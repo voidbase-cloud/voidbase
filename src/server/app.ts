@@ -11,6 +11,7 @@ import { applyPendingMigrations } from "./hooks/migrations";
 import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
 import { deletePrefix } from "./records/files";
 import { mountWebAuthn } from "./webauthn";
+import { authWithOAuth2, mountOAuth2Redirect } from "./oauth2";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import { saveHookRecord } from "./records/service";
@@ -158,6 +159,12 @@ app.put("/api/collections/import", async (c) => {
 app.post("/api/collections/:collection/auth-with-password", async (c) => {
   const collection = await mustFindCollection(c, c.req.param("collection"));
   return authWithPassword(c, collection);
+});
+
+app.post("/api/collections/:collection/auth-with-oauth2", async (c) => {
+  const collection = await mustFindCollection(c, c.req.param("collection"));
+  if (collection.type !== "auth") throw notFound("Missing or invalid auth collection context.");
+  return authWithOAuth2(c, collection, await recordContext(c));
 });
 
 app.post("/api/collections/:collection/auth-refresh", async (c) => {
@@ -370,6 +377,7 @@ function sortBy<T extends object>(items: T[], sort: string, allowed: string[]): 
 
 // --- passkeys (the starter's Go webauthn routes, native here) ---------------
 mountWebAuthn(app);
+mountOAuth2Redirect(app);
 
 // --- pb_hooks runtime ------------------------------------------------------
 // hook code that changes the schema must see the change in the same run ($app.findCollectionByNameOrId)

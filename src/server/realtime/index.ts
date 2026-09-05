@@ -37,6 +37,7 @@ let lastRead: { at: number; since: number; changes: Change[] } | null = null;
 export function parseSubscription(raw: string): Subscription | null {
   const [topicPart, optionsPart] = raw.split("?options=");
   const topic = topicPart ?? "";
+  if (topic.startsWith("@")) return { topic: raw, collection: topic, recordId: null, query: {}, headers: {} }; // @oauth2 and friends: messages, not records
   const m = /^([^/]+)\/(.+)$/.exec(topic);
   if (!m) return null;
   let query: Record<string, string> = {}, headers: Record<string, string> = {};
@@ -130,6 +131,14 @@ async function pollOne(env: AppEnv["Bindings"], cl: Client) {
   for (const ch of changes) {
     if (cl.closed) return;
     cl.cursor = Math.max(cl.cursor, ch.id);
+    if (ch.collection.startsWith("@")) { // one-off message for a single client (OAuth2 redirect handoff)
+      if (ch.recordId === cl.id && cl.subs.some((s) => s.topic === ch.collection)) {
+        await cl.send(ch.collection, ch.data ? JSON.parse(ch.data) : {});
+        cl.subs = cl.subs.filter((s) => s.topic !== ch.collection);
+        await stmt(db, "UPDATE `_realtime_clients` SET subscriptions = ?, updated = ? WHERE id = ?", [JSON.stringify(cl.subs.map((s) => s.topic)), nowString(), cl.id]).run();
+      }
+      continue;
+    }
     const matching = cl.subs.filter((s) => (s.collection === ch.collection || collections.get(s.collection)?.name === ch.collection) && (s.recordId === null || s.recordId === ch.recordId));
     if (!matching.length) continue;
     const collection = collections.get(ch.collection);

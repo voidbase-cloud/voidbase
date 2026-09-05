@@ -1191,8 +1191,9 @@
             "admin"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m4"
+          "status": "done",
+          "milestone": "m4",
+          "notes": "src/server/oauth2: auth-with-oauth2 with PKCE code exchange (client credentials in the header, then the body, like golang.org/x/oauth2), user-info mapping, external-auth lookup, createData plus mappedFields sign-up with a random password, verified/email/password rules from apis/record_auth_with_oauth2.go, meta with isNew and the deprecated avatarUrl alias. Provider defaults for oidc/oidc2/oidc3, google, github, discord, microsoft, gitlab; the rest of the catalog is auth.providers. test/conformance/oauth2.ts (mock OIDC provider) 9/9 against PocketBase."
         },
         {
           "id": "auth.oauth2-realtime",
@@ -1204,9 +1205,10 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m4",
-          "verify": "SDK authWithOAuth2 popup flow completes"
+          "verify": "SDK authWithOAuth2 popup flow completes",
+          "notes": "auth-methods lists providers with state, codeVerifier, S256 challenge, logo and authURL ending in &redirect_uri= like PocketBase; GET/POST /api/oauth2-redirect validates the waiting realtime client and hands {state, code, error} over through the change feed (topic @oauth2), then redirects to the panel's success/failure pages. test/starter-oauth2.ts drives the starter's popup flow with the SDK unchanged."
         },
         {
           "id": "auth.providers",
@@ -2246,7 +2248,7 @@
           "hours": 2,
           "status": "partial",
           "milestone": "m4",
-          "notes": "Verified by test/starter-smoke.ts and test/starter-passkeys.ts: home config, password login, passkey register and login, posts list with thumbnails, live list update from an API create and from Generate, post view, audit log tab, hello, delete flow. The edit form crashes upstream in Svelte 5 (FileInput renders an undefined children snippet) against PocketBase too; signup and OAuth2 pending."
+          "notes": "Verified by test/starter-smoke.ts, test/starter-passkeys.ts and test/starter-oauth2.ts: home config, password login, passkey register and login, OAuth2 popup sign-up, posts list with thumbnails, live list update from an API create and from Generate, post view, audit log tab, hello, delete flow. The edit form crashes upstream in Svelte 5 (FileInput renders an undefined children snippet) against PocketBase too; signup pending."
         },
         {
           "id": "st.e2e",
@@ -2278,7 +2280,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), realtime.ts, fresh-db.ts (empty-D1 boot + migrations), panel-smoke, panel-collections, panel-records, starter-smoke and starter-passkeys all green on 2026-09-05."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (9), realtime.ts, fresh-db.ts (empty-D1 boot + migrations), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
         },
         {
           "id": "prod.sdk-suite",

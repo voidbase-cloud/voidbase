@@ -6,6 +6,9 @@ import { ApiError, badRequest, forbidden, unauthorized, V, validationFailed, typ
 import { decodeJWT, signJWT, verifyJWT } from "./jwt";
 import { verifyPassword } from "./password";
 import { recordToJSON } from "./records/json";
+import { buildAuthURL, providerConfig, s256Challenge } from "./oauth2";
+import catalog from "./collections/oauth2-providers.json";
+import { randomString } from "./ids";
 import type { AppEnv, AuthRecord, Row } from "./types";
 
 export function tokenFromRequest(req: Request): string {
@@ -125,18 +128,41 @@ export async function authRefresh(c: Context<AppEnv>, collection: Collection) {
 }
 
 // GET /api/collections/:collection/auth-methods
-export function authMethods(c: Context<AppEnv>, collection: Collection) {
+const providerLogo = (name: string) => (catalog as { name: string; logo: string }[]).find((p) => p.name === name)?.logo ?? "";
+
+export async function authMethods(c: Context<AppEnv>, collection: Collection) {
   if (!isAuth(collection)) throw badRequest("The collection is not configured to allow authentication.");
   const identityFields = option<string[]>(collection, "passwordAuth.identityFields", ["email"]);
   const mfaEnabled = option<boolean>(collection, "mfa.enabled", false);
   const otpEnabled = option<boolean>(collection, "otp.enabled", false);
+  const oauth2Enabled = option<boolean>(collection, "oauth2.enabled", false);
+  const providers: Record<string, unknown>[] = [];
+  if (oauth2Enabled) {
+    for (const cfg of option<{ name: string }[]>(collection, "oauth2.providers", [])) {
+      const p = providerConfig(collection, cfg.name);
+      if (!p || !p.authURL || !p.tokenURL) continue; // PocketBase skips providers it cannot init
+      const info: Record<string, unknown> = { name: p.name, displayName: p.displayName, logo: providerLogo(p.name), state: randomString(30), authURL: "", authUrl: "", codeVerifier: "", codeChallenge: "", codeChallengeMethod: "" };
+      const extra: Record<string, string> = {};
+      if (p.name === "apple") extra.response_mode = "form_post";
+      if (p.pkce) {
+        info.codeVerifier = randomString(43);
+        info.codeChallenge = await s256Challenge(String(info.codeVerifier));
+        info.codeChallengeMethod = "S256";
+        extra.code_challenge = String(info.codeChallenge); extra.code_challenge_method = "S256";
+      }
+      info.authURL = buildAuthURL(p, String(info.state), extra) + "&redirect_uri="; // empty redirect_uri so clients can append theirs
+      info.authUrl = info.authURL;
+      providers.push(info);
+    }
+  }
+  const legacy = oauth2Enabled ? providers.map((p) => ({ ...p, logo: "" })) : null;
   return c.json({
     password: { identityFields, enabled: option<boolean>(collection, "passwordAuth.enabled", false) },
-    oauth2: { providers: [] as unknown[], enabled: option<boolean>(collection, "oauth2.enabled", false) },
+    oauth2: { providers, enabled: oauth2Enabled },
     mfa: { enabled: mfaEnabled, duration: mfaEnabled ? option<number>(collection, "mfa.duration", 0) : 0 },
     otp: { enabled: otpEnabled, duration: otpEnabled ? option<number>(collection, "otp.duration", 0) : 0 },
     // deprecated fields PocketBase still returns
-    authProviders: null,
+    authProviders: legacy,
     usernamePassword: identityFields.includes("username"),
     emailPassword: identityFields.includes("email"),
   });

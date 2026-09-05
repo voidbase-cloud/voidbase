@@ -1290,8 +1290,9 @@
             "admin"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "manageRule lets a matching auth record change another record's email, verified flag and password without oldPassword; refused otherwise with PocketBase's errors. test/conformance/manage-rule.ts 5/5."
         },
         {
           "id": "auth.token-options",

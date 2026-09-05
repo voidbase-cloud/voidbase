@@ -1,0 +1,20 @@
+{
+ "method": "POST",
+ "path": "/api/collections/users/records",
+ "request": {
+  "email": "new2@example.com",
+  "password": "password123",
+  "passwordConfirm": "nope"
+ },
+ "status": 400,
+ "response": {
+  "data": {
+   "passwordConfirm": {
+    "code": "validation_values_mismatch",
+    "message": "Values don't match."
+   }
+  },
+  "message": "Failed to create record.",
+  "status": 400
+ }
+}

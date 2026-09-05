@@ -1,0 +1,13 @@
+{
+ "method": "GET",
+ "path": "/api/collections/ks_rec/records?filter=tags%20%3F%3D%20%27c%27",
+ "request": null,
+ "status": 200,
+ "response": {
+  "items": [],
+  "page": 1,
+  "perPage": 30,
+  "totalItems": 0,
+  "totalPages": 0
+ }
+}

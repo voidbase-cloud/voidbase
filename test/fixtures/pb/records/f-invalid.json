@@ -1,0 +1,11 @@
+{
+ "method": "GET",
+ "path": "/api/collections/ks_rec/records?filter=title%20%3D",
+ "request": null,
+ "status": 400,
+ "response": {
+  "data": {},
+  "message": "Something went wrong while processing your request.",
+  "status": 400
+ }
+}

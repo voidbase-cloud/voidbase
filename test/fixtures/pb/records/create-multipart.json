@@ -1,0 +1,53 @@
+{
+ "method": "POST",
+ "path": "/api/collections/ks_rec/records",
+ "request": {
+  "title": "With files",
+  "attachments": [
+   "favicon.png",
+   "second.png"
+  ],
+  "tags": [
+   "a",
+   "b"
+  ],
+  "meta": {
+   "k": 1
+  }
+ },
+ "status": 200,
+ "response": {
+  "active": false,
+  "attachments": [
+   "favicon_5rvcs5yo3x.png",
+   "second_sieaffvqee.png"
+  ],
+  "author": "",
+  "authors": [],
+  "body": "",
+  "collectionId": "pbc_1387967905",
+  "collectionName": "ks_rec",
+  "contact": "",
+  "created": "2026-09-05 18:34:06.129Z",
+  "id": "og10s6e847qjdd4",
+  "meta": {
+   "k": 1
+  },
+  "notes": "",
+  "price": 0,
+  "secret": "",
+  "site": "",
+  "tag": "",
+  "tags": [
+   "a",
+   "b"
+  ],
+  "title": "With files",
+  "updated": "2026-09-05 18:34:06.129Z",
+  "when": "",
+  "where": {
+   "lon": 0,
+   "lat": 0
+  }
+ }
+}

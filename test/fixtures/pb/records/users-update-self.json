@@ -1,0 +1,22 @@
+{
+ "method": "PATCH",
+ "path": "/api/collections/users/records/ee7l53q26aloxmt",
+ "request": {
+  "name": "Renamed"
+ },
+ "status": 200,
+ "response": {
+  "avatar": "",
+  "collectionId": "_pb_users_auth_",
+  "collectionName": "users",
+  "created": "2026-09-05 18:34:05.590Z",
+  "email": "new1@example.com",
+  "emailVisibility": false,
+  "id": "ee7l53q26aloxmt",
+  "metadata": null,
+  "name": "Renamed",
+  "updated": "2026-09-05 18:34:05.894Z",
+  "username": "users491051",
+  "verified": false
+ }
+}

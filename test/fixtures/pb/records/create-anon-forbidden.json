@@ -1,0 +1,13 @@
+{
+ "method": "POST",
+ "path": "/api/collections/ks_rec/records",
+ "request": {
+  "title": "Anon"
+ },
+ "status": 400,
+ "response": {
+  "data": {},
+  "message": "Failed to create record.",
+  "status": 400
+ }
+}

@@ -1,0 +1,30 @@
+{
+ "method": "GET",
+ "path": "/api/collections/ks_rec/records?fields=id,body:excerpt(3,true)&perPage=10",
+ "request": null,
+ "status": 200,
+ "response": {
+  "items": [
+   {
+    "body": "hi",
+    "id": "e0f89tv4b0z6lc2"
+   },
+   {
+    "body": "x",
+    "id": "abc123def456ghi"
+   },
+   {
+    "body": "",
+    "id": "0lnh6lulywxf0mp"
+   },
+   {
+    "body": "",
+    "id": "s3i8qvx2ums67fk"
+   }
+  ],
+  "page": 1,
+  "perPage": 10,
+  "totalItems": 4,
+  "totalPages": 1
+ }
+}

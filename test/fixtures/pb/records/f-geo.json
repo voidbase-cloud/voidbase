@@ -1,0 +1,13 @@
+{
+ "method": "GET",
+ "path": "/api/collections/ks_rec/records?filter=geoDistance%28where.lon%2C%20where.lat%2C%201.5%2C%202.5%29%20%3C%2010",
+ "request": null,
+ "status": 200,
+ "response": {
+  "items": [],
+  "page": 1,
+  "perPage": 30,
+  "totalItems": 0,
+  "totalPages": 0
+ }
+}

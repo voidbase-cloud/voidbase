@@ -1,0 +1,47 @@
+{
+ "method": "GET",
+ "path": "/api/collections/ks_rec/records?filter=tag%20%3D%20%27a%27",
+ "request": null,
+ "status": 200,
+ "response": {
+  "items": [
+   {
+    "active": true,
+    "attachments": [],
+    "author": "quxxcxy7bd5x5g4",
+    "authors": [
+     "quxxcxy7bd5x5g4"
+    ],
+    "body": "<p>hi</p>",
+    "collectionId": "pbc_1387967905",
+    "collectionName": "ks_rec",
+    "contact": "a@b.co",
+    "created": "2026-09-05 18:34:05.341Z",
+    "id": "e0f89tv4b0z6lc2",
+    "meta": {
+     "a": 2
+    },
+    "notes": "user edit",
+    "price": 12,
+    "secret": "",
+    "site": "https://example.com/x",
+    "tag": "a",
+    "tags": [
+     "b",
+     "c"
+    ],
+    "title": "Hello",
+    "updated": "2026-09-05 18:34:05.448Z",
+    "when": "2026-01-02 03:04:05.000Z",
+    "where": {
+     "lon": 1.5,
+     "lat": 2.5
+    }
+   }
+  ],
+  "page": 1,
+  "perPage": 30,
+  "totalItems": 1,
+  "totalPages": 1
+ }
+}

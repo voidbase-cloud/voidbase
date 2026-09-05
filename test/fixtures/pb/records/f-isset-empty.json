@@ -1,0 +1,66 @@
+{
+ "method": "GET",
+ "path": "/api/collections/ks_rec/records?filter=notes%20%3D%20%27%27&sort=created",
+ "request": null,
+ "status": 200,
+ "response": {
+  "items": [
+   {
+    "active": false,
+    "attachments": [],
+    "author": "",
+    "authors": [],
+    "body": "x",
+    "collectionId": "pbc_1387967905",
+    "collectionName": "ks_rec",
+    "contact": "",
+    "created": "2026-09-05 18:34:05.345Z",
+    "id": "abc123def456ghi",
+    "meta": null,
+    "notes": "",
+    "price": 0,
+    "secret": "",
+    "site": "",
+    "tag": "",
+    "tags": [],
+    "title": "Custom id",
+    "updated": "2026-09-05 18:34:05.345Z",
+    "when": "",
+    "where": {
+     "lon": 0,
+     "lat": 0
+    }
+   },
+   {
+    "active": false,
+    "attachments": [],
+    "author": "",
+    "authors": [],
+    "body": "",
+    "collectionId": "pbc_1387967905",
+    "collectionName": "ks_rec",
+    "contact": "",
+    "created": "2026-09-05 18:34:05.346Z",
+    "id": "0lnh6lulywxf0mp",
+    "meta": null,
+    "notes": "",
+    "price": 0,
+    "secret": "",
+    "site": "",
+    "tag": "",
+    "tags": [],
+    "title": "Minimal",
+    "updated": "2026-09-05 18:34:05.346Z",
+    "when": "",
+    "where": {
+     "lon": 0,
+     "lat": 0
+    }
+   }
+  ],
+  "page": 1,
+  "perPage": 30,
+  "totalItems": 2,
+  "totalPages": 1
+ }
+}

@@ -9,6 +9,7 @@ export interface AuthRecord {
 
 export interface Bindings {
   DB: D1Database;
+  STORAGE: R2Bucket;
 }
 
 export interface Variables {

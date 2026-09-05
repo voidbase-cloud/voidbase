@@ -1,0 +1,73 @@
+{
+ "method": "POST",
+ "path": "/api/collections/ks_rec/records",
+ "request": {
+  "title": "Hello",
+  "body": "<p>hi</p>",
+  "price": 9.5,
+  "active": true,
+  "contact": "a@b.co",
+  "site": "https://example.com/x",
+  "when": "2026-01-02 03:04:05.000Z",
+  "tag": "a",
+  "tags": [
+   "a",
+   "b"
+  ],
+  "author": "quxxcxy7bd5x5g4",
+  "authors": [
+   "quxxcxy7bd5x5g4"
+  ],
+  "meta": {
+   "a": 1,
+   "b": [
+    1,
+    2
+   ]
+  },
+  "secret": "password123",
+  "where": {
+   "lon": 1.5,
+   "lat": 2.5
+  },
+  "notes": "n"
+ },
+ "status": 200,
+ "response": {
+  "active": true,
+  "attachments": [],
+  "author": "quxxcxy7bd5x5g4",
+  "authors": [
+   "quxxcxy7bd5x5g4"
+  ],
+  "body": "<p>hi</p>",
+  "collectionId": "pbc_1387967905",
+  "collectionName": "ks_rec",
+  "contact": "a@b.co",
+  "created": "2026-09-05 18:34:05.341Z",
+  "id": "e0f89tv4b0z6lc2",
+  "meta": {
+   "a": 1,
+   "b": [
+    1,
+    2
+   ]
+  },
+  "notes": "n",
+  "price": 9.5,
+  "secret": "",
+  "site": "https://example.com/x",
+  "tag": "a",
+  "tags": [
+   "a",
+   "b"
+  ],
+  "title": "Hello",
+  "updated": "2026-09-05 18:34:05.341Z",
+  "when": "2026-01-02 03:04:05.000Z",
+  "where": {
+   "lon": 1.5,
+   "lat": 2.5
+  }
+ }
+}

@@ -1,0 +1,11 @@
+{
+ "method": "GET",
+ "path": "/api/collections/ks_rec/records/0lnh6lulywxf0mp",
+ "request": null,
+ "status": 404,
+ "response": {
+  "data": {},
+  "message": "The requested resource wasn't found.",
+  "status": 404
+ }
+}

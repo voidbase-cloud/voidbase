@@ -1,0 +1,17 @@
+{
+ "method": "GET",
+ "path": "/api/collections/ks_rec/records?sort=@random&perPage=1&fields=id",
+ "request": null,
+ "status": 200,
+ "response": {
+  "items": [
+   {
+    "id": "s3i8qvx2ums67fk"
+   }
+  ],
+  "page": 1,
+  "perPage": 1,
+  "totalItems": 4,
+  "totalPages": 4
+ }
+}

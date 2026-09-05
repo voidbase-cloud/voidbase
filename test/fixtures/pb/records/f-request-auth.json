@@ -1,0 +1,11 @@
+{
+ "method": "GET",
+ "path": "/api/collections/ks_rec/records?filter=author%20%3D%20%40request.auth.id",
+ "request": null,
+ "status": 403,
+ "response": {
+  "data": {},
+  "message": "Only superusers can filter by @request.",
+  "status": 403
+ }
+}

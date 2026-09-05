@@ -1,0 +1,13 @@
+{
+ "method": "PATCH",
+ "path": "/api/collections/users/records/ee7l53q26aloxmt",
+ "request": {
+  "verified": true
+ },
+ "status": 404,
+ "response": {
+  "data": {},
+  "message": "The requested resource wasn't found.",
+  "status": 404
+ }
+}

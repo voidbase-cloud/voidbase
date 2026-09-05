@@ -1,0 +1,42 @@
+{
+ "method": "PATCH",
+ "path": "/api/collections/ks_rec/records/og10s6e847qjdd4",
+ "request": {
+  "attachments+": "third.png"
+ },
+ "status": 200,
+ "response": {
+  "active": false,
+  "attachments": [
+   "second_sieaffvqee.png",
+   "third_xd255actf6.png"
+  ],
+  "author": "",
+  "authors": [],
+  "body": "",
+  "collectionId": "pbc_1387967905",
+  "collectionName": "ks_rec",
+  "contact": "",
+  "created": "2026-09-05 18:34:06.129Z",
+  "id": "og10s6e847qjdd4",
+  "meta": {
+   "k": 1
+  },
+  "notes": "",
+  "price": 0,
+  "secret": "",
+  "site": "",
+  "tag": "",
+  "tags": [
+   "a",
+   "b"
+  ],
+  "title": "With files",
+  "updated": "2026-09-05 18:34:06.162Z",
+  "when": "",
+  "where": {
+   "lon": 0,
+   "lat": 0
+  }
+ }
+}

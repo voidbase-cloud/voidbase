@@ -40,7 +40,7 @@ async function call(method: string, path: string, body?: unknown) {
 }
 
 // clean slate for the replay
-for (const n of ["ks_all", "ks_all2", "1bad", "undefined"]) await call("DELETE", `/api/collections/${n}`);
+for (const n of ["ks_all", "ks_all2", "1bad", "undefined", "ks_rec"]) await call("DELETE", `/api/collections/${n}`);
 
 // 1) import the starter snapshot
 const snapshotSrc = await Bun.file("../pocketbase-sveltekit-starter/pb/pb_migrations/1774379551_collections_snapshot.js").text();

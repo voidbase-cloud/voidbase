@@ -1,0 +1,20 @@
+{
+ "method": "POST",
+ "path": "/api/collections/users/records",
+ "request": {
+  "email": "new1@example.com",
+  "password": "password123",
+  "passwordConfirm": "password123"
+ },
+ "status": 400,
+ "response": {
+  "data": {
+   "email": {
+    "code": "validation_not_unique",
+    "message": "Value must be unique."
+   }
+  },
+  "message": "Failed to create record.",
+  "status": 400
+ }
+}

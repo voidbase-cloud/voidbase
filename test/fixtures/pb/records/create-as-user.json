@@ -1,0 +1,35 @@
+{
+ "method": "POST",
+ "path": "/api/collections/ks_rec/records",
+ "request": {
+  "title": "By user",
+  "author": "quxxcxy7bd5x5g4"
+ },
+ "status": 200,
+ "response": {
+  "active": false,
+  "attachments": [],
+  "author": "quxxcxy7bd5x5g4",
+  "authors": [],
+  "body": "",
+  "collectionId": "pbc_1387967905",
+  "collectionName": "ks_rec",
+  "contact": "",
+  "created": "2026-09-05 18:34:05.436Z",
+  "id": "s3i8qvx2ums67fk",
+  "meta": null,
+  "notes": "",
+  "price": 0,
+  "secret": "",
+  "site": "",
+  "tag": "",
+  "tags": [],
+  "title": "By user",
+  "updated": "2026-09-05 18:34:05.436Z",
+  "when": "",
+  "where": {
+   "lon": 0,
+   "lat": 0
+  }
+ }
+}

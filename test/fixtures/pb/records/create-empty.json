@@ -1,0 +1,16 @@
+{
+ "method": "POST",
+ "path": "/api/collections/ks_rec/records",
+ "request": {},
+ "status": 400,
+ "response": {
+  "data": {
+   "title": {
+    "code": "validation_required",
+    "message": "Cannot be blank."
+   }
+  },
+  "message": "Failed to create record.",
+  "status": 400
+ }
+}

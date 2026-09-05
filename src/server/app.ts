@@ -2,13 +2,15 @@ import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { authMethods, authRefresh, authWithPassword, isSuperuser, loadAuth, requireSuperuser } from "./auth";
 import { ensureBootstrapped } from "./bootstrap";
-import { collectionToJSON, findCollection, isAuth, listCollections, type Collection } from "./collections/model";
+import { collectionToJSON, findCollection, listCollections, loadCollections, type Collection } from "./collections/model";
+import type { Field } from "./collections/fields";
+import { createRecord, deleteRecord, listRecords, updateRecord, viewRecord, type ListQuery, type RecordContext } from "./records/service";
+import { fromColumn } from "./records/values";
 import oauth2Providers from "./collections/oauth2-providers.json";
 import scaffolds from "./collections/scaffolds.json";
-import { all, ident, one } from "./db";
+import { ident, one } from "./db";
 import { ApiError, badRequest, forbidden, notFound } from "./errors";
 import { randomIdSuffix } from "./ids";
-import { recordToJSON } from "./records";
 import { createCollection, deleteCollection, importCollections, truncateCollection, updateCollection } from "./collections/service";
 import { loadSettings, publicSettings } from "./settings";
 import type { AppEnv } from "./types";
@@ -155,35 +157,111 @@ app.get("/api/collections/:collection/auth-methods", async (c) => {
   return authMethods(c, collection);
 });
 
-// --- records: list and view (minimal, milestone one; the filter language lands in milestone three) -------
+// --- records --------------------------------------------------------------
+async function recordContext(c: Context<AppEnv>): Promise<RecordContext> {
+  const auth = c.get("auth");
+  const headers: Record<string, string> = {};
+  c.req.raw.headers.forEach((v, k) => { headers[k.toLowerCase().replace(/-/g, "_")] = v; });
+  const query: Record<string, string> = {};
+  new URL(c.req.url).searchParams.forEach((v, k) => { query[k] = v; });
+  return {
+    db: c.env.DB,
+    storage: c.env.STORAGE,
+    auth,
+    superuser: isSuperuser(auth),
+    request: { auth: auth ? { collection: auth.collection, row: auth.row } : null, method: c.req.method, query, headers, body: {}, context: "default" },
+    collections: await loadCollections(c.env.DB),
+  };
+}
+
+async function readRecordBody(c: Context<AppEnv>): Promise<Record<string, unknown>> {
+  const ct = c.req.header("content-type") ?? "";
+  try {
+    if (ct.includes("multipart/form-data") || ct.includes("application/x-www-form-urlencoded")) {
+      return (await c.req.parseBody({ all: true })) as Record<string, unknown>;
+    }
+    const text = await c.req.text();
+    if (!text.trim()) return {};
+    const v = JSON.parse(text);
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("not an object");
+    return v as Record<string, unknown>;
+  } catch {
+    throw badRequest("Failed to read the submitted data.");
+  }
+}
+
+const listQuery = (c: Context<AppEnv>): ListQuery => ({
+  page: Number(c.req.query("page") ?? 1) || 1,
+  perPage: Number(c.req.query("perPage") ?? 30) || 30,
+  skipTotal: c.req.query("skipTotal") === "1" || c.req.query("skipTotal") === "true",
+  sort: c.req.query("sort") ?? "",
+  filter: c.req.query("filter") ?? "",
+  expand: c.req.query("expand") ?? "",
+  fields: c.req.query("fields") ?? "",
+});
+
 app.get("/api/collections/:collection/records", async (c) => {
   const collection = await mustFindCollection(c, c.req.param("collection"));
-  const auth = c.get("auth");
-  if (collection.listRule === null && !isSuperuser(auth)) throw forbidden("Only superusers can perform this action.");
-  const filter = c.req.query("filter") ?? "";
-  if (filter.trim()) throw badRequest("Invalid filter expression (filters are not supported yet).");
-  const { page, perPage, skipTotal } = paging(c);
-  const orderBy = parseSort(collection, c.req.query("sort") ?? "");
-  const table = ident(collection.name);
-  const rows = await all(c.env.DB, `SELECT * FROM ${table} ${orderBy} LIMIT ? OFFSET ?`, [perPage, (page - 1) * perPage]);
-  let totalItems = -1;
-  let totalPages = -1;
-  if (!skipTotal) {
-    const r = await one<{ n: number }>(c.env.DB, `SELECT COUNT(*) AS n FROM ${table}`);
-    totalItems = r?.n ?? 0;
-    totalPages = Math.ceil(totalItems / perPage);
-  }
-  return c.json({ items: rows.map((row) => recordToJSON(collection, row, { auth })), page, perPage, totalItems, totalPages });
+  const ctx = await recordContext(c);
+  return c.json(await listRecords(ctx, collection, listQuery(c)));
 });
 
 app.get("/api/collections/:collection/records/:id", async (c) => {
   const collection = await mustFindCollection(c, c.req.param("collection"));
-  const auth = c.get("auth");
-  if (collection.viewRule === null && !isSuperuser(auth)) throw forbidden("Only superusers can perform this action.");
-  const row = await one(c.env.DB, `SELECT * FROM ${ident(collection.name)} WHERE id = ? LIMIT 1`, [c.req.param("id")]);
+  const ctx = await recordContext(c);
+  return c.json(await viewRecord(ctx, collection, c.req.param("id"), { expand: c.req.query("expand"), fields: c.req.query("fields") }));
+});
+
+app.post("/api/collections/:collection/records", async (c) => {
+  const collection = await mustFindCollection(c, c.req.param("collection"));
+  const ctx = await recordContext(c);
+  const body = await readRecordBody(c);
+  return c.json(await createRecord(ctx, collection, body, { expand: c.req.query("expand"), fields: c.req.query("fields") }));
+});
+
+app.patch("/api/collections/:collection/records/:id", async (c) => {
+  const collection = await mustFindCollection(c, c.req.param("collection"));
+  const ctx = await recordContext(c);
+  const body = await readRecordBody(c);
+  return c.json(await updateRecord(ctx, collection, c.req.param("id"), body, { expand: c.req.query("expand"), fields: c.req.query("fields") }));
+});
+
+app.delete("/api/collections/:collection/records/:id", async (c) => {
+  const collection = await mustFindCollection(c, c.req.param("collection"));
+  const ctx = await recordContext(c);
+  await deleteRecord(ctx, collection, c.req.param("id"));
+  return c.body(null, 204);
+});
+
+// --- files ----------------------------------------------------------------
+app.get("/api/files/:collection/:recordId/:filename", async (c) => {
+  const collection = await findCollection(c.env.DB, c.req.param("collection"));
+  if (!collection) throw notFound();
+  const row = await one(c.env.DB, `SELECT * FROM ${ident(collection.name)} WHERE id = ? LIMIT 1`, [c.req.param("recordId")]);
   if (!row) throw notFound();
-  const own = isAuth(collection) && auth?.collection.id === collection.id && auth.row.id === row.id;
-  return c.json(recordToJSON(collection, row, { auth, own }));
+  const filename = c.req.param("filename");
+  const field = (collection.fields as Field[]).find((f) => {
+    if (f.type !== "file") return false;
+    const v = fromColumn(f, row[f.name]);
+    return Array.isArray(v) ? v.includes(filename) : v === filename;
+  });
+  if (!field) throw notFound();
+  if (field.protected && !isSuperuser(c.get("auth"))) {
+    // protected files require a file token (milestone five); superusers may always fetch
+    throw notFound();
+  }
+  const obj = await c.env.STORAGE.get(`${collection.id}/${row.id}/${filename}`);
+  if (!obj) throw notFound();
+  const headers = new Headers();
+  headers.set("Content-Type", obj.httpMetadata?.contentType ?? "application/octet-stream");
+  headers.set("Content-Length", String(obj.size));
+  headers.set("Content-Disposition", `${c.req.query("download") ? "attachment" : "inline"}; filename=${filename}`);
+  headers.set("Cache-Control", "max-age=2592000, stale-while-revalidate=86400");
+  headers.set("Last-Modified", obj.uploaded.toUTCString());
+  headers.set("Accept-Ranges", "bytes");
+  headers.set("Content-Security-Policy", "default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; sandbox");
+  headers.set("Vary", "Origin");
+  return new Response(obj.body, { headers });
 });
 
 // --- helpers --------------------------------------------------------------
@@ -209,23 +287,6 @@ async function mustFindCollection(c: Context<AppEnv>, idOrName: string, collecti
   const collection = await findCollection(c.env.DB, idOrName);
   if (!collection) throw collectionRoute ? notFound() : notFound("Missing collection context.");
   return collection;
-}
-
-function parseSort(collection: Collection, sort: string): string {
-  if (!sort.trim()) return "ORDER BY rowid DESC";
-  const allowed = new Set(["id", "created", "updated", ...collection.fields.map((f) => f.name)]);
-  const parts: string[] = [];
-  for (const raw of sort.split(",")) {
-    const s = raw.trim();
-    if (!s) continue;
-    const desc = s.startsWith("-");
-    const name = s.replace(/^[+-]/, "");
-    if (name === "@rowid") parts.push(`rowid ${desc ? "DESC" : "ASC"}`);
-    else if (name === "@random") parts.push("RANDOM()");
-    else if (allowed.has(name)) parts.push(`${ident(name)} ${desc ? "DESC" : "ASC"}`);
-    else throw badRequest(`Invalid sort field "${name}".`);
-  }
-  return parts.length ? `ORDER BY ${parts.join(", ")}` : "ORDER BY rowid DESC";
 }
 
 function sortBy<T extends object>(items: T[], sort: string, allowed: string[]): T[] {

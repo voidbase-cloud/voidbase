@@ -1,0 +1,34 @@
+{
+ "method": "PATCH",
+ "path": "/api/collections/ks_rec/records/s3i8qvx2ums67fk",
+ "request": {
+  "notes": "user edit"
+ },
+ "status": 200,
+ "response": {
+  "active": false,
+  "attachments": [],
+  "author": "quxxcxy7bd5x5g4",
+  "authors": [],
+  "body": "",
+  "collectionId": "pbc_1387967905",
+  "collectionName": "ks_rec",
+  "contact": "",
+  "created": "2026-09-05 18:34:05.436Z",
+  "id": "s3i8qvx2ums67fk",
+  "meta": null,
+  "notes": "user edit",
+  "price": 0,
+  "secret": "",
+  "site": "",
+  "tag": "",
+  "tags": [],
+  "title": "By user",
+  "updated": "2026-09-05 18:34:05.450Z",
+  "when": "",
+  "where": {
+   "lon": 0,
+   "lat": 0
+  }
+ }
+}

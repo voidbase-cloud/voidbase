@@ -1,0 +1,26 @@
+{
+ "method": "GET",
+ "path": "/api/collections/ks_rec/records?perPage=9999&fields=id",
+ "request": null,
+ "status": 200,
+ "response": {
+  "items": [
+   {
+    "id": "e0f89tv4b0z6lc2"
+   },
+   {
+    "id": "abc123def456ghi"
+   },
+   {
+    "id": "0lnh6lulywxf0mp"
+   },
+   {
+    "id": "s3i8qvx2ums67fk"
+   }
+  ],
+  "page": 1,
+  "perPage": 1000,
+  "totalItems": 4,
+  "totalPages": 1
+ }
+}

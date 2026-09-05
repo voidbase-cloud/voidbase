@@ -5,7 +5,7 @@ import { ident } from "./db";
 import { ApiError, badRequest, forbidden, unauthorized, V, validationFailed, type FieldErrors } from "./errors";
 import { decodeJWT, signJWT, verifyJWT } from "./jwt";
 import { verifyPassword } from "./password";
-import { recordToJSON } from "./records";
+import { recordToJSON } from "./records/json";
 import type { AppEnv, AuthRecord, Row } from "./types";
 
 export function tokenFromRequest(req: Request): string {

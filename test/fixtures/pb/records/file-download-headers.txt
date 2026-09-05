@@ -1,0 +1,13 @@
+HTTP/1.1 200 OK
+Accept-Ranges: bytes
+Cache-Control: max-age=2592000, stale-while-revalidate=86400
+Content-Disposition: inline; filename=favicon_5rvcs5yo3x.png
+Content-Length: 731
+Content-Security-Policy: default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; sandbox
+Content-Type: image/png
+Last-Modified: Sat, 05 Sep 2026 18:34:06 GMT
+Vary: Origin
+X-Content-Type-Options: nosniff
+X-Xss-Protection: 1; mode=block
+Date: Sat, 05 Sep 2026 18:34:06 GMT
+

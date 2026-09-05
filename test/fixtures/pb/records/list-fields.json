@@ -1,0 +1,34 @@
+{
+ "method": "GET",
+ "path": "/api/collections/ks_rec/records?fields=id,title,price&perPage=10",
+ "request": null,
+ "status": 200,
+ "response": {
+  "items": [
+   {
+    "id": "e0f89tv4b0z6lc2",
+    "price": 12,
+    "title": "Hello"
+   },
+   {
+    "id": "abc123def456ghi",
+    "price": 0,
+    "title": "Custom id"
+   },
+   {
+    "id": "0lnh6lulywxf0mp",
+    "price": 0,
+    "title": "Minimal"
+   },
+   {
+    "id": "s3i8qvx2ums67fk",
+    "price": 0,
+    "title": "By user"
+   }
+  ],
+  "page": 1,
+  "perPage": 10,
+  "totalItems": 4,
+  "totalPages": 1
+ }
+}

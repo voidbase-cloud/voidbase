@@ -1,0 +1,20 @@
+{
+ "method": "GET",
+ "path": "/api/collections/users/records/quxxcxy7bd5x5g4",
+ "request": null,
+ "status": 200,
+ "response": {
+  "avatar": "",
+  "collectionId": "_pb_users_auth_",
+  "collectionName": "users",
+  "created": "2026-09-05 16:27:36.991Z",
+  "email": "user@example.com",
+  "emailVisibility": false,
+  "id": "quxxcxy7bd5x5g4",
+  "metadata": null,
+  "name": "",
+  "updated": "2026-09-05 16:27:36.991Z",
+  "username": "users443304",
+  "verified": false
+ }
+}

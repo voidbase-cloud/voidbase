@@ -1,0 +1,19 @@
+{
+ "method": "POST",
+ "path": "/api/collections/ks_rec/records",
+ "request": {
+  "title": "Hello",
+  "body": "dup"
+ },
+ "status": 400,
+ "response": {
+  "data": {
+   "title": {
+    "code": "validation_not_unique",
+    "message": "Value must be unique."
+   }
+  },
+  "message": "Failed to create record.",
+  "status": 400
+ }
+}

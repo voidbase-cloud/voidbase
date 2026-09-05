@@ -1,0 +1,18 @@
+{
+ "method": "PATCH",
+ "path": "/api/collections/ks_rec/records/og10s6e847qjdd4",
+ "request": {
+  "attachments": "README.md"
+ },
+ "status": 400,
+ "response": {
+  "data": {
+   "attachments": {
+    "code": "validation_invalid_mime_type",
+    "message": "\"readme_zqrja3bbs6.md\" mime type must be one of: image/png, image/jpeg."
+   }
+  },
+  "message": "Failed to update record.",
+  "status": 400
+ }
+}

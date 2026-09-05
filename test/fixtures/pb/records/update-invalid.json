@@ -1,0 +1,18 @@
+{
+ "method": "PATCH",
+ "path": "/api/collections/ks_rec/records/e0f89tv4b0z6lc2",
+ "request": {
+  "title": ""
+ },
+ "status": 400,
+ "response": {
+  "data": {
+   "title": {
+    "code": "validation_required",
+    "message": "Cannot be blank."
+   }
+  },
+  "message": "Failed to update record.",
+  "status": 400
+ }
+}

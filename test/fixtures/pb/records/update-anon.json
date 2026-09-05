@@ -1,0 +1,13 @@
+{
+ "method": "PATCH",
+ "path": "/api/collections/ks_rec/records/s3i8qvx2ums67fk",
+ "request": {
+  "notes": "anon edit"
+ },
+ "status": 404,
+ "response": {
+  "data": {},
+  "message": "The requested resource wasn't found.",
+  "status": 404
+ }
+}

@@ -1,0 +1,21 @@
+{
+ "method": "PATCH",
+ "path": "/api/collections/ks_rec/records/e0f89tv4b0z6lc2",
+ "request": {
+  "price-": 100
+ },
+ "status": 400,
+ "response": {
+  "data": {
+   "price": {
+    "code": "validation_min_number_constraint",
+    "message": "Must be greater or equal than 0.",
+    "params": {
+     "min": 0
+    }
+   }
+  },
+  "message": "Failed to update record.",
+  "status": 400
+ }
+}

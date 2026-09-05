@@ -1,7 +1,7 @@
 const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const STRING_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-function randomWithAlphabet(length: number, alphabet: string): string {
+export function randomWithAlphabet(length: number, alphabet: string): string {
   const bytes = crypto.getRandomValues(new Uint8Array(length));
   let out = "";
   for (let i = 0; i < length; i++) out += alphabet[bytes[i]! % alphabet.length];

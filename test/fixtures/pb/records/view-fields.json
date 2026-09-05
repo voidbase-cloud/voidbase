@@ -1,0 +1,16 @@
+{
+ "method": "GET",
+ "path": "/api/collections/ks_rec/records/e0f89tv4b0z6lc2?expand=author&fields=id,title,expand.author.email,expand.author.id",
+ "request": null,
+ "status": 200,
+ "response": {
+  "expand": {
+   "author": {
+    "email": "user@example.com",
+    "id": "quxxcxy7bd5x5g4"
+   }
+  },
+  "id": "e0f89tv4b0z6lc2",
+  "title": "Hello"
+ }
+}

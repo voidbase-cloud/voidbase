@@ -1,0 +1,20 @@
+{
+ "method": "POST",
+ "path": "/api/collections/users/records",
+ "request": {
+  "email": "new3@example.com",
+  "password": "short",
+  "passwordConfirm": "short"
+ },
+ "status": 400,
+ "response": {
+  "data": {
+   "password": {
+    "code": "validation_min_text_constraint",
+    "message": "Must be at least 8 character(s)."
+   }
+  },
+  "message": "Failed to create record.",
+  "status": 400
+ }
+}

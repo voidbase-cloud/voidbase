@@ -243,10 +243,9 @@
             "starter"
           ],
           "hours": 2,
-          "status": "partial",
+          "status": "done",
           "milestone": "m1",
-          "verify": "Starter's alertOnFailure shows per-field errors",
-          "notes": "Envelope and the auth validation codes match; the full validation code catalogue comes with records create/update."
+          "verify": "Starter's alertOnFailure shows per-field errors"
         },
         {
           "id": "platform.request-context",
@@ -256,10 +255,9 @@
             "sdk"
           ],
           "hours": 2,
-          "status": "partial",
+          "status": "done",
           "milestone": "m1",
-          "verify": "Rules referencing @request.auth.id evaluate",
-          "notes": "Auth record from the Authorization header (raw or Bearer). Method, headers, query, body context for rules pending."
+          "verify": "Rules referencing @request.auth.id evaluate"
         },
         {
           "id": "platform.dev-loop",
@@ -520,9 +518,8 @@
             "starter"
           ],
           "hours": 1.5,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         },
         {
           "id": "field.editor",
@@ -534,9 +531,8 @@
             "starter"
           ],
           "hours": 1,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         },
         {
           "id": "field.number",
@@ -547,9 +543,8 @@
             "sdk"
           ],
           "hours": 1,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         },
         {
           "id": "field.bool",
@@ -561,9 +556,8 @@
             "starter"
           ],
           "hours": 0.5,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         },
         {
           "id": "field.email",
@@ -575,9 +569,8 @@
             "starter"
           ],
           "hours": 1,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         },
         {
           "id": "field.url",
@@ -588,9 +581,8 @@
             "sdk"
           ],
           "hours": 0.5,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         },
         {
           "id": "field.date",
@@ -601,9 +593,8 @@
             "sdk"
           ],
           "hours": 1,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         },
         {
           "id": "field.autodate",
@@ -615,9 +606,8 @@
             "starter"
           ],
           "hours": 1,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         },
         {
           "id": "field.select",
@@ -629,9 +619,8 @@
             "starter"
           ],
           "hours": 2,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         },
         {
           "id": "field.file",
@@ -643,9 +632,8 @@
             "starter"
           ],
           "hours": 2,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         },
         {
           "id": "field.relation",
@@ -657,9 +645,8 @@
             "starter"
           ],
           "hours": 2,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         },
         {
           "id": "field.json",
@@ -671,9 +658,8 @@
             "starter"
           ],
           "hours": 1.5,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         },
         {
           "id": "field.password",
@@ -685,9 +671,8 @@
             "starter"
           ],
           "hours": 1.5,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         },
         {
           "id": "field.geopoint",
@@ -698,9 +683,8 @@
             "sdk"
           ],
           "hours": 1,
-          "status": "partial",
-          "milestone": "m2",
-          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+          "status": "done",
+          "milestone": "m2"
         }
       ]
     },
@@ -719,10 +703,9 @@
             "admin"
           ],
           "hours": 3,
-          "status": "partial",
+          "status": "done",
           "milestone": "m3",
-          "verify": "Starter posts page paginates",
-          "notes": "List, pagination, sort by fields and @rowid/@random for superusers; filter and rules pending."
+          "verify": "Starter posts page paginates"
         },
         {
           "id": "rec.sort",
@@ -733,7 +716,7 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -745,7 +728,7 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -758,9 +741,8 @@
             "admin"
           ],
           "hours": 1,
-          "status": "partial",
-          "milestone": "m3",
-          "notes": "View by id for superusers; rules pending."
+          "status": "done",
+          "milestone": "m3"
         },
         {
           "id": "rec.create",
@@ -772,7 +754,7 @@
             "admin"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -785,7 +767,7 @@
             "admin"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3",
           "verify": "Starter's files- removal works"
         },
@@ -799,7 +781,7 @@
             "admin"
           ],
           "hours": 1,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -812,9 +794,10 @@
             "admin"
           ],
           "hours": 5,
-          "status": "todo",
+          "status": "partial",
           "milestone": "m3",
-          "verify": "Starter shows expand.user.name on posts"
+          "verify": "Starter shows expand.user.name on posts",
+          "notes": "Direct, multiple, nested, and back-relation expands implemented with view-rule filtering; direct and multiple verified against fixtures, nested and via not yet."
         },
         {
           "id": "rec.rules",
@@ -826,7 +809,7 @@
             "admin"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3",
           "verify": "Non-owner cannot edit another user's post"
         },
@@ -839,7 +822,7 @@
             "starter"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -852,7 +835,7 @@
             "admin"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -908,7 +891,7 @@
             "admin"
           ],
           "hours": 4,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -921,7 +904,7 @@
             "admin"
           ],
           "hours": 1,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -933,8 +916,9 @@
             "admin"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "partial",
+          "milestone": "m5",
+          "notes": "Any-match operators compile; PocketBase's quirk that multi-valued columns compare as raw JSON without :each is reproduced. Any-match through relation joins not yet fixture-verified."
         },
         {
           "id": "flt.paths",
@@ -946,7 +930,7 @@
             "admin"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -958,8 +942,9 @@
             "admin"
           ],
           "hours": 3,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "partial",
+          "milestone": "m5",
+          "notes": "Back-relation joins implemented, not yet fixture-verified."
         },
         {
           "id": "flt.request",
@@ -971,7 +956,7 @@
             "admin"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3",
           "verify": "Starter's user = @request.auth.id rules hold"
         },
@@ -984,7 +969,7 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m5"
         },
         {
@@ -996,7 +981,7 @@
             "admin"
           ],
           "hours": 1,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -1008,7 +993,7 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m5"
         },
         {
@@ -1020,7 +1005,7 @@
             "admin"
           ],
           "hours": 1,
-          "status": "todo",
+          "status": "done",
           "milestone": "m5"
         },
         {
@@ -1032,7 +1017,7 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m5"
         },
         {
@@ -1045,7 +1030,7 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -1332,7 +1317,7 @@
             "admin"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -1345,7 +1330,7 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -1369,8 +1354,9 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m3"
+          "status": "partial",
+          "milestone": "m3",
+          "notes": "Content-Type, Content-Disposition, cache, CSP and Vary headers match PocketBase; Range requests and the download=1 attachment mode pending."
         },
         {
           "id": "file.thumbs",
@@ -1407,7 +1393,7 @@
             "starter"
           ],
           "hours": 1,
-          "status": "todo",
+          "status": "done",
           "milestone": "m3"
         },
         {
@@ -2063,9 +2049,8 @@
             "admin"
           ],
           "hours": 3,
-          "status": "partial",
-          "milestone": "m3",
-          "notes": "Superuser records list renders; create, edit, and filter untested."
+          "status": "done",
+          "milestone": "m3"
         },
         {
           "id": "pnl.auth-records",
@@ -2086,8 +2071,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "todo",
-          "milestone": "m3"
+          "status": "partial",
+          "milestone": "m3",
+          "notes": "Renders with the right base URL in headless runs; not asserted screen by screen."
         },
         {
           "id": "pnl.logs",
@@ -2279,7 +2265,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "test/conformance/compare.ts (20 request cases) and test/conformance/collections.ts (28 scenario steps incl. the starter snapshot import) diff against PocketBase 0.40.2 fixtures; test/panel-*.ts drive the unmodified panel headlessly."
+          "notes": "compare.ts (20), collections.ts (28), records.ts (88 replayed fixtures incl. filters, rules, modifiers, auth records, multipart files) diff against PocketBase 0.40.2; test/panel-*.ts drive the unmodified panel headlessly."
         },
         {
           "id": "prod.sdk-suite",

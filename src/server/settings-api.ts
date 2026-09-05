@@ -8,6 +8,7 @@ import { randomString } from "./ids";
 import type { AppEnv, Row } from "./types";
 import type { Field } from "./collections/fields";
 import { requireSuperuser } from "./auth";
+import { requestHook, trigger } from "./hooks/runtime";
 
 const readBody = async (c: Context<AppEnv>): Promise<Record<string, unknown>> => {
   try { const v = await c.req.json(); if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error(); return v as Record<string, unknown>; }
@@ -19,11 +20,16 @@ export function mountSettingsApi(app: Hono<AppEnv>) {
   app.patch("/api/settings", async (c) => {
     requireSuperuser(c);
     const body = await readBody(c);
-    const merged = mergeSettings(await loadSettings(c.env.DB), body);
-    const errs = validateSettings(merged);
-    if (Object.keys(errs).length) throw new ApiError(400, "An error occurred while saving the new settings.", errs as never);
-    await saveSettings(c.env.DB, merged);
-    return c.json(publicSettings(merged));
+    const current = await loadSettings(c.env.DB);
+    const merged = mergeSettings(current, body);
+    return requestHook("onSettingsUpdateRequest", c, null, { oldSettings: structuredClone(current), newSettings: merged }, async (ev) => {
+      const next = ev.newSettings as typeof merged;
+      const errs = validateSettings(next);
+      if (Object.keys(errs).length) throw new ApiError(400, "An error occurred while saving the new settings.", errs as never);
+      await saveSettings(c.env.DB, next);
+      await trigger("onSettingsReload", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined);
+      return c.json(publicSettings(next));
+    });
   });
 
   app.post("/api/settings/test/email", async (c) => {

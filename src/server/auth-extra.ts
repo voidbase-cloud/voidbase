@@ -9,6 +9,8 @@ import { nowString, randomId } from "./ids";
 import { sendRecordOTP } from "./mail";
 import { hashPassword, verifyPassword } from "./password";
 import { updateRecord, type RecordContext } from "./records/service";
+import { requestHook } from "./hooks/runtime";
+import { CollectionRef, HookRecord } from "./hooks/record";
 import type { AppEnv, Row } from "./types";
 
 type Fe = { code: string; message: string; params?: Record<string, unknown> };
@@ -32,11 +34,13 @@ export function mountAuthExtra(app: Hono<AppEnv>, deps: { collection: (c: Contex
     if (email.length > 255) throw validationFailed({ email: lengthErr(1, 255) });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw validationFailed({ email: { code: "validation_is_email", message: "Must be a valid email address." } });
     const row = await one<Row>(c.env.DB, `SELECT * FROM ${ident(collection.name)} WHERE email = ? LIMIT 1`, [email]);
-    if (!row) return c.json({ otpId: randomId() }); // same shape for unknown emails, like PocketBase
     const length = Number(opt<number>(collection, "otp.length", 8)) || 8;
     const durationMs = (Number(opt<number>(collection, "otp.duration", 180)) || 180) * 1000;
     const digits = crypto.getRandomValues(new Uint8Array(length));
-    const pass = [...digits].map((d) => String(d % 10)).join("");
+    const generated = [...digits].map((d) => String(d % 10)).join("");
+    return requestHook("onRecordRequestOTPRequest", c, collection.name, { collection: new CollectionRef(collection), record: row ? HookRecord.fromRow(collection, row) : null, password: generated }, async (ev) => {
+    const pass = String(ev.password ?? generated);
+    if (!row) return c.json({ otpId: randomId() }); // same shape for unknown emails, like PocketBase
     // too many recent OTPs: reuse the newest instead of issuing another (and drop the expired ones while here)
     const existing = await all<Row>(c.env.DB, "SELECT * FROM `_otps` WHERE collectionRef = ? AND recordRef = ? ORDER BY created DESC", [collection.id, String(row.id)]);
     const expired = existing.filter((o) => Date.now() - createdMs(o) > durationMs);
@@ -52,6 +56,7 @@ export function mountAuthExtra(app: Hono<AppEnv>, deps: { collection: (c: Contex
       } catch (err) { console.error("voidbase: failed to send OTP email", err); await run(c.env.DB, "DELETE FROM `_otps` WHERE id = ?", [id]); }
     })());
     return c.json({ otpId: id });
+    });
   });
 
   app.post("/api/collections/:collection/auth-with-otp", async (c) => {
@@ -79,8 +84,7 @@ export function mountAuthExtra(app: Hono<AppEnv>, deps: { collection: (c: Contex
     if (state.count > 5) throw new ApiError(429, "Too many attempts, please try again later with a new OTP.", {});
     if (!(await verifyPassword(password, String(otp.password ?? "")))) throw badRequest("Invalid or expired OTP");
     const ctx = await deps.ctx(c);
-    const ev = { app: undefined as unknown, collection, record: null as unknown, otp, next: async () => undefined as unknown };
-    void ev;
+    return requestHook("onRecordAuthWithOTPRequest", c, collection.name, { collection: new CollectionRef(collection), record: HookRecord.fromRow(collection, row), otp }, async () => {
     await run(c.env.DB, "DELETE FROM `_otps` WHERE id = ?", [otpId]);
     let fresh = row;
     if (!row.verified && otp.sentTo && String(row.email) === String(otp.sentTo)) {
@@ -90,6 +94,7 @@ export function mountAuthExtra(app: Hono<AppEnv>, deps: { collection: (c: Contex
       catch (err) { console.error("voidbase: failed to update record verified state after OTP", err); }
     }
     return recordAuthResponse(c, { ...ctx, request: { ...ctx.request, context: "otp" } }, collection, fresh, "otp", { body });
+    });
   });
 
   app.post("/api/collections/:collection/impersonate/:id", async (c) => {

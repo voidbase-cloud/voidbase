@@ -1,6 +1,8 @@
 // Email-driven auth flows (apis/record_auth_{verification,password_reset,email_change}_{request,confirm}.go):
 // request endpoints always answer 204 (unknown emails and resend limits are hidden, like PocketBase), confirm
 // endpoints validate the signed token and apply the change through the record service so hooks and realtime fire.
+import { requestHook } from "./hooks/runtime";
+import { CollectionRef, HookRecord } from "./hooks/record";
 import type { Context, Hono } from "hono";
 import { findAuthRecordByToken } from "./auth";
 import { verifyPassword } from "./password";
@@ -52,11 +54,13 @@ export function mountAuthFlows(app: Hono<AppEnv>, deps: { collection: (c: Contex
     if (!row) return c.body(null, 204);
     const key = `@limitVerificationEmail_${collection.id}${row.id}`;
     if (!row.verified && (await resendLimited(c.env.DB, key))) return c.body(null, 204);
-    if (row.verified) return c.body(null, 204);
-    c.executionCtx.waitUntil((async () => {
-      try { await sendRecordVerification(c.env.DB, collection, row); await markResend(c.env.DB, key); } catch (err) { console.error("voidbase: failed to send verification email", err); }
-    })());
-    return c.body(null, 204);
+    return requestHook("onRecordRequestVerificationRequest", c, collection.name, { collection: new CollectionRef(collection), record: HookRecord.fromRow(collection, row) }, async () => {
+      if (row.verified) return c.body(null, 204);
+      c.executionCtx.waitUntil((async () => {
+        try { await sendRecordVerification(c.env.DB, collection, row); await markResend(c.env.DB, key); } catch (err) { console.error("voidbase: failed to send verification email", err); }
+      })());
+      return c.body(null, 204);
+    });
   });
 
   app.post("/api/collections/:collection/confirm-verification", async (c) => {
@@ -71,14 +75,16 @@ export function mountAuthFlows(app: Hono<AppEnv>, deps: { collection: (c: Contex
     if (!auth) throw validationFailed({ token: { code: "validation_invalid_token", message: "Invalid or expired token." } });
     if (auth.collection.id !== collection.id) throw validationFailed({ token: { code: "validation_token_collection_mismatch", message: "The provided token is for different auth collection." } });
     if (String(auth.row.email ?? "") !== String(claims.email)) throw validationFailed({ token: { code: "validation_token_email_mismatch", message: "The record email doesn't match with the requested token claims." } });
-    if (!auth.row.verified) {
-      const patch: Record<string, unknown> = { verified: true };
-      if (!passwordEnabled(collection)) { const pw = randomString(30); patch.password = pw; patch.passwordConfirm = pw; }
-      try { await updateRecord(superCtx(await deps.ctx(c)), collection, String(auth.row.id), patch, {} as never); }
-      catch (err) { if (err instanceof ApiError) throw new ApiError(400, "An error occurred while saving the verified state.", err.data as never); throw err; }
-    }
-    await clearResend(c.env.DB, `@limitVerificationEmail_${collection.id}${auth.row.id}`);
-    return c.body(null, 204);
+    return requestHook("onRecordConfirmVerificationRequest", c, collection.name, { collection: new CollectionRef(collection), record: HookRecord.fromRow(collection, auth.row) }, async () => {
+      if (!auth.row.verified) {
+        const patch: Record<string, unknown> = { verified: true };
+        if (!passwordEnabled(collection)) { const pw = randomString(30); patch.password = pw; patch.passwordConfirm = pw; }
+        try { await updateRecord(superCtx(await deps.ctx(c)), collection, String(auth.row.id), patch, {} as never); }
+        catch (err) { if (err instanceof ApiError) throw new ApiError(400, "An error occurred while saving the verified state.", err.data as never); throw err; }
+      }
+      await clearResend(c.env.DB, `@limitVerificationEmail_${collection.id}${auth.row.id}`);
+      return c.body(null, 204);
+    });
   });
 
   app.post("/api/collections/:collection/request-password-reset", async (c) => {
@@ -93,10 +99,12 @@ export function mountAuthFlows(app: Hono<AppEnv>, deps: { collection: (c: Contex
     if (!row) return c.body(null, 204);
     const key = `@limitPasswordResetEmail_${collection.id}${row.id}`;
     if (await resendLimited(c.env.DB, key)) return c.body(null, 204);
-    c.executionCtx.waitUntil((async () => {
-      try { await sendRecordPasswordReset(c.env.DB, collection, row); await markResend(c.env.DB, key); } catch (err) { console.error("voidbase: failed to send password reset email", err); }
-    })());
-    return c.body(null, 204);
+    return requestHook("onRecordRequestPasswordResetRequest", c, collection.name, { collection: new CollectionRef(collection), record: HookRecord.fromRow(collection, row) }, async () => {
+      c.executionCtx.waitUntil((async () => {
+        try { await sendRecordPasswordReset(c.env.DB, collection, row); await markResend(c.env.DB, key); } catch (err) { console.error("voidbase: failed to send password reset email", err); }
+      })());
+      return c.body(null, 204);
+    });
   });
 
   app.post("/api/collections/:collection/confirm-password-reset", async (c) => {
@@ -115,12 +123,15 @@ export function mountAuthFlows(app: Hono<AppEnv>, deps: { collection: (c: Contex
     if (!password) errs.password = REQUIRED; else if (password.length < min || password.length > 255) errs.password = { code: "validation_length_out_of_range", message: `The length must be between ${min} and 255.`, params: { max: 255, min } };
     if (!confirm) errs.passwordConfirm = REQUIRED; else if (confirm !== password) errs.passwordConfirm = { code: "validation_values_mismatch", message: "Values don't match." };
     if (Object.keys(errs).length) throw validationFailed(errs);
-    const patch: Record<string, unknown> = { password, passwordConfirm: confirm };
-    if (!auth!.row.verified && String(auth!.row.email ?? "") === String(unverifiedClaims(token).email ?? "")) patch.verified = true;
-    try { await updateRecord(superCtx(await deps.ctx(c)), collection, String(auth!.row.id), patch, {} as never); }
-    catch (err) { if (err instanceof ApiError) throw new ApiError(400, "Failed to set new password.", err.data as never); throw err; }
-    await clearResend(c.env.DB, `@limitPasswordResetEmail_${collection.id}${auth!.row.id}`);
-    return c.body(null, 204);
+    const found = auth!;
+    return requestHook("onRecordConfirmPasswordResetRequest", c, collection.name, { collection: new CollectionRef(collection), record: HookRecord.fromRow(collection, found.row) }, async () => {
+      const patch: Record<string, unknown> = { password, passwordConfirm: confirm };
+      if (!found.row.verified && String(found.row.email ?? "") === String(unverifiedClaims(token).email ?? "")) patch.verified = true;
+      try { await updateRecord(superCtx(await deps.ctx(c)), collection, String(found.row.id), patch, {} as never); }
+      catch (err) { if (err instanceof ApiError) throw new ApiError(400, "Failed to set new password.", err.data as never); throw err; }
+      await clearResend(c.env.DB, `@limitPasswordResetEmail_${collection.id}${found.row.id}`);
+      return c.body(null, 204);
+    });
   });
 
   app.post("/api/collections/:collection/request-email-change", async (c) => {
@@ -136,9 +147,11 @@ export function mountAuthFlows(app: Hono<AppEnv>, deps: { collection: (c: Contex
     if (newEmail === String(auth.row.email ?? "")) throw validationFailed({ newEmail: { code: "validation_not_in_invalid", message: "Must not be in list." } });
     const taken = await one<Row>(c.env.DB, `SELECT id FROM ${ident(collection.name)} WHERE email = ? LIMIT 1`, [newEmail]);
     if (taken && taken.id !== auth.row.id) throw validationFailed({ newEmail: { code: "validation_invalid_new_email", message: "Invalid new email address." } });
-    try { await sendRecordChangeEmail(c.env.DB, collection, auth.row, newEmail); }
-    catch (err) { throw badRequest("Failed to request email change."); void err; }
-    return c.body(null, 204);
+    return requestHook("onRecordRequestEmailChangeRequest", c, collection.name, { collection: new CollectionRef(collection), record: HookRecord.fromRow(collection, auth.row), newEmail }, async (ev) => {
+      try { await sendRecordChangeEmail(c.env.DB, collection, auth.row, String(ev.newEmail ?? newEmail)); }
+      catch (err) { throw badRequest("Failed to request email change."); void err; }
+      return c.body(null, 204);
+    });
   });
 
   app.post("/api/collections/:collection/confirm-email-change", async (c) => {
@@ -162,8 +175,11 @@ export function mountAuthFlows(app: Hono<AppEnv>, deps: { collection: (c: Contex
     else if (password.length > 100) errs.password = { code: "validation_length_out_of_range", message: "The length must be between 1 and 100.", params: { max: 100, min: 1 } };
     else if (!auth || !(await verifyPassword(password, String((auth as { row: Row }).row.password ?? "")))) errs.password = { code: "validation_invalid_password", message: "Missing or invalid auth record password." };
     if (Object.keys(errs).length) throw validationFailed(errs);
-    try { await updateRecord(superCtx(await deps.ctx(c)), collection, String(auth!.row.id), { email: newEmail, verified: true }, {} as never); }
-    catch (err) { if (err instanceof ApiError) throw new ApiError(400, "Failed to confirm email change.", err.data as never); throw err; }
-    return c.body(null, 204);
+    const found = auth! as { row: Row };
+    return requestHook("onRecordConfirmEmailChangeRequest", c, collection.name, { collection: new CollectionRef(collection), record: HookRecord.fromRow(collection, found.row), newEmail }, async (ev) => {
+      try { await updateRecord(superCtx(await deps.ctx(c)), collection, String(found.row.id), { email: String(ev.newEmail ?? newEmail), verified: true }, {} as never); }
+      catch (err) { if (err instanceof ApiError) throw new ApiError(400, "Failed to confirm email change.", err.data as never); throw err; }
+      return c.body(null, 204);
+    });
   });
 }

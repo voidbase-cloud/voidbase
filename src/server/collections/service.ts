@@ -1,4 +1,6 @@
 // Collection lifecycle: normalize -> validate -> plan SQL -> one D1 batch. Schema is data, as in PocketBase.
+import { trigger } from "../hooks/runtime";
+import { CollectionRef } from "../hooks/record";
 import { crc32 } from "../crc32";
 import { all, ident, one, stmt } from "../db";
 import { badRequest, notFound, type FieldErrors } from "../errors";
@@ -141,38 +143,63 @@ function rowStatements(db: D1Database, c: Collection, mode: "insert" | "update")
     : stmt(db, "UPDATE `_collections` SET system=?, type=?, name=?, fields=?, indexes=?, listRule=?, viewRule=?, createRule=?, updateRule=?, deleteRule=?, options=?, created=?, updated=? WHERE id = ?", [...params, c.id]);
 }
 
+// Model-level collection events (core/collection_model.go): onCollection{Create,Update,Delete} wrap the
+// persist step (validation runs inside onCollectionValidate within it), then AfterXSuccess or AfterXError.
+async function withCollectionHooks(op: "Create" | "Update" | "Delete", c: Collection, isNew: boolean, validate: () => Promise<void>, persist: () => Promise<void>): Promise<void> {
+  const ev = { app: undefined as unknown, collection: new CollectionRef(c), isNew, next: async () => undefined as unknown };
+  try {
+    await trigger(`onCollection${op}`, ev, c.name, async () => {
+      await trigger("onCollectionValidate", ev, c.name, validate);
+      await persist();
+    });
+  } catch (err) {
+    try { await trigger(`onCollectionAfter${op}Error`, { ...ev, error: err }, c.name, async () => undefined); } catch (hookErr) { console.error(`voidbase: onCollectionAfter${op}Error handler failed`, hookErr); }
+    throw err;
+  }
+  await trigger(`onCollectionAfter${op}Success`, ev, c.name, async () => undefined);
+}
+
 export async function createCollection(db: D1Database, raw: Record<string, unknown>): Promise<Collection> {
   const c = prepareCollection(raw, null);
-  const ctx = await validateContext(db, []);
-  ctx.all.push(c);
-  throwIfErrors(validateCollection(c, null, ctx), "Failed to create collection.");
-  if (c.type === "view") await viewDryRun(db, c, "Failed to create collection.", true);
-  const statements = [rowStatements(db, c, "insert"), ...planCreate(c).map((sql) => db.prepare(sql))];
-  await db.batch(statements);
-  invalidateCollections();
-  if (c.type === "view") await deriveViewFields(db, c);
+  await withCollectionHooks("Create", c, true, async () => {
+    const ctx = await validateContext(db, []);
+    ctx.all.push(c);
+    throwIfErrors(validateCollection(c, null, ctx), "Failed to create collection.");
+    if (c.type === "view") await viewDryRun(db, c, "Failed to create collection.", true);
+  }, async () => {
+    const statements = [rowStatements(db, c, "insert"), ...planCreate(c).map((sql) => db.prepare(sql))];
+    await db.batch(statements);
+    invalidateCollections();
+    if (c.type === "view") await deriveViewFields(db, c);
+  });
   return c;
 }
 
 export async function updateCollection(db: D1Database, old: Collection, raw: Record<string, unknown>): Promise<Collection> {
   const c = prepareCollection(raw, old);
-  const ctx = await validateContext(db, [c]);
-  throwIfErrors(validateCollection(c, old, ctx), "Failed to update collection.");
-  if (c.type === "view") await viewDryRun(db, c, "Failed to update collection.", false);
-  const sql = c.type === "view" ? [dropViewSQL(old.name), createViewSQL(c.name, String(c.options.viewQuery ?? ""))] : syncTableSQL(old, c);
-  await db.batch([rowStatements(db, c, "update"), ...sql.map((s) => db.prepare(s))]);
-  invalidateCollections();
-  if (c.type === "view") await deriveViewFields(db, c);
+  await withCollectionHooks("Update", c, false, async () => {
+    const ctx = await validateContext(db, [c]);
+    throwIfErrors(validateCollection(c, old, ctx), "Failed to update collection.");
+    if (c.type === "view") await viewDryRun(db, c, "Failed to update collection.", false);
+  }, async () => {
+    const sql = c.type === "view" ? [dropViewSQL(old.name), createViewSQL(c.name, String(c.options.viewQuery ?? ""))] : syncTableSQL(old, c);
+    await db.batch([rowStatements(db, c, "update"), ...sql.map((s) => db.prepare(s))]);
+    invalidateCollections();
+    if (c.type === "view") await deriveViewFields(db, c);
+  });
   return c;
 }
 
 export async function deleteCollection(db: D1Database, c: Collection): Promise<void> {
-  if (c.system) throw badRequest("Failed to delete collection.");
-  const refs = (await listCollections(db)).filter((x) => x.id !== c.id && (x.fields as Field[]).some((f) => f.type === "relation" && f.collectionId === c.id));
-  if (refs.length) throw badRequest(`Failed to delete collection probably due to existing reference in ${refs.map((r) => r.name).sort().join(", ")}.`);
-  const sql = c.type === "view" ? [dropViewSQL(c.name)] : [...dropIndexesSQL(c), dropTableSQL(c.name)];
-  await db.batch([...sql.map((s) => db.prepare(s)), stmt(db, "DELETE FROM `_collections` WHERE id = ?", [c.id])]);
-  invalidateCollections();
+  await withCollectionHooks("Delete", c, false, async () => {
+    if (c.system) throw badRequest("Failed to delete collection.");
+    const refs = (await listCollections(db)).filter((x) => x.id !== c.id && (x.fields as Field[]).some((f) => f.type === "relation" && f.collectionId === c.id));
+    if (refs.length) throw badRequest(`Failed to delete collection probably due to existing reference in ${refs.map((r) => r.name).sort().join(", ")}.`);
+  }, async () => {
+    const sql = c.type === "view" ? [dropViewSQL(c.name)] : [...dropIndexesSQL(c), dropTableSQL(c.name)];
+    await db.batch([...sql.map((s) => db.prepare(s)), stmt(db, "DELETE FROM `_collections` WHERE id = ?", [c.id])]);
+    invalidateCollections();
+  });
 }
 
 export async function truncateCollection(db: D1Database, c: Collection): Promise<void> {

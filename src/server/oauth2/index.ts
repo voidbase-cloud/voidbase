@@ -3,6 +3,8 @@
 // which hands {state, code} to the waiting realtime client through the change feed (topic "@oauth2").
 import type { Context, Hono } from "hono";
 import { recordAuthResponse } from "../auth-response";
+import { requestHook } from "../hooks/runtime";
+import { CollectionRef, HookRecord } from "../hooks/record";
 import type { Collection } from "../collections/model";
 import { ident, one, run, stmt } from "../db";
 import { ApiError, badRequest, forbidden } from "../errors";
@@ -98,49 +100,52 @@ export async function authWithOAuth2(c: Context<AppEnv>, collection: Collection,
   else if (fallback) row = fallback;
   else if (user.email) row = await one<Row>(db, `SELECT * FROM ${table} WHERE email = ? LIMIT 1`, [user.email]);
   const isNew = !row;
+  return requestHook("onRecordAuthWithOAuth2Request", c, collection.name, { collection: new CollectionRef(collection), providerName, providerClient: null, oAuth2User: user, createData: (body.createData as Record<string, unknown>) ?? {}, record: row ? HookRecord.fromRow(collection, row) : null, isNewRecord: isNew }, async (ev) => {
 
-  try {
-    if (!row) {
-      if (collection.name === "_superusers") throw new Error("superusers are not allowed to sign-up with OAuth2");
-      const payload: Record<string, unknown> = { ...((body.createData as Record<string, unknown>) ?? {}) };
-      if (!payload.email) payload.email = user.email;
-      const mf = opts.mappedFields ?? {};
-      if (mf.id && !(mf.id in payload)) payload[mf.id] = user.id;
-      if (mf.name && !(mf.name in payload)) payload[mf.name] = user.name;
-      if (mf.username && !(mf.username in payload) && user.username && canAssignUsername(collection, user.username)) payload[mf.username] = user.username;
-      if (mf.avatarURL && !(mf.avatarURL in payload) && user.avatarURL) {
-        const f = collection.fields.find((x) => x.name === mf.avatarURL);
-        if (f && f.type !== "file") payload[mf.avatarURL] = user.avatarURL; // file avatars need a fetch through the record form; kept for auth.providers
+    try {
+      if (!row) {
+        if (collection.name === "_superusers") throw new Error("superusers are not allowed to sign-up with OAuth2");
+        const payload: Record<string, unknown> = { ...((ev.createData as Record<string, unknown>) ?? {}) };
+        if (!payload.email) payload.email = user.email;
+        const mf = opts.mappedFields ?? {};
+        if (mf.id && !(mf.id in payload)) payload[mf.id] = user.id;
+        if (mf.name && !(mf.name in payload)) payload[mf.name] = user.name;
+        if (mf.username && !(mf.username in payload) && user.username && canAssignUsername(collection, user.username)) payload[mf.username] = user.username;
+        if (mf.avatarURL && !(mf.avatarURL in payload) && user.avatarURL) {
+          const f = collection.fields.find((x) => x.name === mf.avatarURL);
+          if (f && f.type !== "file") payload[mf.avatarURL] = user.avatarURL; // file avatars need a fetch through the record form; kept for auth.providers
+        }
+        if (!payload.id) payload.id = randomId();
+        // forms/record_upsert.go: an OAuth2 sign-up without a password gets a random one
+        if (!payload.password) { payload.password = randomString(30); payload.passwordConfirm = payload.password; }
+        await createRecord({ ...ctx, request: { ...ctx.request, context: "oauth2" } }, collection, payload as never, {} as never);
+        row = await one<Row>(db, `SELECT * FROM ${table} WHERE id = ? LIMIT 1`, [payload.id]);
+        if (!row) throw new Error("failed to create OAuth2 auth record");
+        if (row.email === user.email && !row.verified) { await run(db, `UPDATE ${table} SET verified = 1, updated = ? WHERE id = ?`, [nowString(), row.id]); row.verified = 1; }
+      } else {
+        const sets: string[] = []; const params: unknown[] = [];
+        const isLogged = fallback !== null && fallback.id === row.id;
+        const verified = !!row.verified && row.verified !== 0 && row.verified !== "0" && row.verified !== "false";
+        if (!isLogged && !verified) { sets.push("password = ?", "tokenKey = ?"); params.push(await hashPassword(randomString(30)), randomString(50)); }
+        if (!verified) { await run(db, "DELETE FROM `_externalAuths` WHERE collectionRef = ? AND recordRef = ?", [collection.id, row.id]); external = null; }
+        if (!row.email && user.email) { sets.push("email = ?"); params.push(user.email); row.email = user.email; }
+        if (!verified && (!row.email || row.email === user.email)) { sets.push("verified = 1"); row.verified = 1; }
+        if (sets.length) { sets.push("updated = ?"); params.push(nowString()); await run(db, `UPDATE ${table} SET ${sets.join(", ")} WHERE id = ?`, [...params, row.id]); }
       }
-      if (!payload.id) payload.id = randomId();
-      // forms/record_upsert.go: an OAuth2 sign-up without a password gets a random one
-      if (!payload.password) { payload.password = randomString(30); payload.passwordConfirm = payload.password; }
-      await createRecord({ ...ctx, request: { ...ctx.request, context: "oauth2" } }, collection, payload as never, {} as never);
-      row = await one<Row>(db, `SELECT * FROM ${table} WHERE id = ? LIMIT 1`, [payload.id]);
-      if (!row) throw new Error("failed to create OAuth2 auth record");
-      if (row.email === user.email && !row.verified) { await run(db, `UPDATE ${table} SET verified = 1, updated = ? WHERE id = ?`, [nowString(), row.id]); row.verified = 1; }
-    } else {
-      const sets: string[] = []; const params: unknown[] = [];
-      const isLogged = fallback !== null && fallback.id === row.id;
-      const verified = !!row.verified && row.verified !== 0 && row.verified !== "0" && row.verified !== "false";
-      if (!isLogged && !verified) { sets.push("password = ?", "tokenKey = ?"); params.push(await hashPassword(randomString(30)), randomString(50)); }
-      if (!verified) { await run(db, "DELETE FROM `_externalAuths` WHERE collectionRef = ? AND recordRef = ?", [collection.id, row.id]); external = null; }
-      if (!row.email && user.email) { sets.push("email = ?"); params.push(user.email); row.email = user.email; }
-      if (!verified && (!row.email || row.email === user.email)) { sets.push("verified = 1"); row.verified = 1; }
-      if (sets.length) { sets.push("updated = ?"); params.push(nowString()); await run(db, `UPDATE ${table} SET ${sets.join(", ")} WHERE id = ?`, [...params, row.id]); }
+      if (!external) {
+        const now = nowString();
+        await run(db, "INSERT INTO `_externalAuths` (id, collectionRef, recordRef, provider, providerId, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?)", [randomId(), collection.id, row.id, providerName, user.id, now, now]);
+      }
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      console.warn("voidbase: oauth2 submit", err);
+      throw badRequest("Failed to authenticate.");
     }
-    if (!external) {
-      const now = nowString();
-      await run(db, "INSERT INTO `_externalAuths` (id, collectionRef, recordRef, provider, providerId, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?)", [randomId(), collection.id, row.id, providerName, user.id, now, now]);
-    }
-  } catch (err) {
-    if (err instanceof ApiError) throw err;
-    console.warn("voidbase: oauth2 submit", err);
-    throw badRequest("Failed to authenticate.");
-  }
-  const fresh = (await one<Row>(db, `SELECT * FROM ${table} WHERE id = ? LIMIT 1`, [row.id])) ?? row;
-  const meta: Record<string, unknown> = { ...user, avatarUrl: user.avatarURL, isNew }; // avatarUrl: deprecated alias PocketBase still returns
+    const fresh = (await one<Row>(db, `SELECT * FROM ${table} WHERE id = ? LIMIT 1`, [row.id])) ?? row;
+    const meta: Record<string, unknown> = { ...user, avatarUrl: user.avatarURL, isNew }; // avatarUrl: deprecated alias PocketBase still returns
+
   return recordAuthResponse(c, ctx, collection, fresh, "oauth2", { meta: sortKeys(meta), body });
+  });
 }
 
 const sortKeys = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));

@@ -1,7 +1,7 @@
 {
   "name": "voidbase",
   "codename": "kanz-zjy",
-  "updated": "2026-09-05",
+  "updated": "2026-09-06",
   "goal": "A PocketBase-wire-compatible server on Cloudflare Workers via Void. Finish line: the unmodified PocketBase admin panel and the unmodified pocketbase JS SDK both work against it, and it is production ready.",
   "targets": {
     "pocketbase": "0.40.2",
@@ -226,7 +226,7 @@
         {
           "id": "platform.health",
           "title": "Health endpoint with superuser-only fields",
-          "surface": "GET /api/health \u2192 canBackup realIP possibleProxyHeader",
+          "surface": "GET /api/health → canBackup realIP possibleProxyHeader",
           "oracles": [
             "admin",
             "sdk"
@@ -502,8 +502,9 @@
             "prod"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "onCollectionValidate/Create/Update/Delete wrap the persist step (validation inside), AfterXSuccess/AfterXError after; request variants onCollectionsListRequest/ViewRequest/CreateRequest/UpdateRequest/DeleteRequest/CollectionsImportRequest with e.collection swap and ApiError refusal. Verified by test/fresh-db.ts fixture hooks (refusal, AfterCreateSuccess side effect). Execute variants are aliases of the persist step."
         }
       ]
     },
@@ -858,7 +859,7 @@
         {
           "id": "rec.hooks",
           "title": "Record hooks: Validate, Create, Update, Delete, Enrich, Request variants, AfterSuccess and AfterError",
-          "surface": "OnRecordCreate OnRecordUpdateRequest OnRecordEnrich \u2026",
+          "surface": "OnRecordCreate OnRecordUpdateRequest OnRecordEnrich …",
           "oracles": [
             "starter",
             "prod"
@@ -904,7 +905,7 @@
         {
           "id": "flt.compare",
           "title": "Operators = != > >= < <= ~ !~ with coercion and LIKE escaping",
-          "surface": "SignEq \u2026 SignNlike",
+          "surface": "SignEq … SignNlike",
           "oracles": [
             "sdk",
             "starter",
@@ -917,7 +918,7 @@
         {
           "id": "flt.any",
           "title": "Any-match operators ?= ?!= ?> ?>= ?< ?<= ?~ ?!~ and multi-value field semantics",
-          "surface": "SignAnyEq \u2026 SignAnyNlike",
+          "surface": "SignAnyEq … SignAnyNlike",
           "oracles": [
             "sdk",
             "admin"
@@ -1129,7 +1130,7 @@
         {
           "id": "auth.verification",
           "title": "request-verification and confirm-verification",
-          "surface": "POST \u2026/request-verification \u2026/confirm-verification",
+          "surface": "POST …/request-verification …/confirm-verification",
           "oracles": [
             "sdk",
             "admin"
@@ -1142,7 +1143,7 @@
         {
           "id": "auth.password-reset",
           "title": "request-password-reset and confirm-password-reset",
-          "surface": "POST \u2026/request-password-reset \u2026/confirm-password-reset",
+          "surface": "POST …/request-password-reset …/confirm-password-reset",
           "oracles": [
             "sdk",
             "admin"
@@ -1155,7 +1156,7 @@
         {
           "id": "auth.email-change",
           "title": "request-email-change and confirm-email-change",
-          "surface": "POST \u2026/request-email-change \u2026/confirm-email-change",
+          "surface": "POST …/request-email-change …/confirm-email-change",
           "oracles": [
             "sdk",
             "admin"
@@ -1168,7 +1169,7 @@
         {
           "id": "auth.otp",
           "title": "OTP: request-otp, auth-with-otp, _otps table, cleanup",
-          "surface": "POST \u2026/request-otp \u2026/auth-with-otp",
+          "surface": "POST …/request-otp …/auth-with-otp",
           "oracles": [
             "sdk",
             "admin"
@@ -1313,13 +1314,14 @@
         {
           "id": "auth.hooks",
           "title": "Auth request hooks",
-          "surface": "OnRecordAuthRequest OnRecordAuthWithPasswordRequest OnRecordAuthRefreshRequest OnRecordRequestOTPRequest \u2026",
+          "surface": "OnRecordAuthRequest OnRecordAuthWithPasswordRequest OnRecordAuthRefreshRequest OnRecordRequestOTPRequest …",
           "oracles": [
             "prod"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "onRecordAuthWithPasswordRequest (before the password check, e.record/e.password swappable), onRecordAuthRefreshRequest, onRecordAuthWithOAuth2Request, onRecordRequestOTPRequest (e.password = generated code), onRecordAuthWithOTPRequest, and the six request/confirm verification, password reset and email change hooks; onRecordAuthRequest already fired from recordAuthResponse. fresh-db checks the password hook runs before authentication."
         }
       ]
     },
@@ -1427,8 +1429,9 @@
             "prod"
           ],
           "hours": 0.5,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "onFileDownloadRequest wraps the served file (e.servedName editable, e.fileField/e.servedPath set); onFileTokenRequest from /api/files/token."
         }
       ]
     },
@@ -1465,7 +1468,7 @@
         {
           "id": "rt.subs",
           "title": "POST /api/realtime stores the stream's subscriptions and auth token in _realtime_clients keyed by clientId, because the POST can land on any isolate; the stream picks them up on its next poll",
-          "surface": "POST /api/realtime {clientId, subscriptions} \u2192 _realtime_clients",
+          "surface": "POST /api/realtime {clientId, subscriptions} → _realtime_clients",
           "oracles": [
             "sdk",
             "starter"
@@ -1477,7 +1480,7 @@
         {
           "id": "rt.poller",
           "title": "Per-connection poll loop inside its own request (Workers bind timers and stream writers to the request that made them); loops in one isolate share the last change-feed read so D1 sees about one query per second per isolate; cursor per stream",
-          "surface": "module-level poller, SELECT \u2026 FROM _changes WHERE id > ?",
+          "surface": "module-level poller, SELECT … FROM _changes WHERE id > ?",
           "oracles": [
             "sdk",
             "starter"
@@ -1544,8 +1547,9 @@
             "prod"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "onRealtimeConnectRequest, onRealtimeSubscribeRequest (e.subscriptions editable) and onRealtimeMessageSend (e.message.name/data editable) fire around the SSE handlers; realtime conformance suite unchanged."
         },
         {
           "id": "rt.limits",
@@ -1724,8 +1728,9 @@
             "prod"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "onSettingsListRequest (e.settings editable before e.next(); fresh-db checks meta.hideControls injected), onSettingsUpdateRequest (e.oldSettings/e.newSettings, save uses e.newSettings), onSettingsReload after save; mailer events were already firing."
         }
       ]
     },
@@ -1911,8 +1916,9 @@
             "prod"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "cronAdd/cronRemove from hooks register jobs listed first in /api/crons ({id, expression}) and runnable through POST /api/crons/:id and the minute cron; fresh-db checks listing, order and execution side effect."
         }
       ]
     },
@@ -1955,15 +1961,15 @@
         {
           "id": "hk.events",
           "title": "on* event registrations for record, collection, mailer, realtime, and request events with e.next() semantics",
-          "surface": "onRecordCreate onModelUpdate onMailerSend \u2026",
+          "surface": "onRecordCreate onModelUpdate onMailerSend …",
           "oracles": [
             "starter",
             "prod"
           ],
           "hours": 4,
-          "status": "partial",
+          "status": "done",
           "milestone": "m4",
-          "notes": "Record and model hooks (create/update/delete, validate, enrich, *Request, AfterSuccess, AfterError) and the mailer events (onMailerSend, onMailerRecord*Send) fire with e.next() semantics and tags; collection, realtime and settings events are registered but not yet triggered."
+          "notes": "All registered on* families now trigger: record/model, collection (model + request), mailer, realtime, settings, file, batch (onBatchRequest with e.batch editable), auth request hooks, and onBootstrap/onServe once per isolate on the first request. e.next() chain semantics and tags shared through hooks/runtime trigger()."
         },
         {
           "id": "hk.app",

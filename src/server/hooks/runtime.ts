@@ -56,6 +56,21 @@ export async function trigger<T extends { next?: () => Promise<unknown> }>(name:
   return result;
 }
 
+// Request-level hooks (OnXRequest): the handler's work is the innermost step; hooks may write the response
+// themselves (e.json), swap event fields before e.next(), or throw an ApiError.
+export async function requestHook(name: string, c: Context<AppEnv>, tag: string | null, fields: Record<string, unknown>, inner: (ev: RequestEvent & Record<string, unknown>) => Promise<Response>): Promise<Response> {
+  const ev = Object.assign(new RequestEvent(c, authToHookRecord(c.get("auth"))), fields) as unknown as RequestEvent & Record<string, unknown>;
+  let response: Response | null = null;
+  await trigger(name, ev, tag, async () => { response = await inner(ev); return response; });
+  return ev.written ?? response ?? c.body(null, 204);
+}
+// Same, for handlers that answer JSON hooks may edit after e.next(): the result lives on ev.result until the end.
+export async function requestHookResult(name: string, c: Context<AppEnv>, tag: string | null, fields: Record<string, unknown>, compute: (ev: RequestEvent & Record<string, unknown>) => Promise<unknown>): Promise<Response> {
+  const ev = Object.assign(new RequestEvent(c, authToHookRecord(c.get("auth"))), { result: null, ...fields }) as unknown as RequestEvent & Record<string, unknown>;
+  await trigger(name, ev, tag, async () => { ev.result = await compute(ev); return ev.result; });
+  return ev.written ?? c.json(ev.result as Record<string, unknown>);
+}
+
 // ---- errors (JSVM names) -----------------------------------------------------------------------------
 export class HookApiError extends ApiError {}
 export class NotFoundError extends ApiError { constructor(message = "The requested resource wasn't found.", data?: Record<string, unknown>) { super(404, message, data ?? {}); } }

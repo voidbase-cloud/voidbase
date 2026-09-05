@@ -9,6 +9,7 @@ import { ident, one, stmt } from "./db";
 import { ApiError, badRequest, forbidden } from "./errors";
 import { deletePrefix, normalizeFilename } from "./records/files";
 import { loadSettings } from "./settings";
+import { requestHook } from "./hooks/runtime";
 import type { AppEnv, Row } from "./types";
 import type { Field } from "./collections/fields";
 import { toColumn } from "./records/values";
@@ -29,9 +30,11 @@ export function mountBatch(app: Hono<AppEnv>) {
   app.post("/api/batch", async (c) => {
     const settings = await loadSettings(c.env.DB);
     if (!settings.batch.enabled || settings.batch.maxRequests <= 0) throw forbidden("Batch requests are not allowed.");
-    const { requests, files } = await readBatchBody(c);
-    if (!requests) throw new ApiError(400, "Invalid batch request data.", { requests: { code: "validation_required", message: "Cannot be blank." } } as never);
-    if (requests.length > settings.batch.maxRequests) throw new ApiError(400, "Invalid batch request data.", { requests: { code: "validation_length_too_long", message: `The length must be no more than ${settings.batch.maxRequests}.`, params: { max: settings.batch.maxRequests, min: 0 } } } as never);
+    const { requests: parsed, files } = await readBatchBody(c);
+    if (!parsed) throw new ApiError(400, "Invalid batch request data.", { requests: { code: "validation_required", message: "Cannot be blank." } } as never);
+    if (parsed.length > settings.batch.maxRequests) throw new ApiError(400, "Invalid batch request data.", { requests: { code: "validation_length_too_long", message: `The length must be no more than ${settings.batch.maxRequests}.`, params: { max: settings.batch.maxRequests, min: 0 } } } as never);
+    return requestHook("onBatchRequest", c, null, { batch: parsed }, async (ev) => {
+    const requests = ev.batch as InternalRequest[];
     const collections = await loadCollections(c.env.DB);
     const origin = new URL(c.req.url).origin;
     const results: { body: unknown; status: number }[] = [];
@@ -92,6 +95,7 @@ export function mountBatch(app: Hono<AppEnv>) {
       }
     }
     return c.json(results);
+    });
   });
 }
 

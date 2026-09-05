@@ -38,3 +38,42 @@ onRecordAfterCreateError((e) => {
   const marker = new Record(coll, { title: "error-seen" });
   $app.save(marker);
 }, "ks_mig");
+
+// --- request-level and model-level hooks (checked by test/fresh-db.ts) ---------------------------
+
+onCollectionCreateRequest((e) => {
+  if (e.collection.name === "ks_hookfail") {
+    throw new BadRequestError("hook refused.");
+  }
+  e.next();
+});
+
+onCollectionAfterCreateSuccess((e) => {
+  const coll = $app.findCollectionByNameOrId("ks_mig");
+  const marker = new Record(coll, { title: "collection-created" });
+  $app.save(marker);
+}, "ks_hooked");
+
+onSettingsListRequest((e) => {
+  e.settings.meta.hideControls = true;
+  e.next();
+});
+
+onRecordAuthWithPasswordRequest((e) => {
+  if (e.identity === "blocked@example.com") {
+    throw new ForbiddenError("blocked by hook.");
+  }
+  e.next();
+});
+
+onRecordsListRequest((e) => {
+  e.next();
+  // post-processing after e.next(): hooks see the computed result
+  e.result.hooked = true;
+}, "ks_mig");
+
+cronAdd("hookjob", "*/5 * * * *", () => {
+  const coll = $app.findCollectionByNameOrId("ks_mig");
+  const marker = new Record(coll, { title: "cron-ran" });
+  $app.save(marker);
+});

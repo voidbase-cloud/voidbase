@@ -74,6 +74,25 @@ try {
   check("onRecordAfterCreateError fired for the rejected write", seen.totalItems === 1, JSON.stringify(seen).slice(0, 120));
   const byEmail = (await fetch(`${base}/api/hooktest/admin-by-email?email=${encodeURIComponent(process.env.VOIDBASE_SUPERUSER_EMAIL ?? "admin@example.com")}`, { headers: { authorization: suToken } }).then((r) => r.json())) as { id?: string; email?: string };
   check("$app.findAuthRecordByEmail", !!byEmail.id && byEmail.email === (process.env.VOIDBASE_SUPERUSER_EMAIL ?? "admin@example.com"), JSON.stringify(byEmail));
+  // request-level hooks: collections, settings, auth-with-password, list post-processing; hook-registered cron
+  const superJson = { "content-type": "application/json", authorization: suToken };
+  const refused = await fetch(`${base}/api/collections`, { method: "POST", headers: superJson, body: JSON.stringify({ name: "ks_hookfail", type: "base" }) });
+  check("onCollectionCreateRequest can refuse with an ApiError", refused.status === 400 && ((await refused.json()) as { message: string }).message === "Hook refused." /* sentenized like PocketBase */, String(refused.status));
+  const hooked = await fetch(`${base}/api/collections`, { method: "POST", headers: superJson, body: JSON.stringify({ name: "ks_hooked", type: "base" }) });
+  const markers = (await fetch(`${base}/api/collections/ks_mig/records?filter=${encodeURIComponent("title = 'collection-created'")}`).then((r) => r.json())) as { totalItems: number };
+  check("onCollectionAfterCreateSuccess fired for the tagged collection", hooked.status === 200 && markers.totalItems === 1, `${hooked.status} ${JSON.stringify(markers).slice(0, 100)}`);
+  const settings = (await fetch(`${base}/api/settings`, { headers: { authorization: suToken } }).then((r) => r.json())) as { meta?: { hideControls?: boolean } };
+  check("onSettingsListRequest edits the returned settings", settings.meta?.hideControls === true, JSON.stringify(settings.meta).slice(0, 120));
+  const blocked = await fetch(`${base}/api/collections/_superusers/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: "blocked@example.com", password: "whatever" }) });
+  check("onRecordAuthWithPasswordRequest runs before the password check", blocked.status === 403, String(blocked.status));
+  const listed = (await fetch(`${base}/api/collections/ks_mig/records`).then((r) => r.json())) as { hooked?: boolean; items: unknown[] };
+  check("onRecordsListRequest post-processes the result after e.next()", listed.hooked === true && Array.isArray(listed.items), JSON.stringify(listed).slice(0, 100));
+  const crons = (await fetch(`${base}/api/crons`, { headers: { authorization: suToken } }).then((r) => r.json())) as { id: string; expression: string }[];
+  check("cronAdd job listed first with its expression", crons[0]?.id === "hookjob" && crons[0]?.expression === "*/5 * * * *", JSON.stringify(crons).slice(0, 120));
+  const ran = await fetch(`${base}/api/crons/hookjob`, { method: "POST", headers: { authorization: suToken } });
+  await Bun.sleep(1500);
+  const cronMarkers = (await fetch(`${base}/api/collections/ks_mig/records?filter=${encodeURIComponent("title = 'cron-ran'")}`).then((r) => r.json())) as { totalItems: number };
+  check("POST /api/crons/:id runs the hook job", ran.status === 204 && cronMarkers.totalItems === 1, `${ran.status} ${JSON.stringify(cronMarkers).slice(0, 100)}`);
   const api404 = await fetch(`${base}/api/nope`, { headers: { accept: "text/html,*/*;q=0.8" } });
   check("unknown /api path stays a JSON 404", api404.status === 404 && (api404.headers.get("content-type") ?? "").includes("json"), String(api404.status));
 } catch (err) {

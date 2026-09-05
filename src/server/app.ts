@@ -8,6 +8,8 @@ import { createRecord, deleteRecord, listRecords, updateRecord, viewRecord, type
 import { fromColumn, toColumn } from "./records/values";
 import { expandRecords } from "./records/expand";
 import { hookGlobals, hookMiddleware, loadHooks, mountHookRoutes } from "./hooks";
+import { requestHook, requestHookResult, trigger } from "./hooks/runtime";
+import type { Settings } from "./settings";
 import { applyPendingMigrations } from "./hooks/migrations";
 import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
 import { deletePrefix } from "./records/files";
@@ -38,6 +40,7 @@ import { loadSettings, publicSettings } from "./settings";
 import type { AppEnv, Row } from "./types";
 
 export const app = new Hono<AppEnv>();
+let served = false; // onBootstrap / onServe fire once per isolate, on the first request
 
 app.use("*", cors({ origin: "*", allowHeaders: ["Authorization", "Content-Type"], allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS", "HEAD"] }));
 
@@ -52,6 +55,7 @@ app.use("*", async (c, next) => {
 
 app.use("*", async (c, next) => {
   await ensureBootstrapped(c.env.DB, (db) => applyPendingMigrations(db, hookGlobals(), c.env));
+  if (!served) { served = true; await trigger("onBootstrap", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined); await trigger("onServe", { app: undefined as unknown, router: app, next: async () => undefined as unknown }, null, async () => undefined); }
   c.set("auth", await loadAuth(c));
   await next();
 });
@@ -87,7 +91,7 @@ app.get("/api/health", async (c) => {
 // --- settings -------------------------------------------------------------
 app.get("/api/settings", async (c) => {
   requireSuperuser(c);
-  return c.json(publicSettings(await loadSettings(c.env.DB)));
+  return requestHookResult("onSettingsListRequest", c, null, { settings: structuredClone(await loadSettings(c.env.DB)) }, async (ev) => publicSettings(ev.settings as Settings));
 });
 
 // --- collections ----------------------------------------------------------
@@ -114,41 +118,40 @@ app.get("/api/collections", async (c) => {
   let items = await listCollections(c.env.DB);
   const sort = c.req.query("sort") ?? "";
   if (sort) items = sortBy(items, sort, ["name", "type", "system", "created", "updated", "id"]);
-  const total = items.length;
-  return c.json({
-    items: items.slice((page - 1) * perPage, page * perPage).map(collectionToJSON),
-    page,
-    perPage,
-    totalItems: skipTotal ? -1 : total,
-    totalPages: skipTotal ? -1 : Math.ceil(total / perPage),
+  return requestHookResult("onCollectionsListRequest", c, null, { collections: items.map((i) => new CollectionRef(i)) }, async (ev) => {
+    const list = (ev.collections as CollectionRef[]).map((r) => r.data);
+    const total = list.length;
+    return { items: list.slice((page - 1) * perPage, page * perPage).map(collectionToJSON), page, perPage, totalItems: skipTotal ? -1 : total, totalPages: skipTotal ? -1 : Math.ceil(total / perPage) };
   });
 });
 
 app.get("/api/collections/:collection", async (c) => {
   requireSuperuser(c);
   const collection = await mustFindCollection(c, c.req.param("collection"), true);
-  return c.json(collectionToJSON(collection));
+  return requestHookResult("onCollectionViewRequest", c, collection.name, { collection: new CollectionRef(collection) }, async (ev) => collectionToJSON((ev.collection as CollectionRef).data));
 });
 
 app.post("/api/collections", async (c) => {
   requireSuperuser(c);
   const body = await readJSON(c);
-  return c.json(collectionToJSON(await createCollection(c.env.DB, body)));
+  return requestHookResult("onCollectionCreateRequest", c, String(body.name ?? ""), { collection: new CollectionRef(body) }, async (ev) => collectionToJSON(await createCollection(c.env.DB, (ev.collection as CollectionRef).toRaw())));
 });
 
 app.patch("/api/collections/:collection", async (c) => {
   requireSuperuser(c);
   const collection = await mustFindCollection(c, c.req.param("collection"), true);
   const body = await readJSON(c);
-  return c.json(collectionToJSON(await updateCollection(c.env.DB, collection, body)));
+  return requestHookResult("onCollectionUpdateRequest", c, collection.name, { collection: new CollectionRef({ ...collectionToJSON(collection), ...body }) }, async (ev) => collectionToJSON(await updateCollection(c.env.DB, collection, (ev.collection as CollectionRef).toRaw())));
 });
 
 app.delete("/api/collections/:collection", async (c) => {
   requireSuperuser(c);
   const collection = await mustFindCollection(c, c.req.param("collection"), true);
-  await deleteCollection(c.env.DB, collection);
-  try { await deletePrefix(c.env.STORAGE, `${collection.id}/`); } catch (err) { console.error("voidbase: file cleanup failed", err); }
-  return c.body(null, 204);
+  return requestHook("onCollectionDeleteRequest", c, collection.name, { collection: new CollectionRef(collection) }, async () => {
+    await deleteCollection(c.env.DB, collection);
+    try { await deletePrefix(c.env.STORAGE, `${collection.id}/`); } catch (err) { console.error("voidbase: file cleanup failed", err); }
+    return c.body(null, 204);
+  });
 });
 
 app.delete("/api/collections/:collection/truncate", async (c) => {
@@ -166,8 +169,10 @@ app.put("/api/collections/import", async (c) => {
   if (!Array.isArray(items) || items.length === 0) {
     throw badRequest("An error occurred while validating the submitted data.", { collections: { code: "validation_required", message: "Cannot be blank." } });
   }
-  await importCollections(c.env.DB, items as Record<string, unknown>[], !!body.deleteMissing);
-  return c.body(null, 204);
+  return requestHook("onCollectionsImportRequest", c, null, { collections: items, deleteMissing: !!body.deleteMissing }, async (ev) => {
+    await importCollections(c.env.DB, ev.collections as Record<string, unknown>[], !!ev.deleteMissing);
+    return c.body(null, 204);
+  });
 });
 
 // --- records: auth --------------------------------------------------------
@@ -248,13 +253,13 @@ const listQuery = (c: Context<AppEnv>): ListQuery => ({
 app.get("/api/collections/:collection/records", async (c) => {
   const collection = await mustFindCollection(c, c.req.param("collection"));
   const ctx = await recordContext(c);
-  return c.json(await listRecords(ctx, collection, listQuery(c)));
+  return requestHookResult("onRecordsListRequest", c, collection.name, { collection: new CollectionRef(collection), records: null }, async () => listRecords(ctx, collection, listQuery(c)));
 });
 
 app.get("/api/collections/:collection/records/:id", async (c) => {
   const collection = await mustFindCollection(c, c.req.param("collection"));
   const ctx = await recordContext(c);
-  return c.json(await viewRecord(ctx, collection, c.req.param("id"), { expand: c.req.query("expand"), fields: c.req.query("fields") }));
+  return requestHookResult("onRecordViewRequest", c, collection.name, { collection: new CollectionRef(collection), record: null }, async () => viewRecord(ctx, collection, c.req.param("id"), { expand: c.req.query("expand"), fields: c.req.query("fields") }));
 });
 
 app.post("/api/collections/:collection/records", async (c) => {
@@ -279,8 +284,12 @@ app.delete("/api/collections/:collection/records/:id", async (c) => {
 });
 
 // --- realtime -------------------------------------------------------------
-app.get("/api/realtime", (c) => realtimeConnect(c));
-app.post("/api/realtime", (c) => realtimeSetSubscriptions(c));
+app.get("/api/realtime", (c) => requestHook("onRealtimeConnectRequest", c, null, { client: null, idleTimeout: 300 }, () => realtimeConnect(c)));
+app.post("/api/realtime", async (c) => {
+  let body: { clientId?: string; subscriptions?: string[] } = {};
+  try { const ct = c.req.header("content-type") ?? ""; body = ct.includes("json") ? await c.req.json() : (Object.fromEntries((await c.req.formData()).entries()) as unknown as typeof body); } catch { throw badRequest("Failed to read the submitted data."); }
+  return requestHook("onRealtimeSubscribeRequest", c, null, { client: { id: String(body.clientId ?? "") }, subscriptions: Array.isArray(body.subscriptions) ? body.subscriptions : [] }, (ev) => realtimeSetSubscriptions(c, { clientId: String(body.clientId ?? ""), subscriptions: ev.subscriptions as string[] }));
+});
 
 // --- files ----------------------------------------------------------------
 app.get("/api/files/:collection/:recordId/:filename", async (c) => {
@@ -308,6 +317,8 @@ app.get("/api/files/:collection/:recordId/:filename", async (c) => {
     throw err;
   }
   if (!served) throw notFound();
+  return requestHook("onFileDownloadRequest", c, collection.name, { collection: new CollectionRef(collection), record: HookRecord.fromRow(collection, row), fileField: field, servedPath: key, servedName: served.name }, async (ev) => {
+  served = { ...served!, name: String(ev.servedName ?? served!.name) };
   // PocketBase (tools/filesystem Serve): inline only for known-safe media types unless ?download=true,
   // a few extensions override the sniffed content type, filename quoted, then http.ServeContent semantics.
   const forceAttachment = parseBool(c.req.query("download"));
@@ -334,6 +345,7 @@ app.get("/api/files/:collection/:recordId/:filename", async (c) => {
   }
   headers.set("Content-Length", String(served.size));
   return new Response(served.body as BodyInit, { headers });
+  });
 });
 
 // tools/filesystem/filesystem.go

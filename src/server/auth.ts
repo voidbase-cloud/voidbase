@@ -10,6 +10,8 @@ import { buildAuthURL, providerConfig, s256Challenge } from "./oauth2";
 import catalog from "./collections/oauth2-providers.json";
 import { randomString } from "./ids";
 import { recordAuthResponse } from "./auth-response";
+import { requestHook } from "./hooks/runtime";
+import { CollectionRef, HookRecord } from "./hooks/record";
 import type { AppEnv, AuthRecord, Row } from "./types";
 
 export function tokenFromRequest(req: Request): string {
@@ -109,11 +111,18 @@ export async function authWithPassword(c: Context<AppEnv>, collection: Collectio
     row = await one(c.env.DB, `SELECT * FROM ${ident(collection.name)} WHERE ${ident(name)} = ? LIMIT 1`, [identity]);
     if (row) break;
   }
-  const ok = row ? await verifyPassword(password, String(row.password ?? "")) : await dummyPasswordCheck();
-  if (!row || !ok) throw badRequest("Failed to authenticate.");
   const { recordContextFor } = await import("./app");
   const ctx = await recordContextFor(c);
-  return recordAuthResponse(c, { ...ctx, request: { ...ctx.request, context: "password" } }, collection, row, "password", { body });
+  const original = row ? HookRecord.fromRow(collection, row) : null;
+  return requestHook("onRecordAuthWithPasswordRequest", c, collection.name, { collection: new CollectionRef(collection), record: original, identity, password, identityField }, async (ev) => {
+    // hooks may swap e.record; the password is checked against whatever record they leave
+    let target = row;
+    if (ev.record && ev.record !== original) target = await one(c.env.DB, `SELECT * FROM ${ident(collection.name)} WHERE id = ? LIMIT 1`, [String((ev.record as HookRecord).id)]);
+    else if (!ev.record) target = null;
+    const ok = target ? await verifyPassword(String(ev.password ?? ""), String(target.password ?? "")) : await dummyPasswordCheck();
+    if (!target || !ok) throw badRequest("Failed to authenticate.");
+    return recordAuthResponse(c, { ...ctx, request: { ...ctx.request, context: "password" } }, collection, target, "password", { body });
+  });
 }
 
 // Burn roughly the same time as a real check so missing accounts are not distinguishable by timing.
@@ -129,7 +138,8 @@ export async function authRefresh(c: Context<AppEnv>, collection: Collection) {
     throw unauthorized("The request requires valid record authorization token.");
   }
   const { recordContextFor } = await import("./app");
-  return recordAuthResponse(c, await recordContextFor(c), collection, auth.row, "", {});
+  const ctx = await recordContextFor(c);
+  return requestHook("onRecordAuthRefreshRequest", c, collection.name, { collection: new CollectionRef(collection), record: HookRecord.fromRow(collection, auth.row) }, () => recordAuthResponse(c, ctx, collection, auth.row, "", {}));
 }
 
 // GET /api/collections/:collection/auth-methods

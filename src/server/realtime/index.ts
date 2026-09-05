@@ -15,6 +15,7 @@ import { nowString, randomString } from "../ids";
 import { findAuthRecordByToken, isSuperuser } from "../auth";
 import { enrich, fetchRecord, recordMatchesRule, type RecordContext } from "../records/service";
 import { rowToValues } from "../records/values";
+import { trigger } from "../hooks/runtime";
 import type { AppEnv, Row } from "../types";
 
 interface Subscription { topic: string; collection: string; recordId: string | null; query: Record<string, string>; headers: Record<string, string> }
@@ -88,12 +89,14 @@ export async function connect(c: Context<AppEnv>): Promise<Response> {
 }
 
 // POST /api/realtime  {clientId, subscriptions: []}
-export async function setSubscriptions(c: Context<AppEnv>): Promise<Response> {
-  let body: { clientId?: string; subscriptions?: string[] } = {};
-  try {
-    const ct = c.req.header("content-type") ?? "";
-    body = ct.includes("json") ? await c.req.json() : (Object.fromEntries((await c.req.formData()).entries()) as unknown as typeof body);
-  } catch { throw badRequest("Failed to read the submitted data."); }
+export async function setSubscriptions(c: Context<AppEnv>, pre?: { clientId?: string; subscriptions?: string[] }): Promise<Response> {
+  let body: { clientId?: string; subscriptions?: string[] } = pre ?? {};
+  if (!pre) {
+    try {
+      const ct = c.req.header("content-type") ?? "";
+      body = ct.includes("json") ? await c.req.json() : (Object.fromEntries((await c.req.formData()).entries()) as unknown as typeof body);
+    } catch { throw badRequest("Failed to read the submitted data."); }
+  }
   const clientId = String(body.clientId ?? "");
   const subs = Array.isArray(body.subscriptions) ? body.subscriptions.map(String) : [];
   if (!clientId) throw badRequest("An error occurred while validating the submitted data.", { clientId: { code: "validation_required", message: "Cannot be blank." } });
@@ -172,5 +175,6 @@ async function deliver(db: D1Database, bindings: AppEnv["Bindings"], cl: Client,
   }
   const [record] = await enrich(ctx, collection, [row], { expand: sub.query.expand, fields: sub.query.fields });
   if (cl.closed) return;
-  await cl.send(sub.topic, { action: ch.action, record });
+  const ev = { app: undefined as unknown, client: { id: cl.id, subscriptions: cl.subs.map((s) => s.topic) }, message: { name: sub.topic, data: { action: ch.action, record } }, next: async () => undefined as unknown };
+  await trigger("onRealtimeMessageSend", ev, null, async () => { if (!cl.closed) await cl.send(ev.message.name, ev.message.data); });
 }

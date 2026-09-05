@@ -1776,8 +1776,9 @@
             "sdk"
           ],
           "hours": 6,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "src/server/backups.ts: POST /api/backups (name validation, uniqueness, lock) builds a zip (fflate) with data.json (every D1 table's columns and rows, logs included, change feed excluded) plus storage/<key> for every R2 file, stored under __backups__/ in R2; __pbAutoBackup__ from settings.backups.cron with cronMaxKeep pruning. test/conformance/backups.ts 17/17."
         },
         {
           "id": "bak.list",
@@ -1788,8 +1789,9 @@
             "sdk"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "GET /api/backups ({key, modified, size}) and DELETE /api/backups/:key with PocketBase's messages (its raw error carries an OS path)."
         },
         {
           "id": "bak.restore",
@@ -1800,8 +1802,9 @@
             "sdk"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "POST /api/backups/:key/restore rebuilds in the background: drops user tables/views, restores _collections, recreates tables from the schema, reloads every table's rows, replaces the R2 files. Only voidbase archives (data.json) restore; PocketBase's SQLite archives are refused with a clear error. Upload accepts any zip. Verified by a create/modify/restore round trip in backups.ts."
         },
         {
           "id": "bak.download",
@@ -1812,8 +1815,9 @@
             "sdk"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "GET /api/backups/:key?token= with a superuser file token (IP allowlist honoured), served as an attachment."
         },
         {
           "id": "bak.cron",
@@ -2301,7 +2305,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), backups.ts (17), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
         },
         {
           "id": "prod.sdk-suite",

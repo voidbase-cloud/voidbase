@@ -17,6 +17,7 @@
     "@cf-wasm/photon": "^0.4.0",
     "@simplewebauthn/server": "^14.0.1",
     "bcryptjs": "^3.0.2",
+    "fflate": "^0.8.3",
     "hono": "^4.11.9"
   },
   "devDependencies": {

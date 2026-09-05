@@ -9,6 +9,7 @@ import { crons as hookCrons } from "./hooks/runtime";
 import { withHookStore } from "./hooks/migrations";
 import { nowString } from "./ids";
 import { deleteOldLogs } from "./logs";
+import { autoBackup } from "./backups";
 import { loadSettings } from "./settings";
 import type { AppEnv } from "./types";
 
@@ -23,10 +24,11 @@ const BUILTIN: CronJob[] = [
   { id: "__vbChangesCleanup__", expr: "*/10 * * * *", fn: async (env) => { await run(env.DB, "DELETE FROM `_changes` WHERE created < ?", [nowString(new Date(Date.now() - 10 * 60_000))]); await run(env.DB, "DELETE FROM `_realtime_clients` WHERE updated < ?", [nowString(new Date(Date.now() - 6 * 3600_000))]); } },
 ];
 
-export function allJobs(): CronJob[] {
+export function allJobs(backupsCron = ""): CronJob[] {
   const fromHooks: CronJob[] = [...hookCrons.entries()].map(([id, j]) => ({ id, expr: j.expr, fn: async () => j.fn() })).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const auto: CronJob[] = backupsCron ? [{ id: "__pbAutoBackup__", expr: backupsCron, fn: (env) => autoBackup(env) }] : [];
   // cronsList: user jobs alphabetically, then PocketBase's own jobs in registration order, then voidbase's
-  return [...fromHooks, ...BUILTIN];
+  return [...fromHooks, ...BUILTIN, ...auto];
 }
 
 export async function runJob(env: AppEnv["Bindings"], job: CronJob): Promise<void> {
@@ -51,15 +53,16 @@ export function matches(expr: string, date: Date): boolean {
 
 export async function runDue(env: AppEnv["Bindings"], date: Date): Promise<string[]> {
   const ran: string[] = [];
-  for (const job of allJobs()) if (matches(job.expr, date)) { await runJob(env, job); ran.push(job.id); }
+  const settings = await loadSettings(env.DB);
+  for (const job of allJobs(settings.backups.cron)) if (matches(job.expr, date)) { await runJob(env, job); ran.push(job.id); }
   return ran;
 }
 
 export function mountCronsApi(app: Hono<AppEnv>) {
-  app.get("/api/crons", (c) => { requireSuperuser(c); return c.json(allJobs().map((j) => ({ id: j.id, expression: j.expr }))); });
+  app.get("/api/crons", async (c) => { requireSuperuser(c); return c.json(allJobs((await loadSettings(c.env.DB)).backups.cron).map((j) => ({ id: j.id, expression: j.expr }))); });
   app.post("/api/crons/:id", async (c) => {
     requireSuperuser(c);
-    const job = allJobs().find((j) => j.id === c.req.param("id"));
+    const job = allJobs((await loadSettings(c.env.DB)).backups.cron).find((j) => j.id === c.req.param("id"));
     if (!job) throw notFound("Missing or invalid cron job");
     c.executionCtx.waitUntil(runJob(c.env, job));
     return c.body(null, 204);

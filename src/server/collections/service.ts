@@ -218,7 +218,7 @@ export async function importCollections(db: D1Database, items: Record<string, un
   for (const { c } of ordered) if (c.type === "view") await deriveViewFields(db, c);
 }
 
-function planCreate(c: Collection): string[] {
+export function planCreate(c: Collection): string[] {
   if (c.type === "view") return [createViewSQL(c.name, String(c.options.viewQuery ?? ""))];
   return [createTableSQL(c), ...createIndexesSQL(c)];
 }

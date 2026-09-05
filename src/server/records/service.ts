@@ -556,6 +556,9 @@ async function planCascadeDelete(ctx: RecordContext, c: Collection, row: Row, pl
       }
     }
   }
+  if (c.type === "auth") { // recordRefHooks: an auth record takes its OTPs, MFAs, external auths and auth origins with it
+    for (const t of ["_otps", "_mfas", "_externalAuths", "_authOrigins"]) plan.statements.push(stmt(ctx.db, `DELETE FROM ${ident(t)} WHERE collectionRef = ? AND recordRef = ?`, [c.id, id]));
+  }
   plan.statements.push(stmt(ctx.db, `DELETE FROM ${ident(c.name)} WHERE id = ?`, [id]), changeStmt(ctx.db, c, "delete", row));
 }
 

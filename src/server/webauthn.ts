@@ -4,7 +4,7 @@
 // the pending challenge lives in _params (the Go version keeps it in memory, which a Worker cannot rely on).
 import type { Context, Hono } from "hono";
 import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
-import { authResponse } from "./auth";
+import { recordAuthResponse } from "./auth-response";
 import { loadCollections } from "./collections/model";
 import { all, ident, one, run } from "./db";
 import { nowString, randomId } from "./ids";
@@ -158,7 +158,8 @@ export function mountWebAuthn(app: Hono<AppEnv>) {
       if (!verification.verified) return c.json(RESPONSES.login_error, 500);
       try { await saveCredential(c.env.DB, String(user.id), { ...match.cred, counter: verification.authenticationInfo.newCounter }); } catch { return c.json(RESPONSES.cred_error, 500); }
       const users = (await loadCollections(c.env.DB)).get("users")!;
-      return c.json(await authResponse({ collection: users, row: user }));
+      const { recordContextFor } = await import("./app");
+      return recordAuthResponse(c, await recordContextFor(c), users, user, "passkey", { body });
     } catch (err) {
       console.error("voidbase: webauthn login", err);
       return c.json(RESPONSES.login_error, 500);

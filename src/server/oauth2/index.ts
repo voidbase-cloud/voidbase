@@ -2,7 +2,7 @@
 // record creation with createData and the collection's mappedFields, and the browser flow's /api/oauth2-redirect
 // which hands {state, code} to the waiting realtime client through the change feed (topic "@oauth2").
 import type { Context, Hono } from "hono";
-import { authResponse } from "../auth";
+import { recordAuthResponse } from "../auth-response";
 import type { Collection } from "../collections/model";
 import { ident, one, run, stmt } from "../db";
 import { ApiError, badRequest, forbidden } from "../errors";
@@ -156,7 +156,7 @@ export async function authWithOAuth2(c: Context<AppEnv>, collection: Collection,
   }
   const fresh = (await one<Row>(db, `SELECT * FROM ${table} WHERE id = ? LIMIT 1`, [row.id])) ?? row;
   const meta: Record<string, unknown> = { ...user, avatarUrl: user.avatarURL, isNew }; // avatarUrl: deprecated alias PocketBase still returns
-  return c.json(await authResponse({ collection, row: fresh }, sortKeys(meta)));
+  return recordAuthResponse(c, ctx, collection, fresh, "oauth2", { meta: sortKeys(meta), body });
 }
 
 const sortKeys = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));

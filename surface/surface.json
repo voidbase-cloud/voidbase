@@ -1077,10 +1077,10 @@
             "admin"
           ],
           "hours": 2,
-          "status": "partial",
+          "status": "done",
           "milestone": "m1",
           "verify": "Panel login and starter login both succeed",
-          "notes": "Password auth works for any auth collection; non-empty authRule needs the filter engine."
+          "notes": "Password auth with identityFields and identityField; authRule (empty, filter or null) enforced in the shared recordAuthResponse."
         },
         {
           "id": "auth.jwt",
@@ -1169,8 +1169,9 @@
             "admin"
           ],
           "hours": 3,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "request-otp (fake id for unknown emails, expired OTPs pruned, 10-per-window reuse) and auth-with-otp (5 attempts per 180s, verify + random password when MFA is off) with PocketBase's messages; the shared recordAuthResponse handles the rest. test/conformance/otp-mfa.ts 22/22 via the SMTP sink."
         },
         {
           "id": "auth.mfa",
@@ -1181,8 +1182,9 @@
             "admin"
           ],
           "hours": 3,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "checkMFA in src/server/auth-response.ts: 401 {mfaId} on the first method, a different method within mfa.duration closes the session, same method / expired / foreign sessions get PocketBase's 400s, mfa.rule filters who needs it. otp-mfa.ts."
         },
         {
           "id": "auth.oauth2",
@@ -1234,8 +1236,9 @@
             "admin"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "_externalAuths through the records API with owner-only rules, which is what the SDK's listExternalAuths/unlinkExternalAuth call. oauth2.ts."
         },
         {
           "id": "auth.origins",
@@ -1246,8 +1249,9 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "Auth origins keyed by a hash of IP + user agent; a new origin on a record that already has one mails the login alert (authAlert template); _authOrigins visible to the owner through the records API. otp-mfa.ts."
         },
         {
           "id": "auth.impersonate",
@@ -1258,8 +1262,9 @@
             "admin"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "POST impersonate/:id for superusers with a non-refreshable static token and optional duration; guard messages match RequireSuperuserAuth. otp-mfa.ts."
         },
         {
           "id": "auth.superusers",
@@ -1270,9 +1275,9 @@
             "sdk"
           ],
           "hours": 2,
-          "status": "partial",
+          "status": "done",
           "milestone": "m1",
-          "notes": "_superusers collection seeded and working; superuser IP allowlist middleware pending."
+          "notes": "_superusers collection seeded from env; settings.superuserIPs allowlist (IPs and CIDRs) enforced on superuser authentication."
         },
         {
           "id": "auth.manage-rule",
@@ -2287,7 +2292,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (9), settings.ts (20), auth-flows.ts (22, via an SMTP sink), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
         },
         {
           "id": "prod.sdk-suite",

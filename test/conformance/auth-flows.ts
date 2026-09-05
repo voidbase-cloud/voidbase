@@ -34,7 +34,11 @@ class Server {
     this.userId = String(u.json!.id);
   }
   async cleanupUsers() { for (const email of [USER.email, NEW_EMAIL]) { const list = await this.api("GET", `/api/collections/users/records?filter=${encodeURIComponent(`email = "${email}"`)}`, undefined, this.h); for (const it of ((list.json?.items as { id: string }[]) ?? [])) await this.api("DELETE", `/api/collections/users/records/${it.id}`, undefined, this.h); } }
-  async teardown() { await this.cleanupUsers(); await this.api("PATCH", "/api/settings", { smtp: { ...(this.savedSmtp as object), password: "" } }, this.h); }
+  async teardown() {
+    const smtp = await this.api("PATCH", "/api/settings", { smtp: { ...(this.savedSmtp as object), password: "" } }, this.h);
+    if (smtp.status !== 200) console.error(`${this.base}: smtp restore failed`, smtp.status, JSON.stringify(smtp.json));
+    await this.cleanupUsers();
+  }
   user() { return this.api("GET", `/api/collections/users/records/${this.userId}`, undefined, this.h); }
 }
 const pb = new Server(PB), vb = new Server(VB);

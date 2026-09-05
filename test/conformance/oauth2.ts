@@ -94,6 +94,22 @@ try {
     if (r.status !== 200) return { status: r.status, body: r.json };
     return { status: r.status, sameRecord: (r.json!.record as { id: string }).id === state[s.base]!.recordId, isNew: (r.json!.meta as { isNew: boolean }).isNew };
   });
+  await step("external auths listed for the owner (SDK listExternalAuths)", async (s) => {
+    const methods = await s.api("GET", "/api/collections/users/auth-methods"); const info = (methods.json!.oauth2 as { providers: Record<string, string>[] }).providers[0]!;
+    const redirectURL = `${s.base}/api/oauth2-redirect`; const auth = await fetch(new URL(info.authURL! + redirectURL), { redirect: "manual" }); const code = new URL(auth.headers.get("location")!).searchParams.get("code")!;
+    const login = await s.api("POST", "/api/collections/users/auth-with-oauth2", { provider: "oidc", code, codeVerifier: info.codeVerifier, redirectURL });
+    state[s.base]!.userToken = String(login.json?.token ?? "");
+    const list = await s.api("GET", `/api/collections/_externalAuths/records?filter=${encodeURIComponent(`recordRef = "${state[s.base]!.recordId}" && collectionRef = "${(login.json!.record as { collectionId: string }).collectionId}"`)}`, undefined, { authorization: state[s.base]!.userToken! });
+    const item = ((list.json?.items as Record<string, unknown>[]) ?? [])[0];
+    state[s.base]!.externalId = String(item?.id ?? "");
+    const anon = await s.api("GET", "/api/collections/_externalAuths/records");
+    return { status: list.status, total: list.json?.totalItems, provider: item?.provider, providerId: item?.providerId, keys: Object.keys(item ?? {}).sort(), anon: anon.status, anonTotal: anon.json?.totalItems ?? anon.json?.message };
+  });
+  await step("unlink external auth (SDK unlinkExternalAuth)", async (s) => {
+    const del = await s.api("DELETE", `/api/collections/_externalAuths/records/${state[s.base]!.externalId}`, undefined, { authorization: state[s.base]!.userToken! });
+    const list = await s.api("GET", "/api/collections/_externalAuths/records", undefined, { authorization: state[s.base]!.userToken! });
+    return { status: del.status, remaining: list.json?.totalItems };
+  });
   await step("bad code -> 400", async (s) => s.api("POST", "/api/collections/users/auth-with-oauth2", { provider: "oidc", code: "nope", codeVerifier: "x", redirectURL: `${s.base}/api/oauth2-redirect` }).then((r) => ({ status: r.status, body: r.json })));
   await step("unknown provider -> validation error", async (s) => s.api("POST", "/api/collections/users/auth-with-oauth2", { provider: "nothere", code: "x" }).then((r) => ({ status: r.status, body: r.json })));
   await step("missing fields -> validation error", async (s) => s.api("POST", "/api/collections/users/auth-with-oauth2", {}).then((r) => ({ status: r.status, body: r.json })));

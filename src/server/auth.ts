@@ -9,6 +9,7 @@ import { recordToJSON } from "./records/json";
 import { buildAuthURL, providerConfig, s256Challenge } from "./oauth2";
 import catalog from "./collections/oauth2-providers.json";
 import { randomString } from "./ids";
+import { recordAuthResponse } from "./auth-response";
 import type { AppEnv, AuthRecord, Row } from "./types";
 
 export function tokenFromRequest(req: Request): string {
@@ -52,9 +53,9 @@ export function requireSuperuser(c: Context<AppEnv>): AuthRecord {
   return auth;
 }
 
-export async function newAuthToken(auth: AuthRecord, refreshable = true): Promise<string> {
+export async function newAuthToken(auth: AuthRecord, refreshable = true, durationOverride?: number): Promise<string> {
   const secret = option<string>(auth.collection, "authToken.secret", "");
-  const duration = option<number>(auth.collection, "authToken.duration", 604800);
+  const duration = durationOverride ?? option<number>(auth.collection, "authToken.duration", 604800);
   const key = String(auth.row.tokenKey ?? "") + secret;
   if (!key) throw new ApiError(500, "Missing signing key.");
   return signJWT({ collectionId: auth.collection.id, id: String(auth.row.id), refreshable, type: "auth" }, key, duration);
@@ -110,8 +111,9 @@ export async function authWithPassword(c: Context<AppEnv>, collection: Collectio
   }
   const ok = row ? await verifyPassword(password, String(row.password ?? "")) : await dummyPasswordCheck();
   if (!row || !ok) throw badRequest("Failed to authenticate.");
-  // authRule: empty string allows everyone; non-empty rules need the filter engine (milestone three).
-  return c.json(await authResponse({ collection, row }));
+  const { recordContextFor } = await import("./app");
+  const ctx = await recordContextFor(c);
+  return recordAuthResponse(c, { ...ctx, request: { ...ctx.request, context: "password" } }, collection, row, "password", { body });
 }
 
 // Burn roughly the same time as a real check so missing accounts are not distinguishable by timing.
@@ -126,7 +128,8 @@ export async function authRefresh(c: Context<AppEnv>, collection: Collection) {
   if (!auth || auth.collection.id !== collection.id) {
     throw unauthorized("The request requires valid record authorization token.");
   }
-  return c.json(await authResponse(auth));
+  const { recordContextFor } = await import("./app");
+  return recordAuthResponse(c, await recordContextFor(c), collection, auth.row, "", {});
 }
 
 // GET /api/collections/:collection/auth-methods

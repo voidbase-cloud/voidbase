@@ -60,7 +60,7 @@ try {
     fd.append("requests.0.img", new File([PNG as BlobPart], "pixel.png", { type: "image/png" }));
     const r = await s.api("POST", "/api/batch", fd, s.h);
     const res = r.json as { status: number; body: Record<string, unknown> }[];
-    return { status: r.status, itemStatus: res?.[0]?.status, img: String(res?.[0]?.body?.img ?? "").replace(/_[a-z0-9]{10}\.png/, "_X.png"), title: res?.[0]?.body?.title };
+    return { status: r.status, itemStatus: res?.[0]?.status, img: String(res?.[0]?.body?.img ?? "").replace(/(_[a-z0-9]{10})+\.png/, "_X.png"), title: res?.[0]?.body?.title };
   });
   await step("unknown action", async (s) => { const r = await s.api("POST", "/api/batch", { requests: [{ method: "GET", url: "/api/collections/ks_batch/records" }] }, s.h); return { status: r.status, body: r.json }; });
   await step("too many requests", async (s) => { const r = await s.api("POST", "/api/batch", { requests: Array.from({ length: 6 }, () => ({ method: "POST", url: "/api/collections/ks_batch/records", body: { title: "x" } })) }, s.h); return { status: r.status, body: r.json }; });

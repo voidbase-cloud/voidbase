@@ -18,6 +18,8 @@ import { mountAuthFlows } from "./auth-flows";
 import { mountAuthExtra } from "./auth-extra";
 import { mountFilesApi, protectedAccess } from "./files-api";
 import { BATCH_CONTEXT_HEADER, BATCH_CONTEXT_TOKEN, mountBatch } from "./batch";
+import { mountLogsApi, requestLogger } from "./logs";
+import { mountCronsApi } from "./crons";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import { saveHookRecord } from "./records/service";
@@ -49,6 +51,7 @@ app.use("*", async (c, next) => {
   c.set("auth", await loadAuth(c));
   await next();
 });
+app.use("*", requestLogger());
 app.use("*", hookMiddleware() as never);
 
 app.onError((err, c) => {
@@ -397,6 +400,8 @@ mountAuthFlows(app, authDeps);
 mountAuthExtra(app, authDeps);
 mountFilesApi(app);
 mountBatch(app);
+mountLogsApi(app);
+mountCronsApi(app);
 
 // --- pb_hooks runtime ------------------------------------------------------
 const valuesToRowFor = (c: Collection, values: Record<string, unknown>): Row => { const row: Row = {}; for (const f of c.fields as Field[]) row[f.name] = toColumn(f, values[f.name]); return row; };

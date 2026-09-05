@@ -1513,8 +1513,9 @@
             "prod"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "__vbChangesCleanup__ cron every 10 minutes: _changes older than 10 minutes and _realtime_clients rows idle for 6 hours are removed."
         },
         {
           "id": "rt.live",
@@ -1729,8 +1730,9 @@
             "sdk"
           ],
           "hours": 3,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "requestLogger middleware writes a _logs row after every API response through waitUntil (PocketBase's data keys: type, execTime, url, method, status, referer, userAgent, auth, authId, userIP, remoteIP, error and details on failures), honouring logs.maxDays, minLevel, logIP and logAuthId; appLog for application messages; the logs and realtime stream routes are skipped like SkipSuccessActivityLog."
         },
         {
           "id": "log.api",
@@ -1741,9 +1743,10 @@
             "sdk"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "done",
           "milestone": "m5",
-          "verify": "Panel logs page and chart populate"
+          "verify": "Panel logs page and chart populate",
+          "notes": "GET /api/logs with page, perPage, filter (data.* JSON paths, level, message, created), sort (rowid, data.*), GET /api/logs/stats (hourly buckets), GET /api/logs/:id, DELETE /api/logs (0.40 truncate). test/conformance/logs-crons.ts 14/14 against 0.39.11; PocketBase's `details` carries Go-internal error text and is not compared."
         },
         {
           "id": "log.retention",
@@ -1850,8 +1853,9 @@
             "sdk"
           ],
           "hours": 3,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "crons/every-minute.ts (Cloudflare cron trigger) matches every registered expression against the minute: PocketBase's __pbDBOptimize__, __pbMFACleanup__, __pbOTPCleanup__, __pbLogsCleanup__, voidbase's __vbChangesCleanup__ (change feed and stale stream rows) and cronAdd jobs from pb_hooks, each inside a superuser hook store. Cron triggers do not fire in local dev; fired through /__void/scheduled with the dev trigger token."
         },
         {
           "id": "cron.system",
@@ -1874,8 +1878,9 @@
             "sdk"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "GET /api/crons ({id, expression}, user jobs first, then PocketBase's in its order) and POST /api/crons/:id (204, 404 'Missing or invalid cron job'). logs-crons.ts."
         },
         {
           "id": "cron.user",
@@ -1905,8 +1910,9 @@
             "sdk"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "out",
+          "milestone": "m5",
+          "notes": "PocketBase has no SQL console or raw SQL endpoint; kept out to stay a faithful replacement (D1 has its own console in the Cloudflare dashboard)."
         }
       ]
     },
@@ -2174,8 +2180,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "out",
+          "milestone": "m5",
+          "notes": "PocketBase has no SQL console or raw SQL endpoint; kept out to stay a faithful replacement (D1 has its own console in the Cloudflare dashboard)."
         },
         {
           "id": "pnl.import-export",
@@ -2294,7 +2301,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
         },
         {
           "id": "prod.sdk-suite",

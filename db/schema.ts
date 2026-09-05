@@ -114,3 +114,17 @@ export const realtimeClients = sqliteTable("_realtime_clients", {
   created: text("created").notNull().default(now),
   updated: text("updated").notNull().default(now),
 });
+
+// Request and application logs (PocketBase's auxiliary _logs table): data is the JSON payload PocketBase's
+// panel filters on (data.type, data.status, data.auth ...), level uses slog levels (-4 debug, 0 info, 4 warn, 8 error).
+export const logs = sqliteTable(
+  "_logs",
+  {
+    id: text("id").primaryKey(),
+    created: text("created").notNull().default(""),
+    data: text("data").notNull().default("{}"),
+    message: text("message").notNull().default(""),
+    level: integer("level").notNull().default(0),
+  },
+  (t) => [index("idx_logs_created").on(t.created), index("idx_logs_level").on(t.level), index("idx_logs_message").on(t.message)],
+);

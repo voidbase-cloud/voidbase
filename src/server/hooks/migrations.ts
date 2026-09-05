@@ -13,9 +13,8 @@ import { hookStore } from "./runtime";
 
 export type MigrationFn = (app: Record<string, unknown>) => unknown;
 
-export async function applyPendingMigrations(db: D1Database, globals: Record<string, unknown> = {}, bindings?: AppEnv["Bindings"]): Promise<string[]> {
-  if (!migrations.length) return [];
-  // migrations run as a superuser outside any request: give $app the same store a request would have
+// Runs fn inside a superuser hook store outside any request (migrations, cron jobs), so $app works as in a request.
+export async function withHookStore<T>(db: D1Database, bindings: AppEnv["Bindings"] | undefined, fn: () => Promise<T> | T): Promise<T> {
   const collections = await loadCollections(db);
   const ctx = async (): Promise<RecordContext> => ({
     db, storage: bindings?.STORAGE as R2Bucket, auth: null, superuser: true,
@@ -23,7 +22,12 @@ export async function applyPendingMigrations(db: D1Database, globals: Record<str
     collections: await loadCollections(db),
   });
   const store = { c: undefined as never, ctx, collections, settings: await loadSettings(db), env: (bindings ?? {}) as Record<string, unknown> };
-  return hookStore.run(store, () => runPending(db, globals));
+  return hookStore.run(store, () => fn());
+}
+
+export async function applyPendingMigrations(db: D1Database, globals: Record<string, unknown> = {}, bindings?: AppEnv["Bindings"]): Promise<string[]> {
+  if (!migrations.length) return [];
+  return withHookStore(db, bindings, () => runPending(db, globals));
 }
 
 async function runPending(db: D1Database, globals: Record<string, unknown>): Promise<string[]> {

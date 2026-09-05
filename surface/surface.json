@@ -1130,8 +1130,9 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "request (204 always, 2-minute resend limit kept in _params) and confirm (token type verificationToken, email claim check, random password when password auth is disabled) through the record service so hooks and realtime fire. auth-flows.ts 22/22."
         },
         {
           "id": "auth.password-reset",
@@ -1142,8 +1143,9 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "request and confirm with PocketBase's validation (min from the password field), tokenKey rotation, verified when the email claim matches. auth-flows.ts."
         },
         {
           "id": "auth.email-change",
@@ -1154,8 +1156,9 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "request (auth record required, uniqueness, not-in-list) and confirm (newEmail claim, password check, uniqueness) with PocketBase's errors. auth-flows.ts."
         },
         {
           "id": "auth.otp",
@@ -1556,9 +1559,9 @@
             "sdk"
           ],
           "hours": 2,
-          "status": "partial",
+          "status": "done",
           "milestone": "m2",
-          "notes": "GET with secrets masked; PATCH pending."
+          "notes": "GET with secrets omitted; PATCH merges like json.Unmarshal into a clone (nested objects field-wise, arrays replaced, omitted secrets kept), validates every section with PocketBase's codes, messages and params (cron parser messages mirrored), and answers with the public settings. test/conformance/settings.ts 20/20."
         },
         {
           "id": "set.meta",
@@ -1580,9 +1583,10 @@
             "sdk"
           ],
           "hours": 5,
-          "status": "todo",
+          "status": "done",
           "milestone": "m5",
-          "verify": "Panel test email arrives"
+          "verify": "Panel test email arrives",
+          "notes": "src/server/mail/smtp.ts on cloudflare:sockets: implicit TLS or opportunistic STARTTLS, AUTH PLAIN/LOGIN, EHLO localName; multipart/alternative messages with a text alternative; when SMTP is disabled the message is logged (no sendmail on Workers). Test email endpoint included. Verified end to end against a local SMTP sink (test/smtp-sink.ts) by test/conformance/auth-flows.ts."
         },
         {
           "id": "set.mail-provider",
@@ -1604,8 +1608,9 @@
             "sdk"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "partial",
+          "milestone": "m5",
+          "notes": "Settings validation and the test endpoint's validation match; the actual S3 connection test is not implemented (files live in R2)."
         },
         {
           "id": "set.batch",
@@ -1673,8 +1678,9 @@
             "sdk"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "ES256 client secret from a PKCS8 PEM via WebCrypto with Apple's claims; validation matches PocketBase (settings.ts)."
         },
         {
           "id": "set.templates",
@@ -1685,8 +1691,9 @@
             "sdk"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "PocketBase's default templates and HTML layout; per-collection templates from the auth options; {APP_NAME}, {APP_URL}, {TOKEN}, {OTP}, {OTP_ID}, {ALERT_INFO} and escaped {RECORD:field} placeholders. Emails compared byte for byte (tokens normalized) with PocketBase's in auth-flows.ts."
         },
         {
           "id": "set.hooks",
@@ -1923,7 +1930,7 @@
           "hours": 4,
           "status": "partial",
           "milestone": "m4",
-          "notes": "Record and model hooks (create/update/delete, validate, enrich, *Request, AfterSuccess, AfterError) fire with e.next() semantics and tags; collection, mailer, realtime and settings events are registered but not yet triggered."
+          "notes": "Record and model hooks (create/update/delete, validate, enrich, *Request, AfterSuccess, AfterError) and the mailer events (onMailerSend, onMailerRecord*Send) fire with e.next() semantics and tags; collection, realtime and settings events are registered but not yet triggered."
         },
         {
           "id": "hk.app",
@@ -2280,7 +2287,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (9), realtime.ts, fresh-db.ts (17: isolated empty D1 boot with fixture migrations and hooks), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (9), settings.ts (20), auth-flows.ts (22, via an SMTP sink), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
         },
         {
           "id": "prod.sdk-suite",

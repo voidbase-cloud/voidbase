@@ -13,6 +13,8 @@ import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
 import { deletePrefix } from "./records/files";
 import { mountWebAuthn } from "./webauthn";
 import { authWithOAuth2, mountOAuth2Redirect } from "./oauth2";
+import { mountSettingsApi } from "./settings-api";
+import { mountAuthFlows } from "./auth-flows";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import { saveHookRecord } from "./records/service";
@@ -379,6 +381,11 @@ function sortBy<T extends object>(items: T[], sort: string, allowed: string[]): 
 // --- passkeys (the starter's Go webauthn routes, native here) ---------------
 mountWebAuthn(app);
 mountOAuth2Redirect(app);
+mountSettingsApi(app);
+mountAuthFlows(app, {
+  collection: async (c) => { const coll = await mustFindCollection(c, c.req.param("collection") ?? ""); if (coll.type !== "auth") throw notFound("Missing or invalid auth collection context."); return coll; },
+  ctx: (c) => recordContext(c),
+});
 
 // --- pb_hooks runtime ------------------------------------------------------
 const valuesToRowFor = (c: Collection, values: Record<string, unknown>): Row => { const row: Row = {}; for (const f of c.fields as Field[]) row[f.name] = toColumn(f, values[f.name]); return row; };

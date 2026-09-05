@@ -25,7 +25,9 @@ export async function findAuthRecordByToken(db: D1Database, token: string, type 
   if (!collection || !isAuth(collection)) return null;
   const row = await one(db, `SELECT * FROM ${ident(collection.name)} WHERE id = ? LIMIT 1`, [claims.id]);
   if (!row) return null;
-  const secret = option<string>(collection, "authToken.secret", "");
+  // each token type is signed with its own collection secret (core/record_tokens.go)
+  const optionKey = ({ auth: "authToken", verification: "verificationToken", passwordReset: "passwordResetToken", emailChange: "emailChangeToken", file: "fileToken" } as Record<string, string>)[type] ?? "authToken";
+  const secret = option<string>(collection, `${optionKey}.secret`, "");
   const verified = await verifyJWT(token, String(row.tokenKey ?? "") + secret);
   return verified ? { collection, row } : null;
 }

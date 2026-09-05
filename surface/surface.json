@@ -1225,8 +1225,9 @@
             "admin"
           ],
           "hours": 6,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "src/server/oauth2/providers.ts: endpoints, scopes and PKCE defaults for all 32 providers PocketBase ships (Instagram included, which the 0.39 reference lacks), per-provider user-info fetchers (GraphQL for Linear and monday, client headers for Twitch/Trakt/Notion, id_token claims for Apple/OIDC/Microsoft, secondary verified-email lookups for GitHub, Gitea, Gitee and Bitbucket) and PocketBase's field mappings. test/conformance/providers.ts compares the exact auth-methods authURL for 31 providers; the user-info mappings are transcribed from tools/auth and only the OIDC path is exercised end to end (mock provider)."
         },
         {
           "id": "auth.external",
@@ -2305,7 +2306,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), backups.ts (17), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), providers.ts (32), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), backups.ts (17), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
         },
         {
           "id": "prod.sdk-suite",

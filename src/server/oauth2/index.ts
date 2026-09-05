@@ -10,7 +10,7 @@ import { nowString, randomId, randomString } from "../ids";
 import { hashPassword } from "../password";
 import { createRecord, type RecordContext } from "../records/service";
 import type { AppEnv, Row } from "../types";
-import { mapAuthUser, PROVIDER_DEFAULTS, type AuthUser } from "./providers";
+import { fetchProviderUser, PROVIDER_DEFAULTS, type AuthUser, type Token } from "./providers";
 
 export interface ProviderConfig { name: string; clientId: string; clientSecret?: string; authURL?: string; tokenURL?: string; userInfoURL?: string; displayName?: string; pkce?: boolean | null; extra?: Record<string, unknown> }
 interface OAuth2Options { enabled?: boolean; providers?: ProviderConfig[]; mappedFields?: { id?: string; name?: string; username?: string; avatarURL?: string } }
@@ -28,19 +28,15 @@ const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replac
 export async function s256Challenge(verifier: string): Promise<string> {
   return b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
 }
-// golang.org/x/oauth2 AuthCodeURL: response_type=code&client_id=..&scope=..&state=.. plus extra params
+// golang.org/x/oauth2 AuthCodeURL: the parameters come out of url.Values.Encode(), i.e. sorted by key
 export function buildAuthURL(p: ProviderConfig, state: string, extra: Record<string, string>): string {
   const u = new URL(p.authURL ?? "");
-  u.searchParams.set("response_type", "code");
-  u.searchParams.set("client_id", p.clientId);
+  const params: Record<string, string> = { response_type: "code", client_id: p.clientId, state, ...extra };
   const scopes = providerScopes(p.name);
-  if (scopes.length) u.searchParams.set("scope", scopes.join(" "));
-  u.searchParams.set("state", state);
-  for (const [k, v] of Object.entries(extra)) u.searchParams.set(k, v);
-  return u.toString();
+  if (scopes.length) params.scope = scopes.join(" ");
+  const encoded = Object.keys(params).sort().map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k]!).replace(/%20/g, "+")}`).join("&");
+  return `${u.origin}${u.pathname}?${u.search ? u.search.slice(1) + "&" : ""}${encoded}`;
 }
-
-interface Token { access_token: string; token_type?: string; refresh_token?: string; expires_in?: number; id_token?: string }
 
 // oauth2.Config.Exchange with AuthStyleAutoDetect: client credentials in the Authorization header first, in the body second
 async function fetchToken(p: ProviderConfig, code: string, redirectURL: string, codeVerifier: string): Promise<Token> {
@@ -64,25 +60,13 @@ async function fetchToken(p: ProviderConfig, code: string, redirectURL: string, 
   return token;
 }
 
-function decodeJwtClaims(jwt: string): Record<string, unknown> {
-  const part = jwt.split(".")[1] ?? "";
-  return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(part.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(part.length / 4) * 4, "=")), (ch) => ch.charCodeAt(0)))) as Record<string, unknown>;
-}
-
 async function fetchAuthUser(p: ProviderConfig, token: Token): Promise<AuthUser> {
-  let raw: Record<string, unknown>;
-  if (p.userInfoURL) {
-    const res = await fetch(p.userInfoURL, { headers: { authorization: `Bearer ${token.access_token}`, accept: "application/json" } });
-    const text = await res.text();
-    if (res.status >= 400) throw new Error(`failed to fetch OAuth2 user profile via ${p.userInfoURL} (${res.status}):\n${text}`);
-    raw = JSON.parse(text) as Record<string, unknown>;
-  } else if (token.id_token) {
-    raw = decodeJwtClaims(token.id_token); // OIDC without userinfo: unverified claims, audience checked like PocketBase's parser
-    const aud = raw.aud; if (!(aud === p.clientId || (Array.isArray(aud) && aud.includes(p.clientId)))) throw new Error("id_token audience mismatch");
-  } else throw new Error("empty id_token");
-  const mapped = mapAuthUser(p.name, raw);
-  const expiry = token.expires_in ? new Date(Date.now() + Number(token.expires_in) * 1000) : null;
-  return { ...mapped, rawUser: raw, accessToken: token.access_token, refreshToken: token.refresh_token ?? "", expiry: expiry ? nowString(expiry) : "" };
+  const user = await fetchProviderUser({ name: p.name, clientId: p.clientId, clientSecret: p.clientSecret ?? "", userInfoURL: p.userInfoURL ?? "", extra: p.extra ?? {} }, token);
+  if (p.name.startsWith("oidc") && !p.userInfoURL && token.id_token) { // audience check like PocketBase's id_token parser
+    const aud = (user.rawUser as { aud?: unknown }).aud;
+    if (!(aud === p.clientId || (Array.isArray(aud) && aud.includes(p.clientId)))) throw new Error("id_token audience mismatch");
+  }
+  return user;
 }
 
 // POST /api/collections/:collection/auth-with-oauth2

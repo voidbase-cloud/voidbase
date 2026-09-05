@@ -6,7 +6,9 @@ import { $ } from "bun";
 const port = Number(process.argv[2] ?? 5181);
 const base = `http://127.0.0.1:${port}`;
 await $`bun run build`.env({ ...process.env, VOIDBASE_MIGRATIONS_DIR: "test/fixtures/migrations" }).quiet();
-const preview = Bun.spawn(["./node_modules/.bin/vp", "preview", "--port", String(port), "--host", "127.0.0.1"], { stdout: "pipe", stderr: "pipe" });
+const logPath = ".void/preview.log";
+// setsid: vp spawns vite and workerd children; killing the process group at the end takes them all down
+const preview = Bun.spawn(["setsid", "./node_modules/.bin/vp", "preview", "--port", String(port), "--host", "127.0.0.1", "--strictPort"], { stdout: Bun.file(logPath), stderr: Bun.file(logPath) });
 let pass = 0, fail = 0;
 const check = (label: string, ok: boolean, detail = "") => { ok ? pass++ : fail++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${ok ? "" : "  " + detail}`); };
 try {
@@ -26,12 +28,18 @@ try {
   check("admin panel served at /_/", panel.status === 200 && (panel.headers.get("content-type") ?? "").includes("text/html"), String(panel.status));
   const spa = await fetch(`${base}/posts/`, { headers: { accept: "text/html,*/*;q=0.8" } }); // a browser navigation
   check("app SPA fallback at /posts/ for HTML navigations", spa.status === 200 && (spa.headers.get("content-type") ?? "").includes("text/html"), String(spa.status));
-  const nonHtml = await fetch(`${base}/posts/`);
-  check("no SPA fallback for non-HTML clients (PocketBase-like 404)", nonHtml.status === 404, String(nonHtml.status));
+  const nonHtml = await fetch(`${base}/missing.js`);
+  check("index fallback for any missing non-API path (PocketBase Static semantics)", nonHtml.status === 200 && (nonHtml.headers.get("content-type") ?? "").includes("text/html"), String(nonHtml.status));
+  const versionJson = await fetch(`${base}/_app/version.json`);
+  check("real asset under _app/ served as JSON", versionJson.status === 200 && (versionJson.headers.get("content-type") ?? "").includes("json"), `${versionJson.status} ${versionJson.headers.get("content-type")}`);
   const api404 = await fetch(`${base}/api/nope`, { headers: { accept: "text/html,*/*;q=0.8" } });
   check("unknown /api path stays a JSON 404", api404.status === 404 && (api404.headers.get("content-type") ?? "").includes("json"), String(api404.status));
+} catch (err) {
+  console.error("fresh-db: aborted:", err instanceof Error ? err.message : err);
+  console.error("--- preview log tail ---\n" + (await Bun.file(logPath).text()).split("\n").slice(-25).join("\n"));
+  fail++;
 } finally {
-  preview.kill("SIGTERM");
+  try { process.kill(-preview.pid, "SIGTERM"); } catch { preview.kill("SIGTERM"); }
   await preview.exited;
   await $`bun run build`.quiet(); // leave dist/ built from the project's own configuration
 }

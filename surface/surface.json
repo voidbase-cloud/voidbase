@@ -220,7 +220,7 @@
           "status": "done",
           "milestone": "m4",
           "verify": "Deep link to /posts/ loads the starter",
-          "notes": "`bun run app:sync` copies a static app build (default: the starter's adapter-static output) into public/ next to the panel at public/_. A passthrough middleware puts the Worker first, so the SPA fallback to index.html runs after the routes: unknown /api paths stay JSON 404s in dev and production alike. Verified by test/fresh-db.ts and test/starter-smoke.ts against the Worker-served app."
+          "notes": "`bun run app:sync` copies a static app build (default: the starter's adapter-static output) into public/ next to the panel at public/_. middleware/01.request-context.ts puts the Worker first and, with routing.notFound = none, answers misses the way PocketBase's Static handler does: the exact file when it exists, otherwise index.html (200) for the app and /_/index.html for the panel, while /api keeps JSON 404s. Same behaviour in dev and in vp preview; verified by test/fresh-db.ts, panel-smoke and starter-smoke against port 5180."
         },
         {
           "id": "platform.health",

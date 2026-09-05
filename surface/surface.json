@@ -2220,8 +2220,9 @@
             "starter"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m4"
+          "status": "done",
+          "milestone": "m4",
+          "notes": "src/server/webauthn.ts mirrors the starter's Go routes (registration-options, register, login-options, login; same bodies and error strings) with @simplewebauthn/server on Workers; credentials stored in the app's passkeys collection like the Go code, the pending challenge in _params so any isolate can finish the ceremony; RP from settings.meta.appURL or the request origin. test/starter-passkeys.ts drives the unmodified UI with Chrome's virtual authenticator against http://localhost:5180."
         },
         {
           "id": "st.serve",
@@ -2245,7 +2246,7 @@
           "hours": 2,
           "status": "partial",
           "milestone": "m4",
-          "notes": "Verified by test/starter-smoke.ts: home config, login, posts list with thumbnails, live list update from an API create and from Generate, post view, audit log tab, hello, delete flow. The edit form crashes upstream in Svelte 5 (FileInput renders an undefined children snippet) against PocketBase too; signup and OAuth2 pending."
+          "notes": "Verified by test/starter-smoke.ts and test/starter-passkeys.ts: home config, password login, passkey register and login, posts list with thumbnails, live list update from an API create and from Generate, post view, audit log tab, hello, delete flow. The edit form crashes upstream in Svelte 5 (FileInput renders an undefined children snippet) against PocketBase too; signup and OAuth2 pending."
         },
         {
           "id": "st.e2e",
@@ -2277,7 +2278,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), realtime.ts, fresh-db.ts (empty-D1 boot + migrations), panel-smoke, panel-collections, panel-records and starter-smoke all green on 2026-09-05."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), realtime.ts, fresh-db.ts (empty-D1 boot + migrations), panel-smoke, panel-collections, panel-records, starter-smoke and starter-passkeys all green on 2026-09-05."
         },
         {
           "id": "prod.sdk-suite",

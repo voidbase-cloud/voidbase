@@ -10,6 +10,7 @@ import { hookGlobals, hookMiddleware, loadHooks, mountHookRoutes } from "./hooks
 import { applyPendingMigrations } from "./hooks/migrations";
 import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
 import { deletePrefix } from "./records/files";
+import { mountWebAuthn } from "./webauthn";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import { saveHookRecord } from "./records/service";
@@ -366,6 +367,9 @@ function sortBy<T extends object>(items: T[], sort: string, allowed: string[]): 
   }
   return out;
 }
+
+// --- passkeys (the starter's Go webauthn routes, native here) ---------------
+mountWebAuthn(app);
 
 // --- pb_hooks runtime ------------------------------------------------------
 // hook code that changes the schema must see the change in the same run ($app.findCollectionByNameOrId)

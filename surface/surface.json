@@ -224,7 +224,7 @@
         {
           "id": "platform.health",
           "title": "Health endpoint with superuser-only fields",
-          "surface": "GET /api/health → canBackup realIP possibleProxyHeader",
+          "surface": "GET /api/health \u2192 canBackup realIP possibleProxyHeader",
           "oracles": [
             "admin",
             "sdk"
@@ -487,8 +487,9 @@
             "starter"
           ],
           "hours": 3,
-          "status": "todo",
-          "milestone": "m4"
+          "status": "done",
+          "milestone": "m4",
+          "notes": "core/record_model.go cascadeRecordDelete: referencing rows unlinked (updated bumped), deleted when cascadeDelete and the relation becomes empty, refused with PocketBase's message when a required relation would empty; planned first, applied in one D1 batch, files of every deleted row removed. test/conformance/cascade.ts 11/11. Before-delete hooks fire only for the requested record; AfterDeleteSuccess fires for cascaded rows too."
         },
         {
           "id": "coll.hooks",
@@ -853,7 +854,7 @@
         {
           "id": "rec.hooks",
           "title": "Record hooks: Validate, Create, Update, Delete, Enrich, Request variants, AfterSuccess and AfterError",
-          "surface": "OnRecordCreate OnRecordUpdateRequest OnRecordEnrich …",
+          "surface": "OnRecordCreate OnRecordUpdateRequest OnRecordEnrich \u2026",
           "oracles": [
             "starter",
             "prod"
@@ -898,7 +899,7 @@
         {
           "id": "flt.compare",
           "title": "Operators = != > >= < <= ~ !~ with coercion and LIKE escaping",
-          "surface": "SignEq … SignNlike",
+          "surface": "SignEq \u2026 SignNlike",
           "oracles": [
             "sdk",
             "starter",
@@ -911,7 +912,7 @@
         {
           "id": "flt.any",
           "title": "Any-match operators ?= ?!= ?> ?>= ?< ?<= ?~ ?!~ and multi-value field semantics",
-          "surface": "SignAnyEq … SignAnyNlike",
+          "surface": "SignAnyEq \u2026 SignAnyNlike",
           "oracles": [
             "sdk",
             "admin"
@@ -1122,7 +1123,7 @@
         {
           "id": "auth.verification",
           "title": "request-verification and confirm-verification",
-          "surface": "POST …/request-verification …/confirm-verification",
+          "surface": "POST \u2026/request-verification \u2026/confirm-verification",
           "oracles": [
             "sdk",
             "admin"
@@ -1134,7 +1135,7 @@
         {
           "id": "auth.password-reset",
           "title": "request-password-reset and confirm-password-reset",
-          "surface": "POST …/request-password-reset …/confirm-password-reset",
+          "surface": "POST \u2026/request-password-reset \u2026/confirm-password-reset",
           "oracles": [
             "sdk",
             "admin"
@@ -1146,7 +1147,7 @@
         {
           "id": "auth.email-change",
           "title": "request-email-change and confirm-email-change",
-          "surface": "POST …/request-email-change …/confirm-email-change",
+          "surface": "POST \u2026/request-email-change \u2026/confirm-email-change",
           "oracles": [
             "sdk",
             "admin"
@@ -1158,7 +1159,7 @@
         {
           "id": "auth.otp",
           "title": "OTP: request-otp, auth-with-otp, _otps table, cleanup",
-          "surface": "POST …/request-otp …/auth-with-otp",
+          "surface": "POST \u2026/request-otp \u2026/auth-with-otp",
           "oracles": [
             "sdk",
             "admin"
@@ -1293,7 +1294,7 @@
         {
           "id": "auth.hooks",
           "title": "Auth request hooks",
-          "surface": "OnRecordAuthRequest OnRecordAuthWithPasswordRequest OnRecordAuthRefreshRequest OnRecordRequestOTPRequest …",
+          "surface": "OnRecordAuthRequest OnRecordAuthWithPasswordRequest OnRecordAuthRefreshRequest OnRecordRequestOTPRequest \u2026",
           "oracles": [
             "prod"
           ],
@@ -1444,7 +1445,7 @@
         {
           "id": "rt.subs",
           "title": "POST /api/realtime stores the stream's subscriptions and auth token in _realtime_clients keyed by clientId, because the POST can land on any isolate; the stream picks them up on its next poll",
-          "surface": "POST /api/realtime {clientId, subscriptions} → _realtime_clients",
+          "surface": "POST /api/realtime {clientId, subscriptions} \u2192 _realtime_clients",
           "oracles": [
             "sdk",
             "starter"
@@ -1456,7 +1457,7 @@
         {
           "id": "rt.poller",
           "title": "Per-connection poll loop inside its own request (Workers bind timers and stream writers to the request that made them); loops in one isolate share the last change-feed read so D1 sees about one query per second per isolate; cursor per stream",
-          "surface": "module-level poller, SELECT … FROM _changes WHERE id > ?",
+          "surface": "module-level poller, SELECT \u2026 FROM _changes WHERE id > ?",
           "oracles": [
             "sdk",
             "starter"
@@ -1911,7 +1912,7 @@
         {
           "id": "hk.events",
           "title": "on* event registrations for record, collection, mailer, realtime, and request events with e.next() semantics",
-          "surface": "onRecordCreate onModelUpdate onMailerSend …",
+          "surface": "onRecordCreate onModelUpdate onMailerSend \u2026",
           "oracles": [
             "starter",
             "prod"

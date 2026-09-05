@@ -451,28 +451,22 @@ export async function deleteRecord(ctx: RecordContext, c: Collection, id: string
   const rec = HookRecord.fromRow(c, row);
   const reqEv = ctx.hookEvent?.(rec, c);
   const core = async () => {
-    // relations pointing at this record: cascade deletes, otherwise unlink
-    for (const other of new Set(ctx.collections.values())) {
-      for (const f of other.fields as Field[]) {
-        if (f.type !== "relation" || f.collectionId !== c.id) continue;
-        const col = `${ident(other.name)}.${ident(f.name)}`;
-        const match = isMultiple(f) ? `EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(${col}) THEN ${col} ELSE json_array(${col}) END) WHERE value = ?)` : `${col} = ?`;
-        if (f.cascadeDelete) {
-          const refs = await all<{ id: string }>(ctx.db, `SELECT id FROM ${ident(other.name)} WHERE ${match}`, [id]);
-          for (const r of refs) await deleteRecord({ ...ctx, superuser: true, hookEvent: undefined }, other, r.id).catch(() => {});
-        } else if (isMultiple(f)) {
-          const refs = await all<Row>(ctx.db, `SELECT id, ${ident(f.name)} AS v FROM ${ident(other.name)} WHERE ${match}`, [id]);
-          for (const r of refs) {
-            const list = (Array.isArray(r.v) ? r.v : JSON.parse(String(r.v || "[]"))) as string[];
-            await stmt(ctx.db, `UPDATE ${ident(other.name)} SET ${ident(f.name)} = ? WHERE id = ?`, [JSON.stringify(list.filter((x) => x !== id)), r.id]).run();
-          }
-        } else {
-          await stmt(ctx.db, `UPDATE ${ident(other.name)} SET ${ident(f.name)} = '' WHERE ${match}`, [id]).run();
-        }
-      }
+    // core/record_model.go cascadeRecordDelete: referencing records are unlinked, deleted when the relation is
+    // cascadeDelete and nothing else remains, or refused when a required relation would become empty.
+    // Everything is planned first and applied in one D1 batch so a refusal leaves nothing half-done.
+    const plan: DeletePlan = { statements: [], deleted: [], overlay: new Map() };
+    await planCascadeDelete(ctx, c, row, plan);
+    await ctx.db.batch(plan.statements);
+    for (const d of plan.deleted) {
+      try { await deleteAllRecordFiles(ctx.storage, d.c.id, String(d.row.id)); } catch (err) { console.error("voidbase: file cleanup failed", err); }
     }
-    await ctx.db.batch([stmt(ctx.db, `DELETE FROM ${ident(c.name)} WHERE id = ?`, [id]), changeStmt(ctx.db, c, "delete", row)]);
-    try { await deleteAllRecordFiles(ctx.storage, c.id, id); } catch (err) { console.error("voidbase: file cleanup failed", err); }
+    for (const d of plan.deleted) {
+      if (d.c.id === c.id && d.row.id === row.id) continue; // the main record's hooks fire around this function
+      const r = HookRecord.fromRow(d.c, d.row);
+      const ev = { app: undefined as unknown, record: r, model: r, collection: new CollectionRef(d.c), next: async () => undefined as unknown };
+      await trigger("onRecordAfterDeleteSuccess", ev, d.c.name, async () => undefined);
+      await trigger("onModelAfterDeleteSuccess", ev, d.c.name, async () => undefined);
+    }
   };
   const modelEv = { app: undefined as unknown, record: rec, model: rec, collection: new CollectionRef(c), next: async () => undefined as unknown };
   const withModelHooks = () => trigger("onModelDelete", modelEv, c.name, () => trigger("onRecordDelete", modelEv, c.name, core));
@@ -480,6 +474,47 @@ export async function deleteRecord(ctx: RecordContext, c: Collection, id: string
   else await withModelHooks();
   await trigger("onRecordAfterDeleteSuccess", modelEv, c.name, async () => undefined);
   await trigger("onModelAfterDeleteSuccess", modelEv, c.name, async () => undefined);
+}
+
+
+// ---- cascade delete planning --------------------------------------------------------------------
+interface DeletePlan { statements: D1PreparedStatement[]; deleted: { c: Collection; row: Row }[]; overlay: Map<string, Row> }
+const REQUIRED_REF_MSG = "Failed to delete record. Make sure that the record is not part of a required relation reference.";
+
+async function planCascadeDelete(ctx: RecordContext, c: Collection, row: Row, plan: DeletePlan): Promise<void> {
+  const key = `${c.id}:${row.id}`;
+  if (plan.deleted.some((d) => `${d.c.id}:${d.row.id}` === key)) return;
+  plan.deleted.push({ c, row });
+  const id = String(row.id);
+  const others = [...new Set(ctx.collections.values())].filter((o) => o.type !== "view").sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  for (const other of others) {
+    for (const f of other.fields as Field[]) {
+      if (f.type !== "relation" || f.collectionId !== c.id) continue;
+      const col = `${ident(other.name)}.${ident(f.name)}`;
+      const match = isMultiple(f) ? `EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(${col}) THEN ${col} ELSE json_array(${col}) END) WHERE value = ?)` : `${col} = ?`;
+      const self = other.id === c.id;
+      const refs = await all<Row>(ctx.db, `SELECT * FROM ${ident(other.name)} WHERE ${match}${self ? ` AND ${ident(other.name)}.id != ?` : ""}`, self ? [id, id] : [id]);
+      for (const fresh of refs) {
+        const refKey = `${other.id}:${fresh.id}`;
+        if (plan.deleted.some((d) => `${d.c.id}:${d.row.id}` === refKey)) continue; // already going away
+        const r = plan.overlay.get(refKey) ?? fresh;
+        const raw = r[f.name];
+        const ids = (isMultiple(f) ? (Array.isArray(raw) ? raw : JSON.parse(String(raw || "[]"))) as unknown[] : [raw]).map(String).filter((x) => x !== "");
+        const remaining = ids.filter((x) => x !== id);
+        if (f.cascadeDelete && remaining.length === 0) { await planCascadeDelete(ctx, other, r, plan); continue; }
+        if (f.required && remaining.length === 0) throw badRequest(REQUIRED_REF_MSG);
+        const value = isMultiple(f) ? JSON.stringify(remaining) : (remaining[0] ?? "");
+        const now = nowString();
+        const updated: Row = { ...r, [f.name]: value };
+        const sets = [`${ident(f.name)} = ?`];
+        const params: unknown[] = [value];
+        for (const af of other.fields as Field[]) if (af.type === "autodate" && af.onUpdate) { sets.push(`${ident(af.name)} = ?`); params.push(now); updated[af.name] = now; }
+        plan.overlay.set(refKey, updated);
+        plan.statements.push(stmt(ctx.db, `UPDATE ${ident(other.name)} SET ${sets.join(", ")} WHERE id = ?`, [...params, r.id]), changeStmt(ctx.db, other, "update", updated));
+      }
+    }
+  }
+  plan.statements.push(stmt(ctx.db, `DELETE FROM ${ident(c.name)} WHERE id = ?`, [id]), changeStmt(ctx.db, c, "delete", row));
 }
 
 // ---- programmatic saves from hooks ($app.save / RecordUpsertForm.submit) -------------------------

@@ -84,7 +84,8 @@ export async function listRecords(ctx: RecordContext, c: Collection, q: ListQuer
     } catch (err) { wrapFilterError(err); }
   }
   let orderBy = "";
-  try { orderBy = compileSort(q.sort, c, ctx.superuser) || `ORDER BY ${ident(c.name)}.rowid ASC`; } catch (err) { wrapFilterError(err); }
+  // views have no rowid: PocketBase falls back to the id column there
+  try { orderBy = compileSort(q.sort, c, ctx.superuser) || (c.type === "view" ? `ORDER BY ${ident(c.name)}.id ASC` : `ORDER BY ${ident(c.name)}.rowid ASC`); } catch (err) { wrapFilterError(err); }
   const page = Math.max(1, q.page || 1);
   const perPage = Math.min(MAX_PER_PAGE, Math.max(1, q.perPage || DEFAULT_PER_PAGE));
   const sel = selectSQL(c, conds, joins, `${orderBy} LIMIT ? OFFSET ?`);

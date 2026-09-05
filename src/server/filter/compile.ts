@@ -106,7 +106,7 @@ export function compileSort(sort: string, base: Collection, allowHidden: boolean
     if (!s) continue;
     const desc = s.startsWith("-");
     const name = s.replace(/^[+-]/, "");
-    if (name === "@rowid") parts.push(`${ident(base.name)}.rowid ${desc ? "DESC" : "ASC"}`);
+    if (name === "@rowid") parts.push(`${ident(base.name)}.${base.type === "view" ? "id" : "rowid"} ${desc ? "DESC" : "ASC"}`);
     else if (name === "@random") parts.push("RANDOM()");
     else {
       const f = (base.fields as Field[]).find((x) => x.name === name);
@@ -287,7 +287,8 @@ class Compiler {
     for (let i = 0; i < parts.length; i++) {
       const raw = parts[i]!;
       const isLast = i === parts.length - 1;
-      const [prop, modifier] = raw.split(":") as [string, string | undefined];
+      const [prop, rawModifier] = raw.split(":") as [string, string | undefined];
+      let modifier = rawModifier;
       const fields = cur.fields as Field[];
       const field = fields.find((f) => f.name === prop);
       if (field && field.hidden && !this.o.allowHiddenFields && !allowHidden) throw new FilterError(`unknown field "${prop}"`);
@@ -335,8 +336,8 @@ class Compiler {
 
       // last segment
       const c = col(curAlias, prop);
+      if (modifier === "length" && !isArrayable(field)) modifier = ""; // PocketBase ignores :length on single-value fields
       if (modifier === "length") {
-        if (!isArrayable(field)) throw new FilterError(`":length" modifier is not supported on "${prop}"`);
         const sql = jsonArrayLength(c);
         return { sql, params: [], nullFallback: "auto", joins, multiValue: multi ? { valueSql: sql, joins, params: [] } : undefined };
       }

@@ -475,9 +475,9 @@
             "sdk"
           ],
           "hours": 4,
-          "status": "partial",
+          "status": "done",
           "milestone": "m5",
-          "notes": "CREATE VIEW plus fields derived from PRAGMA table_info; dry-run endpoint and PocketBase's type inference pending."
+          "notes": "core/view.go semantics: the query is dry-run as a temporary view, fields are inferred from the SELECT (clones of source fields, relation for a source id, number for count()/total(), CAST types, json otherwise), PocketBase's identifier parser rules and error texts (missing id, wildcard, invalid identifier parts, SQL errors) with the fields error alongside; view records are read-only and ordered by id. test/conformance/views.ts 11/11."
         },
         {
           "id": "coll.cascade",
@@ -796,10 +796,10 @@
             "admin"
           ],
           "hours": 5,
-          "status": "partial",
+          "status": "done",
           "milestone": "m3",
           "verify": "Starter shows expand.user.name on posts",
-          "notes": "Direct, multiple, nested, and back-relation expands implemented with view-rule filtering; direct and multiple verified against fixtures, nested and via not yet."
+          "notes": "Direct, multiple, nested and back-relation (via) expands with view-rule filtering, in list and view responses. records.ts fixtures and filters-extra.ts."
         },
         {
           "id": "rec.rules",
@@ -920,9 +920,9 @@
             "admin"
           ],
           "hours": 4,
-          "status": "partial",
+          "status": "done",
           "milestone": "m5",
-          "notes": "Any-match operators compile; PocketBase's quirk that multi-valued columns compare as raw JSON without :each is reproduced. Any-match through relation joins not yet fixture-verified."
+          "notes": "?= ?!= ?> ?>= ?< ?<= ?~ ?!~ with PocketBase's multi-match semantics, :each and :length (ignored on single-value fields like PocketBase), raw JSON comparison for multi-valued columns. test/conformance/filters-extra.ts 27/27 plus the records fixtures."
         },
         {
           "id": "flt.paths",
@@ -946,9 +946,9 @@
             "admin"
           ],
           "hours": 3,
-          "status": "partial",
+          "status": "done",
           "milestone": "m5",
-          "notes": "Back-relation joins implemented, not yet fixture-verified."
+          "notes": "Back-relations (collection_via_field) for single and multiple relations, in filters (any and all match) and expands. filters-extra.ts."
         },
         {
           "id": "flt.request",
@@ -2314,7 +2314,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), providers.ts (32), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), backups.ts (17), sql.ts (7), manage-rule.ts (5), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, panel-admin, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), providers.ts (32), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), backups.ts (17), sql.ts (7), manage-rule.ts (5), filters-extra.ts (27), views.ts (11), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, panel-admin, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
         },
         {
           "id": "prod.sdk-suite",

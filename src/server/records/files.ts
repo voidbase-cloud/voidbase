@@ -36,7 +36,8 @@ export function sniffMime(bytes: Uint8Array, declared: string, name: string): { 
   if (/^<svg[\s>]/i.test(head) || (/^<\?xml/i.test(head) && /<svg/i.test(head))) return { type: "image/svg+xml", ext: ".svg" };
   if (/^\s*[{[]/.test(head)) { try { JSON.parse(new TextDecoder().decode(b)); return { type: "application/json", ext: ".json" }; } catch { /* not json */ } }
   const ext = name.includes(".") ? name.slice(name.lastIndexOf(".")).toLowerCase() : "";
-  if (declared && declared !== "application/octet-stream") return { type: declared.split(";")[0]!.trim(), ext };
+  // PocketBase detects the type from the bytes (gabriel-vasile/mimetype) and ignores the declared one
+  void declared;
   const isText = b.slice(0, 512).every((x) => x === 9 || x === 10 || x === 13 || (x >= 32 && x < 127) || x >= 128);
   return isText ? { type: "text/plain; charset=utf-8", ext: ext || ".txt" } : { type: "application/octet-stream", ext };
 }
@@ -50,9 +51,19 @@ export async function putUpload(storage: R2Bucket, collectionId: string, recordI
 export async function deleteFiles(storage: R2Bucket, collectionId: string, recordId: string, names: string[]): Promise<void> {
   if (names.length === 0) return;
   await storage.delete(names.map((n) => fileKey(collectionId, recordId, n)));
+  // cached thumbnails live under thumbs_{filename}/
+  for (const n of names) await deletePrefix(storage, `${collectionId}/${recordId}/thumbs_${n}/`);
 }
 
 export async function deleteAllRecordFiles(storage: R2Bucket, collectionId: string, recordId: string): Promise<void> {
-  const listed = await storage.list({ prefix: `${collectionId}/${recordId}/` });
-  if (listed.objects.length) await storage.delete(listed.objects.map((o) => o.key));
+  await deletePrefix(storage, `${collectionId}/${recordId}/`);
+}
+
+export async function deletePrefix(storage: R2Bucket, prefix: string): Promise<void> {
+  let cursor: string | undefined;
+  do {
+    const listed = await storage.list({ prefix, cursor });
+    if (listed.objects.length) await storage.delete(listed.objects.map((o) => o.key));
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor);
 }

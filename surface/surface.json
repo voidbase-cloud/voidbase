@@ -1355,9 +1355,9 @@
             "admin"
           ],
           "hours": 2,
-          "status": "partial",
+          "status": "done",
           "milestone": "m3",
-          "notes": "Content-Type, Content-Disposition, cache, CSP and Vary headers match PocketBase; Range requests and the download=1 attachment mode pending."
+          "notes": "Serve semantics from tools/filesystem: inline only for known media types else attachment, ?download=true forces attachment, extension overrides (svg, css, js, office), quoted filename, If-Modified-Since 304, single-range 206 and 416 from R2 range reads. Uploads store the sniffed type (declared type ignored, as PocketBase does)."
         },
         {
           "id": "file.thumbs",
@@ -1369,9 +1369,10 @@
             "admin"
           ],
           "hours": 6,
-          "status": "todo",
+          "status": "done",
           "milestone": "m4",
-          "verify": "Starter post thumbnails render at 100x100"
+          "verify": "Starter post thumbnails render at 100x100",
+          "notes": "Photon (Rust to wasm, @cf-wasm/photon) reproduces disintegration/imaging: fill crop center/top/bottom, fit without upscaling, one-sided resize; JPEG stays JPEG, everything else becomes PNG; only declared sizes plus 100x100; non-images and failures fall back to the original; cached in R2 under thumbs_{file}/ and removed with the file. test/conformance/thumbs.ts: 58/58 against PocketBase (dimensions, types, names, ranges). GIF thumbs come out as PNG here (PocketBase re-encodes GIF)."
         },
         {
           "id": "file.protected",

@@ -8,6 +8,7 @@ import { createRecord, deleteRecord, listRecords, updateRecord, viewRecord, type
 import { fromColumn } from "./records/values";
 import { hookGlobals, hookMiddleware, loadHooks, mountHookRoutes } from "./hooks";
 import { applyPendingMigrations } from "./hooks/migrations";
+import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import { saveHookRecord } from "./records/service";
@@ -265,19 +266,61 @@ app.get("/api/files/:collection/:recordId/:filename", async (c) => {
     // protected files require a file token (milestone five); superusers may always fetch
     throw notFound();
   }
-  const obj = await c.env.STORAGE.get(`${collection.id}/${row.id}/${filename}`);
-  if (!obj) throw notFound();
+  const key = `${collection.id}/${row.id}/${filename}`;
+  let served: Awaited<ReturnType<typeof resolveServedFile>>;
+  try {
+    served = await resolveServedFile(c.env.STORAGE, key, filename, c.req.query("thumb") ?? "", ((field.thumbs as string[] | null | undefined) ?? []), c.req.header("Range"));
+  } catch (err) {
+    if (err instanceof RangeNotSatisfiable) {
+      const disposition = !parseBool(c.req.query("download")) && INLINE_SERVE_CONTENT_TYPES.includes(err.contentType) ? "inline" : "attachment";
+      return new Response("invalid range: failed to overlap\n", { status: 416, headers: { "Content-Range": `bytes */${err.size}`, "Content-Disposition": `${disposition}; filename=${JSON.stringify(err.name)}`, "Content-Type": "text/plain; charset=utf-8" } });
+    }
+    throw err;
+  }
+  if (!served) throw notFound();
+  // PocketBase (tools/filesystem Serve): inline only for known-safe media types unless ?download=true,
+  // a few extensions override the sniffed content type, filename quoted, then http.ServeContent semantics.
+  const forceAttachment = parseBool(c.req.query("download"));
+  const disposition = !forceAttachment && INLINE_SERVE_CONTENT_TYPES.includes(served.contentType) ? "inline" : "attachment";
+  const ext = filename.includes(".") ? filename.slice(filename.lastIndexOf(".")).toLowerCase() : "";
+  const contentType = MANUAL_EXTENSION_CONTENT_TYPES[ext] ?? served.contentType;
   const headers = new Headers();
-  headers.set("Content-Type", obj.httpMetadata?.contentType ?? "application/octet-stream");
-  headers.set("Content-Length", String(obj.size));
-  headers.set("Content-Disposition", `${c.req.query("download") ? "attachment" : "inline"}; filename=${filename}`);
-  headers.set("Cache-Control", "max-age=2592000, stale-while-revalidate=86400");
-  headers.set("Last-Modified", obj.uploaded.toUTCString());
-  headers.set("Accept-Ranges", "bytes");
+  headers.set("Content-Disposition", `${disposition}; filename=${JSON.stringify(served.name)}`);
+  headers.set("Content-Type", contentType);
   headers.set("Content-Security-Policy", "default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; sandbox");
+  headers.set("Cache-Control", "max-age=2592000, stale-while-revalidate=86400");
+  headers.set("Last-Modified", served.uploaded.toUTCString());
+  headers.set("Accept-Ranges", "bytes");
   headers.set("Vary", "Origin");
-  return new Response(obj.body, { headers });
+  const ims = c.req.header("If-Modified-Since");
+  if (ims && !c.req.header("Range")) {
+    const since = Date.parse(ims);
+    if (!Number.isNaN(since) && Math.floor(served.uploaded.getTime() / 1000) <= Math.floor(since / 1000)) return new Response(null, { status: 304, headers });
+  }
+  if (served.range) {
+    headers.set("Content-Range", `bytes ${served.range.offset}-${served.range.offset + served.range.length - 1}/${served.size}`);
+    headers.set("Content-Length", String(served.range.length));
+    return new Response(served.body as BodyInit, { status: 206, headers });
+  }
+  headers.set("Content-Length", String(served.size));
+  return new Response(served.body as BodyInit, { headers });
 });
+
+// tools/filesystem/filesystem.go
+const INLINE_SERVE_CONTENT_TYPES = [
+  "image/png", "image/jpg", "image/jpeg", "image/gif", "image/webp", "image/x-icon", "image/bmp",
+  "video/webm", "video/mp4", "video/3gpp", "video/quicktime", "video/x-ms-wmv",
+  "audio/basic", "audio/aiff", "audio/mpeg", "audio/midi", "audio/mp3", "audio/wave", "audio/wav", "audio/x-wav", "audio/x-mpeg", "audio/x-m4a", "audio/aac",
+  "application/pdf", "application/x-pdf",
+];
+const MANUAL_EXTENSION_CONTENT_TYPES: Record<string, string> = {
+  ".svg": "image/svg+xml", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+};
+// strconv.ParseBool
+const parseBool = (v: string | undefined) => v !== undefined && ["1", "t", "T", "TRUE", "true", "True"].includes(v);
 
 // --- helpers --------------------------------------------------------------
 async function readJSON(c: Context<AppEnv>): Promise<Record<string, unknown>> {

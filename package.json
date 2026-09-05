@@ -13,6 +13,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@cf-wasm/photon": "^0.4.0",
     "bcryptjs": "^3.0.2",
     "hono": "^4.11.9"
   },

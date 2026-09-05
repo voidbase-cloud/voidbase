@@ -1,0 +1,2460 @@
+{
+  "name": "voidbase",
+  "codename": "kanz-zjy",
+  "updated": "2026-09-05",
+  "goal": "A PocketBase-wire-compatible server on Cloudflare Workers via Void. Finish line: the unmodified PocketBase admin panel and the unmodified pocketbase JS SDK both work against it, and it is production ready.",
+  "targets": {
+    "pocketbase": "0.40.2",
+    "admin_panel": "0.40.2 (ui/dist, hash router, PB_BACKEND_URL=../)",
+    "js_sdk": "0.28.0",
+    "runtime": "Cloudflare Workers via Void 0.10.x: D1, R2, Durable Objects, cron triggers"
+  },
+  "sources": {
+    "routes": "pocketbase/apis/*.go route registrations",
+    "fields": "pocketbase/core/field_*.go",
+    "rules": "pocketbase/core/record_field_resolver*.go and tools/search/filter.go",
+    "sdk": "sk/node_modules/pocketbase/dist/pocketbase.es.d.ts",
+    "panel": "pocketbase/ui/src (pb.* SDK usage grep)"
+  },
+  "decisions": [
+    {
+      "id": "d1",
+      "date": "2026-09-05",
+      "title": "Native TypeScript port, not PocketBase-in-wasm",
+      "choice": "Reimplement the wire protocol on Workers primitives.",
+      "why": "PocketBase compiles to wasm unmodified (51 MB, fits), but it pins compute and storage in one Durable Object, and Void exposes no custom Durable Objects. That is a lift, not a port."
+    },
+    {
+      "id": "d2",
+      "date": "2026-09-05",
+      "title": "D1 per instance for data",
+      "choice": "One D1 database per voidbase instance, raw binding for user collections, Drizzle only for system tables.",
+      "why": "Read replication through the Sessions API, managed migrations, and Cloudflare's own guidance to scale out with many small databases. Accepted constraints: batch-only writes, 100 bound parameters, 100 columns per table."
+    },
+    {
+      "id": "d3",
+      "date": "2026-09-05",
+      "title": "Validate, then one batch",
+      "choice": "Every write path validates with reads first, then commits a single D1 batch. Hooks run before or after the batch, never inside a transaction.",
+      "why": "D1 has no interactive transactions. This is the documented semantic difference from PocketBase."
+    },
+    {
+      "id": "d4",
+      "date": "2026-09-05",
+      "title": "Queues for side effects",
+      "choice": "Email, audit log rows, cascade file deletes, thumbnails, and webhook actions run in queue consumers.",
+      "why": "Keeps request latency flat and matches the platform's intended use of Queues."
+    },
+    {
+      "id": "d5",
+      "date": "2026-09-05",
+      "title": "Realtime on void/sse over a D1 change feed",
+      "choice": "PocketBase framing is written by void/sse. Fanout is a _changes table in D1 appended inside the write batch and polled by one multiplexed poller per isolate every one to two seconds. void/live stays an opt-in low-latency transport behind the same front. No sidecar, no custom Durable Object.",
+      "why": "void/live holds one Durable Object per connection, billed for wall-clock duration at about $4 per always-connected client per month. The change feed costs about $0.02 per client per month and $0 when nobody is connected, and it keeps the self-host deploy path open. Revised the same day after pricing the first version."
+    },
+    {
+      "id": "d6",
+      "date": "2026-09-05",
+      "title": "Two unmodified oracles",
+      "choice": "The PocketBase 0.40.2 admin panel and the pocketbase JS SDK 0.28, both untouched, define done. Schema is data, edited at runtime.",
+      "why": "The panel exercises the superuser surface that apps never touch; the starter exercises the app surface."
+    }
+  ],
+  "statuses": {
+    "todo": {
+      "label": "Not started",
+      "weight": 0,
+      "counts": true
+    },
+    "partial": {
+      "label": "In progress",
+      "weight": 0.5,
+      "counts": true
+    },
+    "done": {
+      "label": "Done",
+      "weight": 1,
+      "counts": true
+    },
+    "deferred": {
+      "label": "Deferred",
+      "weight": 0,
+      "counts": false
+    },
+    "out": {
+      "label": "Out of scope",
+      "weight": 0,
+      "counts": false
+    }
+  },
+  "oracles": [
+    {
+      "id": "sdk",
+      "label": "SDK seamless",
+      "description": "Every service method in the pocketbase JS SDK 0.28 typings behaves as it does against PocketBase 0.40.2."
+    },
+    {
+      "id": "admin",
+      "label": "Admin panel green",
+      "description": "The unmodified PocketBase admin panel served at /_/ works screen by screen."
+    },
+    {
+      "id": "starter",
+      "label": "Starter app green",
+      "description": "pocketbase-sveltekit-starter runs unchanged, including its JS hooks and migrations."
+    },
+    {
+      "id": "prod",
+      "label": "Production ready",
+      "description": "Hardening, operations, docs, tests, and deploy paths a paying user needs."
+    }
+  ],
+  "milestones": [
+    {
+      "id": "m1",
+      "title": "Panel boots",
+      "description": "Worker serves the panel, answers health, authenticates a superuser."
+    },
+    {
+      "id": "m2",
+      "title": "Schema engine",
+      "description": "Collections and all field types are created, edited, and imported at runtime on D1."
+    },
+    {
+      "id": "m3",
+      "title": "Records and rules",
+      "description": "Records CRUD, expand, filters, API rules, basic files. Panel record screens green."
+    },
+    {
+      "id": "m4",
+      "title": "Starter app green",
+      "description": "Realtime, hooks runtime, thumbs, OAuth2. The SvelteKit starter passes end to end."
+    },
+    {
+      "id": "m5",
+      "title": "SDK seamless",
+      "description": "Every remaining SDK method: OTP, MFA, batch, logs, backups, crons, SQL, providers."
+    },
+    {
+      "id": "m6",
+      "title": "Production ready",
+      "description": "Rate limits, mail, security review, conformance suite, docs, CLI, release."
+    }
+  ],
+  "areas": [
+    {
+      "id": "platform",
+      "title": "Platform and bootstrap",
+      "summary": "The Worker skeleton, system tables, settings store, static serving, and deploy paths.",
+      "items": [
+        {
+          "id": "platform.skeleton",
+          "title": "Void app skeleton: one catch-all route mounting the voidbase Hono router",
+          "surface": "routes/api/[...path].ts",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 2,
+          "status": "done",
+          "milestone": "m1",
+          "verify": "GET /api/health answers from void dev"
+        },
+        {
+          "id": "platform.system-tables",
+          "title": "System tables bootstrap migration",
+          "surface": "_collections _params _migrations _superusers _mfas _otps _externalAuths _authOrigins _logs",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 3,
+          "status": "done",
+          "milestone": "m1",
+          "verify": "Fresh D1 boots with the five system collections visible to a superuser"
+        },
+        {
+          "id": "platform.settings-store",
+          "title": "Settings persisted in _params with defaults, cache, and reload",
+          "surface": "_params.settings",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 2,
+          "status": "done",
+          "milestone": "m1",
+          "verify": "Panel application settings round-trip"
+        },
+        {
+          "id": "platform.encryption",
+          "title": "Settings secrets encrypted at rest with a deploy secret",
+          "surface": "PB_ENCRYPTION_KEY equivalent",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m6",
+          "verify": "SMTP password unreadable in the _params row"
+        },
+        {
+          "id": "platform.panel-static",
+          "title": "Serve the admin panel build under /_/ with hash routing",
+          "surface": "GET /_/{path...}",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 1,
+          "status": "done",
+          "milestone": "m1",
+          "verify": "Login screen renders from the Worker"
+        },
+        {
+          "id": "platform.app-static",
+          "title": "Serve the app's static build with SPA fallback outside /api and /_",
+          "surface": "publicDir + routing.fallbacks",
+          "oracles": [
+            "starter"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m4",
+          "verify": "Deep link to /posts/ loads the starter"
+        },
+        {
+          "id": "platform.health",
+          "title": "Health endpoint with superuser-only fields",
+          "surface": "GET /api/health → canBackup realIP possibleProxyHeader",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 1,
+          "status": "done",
+          "milestone": "m1",
+          "verify": "Panel settings page shows real IP and proxy header"
+        },
+        {
+          "id": "platform.error-envelope",
+          "title": "PocketBase error envelope and validation error codes",
+          "surface": "{status, message, data:{field:{code,message}}}",
+          "oracles": [
+            "sdk",
+            "starter"
+          ],
+          "hours": 2,
+          "status": "partial",
+          "milestone": "m1",
+          "verify": "Starter's alertOnFailure shows per-field errors",
+          "notes": "Envelope and the auth validation codes match; the full validation code catalogue comes with records create/update."
+        },
+        {
+          "id": "platform.request-context",
+          "title": "Request info: auth record from bearer token, method, headers, query, body, client IP",
+          "surface": "@request.*",
+          "oracles": [
+            "sdk"
+          ],
+          "hours": 2,
+          "status": "partial",
+          "milestone": "m1",
+          "verify": "Rules referencing @request.auth.id evaluate",
+          "notes": "Auth record from the Authorization header (raw or Bearer). Method, headers, query, body context for rules pending."
+        },
+        {
+          "id": "platform.dev-loop",
+          "title": "Local dev: void dev with local D1 and R2, seeded superuser, hot reload",
+          "surface": "void dev",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 2,
+          "status": "done",
+          "milestone": "m1",
+          "verify": "One command brings up panel plus API locally"
+        },
+        {
+          "id": "platform.middleware-core",
+          "title": "Core middleware parity: panic recovery, load auth token, security headers, CORS, body limit",
+          "surface": "pbPanicRecover pbLoadAuthToken pbSecurityHeaders pbCors pbBodyLimit",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m6",
+          "verify": "Headers match PocketBase's defaults on every response"
+        },
+        {
+          "id": "platform.deploy-void",
+          "title": "Deploy to the Void platform with D1, R2, and DO provisioned from imports",
+          "surface": "void deploy",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m6",
+          "verify": "Panel reachable at the .void.app URL"
+        },
+        {
+          "id": "platform.deploy-cf",
+          "title": "Self-host deploy to your own Cloudflare account",
+          "surface": "void deploy --backend cloudflare --provision",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m6",
+          "verify": "Same build live on a custom Cloudflare account, DO included"
+        }
+      ]
+    },
+    {
+      "id": "collections",
+      "title": "Collections and schema engine",
+      "summary": "Schema is data, as in PocketBase: a _collections table driving runtime DDL on D1.",
+      "items": [
+        {
+          "id": "coll.model",
+          "title": "Collection model: base, auth, view types; fields, rules, indexes, system flag, options",
+          "surface": "_collections row shape",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 4,
+          "status": "done",
+          "milestone": "m2",
+          "verify": "GET /api/collections/{c} matches PocketBase's JSON for the same collection"
+        },
+        {
+          "id": "coll.validate",
+          "title": "Collection validation: names, reserved names, field name rules, system field protection, index syntax",
+          "surface": "form validation",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 3,
+          "status": "partial",
+          "milestone": "m2",
+          "verify": "Panel shows the same field errors as PocketBase",
+          "notes": "Names, ids, types, duplicates, reserved names, system-field protection, field settings, indexes: all matching PocketBase's codes. API rule syntax validation waits for the filter parser."
+        },
+        {
+          "id": "coll.ddl",
+          "title": "Runtime DDL on D1: create table, add, drop, rename column, indexes, CREATE VIEW",
+          "surface": "D1 exec",
+          "oracles": [
+            "admin",
+            "starter"
+          ],
+          "hours": 6,
+          "status": "done",
+          "milestone": "m2",
+          "verify": "Editing a field in the panel alters the D1 table"
+        },
+        {
+          "id": "coll.list",
+          "title": "List collections with filter, sort, pagination",
+          "surface": "GET /api/collections",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 1,
+          "status": "done",
+          "milestone": "m2"
+        },
+        {
+          "id": "coll.view",
+          "title": "View one collection by id or name",
+          "surface": "GET /api/collections/{c}",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 0.5,
+          "status": "done",
+          "milestone": "m2"
+        },
+        {
+          "id": "coll.create",
+          "title": "Create collection",
+          "surface": "POST /api/collections",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 2,
+          "status": "done",
+          "milestone": "m2"
+        },
+        {
+          "id": "coll.update",
+          "title": "Update collection including field add, remove, rename, and type-change rules",
+          "surface": "PATCH /api/collections/{c}",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 3,
+          "status": "done",
+          "milestone": "m2"
+        },
+        {
+          "id": "coll.delete",
+          "title": "Delete collection with dependent relation checks and file cleanup",
+          "surface": "DELETE /api/collections/{c}",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 2,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Delete with relation-reference refusal and system protection; file cleanup lands with Files."
+        },
+        {
+          "id": "coll.import",
+          "title": "Import collections with deleteMissing",
+          "surface": "PUT /api/collections/import",
+          "oracles": [
+            "admin",
+            "sdk",
+            "starter"
+          ],
+          "hours": 2,
+          "status": "done",
+          "milestone": "m2",
+          "verify": "Starter snapshot imports unchanged"
+        },
+        {
+          "id": "coll.truncate",
+          "title": "Truncate collection records",
+          "surface": "DELETE /api/collections/{c}/truncate",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 0.5,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "DELETE FROM the table; file cleanup lands with Files."
+        },
+        {
+          "id": "coll.scaffolds",
+          "title": "Scaffolds for new collections",
+          "surface": "GET /api/collections/meta/scaffolds",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 1,
+          "status": "done",
+          "milestone": "m2"
+        },
+        {
+          "id": "coll.oauth2-meta",
+          "title": "OAuth2 provider catalog metadata",
+          "surface": "GET /api/collections/meta/oauth2-providers",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 0.5,
+          "status": "done",
+          "milestone": "m2"
+        },
+        {
+          "id": "coll.views",
+          "title": "View collections: dry-run query, fields derived from SELECT, read-only records",
+          "surface": "POST /api/collections/meta/dry-run-view",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 4,
+          "status": "partial",
+          "milestone": "m5",
+          "notes": "CREATE VIEW plus fields derived from PRAGMA table_info; dry-run endpoint and PocketBase's type inference pending."
+        },
+        {
+          "id": "coll.cascade",
+          "title": "Relation cascadeDelete and orphan file removal",
+          "surface": "relation.cascadeDelete",
+          "oracles": [
+            "sdk",
+            "starter"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "coll.hooks",
+          "title": "Collection hooks with Request, Execute, AfterSuccess, AfterError variants",
+          "surface": "OnCollectionValidate OnCollectionCreate OnCollectionUpdate OnCollectionDelete",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m6"
+        }
+      ]
+    },
+    {
+      "id": "fields",
+      "title": "Field types",
+      "summary": "All fourteen PocketBase field types with their options, storage shape, and validation.",
+      "items": [
+        {
+          "id": "field.text",
+          "title": "text: min, max, pattern, autogeneratePattern, primaryKey",
+          "surface": "field_text.go",
+          "oracles": [
+            "admin",
+            "sdk",
+            "starter"
+          ],
+          "hours": 1.5,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        },
+        {
+          "id": "field.editor",
+          "title": "editor: convertURLs, maxSize",
+          "surface": "field_editor.go",
+          "oracles": [
+            "admin",
+            "sdk",
+            "starter"
+          ],
+          "hours": 1,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        },
+        {
+          "id": "field.number",
+          "title": "number: min, max, onlyInt",
+          "surface": "field_number.go",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 1,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        },
+        {
+          "id": "field.bool",
+          "title": "bool",
+          "surface": "field_bool.go",
+          "oracles": [
+            "admin",
+            "sdk",
+            "starter"
+          ],
+          "hours": 0.5,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        },
+        {
+          "id": "field.email",
+          "title": "email: exceptDomains, onlyDomains",
+          "surface": "field_email.go",
+          "oracles": [
+            "admin",
+            "sdk",
+            "starter"
+          ],
+          "hours": 1,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        },
+        {
+          "id": "field.url",
+          "title": "url: exceptDomains, onlyDomains",
+          "surface": "field_url.go",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 0.5,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        },
+        {
+          "id": "field.date",
+          "title": "date: min, max, UTC string format",
+          "surface": "field_date.go",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 1,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        },
+        {
+          "id": "field.autodate",
+          "title": "autodate: onCreate, onUpdate",
+          "surface": "field_autodate.go",
+          "oracles": [
+            "admin",
+            "sdk",
+            "starter"
+          ],
+          "hours": 1,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        },
+        {
+          "id": "field.select",
+          "title": "select: values, maxSelect, single value versus JSON array storage",
+          "surface": "field_select.go",
+          "oracles": [
+            "admin",
+            "sdk",
+            "starter"
+          ],
+          "hours": 2,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        },
+        {
+          "id": "field.file",
+          "title": "file: maxSelect, maxSize, mimeTypes, thumbs, protected (validation; storage lives under Files)",
+          "surface": "field_file.go",
+          "oracles": [
+            "admin",
+            "sdk",
+            "starter"
+          ],
+          "hours": 2,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        },
+        {
+          "id": "field.relation",
+          "title": "relation: collectionId, cascadeDelete, minSelect, maxSelect",
+          "surface": "field_relation.go",
+          "oracles": [
+            "admin",
+            "sdk",
+            "starter"
+          ],
+          "hours": 2,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        },
+        {
+          "id": "field.json",
+          "title": "json: maxSize, stored as text, path querying",
+          "surface": "field_json.go",
+          "oracles": [
+            "admin",
+            "sdk",
+            "starter"
+          ],
+          "hours": 1.5,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        },
+        {
+          "id": "field.password",
+          "title": "password: cost, min, max, pattern, hidden, hashed",
+          "surface": "field_password.go",
+          "oracles": [
+            "admin",
+            "sdk",
+            "starter"
+          ],
+          "hours": 1.5,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        },
+        {
+          "id": "field.geopoint",
+          "title": "geoPoint: lon and lat JSON, map input in the panel",
+          "surface": "field_geo_point.go",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 1,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "Options, defaults, column type, and settings validation match PocketBase. Record value validation lands with records create and update in milestone three."
+        }
+      ]
+    },
+    {
+      "id": "records",
+      "title": "Records API",
+      "summary": "The endpoints every SDK-based app lives on.",
+      "items": [
+        {
+          "id": "rec.list",
+          "title": "List: page, perPage up to 500, skipTotal, totalItems, totalPages",
+          "surface": "GET /api/collections/{c}/records",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "partial",
+          "milestone": "m3",
+          "verify": "Starter posts page paginates",
+          "notes": "List, pagination, sort by fields and @rowid/@random for superusers; filter and rules pending."
+        },
+        {
+          "id": "rec.sort",
+          "title": "Sort: signed fields, multiple keys, @random, @rowid, relation paths",
+          "surface": "?sort=-created,title",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "rec.fields",
+          "title": "Field selection with :excerpt(n,bool) modifier and wildcards",
+          "surface": "?fields=*,expand.user.name",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "rec.view",
+          "title": "View one record",
+          "surface": "GET /api/collections/{c}/records/{id}",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 1,
+          "status": "partial",
+          "milestone": "m3",
+          "notes": "View by id for superusers; rules pending."
+        },
+        {
+          "id": "rec.create",
+          "title": "Create from JSON or multipart with defaults and autodate",
+          "surface": "POST /api/collections/{c}/records",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "rec.update",
+          "title": "Update with field+, +field, field- modifiers for multi-value and file fields",
+          "surface": "PATCH /api/collections/{c}/records/{id}",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m3",
+          "verify": "Starter's files- removal works"
+        },
+        {
+          "id": "rec.delete",
+          "title": "Delete with cascade and file cleanup",
+          "surface": "DELETE /api/collections/{c}/records/{id}",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "rec.expand",
+          "title": "Expand: direct relations, nested paths to depth 6, back-relations via, view-rule check per expanded record",
+          "surface": "?expand=user,comments_via_post.author",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 5,
+          "status": "todo",
+          "milestone": "m3",
+          "verify": "Starter shows expand.user.name on posts"
+        },
+        {
+          "id": "rec.rules",
+          "title": "API rule enforcement per action; null means superuser only, empty means public; superuser bypass",
+          "surface": "listRule viewRule createRule updateRule deleteRule",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m3",
+          "verify": "Non-owner cannot edit another user's post"
+        },
+        {
+          "id": "rec.enrich",
+          "title": "Response enrichment: hidden fields, emailVisibility, collectionId and collectionName, expand payload",
+          "surface": "record JSON",
+          "oracles": [
+            "sdk",
+            "starter"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "rec.validation",
+          "title": "Field validation with PocketBase error codes such as validation_required and validation_not_unique",
+          "surface": "400 data.{field}.code",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "rec.batch",
+          "title": "Batch transaction: create, update, upsert, delete across collections; multipart requests.N.field; settings.batch limits",
+          "surface": "POST /api/batch",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 5,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "rec.hooks",
+          "title": "Record hooks: Validate, Create, Update, Delete, Enrich, Request variants, AfterSuccess and AfterError",
+          "surface": "OnRecordCreate OnRecordUpdateRequest OnRecordEnrich …",
+          "oracles": [
+            "starter",
+            "prod"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m4",
+          "verify": "Starter's slugDefault and auditlog hooks fire"
+        },
+        {
+          "id": "rec.conformance",
+          "title": "Differential conformance tests for the records API against PocketBase",
+          "surface": "tests/records",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m6"
+        }
+      ]
+    },
+    {
+      "id": "filter",
+      "title": "Filter and rule language",
+      "summary": "The fexpr grammar compiled to SQL, used by filters, sorts, and API rules.",
+      "items": [
+        {
+          "id": "flt.parser",
+          "title": "fexpr-compatible parser: identifiers, quoted strings, numbers, null, true, false, parentheses, and, or, comments",
+          "surface": "tokenizer + Pratt parser",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "flt.compare",
+          "title": "Operators = != > >= < <= ~ !~ with coercion and LIKE escaping",
+          "surface": "SignEq … SignNlike",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "flt.any",
+          "title": "Any-match operators ?= ?!= ?> ?>= ?< ?<= ?~ ?!~ and multi-value field semantics",
+          "surface": "SignAnyEq … SignAnyNlike",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "flt.paths",
+          "title": "Relation path traversal a.b.c through joins",
+          "surface": "user.name = 'x'",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "flt.via",
+          "title": "Back-relations collection_via_field",
+          "surface": "comments_via_post.id ?= 'x'",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "flt.request",
+          "title": "@request.auth, @request.body, @request.query, @request.headers, @request.method, @request.context",
+          "surface": "rule identifiers",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m3",
+          "verify": "Starter's user = @request.auth.id rules hold"
+        },
+        {
+          "id": "flt.collection",
+          "title": "@collection.name.field cross-collection references",
+          "surface": "@collection.roles.user ?= @request.auth.id",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "flt.macros",
+          "title": "Datetime macros @now, @second to @year, @todayStart and End, @monthStart and End, @yearStart and End, @yesterday, @tomorrow",
+          "surface": "macros",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "flt.modifiers",
+          "title": "Field modifiers :isset, :length, :each, :lower",
+          "surface": "tags:length > 2",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "flt.geo",
+          "title": "geoDistance(lonA, latA, lonB, latB)",
+          "surface": "geoDistance(...) < 10",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "flt.json",
+          "title": "JSON field path filters data.key.sub",
+          "surface": "metadata.foo = 'bar'",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "flt.write-rules",
+          "title": "Create and update rule evaluation against the incoming record",
+          "surface": "@request.body.* in createRule",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "flt.conformance",
+          "title": "Differential filter corpus against PocketBase, hundreds of expressions",
+          "surface": "tests/filter",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m6"
+        }
+      ]
+    },
+    {
+      "id": "auth",
+      "title": "Auth",
+      "summary": "Auth collections, tokens, every auth flow, providers, and superusers.",
+      "items": [
+        {
+          "id": "auth.system-fields",
+          "title": "Auth system fields, tokenKey, password hashing with bcrypt verify for imported users then rehash",
+          "surface": "email emailVisibility verified password tokenKey",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "done",
+          "milestone": "m1"
+        },
+        {
+          "id": "auth.password",
+          "title": "auth-with-password with identityFields and authRule",
+          "surface": "POST /api/collections/{c}/auth-with-password",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "partial",
+          "milestone": "m1",
+          "verify": "Panel login and starter login both succeed",
+          "notes": "Password auth works for any auth collection; non-empty authRule needs the filter engine."
+        },
+        {
+          "id": "auth.jwt",
+          "title": "JWT issue and verify: HS256 with tokenKey plus collection secret; types auth, verification, passwordReset, emailChange, file, otp",
+          "surface": "payload {id, type, collectionId, refreshable, exp}",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "done",
+          "milestone": "m1",
+          "verify": "SDK authStore.isValid and isSuperuser read the token correctly"
+        },
+        {
+          "id": "auth.refresh",
+          "title": "auth-refresh",
+          "surface": "POST /api/collections/{c}/auth-refresh",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 1,
+          "status": "done",
+          "milestone": "m1"
+        },
+        {
+          "id": "auth.methods",
+          "title": "auth-methods listing: password, oauth2, mfa, otp",
+          "surface": "GET /api/collections/{c}/auth-methods",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 1,
+          "status": "done",
+          "milestone": "m4"
+        },
+        {
+          "id": "auth.verification",
+          "title": "request-verification and confirm-verification",
+          "surface": "POST …/request-verification …/confirm-verification",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "auth.password-reset",
+          "title": "request-password-reset and confirm-password-reset",
+          "surface": "POST …/request-password-reset …/confirm-password-reset",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "auth.email-change",
+          "title": "request-email-change and confirm-email-change",
+          "surface": "POST …/request-email-change …/confirm-email-change",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "auth.otp",
+          "title": "OTP: request-otp, auth-with-otp, _otps table, cleanup",
+          "surface": "POST …/request-otp …/auth-with-otp",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "auth.mfa",
+          "title": "MFA: mfaId challenge response, _mfas table, two-method flow",
+          "surface": "401 {mfaId}",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "auth.oauth2",
+          "title": "auth-with-oauth2 code exchange, createData, _externalAuths link",
+          "surface": "POST /api/collections/{c}/auth-with-oauth2",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "auth.oauth2-realtime",
+          "title": "Browser OAuth2 flow through realtime plus the redirect route",
+          "surface": "GET/POST /api/oauth2-redirect",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m4",
+          "verify": "SDK authWithOAuth2 popup flow completes"
+        },
+        {
+          "id": "auth.providers",
+          "title": "Provider catalog: oidc, google, github, apple, microsoft, discord, facebook, gitlab, gitea, gitee, bitbucket, box, instagram, kakao, lark, linear, livechat, mailcow, monday, notion, patreon, planningcenter, spotify, strava, trakt, twitch, twitter, vk, wakatime, yandex",
+          "surface": "tools/auth/*.go",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 6,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "auth.external",
+          "title": "listExternalAuths and unlinkExternalAuth",
+          "surface": "_externalAuths records API",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "auth.origins",
+          "title": "Auth origins and new-device auth alert email",
+          "surface": "_authOrigins",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "auth.impersonate",
+          "title": "Superuser impersonate with custom token duration",
+          "surface": "POST /api/collections/{c}/impersonate/{id}",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "auth.superusers",
+          "title": "_superusers collection and superuser IP allowlist middleware",
+          "surface": "pbSuperuserIPsWhitelist",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 2,
+          "status": "partial",
+          "milestone": "m1",
+          "notes": "_superusers collection seeded and working; superuser IP allowlist middleware pending."
+        },
+        {
+          "id": "auth.manage-rule",
+          "title": "manageRule for managing other auth records",
+          "surface": "manageRule",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "auth.token-options",
+          "title": "Per-collection token durations and secrets, authAlert config",
+          "surface": "authToken passwordResetToken emailChangeToken verificationToken fileToken",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "auth.hooks",
+          "title": "Auth request hooks",
+          "surface": "OnRecordAuthRequest OnRecordAuthWithPasswordRequest OnRecordAuthRefreshRequest OnRecordRequestOTPRequest …",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m6"
+        }
+      ]
+    },
+    {
+      "id": "files",
+      "title": "Files",
+      "summary": "Upload, storage on R2, download, thumbnails, protected files.",
+      "items": [
+        {
+          "id": "file.upload",
+          "title": "Multipart upload, generated filenames name_random.ext, maxSelect, maxSize, mimeTypes validation",
+          "surface": "multipart/form-data",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "file.r2",
+          "title": "R2 storage backend keyed {collectionId}/{recordId}/{filename}",
+          "surface": "void/storage",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "file.s3",
+          "title": "External S3 backend from settings.s3",
+          "surface": "settings.s3",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "file.download",
+          "title": "Download: content type, cache headers, download=1, range requests",
+          "surface": "GET /api/files/{c}/{id}/{filename}",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "file.thumbs",
+          "title": "Thumbnails WxH, WxHt, WxHb, WxHf, 0xH, Wx0 for declared thumbs, generated on demand and cached in R2",
+          "surface": "?thumb=100x100",
+          "oracles": [
+            "sdk",
+            "starter",
+            "admin"
+          ],
+          "hours": 6,
+          "status": "todo",
+          "milestone": "m4",
+          "verify": "Starter post thumbnails render at 100x100"
+        },
+        {
+          "id": "file.protected",
+          "title": "Protected files and file tokens",
+          "surface": "POST /api/files/token, ?token=",
+          "oracles": [
+            "sdk",
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "file.cleanup",
+          "title": "Cleanup on delete and field- removal, orphan sweep",
+          "surface": "R2 delete",
+          "oracles": [
+            "sdk",
+            "starter"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "file.hooks",
+          "title": "File hooks",
+          "surface": "OnFileDownloadRequest OnFileTokenRequest",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m6"
+        }
+      ]
+    },
+    {
+      "id": "realtime",
+      "title": "Realtime",
+      "summary": "PocketBase's SSE protocol emitted by void/sse, fanned out through a D1 change feed. Zero cost when nobody is connected. void/live is an opt-in low-latency transport.",
+      "items": [
+        {
+          "id": "rt.connect",
+          "title": "GET /api/realtime as a void/sse eventStream: PB_CONNECT with the clientId as the SSE id, keepalive comments, close on client abort",
+          "surface": "eventStream() from void/sse",
+          "oracles": [
+            "sdk",
+            "starter"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m4",
+          "verify": "SDK realtime.isConnected becomes true against voidbase"
+        },
+        {
+          "id": "rt.feed",
+          "title": "_changes table (id, collection, recordId, action, created) appended inside the same D1 batch as the record write, so the feed is atomic with the change",
+          "surface": "_changes",
+          "oracles": [
+            "sdk",
+            "starter"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "rt.subs",
+          "title": "POST /api/realtime stores the stream's subscriptions and auth token in _realtime_clients keyed by clientId, because the POST can land on any isolate; the stream picks them up on its next poll",
+          "surface": "POST /api/realtime {clientId, subscriptions} → _realtime_clients",
+          "oracles": [
+            "sdk",
+            "starter"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "rt.poller",
+          "title": "One multiplexed poller per isolate: a single D1 read per interval serves every open stream in that isolate; adaptive one to two second interval; cursor per stream",
+          "surface": "module-level poller, SELECT … FROM _changes WHERE id > ?",
+          "oracles": [
+            "sdk",
+            "starter"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "rt.hydrate",
+          "title": "Each matched change is hydrated from D1: rule check with the subscriber's auth (listRule for coll/*, viewRule for coll/id), expand from the subscription options, record enrichment",
+          "surface": "one D1 read per event per subscriber",
+          "oracles": [
+            "sdk",
+            "starter"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m4",
+          "verify": "Starter posts list updates live in a second tab; a non-owner never receives a private record"
+        },
+        {
+          "id": "rt.reconnect",
+          "title": "Reconnect: fresh clientId on PB_CONNECT, SDK resubmits subscriptions; the client row and cursor are dropped when the stream closes",
+          "surface": "stream.closed",
+          "oracles": [
+            "sdk",
+            "starter"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "rt.retention",
+          "title": "_changes and _realtime_clients retention cron; poll interval knob; documented default latency of one to two seconds",
+          "surface": "crons + docs",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "rt.live",
+          "title": "Opt-in low-latency transport on void/live behind the same PocketBase-framed front: in-isolate bridge with live.connect as owner client:<id>, control translation, topic sharding past 256 subscribers",
+          "surface": "realtime.transport = 'live'",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 8,
+          "status": "deferred",
+          "milestone": "m6",
+          "notes": "Costs about $4 per always-connected client per month in Durable Object duration. Only for apps that need sub-second delivery."
+        },
+        {
+          "id": "rt.hooks",
+          "title": "Realtime hooks",
+          "surface": "OnRealtimeConnectRequest OnRealtimeSubscribeRequest OnRealtimeMessageSend",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "rt.limits",
+          "title": "Load test: open streams per isolate and D1 reads per second at one thousand and ten thousand clients",
+          "surface": "k6",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m6"
+        }
+      ]
+    },
+    {
+      "id": "settings",
+      "title": "Settings and mail",
+      "summary": "Every settings section the panel edits, plus a mailer that works from a Worker.",
+      "items": [
+        {
+          "id": "set.api",
+          "title": "Get and update all sections, secrets masked on read",
+          "surface": "GET/PATCH /api/settings",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 2,
+          "status": "partial",
+          "milestone": "m2",
+          "notes": "GET with secrets masked; PATCH pending."
+        },
+        {
+          "id": "set.meta",
+          "title": "Meta: appName, appURL, senderName, senderAddress, hideControls",
+          "surface": "settings.meta",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "set.smtp",
+          "title": "SMTP over TCP sockets: host, port, username, password, authMethod, tls, localName; test email",
+          "surface": "POST /api/settings/test/email",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 5,
+          "status": "todo",
+          "milestone": "m5",
+          "verify": "Panel test email arrives"
+        },
+        {
+          "id": "set.mail-provider",
+          "title": "Alternative mail transport: Cloudflare Email Service or an HTTP provider behind the same settings",
+          "surface": "send_email binding",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "set.s3",
+          "title": "S3 settings and connection test",
+          "surface": "POST /api/settings/test/s3",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "set.batch",
+          "title": "Batch settings: enabled, maxRequests, timeout, maxBodySize",
+          "surface": "settings.batch",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "set.ratelimits",
+          "title": "Rate limits: rules with labels like *:auth, per-IP counters, excludedIPs",
+          "surface": "pbRateLimit",
+          "oracles": [
+            "admin",
+            "prod"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "set.trusted-proxy",
+          "title": "Trusted proxy headers and leftmost IP",
+          "surface": "settings.trustedProxy",
+          "oracles": [
+            "admin",
+            "prod"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "set.logs",
+          "title": "Logs settings: maxDays, minLevel, logIP, logAuthId",
+          "surface": "settings.logs",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "set.backups",
+          "title": "Backups settings: cron, cronMaxKeep, S3 target",
+          "surface": "settings.backups",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "set.apple",
+          "title": "Apple client secret generation",
+          "surface": "POST /api/settings/apple/generate-client-secret",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "set.templates",
+          "title": "Email templates per auth collection with PocketBase placeholders: verification, reset, email change, OTP, auth alert",
+          "surface": "{APP_NAME} {TOKEN} {OTP}",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "set.hooks",
+          "title": "Settings and mailer hooks",
+          "surface": "OnSettingsListRequest OnSettingsUpdateRequest OnSettingsReload OnMailerSend OnMailerRecord*Send",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m6"
+        }
+      ]
+    },
+    {
+      "id": "logs",
+      "title": "Logs",
+      "summary": "Request logs in D1 with the panel's list, detail, and hourly stats.",
+      "items": [
+        {
+          "id": "log.writer",
+          "title": "Request and activity logger writing _logs in batches after the response",
+          "surface": "pbActivityLogger via waitUntil",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "log.api",
+          "title": "List with filter and sort, view one, hourly stats, truncate",
+          "surface": "GET /api/logs, /api/logs/stats, /api/logs/{id}, DELETE /api/logs",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m5",
+          "verify": "Panel logs page and chart populate"
+        },
+        {
+          "id": "log.retention",
+          "title": "Retention cron and minLevel filtering",
+          "surface": "__pbLogsCleanup__",
+          "oracles": [
+            "admin",
+            "prod"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m6"
+        }
+      ]
+    },
+    {
+      "id": "backups",
+      "title": "Backups",
+      "summary": "Archives of D1 data and files into R2, with restore. CPU-time bound on Workers.",
+      "items": [
+        {
+          "id": "bak.create",
+          "title": "Create an archive of D1 data plus a files manifest into R2",
+          "surface": "POST /api/backups",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 6,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "bak.list",
+          "title": "List and delete backups",
+          "surface": "GET /api/backups, DELETE /api/backups/{key}",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "bak.restore",
+          "title": "Upload and restore by recreating tables and files",
+          "surface": "POST /api/backups/upload, POST /api/backups/{key}/restore",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "bak.download",
+          "title": "Download with a superuser file token",
+          "surface": "GET /api/backups/{key}?token=",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "bak.cron",
+          "title": "Auto backup cron and cronMaxKeep",
+          "surface": "__pbAutoBackup__",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "bak.gate",
+          "title": "canBackup gating in health when the feature is unavailable",
+          "surface": "health.data.canBackup",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m6"
+        }
+      ]
+    },
+    {
+      "id": "crons",
+      "title": "Crons and scheduled jobs",
+      "summary": "A per-minute Cloudflare trigger dispatching PocketBase-style cron expressions.",
+      "items": [
+        {
+          "id": "cron.registry",
+          "title": "Cron registry with a per-minute trigger dispatching cron expressions",
+          "surface": "crons/tick.ts",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "cron.system",
+          "title": "System jobs: logs cleanup, OTP and MFA cleanup, auth origins cleanup, auto backup",
+          "surface": "__pbLogsCleanup__ __pbOTPCleanup__ __pbMFACleanup__ __pbAutoBackup__",
+          "oracles": [
+            "admin",
+            "prod"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "cron.api",
+          "title": "List and run crons",
+          "surface": "GET /api/crons, POST /api/crons/{id}",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "cron.user",
+          "title": "cronAdd and cronRemove from hooks",
+          "surface": "cronAdd(id, expr, fn)",
+          "oracles": [
+            "starter",
+            "prod"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m6"
+        }
+      ]
+    },
+    {
+      "id": "sql",
+      "title": "SQL console",
+      "summary": "The superuser-only raw SQL route behind the panel's console.",
+      "items": [
+        {
+          "id": "sql.run",
+          "title": "Superuser raw SQL against D1",
+          "surface": "POST /api/sql",
+          "oracles": [
+            "admin",
+            "sdk"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m5"
+        }
+      ]
+    },
+    {
+      "id": "hooks",
+      "title": "Hooks and migrations runtime",
+      "summary": "A TypeScript runtime that runs pb_hooks and pb_migrations files unchanged inside the Worker.",
+      "items": [
+        {
+          "id": "hk.router",
+          "title": "routerAdd and routerUse with path params and middleware",
+          "surface": "routerAdd(method, path, handler, ...mw)",
+          "oracles": [
+            "starter"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "hk.events",
+          "title": "on* event registrations for record, collection, mailer, realtime, and request events with e.next() semantics",
+          "surface": "onRecordCreate onModelUpdate onMailerSend …",
+          "oracles": [
+            "starter",
+            "prod"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "hk.app",
+          "title": "$app: findCollectionByNameOrId, findRecordById, findFirstRecordByFilter, findRecordsByFilter, save, delete, settings, newMailClient, runInTransaction",
+          "surface": "$app",
+          "oracles": [
+            "starter",
+            "prod"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "hk.models",
+          "title": "Record, Collection, RecordUpsertForm, MailerMessage, DateTime, and field classes",
+          "surface": "new Record(coll, data)",
+          "oracles": [
+            "starter",
+            "prod"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "hk.apis",
+          "title": "$apis: requireAuth, requireSuperuserAuth, requireGuestOnly, enrichRecord, ApiError family",
+          "surface": "$apis.requireAuth()",
+          "oracles": [
+            "starter"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "hk.utils",
+          "title": "$http.send, $filesystem.fileFromURL and fileFromBytes, $security, $os.getenv, $template, $mails",
+          "surface": "$http $filesystem $security $os $template $mails",
+          "oracles": [
+            "starter",
+            "prod"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "hk.bundle",
+          "title": "Bundle pb_hooks/*.pb.js and required siblings into the Worker at build time with __hooks semantics",
+          "surface": "import.meta.glob",
+          "oracles": [
+            "starter"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m4",
+          "verify": "Starter's main.pb.js runs untouched"
+        },
+        {
+          "id": "hk.migrations",
+          "title": "JS migrations runner: migrate(up, down) with importCollections and model helpers, tracked in _migrations",
+          "surface": "pb_migrations/*.js",
+          "oracles": [
+            "starter",
+            "admin"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "hk.go",
+          "title": "Go hooks and custom Go endpoints",
+          "surface": "main.go",
+          "oracles": [
+            "starter"
+          ],
+          "hours": 0,
+          "status": "out",
+          "milestone": "m4",
+          "notes": "No Go on Workers. The starter's Go-only /api/go-hello is replaced by the JS route."
+        }
+      ]
+    },
+    {
+      "id": "panel",
+      "title": "Admin panel on Cloudflare",
+      "summary": "The unmodified PocketBase panel, screen by screen. Each screen is a verification checkpoint.",
+      "items": [
+        {
+          "id": "pnl.build",
+          "title": "Build ui/ with PB_BACKEND_URL=../ and ship dist with the library",
+          "surface": "ui/dist",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 1,
+          "status": "done",
+          "milestone": "m1"
+        },
+        {
+          "id": "pnl.login",
+          "title": "Login, token refresh, logout, superuser password reset",
+          "surface": "#/login",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 1,
+          "status": "partial",
+          "milestone": "m1",
+          "notes": "Login, token refresh, and logout verified headlessly; superuser password reset flow pending."
+        },
+        {
+          "id": "pnl.collections",
+          "title": "Collections: list, create, field editor for all fourteen types, rules editor, indexes, delete, truncate",
+          "surface": "#/collections",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 3,
+          "status": "done",
+          "milestone": "m2"
+        },
+        {
+          "id": "pnl.records",
+          "title": "Records: list with filter, sort, pagination, column toggles, bulk delete; create and edit with uploads, relation picker, JSON editor, geoPoint map",
+          "surface": "#/collections?collection=",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 3,
+          "status": "partial",
+          "milestone": "m3",
+          "notes": "Superuser records list renders; create, edit, and filter untested."
+        },
+        {
+          "id": "pnl.auth-records",
+          "title": "Auth records: verify, send reset, change email, impersonate, external auths, OAuth2 provider config",
+          "surface": "record panel auth tab",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "pnl.api-preview",
+          "title": "API preview docs render with the right base URL",
+          "surface": "API preview",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m3"
+        },
+        {
+          "id": "pnl.logs",
+          "title": "Logs page with filters and hourly chart",
+          "surface": "#/logs",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "pnl.settings-app",
+          "title": "Settings: application",
+          "surface": "#/settings",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "pnl.settings-mail",
+          "title": "Settings: mail with test email",
+          "surface": "#/settings/mail",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "pnl.settings-storage",
+          "title": "Settings: storage with S3 test",
+          "surface": "#/settings/storage",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "pnl.settings-backups",
+          "title": "Settings: backups create, download, restore, upload",
+          "surface": "#/settings/backups",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "pnl.settings-crons",
+          "title": "Settings: crons list and run",
+          "surface": "#/settings/crons",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "pnl.settings-sql",
+          "title": "Settings: SQL console",
+          "surface": "#/settings/sql",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "pnl.import-export",
+          "title": "Import and export collections",
+          "surface": "#/settings/import-collections #/settings/export-collections",
+          "oracles": [
+            "admin"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m5"
+        },
+        {
+          "id": "pnl.branding",
+          "title": "Optional branding swap: logo, favicon, title, doc links",
+          "surface": "ui/public logo.svg favicon.png index.html",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m6"
+        }
+      ]
+    },
+    {
+      "id": "starter",
+      "title": "Starter app on Cloudflare",
+      "summary": "pocketbase-sveltekit-starter as the second oracle, run unchanged.",
+      "items": [
+        {
+          "id": "st.import",
+          "title": "Import the starter's collections snapshot",
+          "surface": "pb_migrations/1774379551_collections_snapshot.js",
+          "oracles": [
+            "starter"
+          ],
+          "hours": 0.5,
+          "status": "done",
+          "milestone": "m2"
+        },
+        {
+          "id": "st.hooks",
+          "title": "Run main.pb.js, util.js, auditlog.pb.js unchanged: /api/config, /api/hello, /api/sendmail, /api/generate, slug default, audit log",
+          "surface": "pb_hooks",
+          "oracles": [
+            "starter"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "st.webauthn",
+          "title": "Passkeys: registration-options, register, login-options, login through a WebAuthn library on Workers",
+          "surface": "/api/webauthn/*",
+          "oracles": [
+            "starter"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "st.serve",
+          "title": "Serve sk/build from the same Worker",
+          "surface": "publicDir ../sk/build",
+          "oracles": [
+            "starter"
+          ],
+          "hours": 0.5,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "st.pages",
+          "title": "Every page green: home, posts with realtime and pagination, post view with images and thumbs, edit with uploads, hello, auditlog, login, signup, OAuth2",
+          "surface": "sk/src/routes",
+          "oracles": [
+            "starter"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m4"
+        },
+        {
+          "id": "st.e2e",
+          "title": "Playwright suite from sk/tests run against voidbase in CI",
+          "surface": "sk/tests",
+          "oracles": [
+            "starter",
+            "prod"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m4"
+        }
+      ]
+    },
+    {
+      "id": "prod",
+      "title": "Production readiness",
+      "summary": "What separates a demo from something people deploy and pay for.",
+      "items": [
+        {
+          "id": "prod.conformance",
+          "title": "Conformance harness: identical requests against PocketBase and voidbase, responses diffed",
+          "surface": "tests/conformance",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 8,
+          "status": "partial",
+          "milestone": "m6",
+          "notes": "test/conformance/compare.ts (20 request cases) and test/conformance/collections.ts (28 scenario steps incl. the starter snapshot import) diff against PocketBase 0.40.2 fixtures; test/panel-*.ts drive the unmodified panel headlessly."
+        },
+        {
+          "id": "prod.sdk-suite",
+          "title": "SDK coverage matrix executed live for every service method in the typings",
+          "surface": "tests/sdk",
+          "oracles": [
+            "prod",
+            "sdk"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "prod.security",
+          "title": "Security review: rule bypass attempts, token handling, file access, injection through filters, rate limits",
+          "surface": "review",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "prod.observability",
+          "title": "Structured logging to Void logs, request metrics, error alerts",
+          "surface": "void/log",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "prod.perf",
+          "title": "Performance baseline: D1 latency per endpoint, DO fanout, cold start",
+          "surface": "bench",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 3,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "prod.limits-doc",
+          "title": "Documented differences and limits versus PocketBase: D1 size, CPU time, thumbs, backups",
+          "surface": "docs/differences.md",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "prod.docs",
+          "title": "README, quickstart, migration guide from PocketBase, hooks API reference",
+          "surface": "docs",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "prod.cli",
+          "title": "CLI: init, import, superuser upsert, dev, deploy wrappers",
+          "surface": "voidbase bin",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 4,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "prod.export",
+          "title": "Data export to a SQLite file and files archive for leaving voidbase",
+          "surface": "voidbase export",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "prod.compat-matrix",
+          "title": "Version compatibility matrix and upstream tracking: panel 0.40.2, SDK 0.28",
+          "surface": "COMPAT.md",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 1,
+          "status": "todo",
+          "milestone": "m6"
+        },
+        {
+          "id": "prod.release",
+          "title": "Package publish, semver, changelog, license and attribution",
+          "surface": "npm",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 2,
+          "status": "todo",
+          "milestone": "m6"
+        }
+      ]
+    },
+    {
+      "id": "beyond",
+      "title": "Beyond parity",
+      "summary": "Cloudflare-native advantages. Deferred: not counted toward the finish line.",
+      "items": [
+        {
+          "id": "byd.edge-cache",
+          "title": "Edge caching of public list responses",
+          "surface": "ISR",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 3,
+          "status": "deferred",
+          "milestone": "m6"
+        },
+        {
+          "id": "byd.kv-revocation",
+          "title": "KV-backed token revocation",
+          "surface": "void/kv",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 2,
+          "status": "deferred",
+          "milestone": "m6"
+        },
+        {
+          "id": "byd.ai",
+          "title": "Workers AI in the hooks runtime",
+          "surface": "$ai",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 2,
+          "status": "deferred",
+          "milestone": "m6"
+        },
+        {
+          "id": "byd.replication",
+          "title": "D1 read replication tuning",
+          "surface": "D1 sessions",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 2,
+          "status": "deferred",
+          "milestone": "m6"
+        },
+        {
+          "id": "byd.shadcn-admin",
+          "title": "shadcn-admin-kit alternate admin with a PocketBase data provider",
+          "surface": "ra-core dataProvider",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 10,
+          "status": "deferred",
+          "milestone": "m6"
+        }
+      ]
+    }
+  ]
+}

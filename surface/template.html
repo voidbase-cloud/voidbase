@@ -1,0 +1,445 @@
+<title>Voidbase Surface Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    color-scheme: light;
+    --ground: #f4f5f8;
+    --surface: #ffffff;
+    --surface-2: #eceef3;
+    --ink: #171b22;
+    --ink-2: #4f5866;
+    --ink-3: #7d8593;
+    --hair: #dfe3ea;
+    --hair-2: #c9cfd9;
+    --accent: #2a78d6;
+    --accent-ink: #1c5cab;
+    --fill-done: #2a78d6;
+    --fill-partial: #86b6ef;
+    --track: #cde2fb;
+    --good: #0ca30c;
+    --warn: #fab219;
+    --focus: #2a78d6;
+    --sans: "IBM Plex Sans", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground: #101317;
+      --surface: #171b21;
+      --surface-2: #1f242c;
+      --ink: #e8ebf0;
+      --ink-2: #aab2be;
+      --ink-3: #737c8a;
+      --hair: #2a3039;
+      --hair-2: #39404b;
+      --accent: #3987e5;
+      --accent-ink: #6da7ec;
+      --fill-done: #3987e5;
+      --fill-partial: #1c5cab;
+      --track: #14345c;
+      --good: #0ca30c;
+      --warn: #fab219;
+      --focus: #6da7ec;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground: #101317;
+    --surface: #171b21;
+    --surface-2: #1f242c;
+    --ink: #e8ebf0;
+    --ink-2: #aab2be;
+    --ink-3: #737c8a;
+    --hair: #2a3039;
+    --hair-2: #39404b;
+    --accent: #3987e5;
+    --accent-ink: #6da7ec;
+    --fill-done: #3987e5;
+    --fill-partial: #1c5cab;
+    --track: #14345c;
+    --good: #0ca30c;
+    --warn: #fab219;
+    --focus: #6da7ec;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font: 14px/1.5 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-ink); }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  button, input, select { font: inherit; color: inherit; }
+  code, .mono { font-family: var(--mono); font-size: 0.86em; }
+  h1, h2, h3 { margin: 0; text-wrap: balance; font-weight: 600; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  .label {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3);
+  }
+
+  /* header */
+  header.top { border-bottom: 1px solid var(--hair); background: var(--surface); }
+  header.top .wrap { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 24px; padding-block: 18px; }
+  header.top h1 { font-size: 20px; }
+  header.top h1 span { color: var(--ink-3); font-weight: 400; }
+  header.top .meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--ink-2); font-size: 13px; margin-left: auto; }
+  header.top .meta b { font-weight: 500; color: var(--ink); }
+
+  /* summary */
+  section.summary { padding-block: 28px 8px; }
+  .hero {
+    display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 2fr); gap: 28px 40px; align-items: end;
+  }
+  .hero .figure { font-size: 64px; line-height: 1; font-weight: 600; letter-spacing: -0.02em; }
+  .hero .figure small { font-size: 26px; color: var(--ink-3); font-weight: 500; letter-spacing: 0; }
+  .hero .sub { color: var(--ink-2); margin-top: 6px; }
+  .hero .sub b { color: var(--ink); font-weight: 500; }
+  .goal { color: var(--ink-2); max-width: 62ch; }
+
+  .meter { display: flex; height: 10px; border-radius: 4px; background: var(--track); overflow: hidden; gap: 2px; }
+  .meter > i { display: block; height: 100%; }
+  .meter > i.done { background: var(--fill-done); border-radius: 4px 0 0 4px; }
+  .meter > i.partial { background: var(--fill-partial); }
+  .meter > i:last-child { border-radius: 0 4px 4px 0; }
+  .meter > i.done:only-child { border-radius: 4px; }
+  .meter.big { height: 16px; margin-top: 14px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }
+  .tile { background: var(--surface); border: 1px solid var(--hair); border-radius: 6px; padding: 14px 16px; display: grid; gap: 8px; }
+  .tile .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .tile .pct { font-size: 22px; font-weight: 600; }
+  .tile .hint { color: var(--ink-3); font-size: 12px; }
+  .tile .desc { color: var(--ink-2); font-size: 12.5px; }
+
+  /* milestones */
+  section.milestones { padding-block: 24px 8px; }
+  .track { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2px; margin-top: 10px; }
+  .ms { background: var(--surface); border: 1px solid var(--hair); padding: 12px 14px; display: grid; gap: 8px; grid-template-rows: auto auto 1fr auto auto; min-width: 0; }
+  .ms:first-child { border-radius: 6px 0 0 6px; }
+  .ms:last-child { border-radius: 0 6px 6px 0; }
+  .ms .id { color: var(--ink-3); }
+  .ms h3 { font-size: 14px; }
+  .ms .desc { color: var(--ink-2); font-size: 12.5px; }
+  .ms .num { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .ms.reached { border-color: var(--good); }
+  .ms.reached .id::after { content: " · reached"; color: var(--good); }
+
+  /* decisions */
+  section.decisions { padding-block: 24px 4px; }
+  .dlist { list-style: none; margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .dlist li { background: var(--surface); border: 1px solid var(--hair); border-radius: 6px; padding: 12px 14px; display: grid; gap: 4px; align-content: start; }
+  .dlist .did { color: var(--ink-3); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+  .dlist h3 { font-size: 14px; }
+  .dlist .choice { font-size: 13px; }
+  .dlist .why { font-size: 12.5px; color: var(--ink-2); }
+  @media (max-width: 900px) { .dlist { grid-template-columns: 1fr; } }
+
+  /* controls */
+  section.controls { position: sticky; top: 0; z-index: 2; background: var(--ground); border-bottom: 1px solid var(--hair); padding-block: 12px; margin-top: 20px; }
+  section.controls .wrap { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    border: 1px solid var(--hair-2); background: var(--surface); border-radius: 999px; padding: 3px 10px; cursor: pointer;
+    font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2);
+  }
+  .chip[aria-pressed="true"] { border-color: var(--accent); color: var(--ink); background: var(--surface-2); }
+  .chip .n { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .search { border: 1px solid var(--hair-2); background: var(--surface); border-radius: 6px; padding: 5px 10px; min-width: 220px; }
+  .ghost { border: 0; background: none; color: var(--accent-ink); cursor: pointer; padding: 4px 6px; }
+  .legend { margin-left: auto; display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); }
+
+  /* status glyphs */
+  .st { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12.5px; }
+  .st i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1.5px solid var(--hair-2); flex: none; }
+  .st.done i { background: var(--good); border-color: var(--good); }
+  .st.partial i { background: linear-gradient(90deg, var(--warn) 50%, transparent 50%); border-color: var(--warn); }
+  .st.todo i { background: transparent; }
+  .st.deferred i { border-style: dashed; }
+  .st.out i { border-color: var(--ink-3); background: linear-gradient(135deg, transparent 45%, var(--ink-3) 45% 55%, transparent 55%); }
+
+  /* areas */
+  section.areas { padding-block: 20px 60px; display: grid; gap: 10px; }
+  details.area { background: var(--surface); border: 1px solid var(--hair); border-radius: 6px; }
+  details.area[hidden] { display: none; }
+  details.area > summary {
+    list-style: none; cursor: pointer; display: grid; grid-template-columns: 18px minmax(0, 1.6fr) minmax(160px, 1fr) auto; gap: 14px; align-items: center; padding: 12px 16px;
+  }
+  details.area > summary::-webkit-details-marker { display: none; }
+  details.area > summary .caret { color: var(--ink-3); transition: transform 0.15s; }
+  details.area[open] > summary .caret { transform: rotate(90deg); }
+  details.area > summary h2 { font-size: 15px; }
+  details.area > summary .sum { color: var(--ink-2); font-size: 12.5px; }
+  details.area > summary .nums { font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 12.5px; white-space: nowrap; text-align: right; }
+  details.area > summary .nums b { color: var(--ink); font-weight: 600; font-size: 14px; }
+  .items { border-top: 1px solid var(--hair); overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-weight: 600; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); padding: 8px 12px; border-bottom: 1px solid var(--hair); }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  tr[hidden] { display: none; }
+  td.t { min-width: 260px; }
+  td.t .id { color: var(--ink-3); font-size: 11.5px; }
+  td.t .verify { color: var(--ink-2); font-size: 12.5px; margin-top: 2px; }
+  td.t .verify::before { content: "verify: "; color: var(--ink-3); }
+  td.t .notes { color: var(--ink-2); font-size: 12.5px; margin-top: 2px; }
+  td.s code { color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+  td.o { white-space: nowrap; }
+  td.o span { display: inline-block; border: 1px solid var(--hair-2); border-radius: 3px; padding: 0 5px; font-size: 11px; color: var(--ink-2); margin-right: 3px; }
+  td.h { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink-2); }
+  td.m { color: var(--ink-3); white-space: nowrap; }
+  tr.out td.t .title, tr.out td.s { text-decoration: line-through; color: var(--ink-3); }
+  tr.deferred td { color: var(--ink-2); }
+  .empty { padding: 14px 16px; color: var(--ink-3); }
+
+  footer { border-top: 1px solid var(--hair); color: var(--ink-2); font-size: 13px; padding-block: 20px 40px; }
+  footer .wrap { display: grid; gap: 8px; max-width: 72ch; }
+  footer code { background: var(--surface-2); padding: 1px 5px; border-radius: 3px; }
+
+  @media (max-width: 900px) {
+    .hero { grid-template-columns: 1fr; }
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .track { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .ms, .ms:first-child, .ms:last-child { border-radius: 6px; }
+    details.area > summary { grid-template-columns: 18px minmax(0, 1fr) auto; }
+    details.area > summary .meter { grid-column: 2 / -1; }
+  }
+  @media (max-width: 560px) {
+    .tiles { grid-template-columns: 1fr; }
+    .track { grid-template-columns: 1fr; }
+    .hero .figure { font-size: 48px; }
+  }
+  @media (prefers-reduced-motion: reduce) { details.area > summary .caret { transition: none; } }
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <h1 id="title">voidbase <span>surface map</span></h1>
+    <div class="meta" id="meta"></div>
+  </div>
+</header>
+
+<section class="summary">
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <div class="label">Distance to the finish line</div>
+        <div class="figure" id="overall-pct"></div>
+        <div class="sub" id="overall-sub"></div>
+      </div>
+      <div>
+        <p class="goal" id="goal"></p>
+        <div class="meter big" id="overall-meter" role="img" aria-label="overall progress"></div>
+      </div>
+    </div>
+    <div class="tiles" id="oracles"></div>
+  </div>
+</section>
+
+<section class="milestones">
+  <div class="wrap">
+    <div class="label">Milestones, in order</div>
+    <div class="track" id="milestones"></div>
+  </div>
+</section>
+
+<section class="decisions">
+  <div class="wrap">
+    <div class="label">Architecture decisions</div>
+    <ol class="dlist" id="decisions"></ol>
+  </div>
+</section>
+
+<section class="controls">
+  <div class="wrap">
+    <div class="chips" id="status-chips" aria-label="filter by status"></div>
+    <div class="chips" id="oracle-chips" aria-label="filter by finish line"></div>
+    <select class="search" id="ms-select" aria-label="filter by milestone" style="min-width: 160px;"></select>
+    <input class="search" id="search" type="search" placeholder="Search items, routes, ids" aria-label="search items">
+    <button class="ghost" id="expand-all" type="button">Expand all</button>
+    <button class="ghost" id="collapse-all" type="button">Collapse all</button>
+    <div class="legend" id="legend"></div>
+  </div>
+</section>
+
+<section class="areas wrap" id="areas"></section>
+
+<footer>
+  <div class="wrap">
+    <div><b>How this page updates.</b> The source of truth is <code>voidbase/surface/surface.json</code>. Change an item's <code>status</code> to <code>partial</code> or <code>done</code> when it is verified against an oracle, then run <code>bun surface/render.ts</code> and republish the artifact.</div>
+    <div>Progress is weighted by estimated hours. Done counts fully, in progress counts half. Deferred and out-of-scope items are listed but never counted, so the bar only moves for work on the finish line.</div>
+    <div id="sources"></div>
+  </div>
+</footer>
+
+<script id="surface-data" type="application/json">/*__SURFACE_JSON__*/null</script>
+<script>
+(function () {
+  const S = JSON.parse(document.getElementById("surface-data").textContent);
+  if (!S) { document.getElementById("areas").innerHTML = '<div class="empty">No surface data. Run bun surface/render.ts.</div>'; return; }
+
+  const ALL = S.areas.flatMap((a) => a.items.map((i) => Object.assign({ area: a.id }, i)));
+  const counts = (st) => S.statuses[st].counts;
+  const weight = (st) => S.statuses[st].weight;
+
+  function progress(items) {
+    const c = items.filter((i) => counts(i.status));
+    const total = c.reduce((s, i) => s + i.hours, 0);
+    const doneH = c.filter((i) => i.status === "done").reduce((s, i) => s + i.hours, 0);
+    const partH = c.filter((i) => i.status === "partial").reduce((s, i) => s + i.hours * weight("partial"), 0);
+    const n = (st) => c.filter((i) => i.status === st).length;
+    return { total, doneH, partH, earned: doneH + partH, pct: total ? ((doneH + partH) / total) * 100 : 0, done: n("done"), partial: n("partial"), todo: n("todo"), items: c.length };
+  }
+  const fmtH = (h) => (Math.round(h * 10) / 10).toString();
+  const pct1 = (p) => (Math.round(p * 10) / 10).toString();
+  function meter(p, cls) {
+    const d = p.total ? (p.doneH / p.total) * 100 : 0;
+    const q = p.total ? (p.partH / p.total) * 100 : 0;
+    return '<div class="meter ' + (cls || "") + '" role="img" aria-label="' + pct1(p.pct) + ' percent">' +
+      (d > 0 ? '<i class="done" style="width:' + d + '%"></i>' : "") +
+      (q > 0 ? '<i class="partial" style="width:' + q + '%"></i>' : "") + "</div>";
+  }
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const st = (status) => '<span class="st ' + status + '"><i></i>' + esc(S.statuses[status].label) + "</span>";
+
+  // header
+  document.title = "Voidbase Surface Map";
+  document.getElementById("meta").innerHTML =
+    "<span>codename <b>" + esc(S.codename) + "</b></span>" +
+    "<span>PocketBase <b>" + esc(S.targets.pocketbase) + "</b></span>" +
+    "<span>JS SDK <b>" + esc(S.targets.js_sdk) + "</b></span>" +
+    "<span>updated <b>" + esc(S.updated) + "</b></span>";
+  document.getElementById("goal").textContent = S.goal;
+
+  // overall
+  const O = progress(ALL);
+  document.getElementById("overall-pct").innerHTML = pct1(O.pct) + "<small>%</small>";
+  document.getElementById("overall-sub").innerHTML =
+    "<b>" + fmtH(O.earned) + "</b> of <b>" + fmtH(O.total) + "</b> estimated hours · " +
+    O.done + " done, " + O.partial + " in progress, " + O.todo + " not started, of " + O.items + " counted items";
+  document.getElementById("overall-meter").outerHTML = meter(O, "big");
+
+  // oracle tiles
+  document.getElementById("oracles").innerHTML = S.oracles.map((o) => {
+    const p = progress(ALL.filter((i) => i.oracles.includes(o.id)));
+    return '<div class="tile"><div class="row"><span class="label">' + esc(o.label) + '</span><span class="hint">' + p.items + " items · " + fmtH(p.total) + "h</span></div>" +
+      '<div class="row"><span class="pct">' + pct1(p.pct) + '%</span><span class="hint">' + p.done + " done · " + p.partial + " in progress</span></div>" +
+      meter(p) + '<div class="desc">' + esc(o.description) + "</div></div>";
+  }).join("");
+
+  // milestones
+  document.getElementById("milestones").innerHTML = S.milestones.map((m) => {
+    const p = progress(ALL.filter((i) => i.milestone === m.id));
+    const reached = p.items > 0 && p.done === p.items;
+    return '<div class="ms' + (reached ? " reached" : "") + '"><div class="label id">' + esc(m.id) + "</div><h3>" + esc(m.title) + "</h3>" +
+      '<div class="desc">' + esc(m.description) + "</div>" + meter(p) +
+      '<div class="num"><span>' + pct1(p.pct) + "%</span><span>" + fmtH(p.earned) + "/" + fmtH(p.total) + "h · " + p.items + " items</span></div></div>";
+  }).join("");
+
+  // decisions
+  const dEl = document.getElementById("decisions");
+  if (Array.isArray(S.decisions) && S.decisions.length) {
+    dEl.innerHTML = S.decisions.map((d) =>
+      '<li><div class="did">' + esc(d.id) + " · " + esc(d.date) + "</div><h3>" + esc(d.title) + '</h3><div class="choice">' + esc(d.choice) + '</div><div class="why">' + esc(d.why) + "</div></li>").join("");
+  } else {
+    dEl.closest("section").hidden = true;
+  }
+
+  // controls
+  const state = { statuses: new Set(Object.keys(S.statuses)), oracles: new Set(), milestone: "", q: "" };
+  try {
+    const saved = JSON.parse(localStorage.getItem("voidbase-surface-filters") || "null");
+    if (saved) { state.statuses = new Set(saved.statuses); state.oracles = new Set(saved.oracles); state.milestone = saved.milestone || ""; state.q = saved.q || ""; }
+  } catch (e) {}
+  function persist() {
+    try { localStorage.setItem("voidbase-surface-filters", JSON.stringify({ statuses: [...state.statuses], oracles: [...state.oracles], milestone: state.milestone, q: state.q })); } catch (e) {}
+  }
+
+  const statusChips = document.getElementById("status-chips");
+  statusChips.innerHTML = Object.keys(S.statuses).map((k) => {
+    const n = ALL.filter((i) => i.status === k).length;
+    return '<button type="button" class="chip" data-status="' + k + '" aria-pressed="' + state.statuses.has(k) + '">' + st(k) + '<span class="n">' + n + "</span></button>";
+  }).join("");
+  const oracleChips = document.getElementById("oracle-chips");
+  oracleChips.innerHTML = S.oracles.map((o) =>
+    '<button type="button" class="chip" data-oracle="' + o.id + '" aria-pressed="' + state.oracles.has(o.id) + '">' + esc(o.label) + "</button>").join("");
+  const msSelect = document.getElementById("ms-select");
+  msSelect.innerHTML = '<option value="">All milestones</option>' + S.milestones.map((m) => '<option value="' + m.id + '"' + (state.milestone === m.id ? " selected" : "") + ">" + esc(m.id + " " + m.title) + "</option>").join("");
+  const search = document.getElementById("search");
+  search.value = state.q;
+  document.getElementById("legend").innerHTML = Object.keys(S.statuses).map(st).join("");
+
+  // areas
+  let openState = {};
+  try { openState = JSON.parse(localStorage.getItem("voidbase-surface-open") || "{}") || {}; } catch (e) {}
+  const areasEl = document.getElementById("areas");
+  areasEl.innerHTML = S.areas.map((a) => {
+    const p = progress(a.items);
+    const rows = a.items.map((it) =>
+      '<tr class="' + it.status + '" data-id="' + esc(it.id) + '" data-status="' + it.status + '" data-oracles="' + it.oracles.join(" ") + '" data-ms="' + it.milestone + '">' +
+      "<td>" + st(it.status) + "</td>" +
+      '<td class="t"><div class="title">' + esc(it.title) + '</div><div class="id mono">' + esc(it.id) + "</div>" +
+      (it.verify ? '<div class="verify">' + esc(it.verify) + "</div>" : "") +
+      (it.notes ? '<div class="notes">' + esc(it.notes) + "</div>" : "") + "</td>" +
+      '<td class="s"><code>' + esc(it.surface || "") + "</code></td>" +
+      '<td class="o">' + it.oracles.map((o) => "<span>" + esc(o) + "</span>").join("") + "</td>" +
+      '<td class="m mono">' + esc(it.milestone) + "</td>" +
+      '<td class="h">' + (counts(it.status) ? fmtH(it.hours) + "h" : "—") + "</td></tr>").join("");
+    return '<details class="area" data-area="' + a.id + '"' + (openState[a.id] ? " open" : "") + ">" +
+      '<summary><span class="caret">▸</span><div><h2>' + esc(a.title) + '</h2><div class="sum">' + esc(a.summary) + "</div></div>" +
+      meter(p) +
+      '<div class="nums"><b>' + pct1(p.pct) + "%</b><br>" + fmtH(p.earned) + "/" + fmtH(p.total) + "h · " + p.items + " items</div></summary>" +
+      '<div class="items"><table><thead><tr><th>Status</th><th>Item</th><th>Surface</th><th>Finish lines</th><th>Ms</th><th>Est.</th></tr></thead><tbody>' + rows +
+      '</tbody></table><div class="empty" hidden>No items match the current filters.</div></div></details>';
+  }).join("");
+
+  function applyFilters() {
+    const q = state.q.trim().toLowerCase();
+    document.querySelectorAll("details.area").forEach((d) => {
+      let visible = 0;
+      d.querySelectorAll("tbody tr").forEach((tr) => {
+        const okS = state.statuses.has(tr.dataset.status);
+        const okO = state.oracles.size === 0 || tr.dataset.oracles.split(" ").some((o) => state.oracles.has(o));
+        const okM = !state.milestone || tr.dataset.ms === state.milestone;
+        const okQ = !q || tr.textContent.toLowerCase().includes(q);
+        const show = okS && okO && okM && okQ;
+        tr.hidden = !show;
+        if (show) visible++;
+      });
+      d.querySelector(".empty").hidden = visible > 0;
+      d.hidden = visible === 0 && (q !== "" || state.oracles.size > 0 || state.milestone !== "");
+    });
+    persist();
+  }
+  statusChips.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-status]"); if (!b) return;
+    const k = b.dataset.status;
+    if (state.statuses.has(k)) state.statuses.delete(k); else state.statuses.add(k);
+    b.setAttribute("aria-pressed", String(state.statuses.has(k)));
+    applyFilters();
+  });
+  oracleChips.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-oracle]"); if (!b) return;
+    const k = b.dataset.oracle;
+    if (state.oracles.has(k)) state.oracles.delete(k); else state.oracles.add(k);
+    b.setAttribute("aria-pressed", String(state.oracles.has(k)));
+    applyFilters();
+  });
+  msSelect.addEventListener("change", () => { state.milestone = msSelect.value; applyFilters(); });
+  search.addEventListener("input", () => { state.q = search.value; applyFilters(); });
+  document.getElementById("expand-all").addEventListener("click", () => document.querySelectorAll("details.area").forEach((d) => { d.open = true; }));
+  document.getElementById("collapse-all").addEventListener("click", () => document.querySelectorAll("details.area").forEach((d) => { d.open = false; }));
+  areasEl.addEventListener("toggle", (e) => {
+    const d = e.target; if (!d.matches("details.area")) return;
+    openState[d.dataset.area] = d.open;
+    try { localStorage.setItem("voidbase-surface-open", JSON.stringify(openState)); } catch (err) {}
+  }, true);
+  applyFilters();
+
+  document.getElementById("sources").innerHTML = "<b>Ground truth.</b> " + Object.keys(S.sources).map((k) => esc(k) + ": <code>" + esc(S.sources[k]) + "</code>").join(" · ");
+})();
+</script>

@@ -4,3 +4,11 @@ dist
 .wrangler
 *.tsbuildinfo
 .DS_Store
+.env
+.env.*
+!.env.example
+
+# generated
+surface/dist
+# synced from ../pocketbase/ui/dist by `bun run panel:sync`
+public/_

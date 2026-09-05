@@ -8,17 +8,17 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "types": [
-      "void/env"
-    ],
-    "jsx": "react-jsx"
+      "void/env",
+      "@cloudflare/workers-types"
+    ]
   },
   "include": [
     "src",
-    "pages",
     "routes",
     "middleware",
     "crons",
     "queues",
-    "db"
+    "db",
+    "env.ts"
   ]
 }

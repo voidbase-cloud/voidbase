@@ -1,0 +1,71 @@
+{
+ "authRule": null,
+ "manageRule": null,
+ "authAlert": {
+  "enabled": null,
+  "emailTemplate": {
+   "subject": null,
+   "body": null
+  }
+ },
+ "oauth2": {
+  "providers": null,
+  "mappedFields": {
+   "id": null,
+   "name": null,
+   "username": null,
+   "avatarURL": null
+  },
+  "enabled": null
+ },
+ "passwordAuth": {
+  "enabled": null,
+  "identityFields": null
+ },
+ "mfa": {
+  "enabled": null,
+  "duration": null,
+  "rule": null
+ },
+ "otp": {
+  "enabled": null,
+  "duration": null,
+  "length": null,
+  "emailTemplate": {
+   "subject": null,
+   "body": null
+  }
+ },
+ "authToken": {
+  "secret": null,
+  "duration": null
+ },
+ "passwordResetToken": {
+  "secret": null,
+  "duration": null
+ },
+ "emailChangeToken": {
+  "secret": null,
+  "duration": null
+ },
+ "verificationToken": {
+  "secret": null,
+  "duration": null
+ },
+ "fileToken": {
+  "secret": null,
+  "duration": null
+ },
+ "verificationTemplate": {
+  "subject": null,
+  "body": null
+ },
+ "resetPasswordTemplate": {
+  "subject": null,
+  "body": null
+ },
+ "confirmEmailChangeTemplate": {
+  "subject": null,
+  "body": null
+ }
+}

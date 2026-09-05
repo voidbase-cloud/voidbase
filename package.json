@@ -1,28 +1,27 @@
 {
-  "dependencies": {
-    "hono": "^4.11.9",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
-  },
-  "devDependencies": {
-    "void": "^0.10.13",
-    "vite": "^8.0.10",
-    "typescript": "^5.9.3",
-    "vite-plus": "^0.1.21",
-    "@void/react": "0.10.13",
-    "@rolldown/plugin-babel": "^0.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
-    "babel-plugin-react-compiler": "^1.0.0",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3"
-  },
   "name": "voidbase",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
+  "description": "PocketBase-wire-compatible backend on Cloudflare Workers via Void",
   "scripts": {
     "dev": "vp dev",
     "build": "vp build",
-    "preview": "vp preview"
+    "preview": "vp preview",
+    "panel:sync": "bun scripts/sync-panel.ts",
+    "surface": "bun surface/render.ts",
+    "test": "bun test"
   },
-  "packageManager": "pnpm@11.0.9"
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "hono": "^4.11.9"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250903.0",
+    "playwright": "^1.63.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.10",
+    "vite-plus": "^0.1.21",
+    "void": "^0.10.13"
+  }
 }

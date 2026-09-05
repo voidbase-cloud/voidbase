@@ -1,0 +1,7 @@
+import { defineEnv, string } from "void/env";
+
+export default defineEnv({
+  // First superuser, upserted at bootstrap when both are set (mirrors the starter's entrypoint).
+  VOIDBASE_SUPERUSER_EMAIL: string().optional(),
+  VOIDBASE_SUPERUSER_PASSWORD: string().optional(),
+});

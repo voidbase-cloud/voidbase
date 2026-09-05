@@ -1,0 +1,1 @@
+{"data":{"name":{"code":"validation_collection_name_exists","message":"Collection name must be unique (case insensitive)."}},"message":"Failed to create collection.","status":400}

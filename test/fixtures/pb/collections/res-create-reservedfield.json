@@ -1,0 +1,1 @@
+{"data":{"fields":{"1":{"name":{"code":"validation_not_in_invalid","message":"Must not be in list."}}}},"message":"Failed to create collection.","status":400}

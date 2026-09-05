@@ -2,13 +2,14 @@ import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { authMethods, authRefresh, authWithPassword, isSuperuser, loadAuth, requireSuperuser } from "./auth";
 import { ensureBootstrapped } from "./bootstrap";
-import { collectionToJSON, findCollection, listCollections, loadCollections, type Collection } from "./collections/model";
+import { collectionToJSON, findCollection, invalidateCollections, listCollections, loadCollections, type Collection } from "./collections/model";
 import type { Field } from "./collections/fields";
 import { createRecord, deleteRecord, listRecords, updateRecord, viewRecord, type ListQuery, type RecordContext } from "./records/service";
 import { fromColumn } from "./records/values";
 import { hookGlobals, hookMiddleware, loadHooks, mountHookRoutes } from "./hooks";
 import { applyPendingMigrations } from "./hooks/migrations";
 import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
+import { deletePrefix } from "./records/files";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import { saveHookRecord } from "./records/service";
@@ -36,7 +37,7 @@ app.use("*", async (c, next) => {
 });
 
 app.use("*", async (c, next) => {
-  await ensureBootstrapped(c.env.DB, (db) => applyPendingMigrations(db, hookGlobals()));
+  await ensureBootstrapped(c.env.DB, (db) => applyPendingMigrations(db, hookGlobals(), c.env));
   c.set("auth", await loadAuth(c));
   await next();
 });
@@ -129,6 +130,7 @@ app.delete("/api/collections/:collection", async (c) => {
   requireSuperuser(c);
   const collection = await mustFindCollection(c, c.req.param("collection"), true);
   await deleteCollection(c.env.DB, collection);
+  try { await deletePrefix(c.env.STORAGE, `${collection.id}/`); } catch (err) { console.error("voidbase: file cleanup failed", err); }
   return c.body(null, 204);
 });
 
@@ -136,6 +138,7 @@ app.delete("/api/collections/:collection/truncate", async (c) => {
   requireSuperuser(c);
   const collection = await mustFindCollection(c, c.req.param("collection"), true);
   await truncateCollection(c.env.DB, collection);
+  try { await deletePrefix(c.env.STORAGE, `${collection.id}/`); } catch (err) { console.error("voidbase: file cleanup failed", err); }
   return c.body(null, 204);
 });
 
@@ -365,6 +368,13 @@ function sortBy<T extends object>(items: T[], sort: string, allowed: string[]): 
 }
 
 // --- pb_hooks runtime ------------------------------------------------------
+// hook code that changes the schema must see the change in the same run ($app.findCollectionByNameOrId)
+async function refreshStoreCollections(store: { collections: Map<string, Collection> }, db: D1Database) {
+  invalidateCollections();
+  const fresh = await loadCollections(db);
+  store.collections.clear();
+  for (const [k, v] of fresh) store.collections.set(k, v);
+}
 installServices({
   saveRecord: async (rec) => saveHookRecord(await hookStore.getStore()!.ctx(), rec),
   deleteRecord: async (rec) => { const ctx = await hookStore.getStore()!.ctx(); await deleteRecord({ ...ctx, superuser: true, hookEvent: undefined }, rec.collection().data, rec.id); },
@@ -388,6 +398,25 @@ installServices({
     const order = sort.trim() ? sort.split(",").map((s) => { const d = s.trim().startsWith("-"); const n = s.trim().replace(/^[+-]/, ""); return `${ident(coll.name)}.${ident(n)} ${d ? "DESC" : "ASC"}`; }).join(", ") : `${ident(coll.name)}.rowid ASC`;
     const rows = await all(ctx.db, `SELECT DISTINCT ${ident(coll.name)}.* FROM ${ident(coll.name)} ${joins} WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`, [...ps, limit > 0 ? limit : 1000, offset]);
     return rows.map((r: Row) => HookRecord.fromRow(coll, r));
+  },
+  saveCollection: async (ref) => {
+    const store = hookStore.getStore()!;
+    const ctx = await store.ctx();
+    const raw = ref.toRaw();
+    const existing = (raw.id ? ctx.collections.get(String(raw.id)) : undefined) ?? (raw.name ? ctx.collections.get(String(raw.name)) : undefined);
+    const saved = existing ? await updateCollection(ctx.db, existing, raw) : await createCollection(ctx.db, raw);
+    Object.assign(ref.data, saved);
+    await refreshStoreCollections(store, ctx.db);
+    return ref;
+  },
+  deleteCollection: async (ref) => {
+    const store = hookStore.getStore()!;
+    const ctx = await store.ctx();
+    const existing = ctx.collections.get(ref.id) ?? ctx.collections.get(ref.name);
+    if (!existing) throw new Error(`sql: no rows in result set (collection "${ref.id || ref.name}")`);
+    await deleteCollection(ctx.db, existing);
+    try { await deletePrefix(ctx.storage, `${existing.id}/`); } catch (err) { console.error("voidbase: file cleanup failed", err); }
+    await refreshStoreCollections(store, ctx.db);
   },
   sendMail: async (msg) => { console.log("voidbase: mail (not delivered, mailer lands in milestone five):", msg.subject, "->", msg.to.map((t) => t.address).join(",")); },
 });

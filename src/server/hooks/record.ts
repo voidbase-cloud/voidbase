@@ -5,16 +5,61 @@ import { recordToJSON } from "../records/json";
 import { fromColumn, normalizeInput, type Upload } from "../records/values";
 import type { Row } from "../types";
 
+// Field list with the JSVM helpers generated migrations use (collection.fields.addAt(...), removeById(...)).
+export type FieldList = Field[] & {
+  add(...fields: Field[]): void; addAt(index: number, ...fields: Field[]): void;
+  removeById(id: string): void; removeByName(name: string): void;
+  getById(id: string): Field | undefined; getByName(name: string): Field | undefined;
+};
+export function fieldList(fields: Field[]): FieldList {
+  const list = fields as FieldList;
+  if (typeof list.addAt === "function") return list;
+  Object.defineProperties(list, {
+    add: { value(...fs: Field[]) { list.push(...fs); } },
+    addAt: { value(index: number, ...fs: Field[]) { list.splice(Math.max(0, Math.min(index, list.length)), 0, ...fs); } },
+    removeById: { value(id: string) { const i = list.findIndex((f) => f.id === id); if (i >= 0) list.splice(i, 1); } },
+    removeByName: { value(name: string) { const i = list.findIndex((f) => f.name === name); if (i >= 0) list.splice(i, 1); } },
+    getById: { value(id: string) { return list.find((f) => f.id === id); } },
+    getByName: { value(name: string) { return list.find((f) => f.name === name); } },
+  });
+  return list;
+}
+
+// `new Collection({...})` in hooks and migrations, and what $app.findCollectionByNameOrId returns.
+// Property reads and writes fall through to the underlying collection data (unmarshal({...}, collection) works).
 export class CollectionRef {
-  constructor(public readonly data: Collection) {}
+  readonly data: Collection;
+  constructor(data: Collection | Record<string, unknown> = {}) {
+    const d = { fields: [], indexes: [], ...(data as Record<string, unknown>) } as unknown as Collection;
+    d.fields = fieldList([...(d.fields as Field[])].map((f) => ({ ...f })));
+    this.data = d;
+    return new Proxy(this, {
+      get(target, prop, receiver) {
+        if (prop in target) return Reflect.get(target, prop, receiver);
+        return (target.data as unknown as Record<string | symbol, unknown>)[prop];
+      },
+      set(target, prop, value) {
+        if (prop in target && typeof prop === "string" && !["id", "name", "type", "system", "fields"].includes(prop)) return Reflect.set(target, prop, value);
+        (target.data as unknown as Record<string | symbol, unknown>)[prop] = prop === "fields" ? fieldList(value as Field[]) : value;
+        return true;
+      },
+      has(target, prop) { return prop in target || prop in (target.data as object); },
+    });
+  }
   get id() { return this.data.id; }
+  set id(v: string) { this.data.id = v; }
   get name() { return this.data.name; }
+  set name(v: string) { this.data.name = v; }
   get type() { return this.data.type; }
-  get fields() { return this.data.fields; }
+  set type(v: string) { (this.data as { type: string }).type = v; }
+  get fields(): FieldList { return fieldList(this.data.fields as Field[]); }
+  set fields(v: Field[]) { this.data.fields = fieldList(v); }
   get system() { return this.data.system; }
   isAuth() { return this.data.type === "auth"; }
   isView() { return this.data.type === "view"; }
   isBase() { return this.data.type === "base"; }
+  // plain JSON for the collections service
+  toRaw(): Record<string, unknown> { return JSON.parse(JSON.stringify(this.data)) as Record<string, unknown>; }
 }
 
 export class HookRecord {

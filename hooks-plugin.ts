@@ -25,6 +25,7 @@ export const HOOK_GLOBALS = [
   "$app", "$apis", "$http", "$os", "$filesystem", "$security", "$mails", "$template", "$dbx",
   "routerAdd", "routerUse", "cronAdd", "cronRemove", "migrate",
   "Record", "Collection", "RecordUpsertForm", "MailerMessage", "DateTime", "RequestInfo",
+  "Field", "TextField", "EditorField", "NumberField", "BoolField", "EmailField", "URLField", "DateField", "AutodateField", "SelectField", "FileField", "RelationField", "JSONField", "GeoPointField", "PasswordField",
   "ApiError", "NotFoundError", "BadRequestError", "ForbiddenError", "UnauthorizedError", "InternalServerError", "ValidationError",
   "__hooks", "require", "module", "exports", "console", "toString", "sleep", "arrayOf", "unmarshal",
 ];

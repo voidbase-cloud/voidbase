@@ -18,6 +18,11 @@ const moduleCache = new Map<string, unknown>();
 
 class DateTime { d: Date; constructor(v?: string | number | Date) { this.d = v === undefined ? new Date() : new Date(v); } string() { return this.d.toISOString().replace("T", " "); } time() { return this.d; } unix() { return Math.floor(this.d.getTime() / 1000); } toJSON() { return this.string(); } }
 
+// new Field({...}) / new TextField({...}) in JSVM code produce plain field data
+function fieldClass(type?: string) {
+  return class { constructor(data: Record<string, unknown> = {}) { return { ...(type ? { type } : {}), ...data }; } };
+}
+
 function buildGlobals(): Record<string, unknown> {
   const g: Record<string, unknown> = {
     $app, $apis, $http, $os, $filesystem, $security,
@@ -26,6 +31,9 @@ function buildGlobals(): Record<string, unknown> {
     migrate: () => { /* migrations are applied by the migrations runner, not at hook load */ },
     Record: class Record extends HookRecord { constructor(collection: CollectionRef, data?: { [k: string]: unknown }) { super(collection, data ?? {}); } },
     Collection: CollectionRef,
+    Field: fieldClass(), TextField: fieldClass("text"), EditorField: fieldClass("editor"), NumberField: fieldClass("number"), BoolField: fieldClass("bool"),
+    EmailField: fieldClass("email"), URLField: fieldClass("url"), DateField: fieldClass("date"), AutodateField: fieldClass("autodate"), SelectField: fieldClass("select"),
+    FileField: fieldClass("file"), RelationField: fieldClass("relation"), JSONField: fieldClass("json"), GeoPointField: fieldClass("geoPoint"), PasswordField: fieldClass("password"),
     RecordUpsertForm: RecordUpsertFormFactory($app),
     MailerMessage, DateTime, RequestInfo: class {},
     ApiError, NotFoundError, BadRequestError, ForbiddenError, UnauthorizedError, InternalServerError, ValidationError,

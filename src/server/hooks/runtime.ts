@@ -105,6 +105,8 @@ export class RequestEvent {
 
 // ---- $app ---------------------------------------------------------------------------------------------
 export interface AppServices {
+  saveCollection(ref: CollectionRef): Promise<CollectionRef>;
+  deleteCollection(ref: CollectionRef): Promise<void>;
   saveRecord: (rec: HookRecord) => Promise<HookRecord>;
   deleteRecord: (rec: HookRecord) => Promise<void>;
   findRecordById: (collection: string, id: string) => Promise<HookRecord | null>;
@@ -122,9 +124,9 @@ export interface AppApi {
   findRecordsByFilter(collection: string | CollectionRef, filter: string, sort?: string, limit?: number, offset?: number, params?: Record<string, unknown>): Promise<HookRecord[]>;
   findFirstRecordByFilter(collection: string | CollectionRef, filter: string, params?: Record<string, unknown>): Promise<HookRecord>;
   findFirstRecordByData(collection: string | CollectionRef, key: string, value: unknown): Promise<HookRecord>;
-  save(rec: HookRecord): Promise<HookRecord>;
-  saveNoValidate(rec: HookRecord): Promise<HookRecord>;
-  delete(rec: HookRecord): Promise<void>;
+  save(model: HookRecord | CollectionRef): Promise<HookRecord | CollectionRef>;
+  saveNoValidate(model: HookRecord | CollectionRef): Promise<HookRecord | CollectionRef>;
+  delete(model: HookRecord | CollectionRef): Promise<void>;
   settings(): Settings;
   newMailClient(): { send: (msg: MailerMessage) => Promise<void> };
   logger(): Console;
@@ -156,9 +158,9 @@ export const $app: AppApi = {
     if (!rows[0]) throw new Error("sql: no rows in result set");
     return rows[0];
   },
-  save: (rec: HookRecord) => svc().saveRecord(rec),
-  saveNoValidate: (rec: HookRecord) => svc().saveRecord(rec),
-  delete: (rec: HookRecord) => svc().deleteRecord(rec),
+  save: (model: HookRecord | CollectionRef) => (model instanceof CollectionRef ? svc().saveCollection(model) : svc().saveRecord(model)),
+  saveNoValidate: (model: HookRecord | CollectionRef) => (model instanceof CollectionRef ? svc().saveCollection(model) : svc().saveRecord(model)),
+  delete: (model: HookRecord | CollectionRef) => (model instanceof CollectionRef ? svc().deleteCollection(model) : svc().deleteRecord(model)),
   settings() { return mustStore().settings; },
   newMailClient() { return { send: (msg: MailerMessage) => svc().sendMail(msg) }; },
   logger() { return console; },

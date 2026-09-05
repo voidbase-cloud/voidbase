@@ -10,7 +10,8 @@
     "preview": "vp preview",
     "panel:sync": "bun scripts/sync-panel.ts",
     "surface": "bun surface/render.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "app:sync": "bun scripts/sync-app.ts"
   },
   "dependencies": {
     "@cf-wasm/photon": "^0.4.0",

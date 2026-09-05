@@ -10,5 +10,5 @@ dist
 
 # generated
 surface/dist
-# synced from ../pocketbase/ui/dist by `bun run panel:sync`
-public/_
+# synced by `bun run panel:sync` (public/_) and `bun run app:sync` (everything else)
+public/*

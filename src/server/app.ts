@@ -1,11 +1,12 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
-import { authMethods, authRefresh, authWithPassword, isSuperuser, loadAuth, requireSuperuser } from "./auth";
+import { authMethods, authRefresh, authWithPassword, findAuthRecordByToken, isSuperuser, loadAuth, requireSuperuser } from "./auth";
 import { ensureBootstrapped } from "./bootstrap";
 import { collectionToJSON, findCollection, invalidateCollections, listCollections, loadCollections, type Collection } from "./collections/model";
 import type { Field } from "./collections/fields";
 import { createRecord, deleteRecord, listRecords, updateRecord, viewRecord, type ListQuery, type RecordContext } from "./records/service";
-import { fromColumn } from "./records/values";
+import { fromColumn, toColumn } from "./records/values";
+import { expandRecords } from "./records/expand";
 import { hookGlobals, hookMiddleware, loadHooks, mountHookRoutes } from "./hooks";
 import { applyPendingMigrations } from "./hooks/migrations";
 import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
@@ -380,6 +381,7 @@ mountWebAuthn(app);
 mountOAuth2Redirect(app);
 
 // --- pb_hooks runtime ------------------------------------------------------
+const valuesToRowFor = (c: Collection, values: Record<string, unknown>): Row => { const row: Row = {}; for (const f of c.fields as Field[]) row[f.name] = toColumn(f, values[f.name]); return row; };
 // hook code that changes the schema must see the change in the same run ($app.findCollectionByNameOrId)
 async function refreshStoreCollections(store: { collections: Map<string, Collection> }, db: D1Database) {
   invalidateCollections();
@@ -410,6 +412,43 @@ installServices({
     const order = sort.trim() ? sort.split(",").map((s) => { const d = s.trim().startsWith("-"); const n = s.trim().replace(/^[+-]/, ""); return `${ident(coll.name)}.${ident(n)} ${d ? "DESC" : "ASC"}`; }).join(", ") : `${ident(coll.name)}.rowid ASC`;
     const rows = await all(ctx.db, `SELECT DISTINCT ${ident(coll.name)}.* FROM ${ident(coll.name)} ${joins} WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`, [...ps, limit > 0 ? limit : 1000, offset]);
     return rows.map((r: Row) => HookRecord.fromRow(coll, r));
+  },
+  countRecords: async (collection, where) => {
+    const ctx = await hookStore.getStore()!.ctx();
+    const coll = ctx.collections.get(collection);
+    if (!coll) throw new Error(`sql: no rows in result set (collection "${collection}")`);
+    let sql = "1=1"; let ps: unknown[] = []; let joins = "";
+    if (typeof where === "string" && where.trim()) {
+      const compiled = compileFilter(where, { base: coll, collections: ctx.collections, request: ctx.request, allowHiddenFields: true });
+      sql = compiled.where; ps = compiled.params; joins = compiled.joins.map(renderJoin).join(" ");
+    } else if (where && typeof where === "object") {
+      // dbx expression: [[col]] quoting and {:name} params
+      const params: unknown[] = [];
+      sql = where.sql.replace(/\[\[(\w+)\]\]/g, (_m, col: string) => ident(col)).replace(/\{:(\w+)\}/g, (_m, k: string) => { params.push(where.params[k] ?? null); return "?"; });
+      ps = params;
+    }
+    const row = await one<{ n: number }>(ctx.db, `SELECT COUNT(DISTINCT ${ident(coll.name)}.id) AS n FROM ${ident(coll.name)} ${joins} WHERE ${sql}`, ps);
+    return Number(row?.n ?? 0);
+  },
+  findAuthRecordByEmail: async (collection, email) => {
+    const ctx = await hookStore.getStore()!.ctx();
+    const coll = ctx.collections.get(collection);
+    if (!coll || coll.type !== "auth") return null;
+    const row = await one(ctx.db, `SELECT * FROM ${ident(coll.name)} WHERE email = ? LIMIT 1`, [email]);
+    return row ? HookRecord.fromRow(coll, row) : null;
+  },
+  findAuthRecordByToken: async (token, type) => {
+    const ctx = await hookStore.getStore()!.ctx();
+    const auth = await findAuthRecordByToken(ctx.db, token, type);
+    return auth ? HookRecord.fromRow(auth.collection, auth.row) : null;
+  },
+  expandRecords: async (records, expands) => {
+    if (!records.length || !expands.length) return;
+    const ctx = await hookStore.getStore()!.ctx();
+    const coll = records[0]!.collection().data;
+    const rows = records.map((r) => valuesToRowFor(coll, r.fieldsData()));
+    const map = await expandRecords({ db: ctx.db, collections: ctx.collections, auth: ctx.auth, superuser: true, request: ctx.request }, coll, rows, expands);
+    for (const r of records) { const e = map.get(String(r.id)); if (e && Object.keys(e).length) r.expand = { ...(r.expand ?? {}), ...e }; }
   },
   saveCollection: async (ref) => {
     const store = hookStore.getStore()!;

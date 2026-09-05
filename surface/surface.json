@@ -861,10 +861,10 @@
             "prod"
           ],
           "hours": 3,
-          "status": "partial",
+          "status": "done",
           "milestone": "m4",
           "verify": "Starter's slugDefault and auditlog hooks fire",
-          "notes": "Model and record create/update/delete hooks, *Request hooks and AfterSuccess fire around the record service (the starter auditlog hook writes through them); Validate, Enrich and AfterError pending."
+          "notes": "Model and record Create/Update/Delete, *Request, Validate (after the built-in checks; a thrown error fails the write with PocketBase's message), Enrich (hide/unhide per record, also for realtime payloads), AfterSuccess and AfterError (with e.error) all fire around the record service. Verified by test/fresh-db.ts with test/fixtures/hooks."
         },
         {
           "id": "rec.conformance",
@@ -1923,7 +1923,7 @@
           "hours": 4,
           "status": "partial",
           "milestone": "m4",
-          "notes": "Record and model hooks (create/update/delete, *Request, AfterSuccess) fire around the records service with e.next() chaining; collection, mailer, realtime, and auth-request events are registered but not yet triggered."
+          "notes": "Record and model hooks (create/update/delete, validate, enrich, *Request, AfterSuccess, AfterError) fire with e.next() semantics and tags; collection, mailer, realtime and settings events are registered but not yet triggered."
         },
         {
           "id": "hk.app",
@@ -1934,9 +1934,9 @@
             "prod"
           ],
           "hours": 4,
-          "status": "partial",
+          "status": "done",
           "milestone": "m4",
-          "notes": "findCollectionByNameOrId, findAllCollections, findRecordById, findRecordsByFilter, findFirstRecordByFilter/Data, save and delete for records and collections, settings, newMailClient (logs only), runInTransaction (no-op wrapper). Missing: expandRecord(s), countRecords, findAuthRecordByEmail/Token, real transactions (D1 batch only)."
+          "notes": "findCollectionByNameOrId, findAllCollections, findRecordById, findRecordsByFilter, findFirstRecordByFilter/Data, countRecords (filter string or $dbx.exp/hashExp), findAuthRecordByEmail/Token, expandRecord(s), save and delete for records and collections, settings, newMailClient (logs only), runInTransaction (no transaction: D1 batch semantics). Verified by test/fresh-db.ts."
         },
         {
           "id": "hk.models",
@@ -1958,9 +1958,9 @@
             "starter"
           ],
           "hours": 1,
-          "status": "partial",
+          "status": "done",
           "milestone": "m4",
-          "notes": "requireAuth verified; requireSuperuserAuth, requireGuestOnly, requireSuperuserOrOwnerAuth implemented, not yet exercised."
+          "notes": "requireAuth, requireSuperuserAuth, requireGuestOnly, requireSuperuserOrOwnerAuth, enrichRecord(s) and the ApiError family; guards verified by test/fresh-db.ts, requireAuth by the starter's /api/hello."
         },
         {
           "id": "hk.utils",
@@ -2280,7 +2280,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (9), realtime.ts, fresh-db.ts (empty-D1 boot + migrations), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (9), realtime.ts, fresh-db.ts (17: isolated empty D1 boot with fixture migrations and hooks), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
         },
         {
           "id": "prod.sdk-suite",

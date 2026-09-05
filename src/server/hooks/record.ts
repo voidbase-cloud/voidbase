@@ -137,12 +137,14 @@ export class HookRecord {
   ignoreEmailVisibility(v = true) { this.emailVisible = v; return this; }
   hide(...names: string[]) { for (const n of names) this.hidden.add(n); return this; }
   unhide(...names: string[]) { for (const n of names) this.hidden.delete(n); return this; }
+  hiddenFields(): string[] { return [...this.hidden]; }
+  expand: Record<string, unknown> | null = null; // set by $apis.enrichRecord / $app.expandRecord
   fieldsData() { return { ...this.values }; }
   // JSON export as the API would return it (email included when visibility is ignored)
   publicExport(): Record<string, unknown> {
     const row: Row = {};
     for (const f of this.fields()) row[f.name] = this.values[f.name];
-    const out = recordToJSON(this.coll.data, row, { own: this.emailVisible });
+    const out = recordToJSON(this.coll.data, row, { own: this.emailVisible, expand: this.expand ?? undefined });
     for (const n of this.hidden) delete out[n];
     return out;
   }

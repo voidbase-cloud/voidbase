@@ -37,6 +37,8 @@ export function onEvent(name: string, fn: HookFn, tags: string[]) {
 }
 
 // Runs the handlers for an event as a chain around `inner` (the core action). e.next() runs the rest once.
+export const hasHandlers = (name: string, tag: string | null) => (eventHooks.get(name) ?? []).some((h) => h.tags.length === 0 || (tag !== null && h.tags.includes(tag)));
+
 export async function trigger<T extends { next?: () => Promise<unknown> }>(name: string, e: T, tag: string | null, inner: () => Promise<unknown>): Promise<unknown> {
   const handlers = (eventHooks.get(name) ?? []).filter((h) => h.tags.length === 0 || (tag !== null && h.tags.includes(tag)));
   if (handlers.length === 0) return inner();
@@ -111,8 +113,18 @@ export interface AppServices {
   deleteRecord: (rec: HookRecord) => Promise<void>;
   findRecordById: (collection: string, id: string) => Promise<HookRecord | null>;
   findRecordsByFilter: (collection: string, filter: string, sort: string, limit: number, offset: number, params?: Record<string, unknown>) => Promise<HookRecord[]>;
+  countRecords: (collection: string, where: DbxExpr | string | null) => Promise<number>;
+  findAuthRecordByEmail: (collection: string, email: string) => Promise<HookRecord | null>;
+  findAuthRecordByToken: (token: string, type: string) => Promise<HookRecord | null>;
+  expandRecords: (records: HookRecord[], expands: string[]) => Promise<void>;
   sendMail: (msg: MailerMessage) => Promise<void>;
 }
+// $dbx: the small subset generated hooks use ($dbx.exp("col = {:v}", {v}), $dbx.hashExp({col: v}))
+export interface DbxExpr { sql: string; params: Record<string, unknown> }
+export const $dbx = {
+  exp: (sql: string, params: Record<string, unknown> = {}): DbxExpr => ({ sql, params }),
+  hashExp: (pairs: Record<string, unknown>): DbxExpr => ({ sql: Object.keys(pairs).map((k) => `[[${k}]] = {:${k}}`).join(" AND "), params: { ...pairs } }),
+};
 let services: AppServices | null = null;
 export function installServices(s: AppServices) { services = s; }
 const svc = () => { if (!services) throw new Error("hooks: services not installed"); return services; };
@@ -124,6 +136,11 @@ export interface AppApi {
   findRecordsByFilter(collection: string | CollectionRef, filter: string, sort?: string, limit?: number, offset?: number, params?: Record<string, unknown>): Promise<HookRecord[]>;
   findFirstRecordByFilter(collection: string | CollectionRef, filter: string, params?: Record<string, unknown>): Promise<HookRecord>;
   findFirstRecordByData(collection: string | CollectionRef, key: string, value: unknown): Promise<HookRecord>;
+  countRecords(collection: string | CollectionRef, ...exprs: (DbxExpr | string)[]): Promise<number>;
+  findAuthRecordByEmail(collection: string | CollectionRef, email: string): Promise<HookRecord>;
+  findAuthRecordByToken(token: string, type?: string): Promise<HookRecord>;
+  expandRecord(record: HookRecord, expands: string[], fetch?: unknown): Promise<void>;
+  expandRecords(records: HookRecord[], expands: string[], fetch?: unknown): Promise<void>;
   save(model: HookRecord | CollectionRef): Promise<HookRecord | CollectionRef>;
   saveNoValidate(model: HookRecord | CollectionRef): Promise<HookRecord | CollectionRef>;
   delete(model: HookRecord | CollectionRef): Promise<void>;
@@ -158,6 +175,19 @@ export const $app: AppApi = {
     if (!rows[0]) throw new Error("sql: no rows in result set");
     return rows[0];
   },
+  countRecords: (collection: string | CollectionRef, ...exprs: (DbxExpr | string)[]) => svc().countRecords(typeof collection === "string" ? collection : collection.name, exprs.length ? (exprs.length === 1 ? exprs[0]! : { sql: exprs.map((x) => `(${typeof x === "string" ? x : x.sql})`).join(" AND "), params: Object.assign({}, ...exprs.map((x) => (typeof x === "string" ? {} : x.params))) }) : null),
+  async findAuthRecordByEmail(collection: string | CollectionRef, email: string) {
+    const rec = await svc().findAuthRecordByEmail(typeof collection === "string" ? collection : collection.name, email);
+    if (!rec) throw new Error("sql: no rows in result set");
+    return rec;
+  },
+  async findAuthRecordByToken(token: string, type = "auth") {
+    const rec = await svc().findAuthRecordByToken(token, type);
+    if (!rec) throw new Error("sql: no rows in result set");
+    return rec;
+  },
+  expandRecord: (record: HookRecord, expands: string[]) => svc().expandRecords([record], expands),
+  expandRecords: (records: HookRecord[], expands: string[]) => svc().expandRecords(records, expands),
   save: (model: HookRecord | CollectionRef) => (model instanceof CollectionRef ? svc().saveCollection(model) : svc().saveRecord(model)),
   saveNoValidate: (model: HookRecord | CollectionRef) => (model instanceof CollectionRef ? svc().saveCollection(model) : svc().saveRecord(model)),
   delete: (model: HookRecord | CollectionRef) => (model instanceof CollectionRef ? svc().deleteCollection(model) : svc().deleteRecord(model)),
@@ -182,6 +212,9 @@ export class MailerMessage {
 }
 
 export const $apis = {
+  // $apis.enrichRecord(e, record, ...expands): expands and applies the auth-aware export (as the API would)
+  async enrichRecord(_e: unknown, record: HookRecord, ...expands: string[]): Promise<HookRecord> { if (expands.length) await svc().expandRecords([record], expands); return record; },
+  async enrichRecords(_e: unknown, records: HookRecord[], ...expands: string[]): Promise<HookRecord[]> { if (expands.length) await svc().expandRecords(records, expands); return records; },
   requireAuth(...collections: string[]): HookMiddleware {
     return { id: "pbRequireAuth", func: async (e) => {
       const ev = e as RequestEvent;
@@ -208,8 +241,6 @@ export const $apis = {
       return ev.next();
     } };
   },
-  enrichRecord: (_e: unknown, record: HookRecord) => record,
-  enrichRecords: (_e: unknown, records: HookRecord[]) => records,
 };
 
 export const $http = {

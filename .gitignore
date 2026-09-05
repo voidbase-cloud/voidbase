@@ -12,3 +12,4 @@ dist
 surface/dist
 # synced by `bun run panel:sync` (public/_) and `bun run app:sync` (everything else)
 public/*
+.void-fresh

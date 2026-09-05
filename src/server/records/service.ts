@@ -15,7 +15,8 @@ import { recordToJSON } from "./json";
 import { parseFields, pick } from "./picker";
 import { autogenerate, normalizeInput, rowToValues, toColumn, uniqueStrings, validateValues, type FieldError, type RecordErrors, type Upload } from "./values";
 import { CollectionRef, HookRecord } from "../hooks/record";
-import { trigger, type RequestEvent } from "../hooks/runtime";
+import { hasHandlers, trigger, type RequestEvent } from "../hooks/runtime";
+import { fromColumn } from "./values";
 
 export interface RecordContext {
   db: D1Database;
@@ -118,7 +119,24 @@ export async function viewRecord(ctx: RecordContext, c: Collection, id: string, 
 export async function enrich(ctx: RecordContext, c: Collection, rows: Row[], opts: EnrichOptions): Promise<Record<string, unknown>[]> {
   const expands = (opts.expand ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const expandMap = expands.length ? await expandRecords({ db: ctx.db, collections: ctx.collections, auth: ctx.auth, superuser: ctx.superuser, request: ctx.request }, c, rows, expands) : null;
-  let items: unknown = rows.map((r) => recordToJSON(c, r, { auth: ctx.auth, own: isOwn(ctx, c, r), expand: expandMap?.get(String(r.id)) }));
+  let items: unknown;
+  if (hasHandlers("onRecordEnrich", c.name)) {
+    // OnRecordEnrich: hooks may hide()/unhide() fields per record before it is exported
+    const requestInfo = { auth: ctx.auth ? HookRecord.fromRow(ctx.auth.collection, ctx.auth.row) : null, method: ctx.request.method, query: ctx.request.query, headers: ctx.request.headers, context: ctx.request.context };
+    const out: Record<string, unknown>[] = [];
+    for (const r of rows) {
+      const rec = HookRecord.fromRow(c, r);
+      const ev = { app: undefined as unknown, record: rec, requestInfo, next: async () => undefined as unknown };
+      await trigger("onRecordEnrich", ev, c.name, async () => undefined);
+      const json = recordToJSON(c, r, { auth: ctx.auth, own: isOwn(ctx, c, r), expand: expandMap?.get(String(r.id)) });
+      const hidden = new Set(rec.hiddenFields());
+      for (const n of hidden) delete json[n];
+      for (const f of c.fields as Field[]) if (f.hidden && !hidden.has(f.name) && !(f.name in json) && f.type !== "password") json[f.name] = fromColumn(f, r[f.name]);
+      if (c.type === "auth" && !hidden.has("email") && !("email" in json)) json.email = r.email ?? "";
+      out.push(json);
+    }
+    items = out;
+  } else items = rows.map((r) => recordToJSON(c, r, { auth: ctx.auth, own: isOwn(ctx, c, r), expand: expandMap?.get(String(r.id)) }));
   if (opts.fields?.trim()) {
     try { items = pick(items, parseFields(opts.fields)); } catch { throw badRequest(); }
   }
@@ -331,6 +349,7 @@ export async function createRecord(ctx: RecordContext, c: Collection, body: RawB
       if (clash) errors.id = { code: "validation_pk_invalid", message: "The record primary key is invalid or already exists." };
     }
     if (Object.keys(errors).length) throw badRequest("Failed to create record.", sortedErrors(errors));
+    await validateHooks(modelEv, c, "Failed to create record.");
     const stored = { ...values };
     for (const f of fields) if (f.type === "password") stored[f.name] = stored[f.name] ? await hashPassword(String(stored[f.name])) : "";
     const cols = fields.map((f) => ident(f.name));
@@ -349,8 +368,7 @@ export async function createRecord(ctx: RecordContext, c: Collection, body: RawB
   };
   const modelEv = { app: undefined as unknown, record: rec, model: rec, collection: new CollectionRef(c), next: async () => undefined as unknown };
   const withModelHooks = () => trigger("onModelCreate", modelEv, c.name, () => trigger("onRecordCreate", modelEv, c.name, core));
-  if (reqEv) await trigger("onRecordCreateRequest", reqEv, c.name, withModelHooks);
-  else await withModelHooks();
+  await withAfterError("Create", modelEv, c, () => (reqEv ? trigger("onRecordCreateRequest", reqEv, c.name, withModelHooks) : withModelHooks()));
   await trigger("onRecordAfterCreateSuccess", modelEv, c.name, async () => undefined);
   await trigger("onModelAfterCreateSuccess", modelEv, c.name, async () => undefined);
   const row = await one(ctx.db, `SELECT * FROM ${ident(c.name)} WHERE id = ?`, [rec.values.id]);
@@ -402,6 +420,7 @@ export async function updateRecord(ctx: RecordContext, c: Collection, id: string
     const fieldErrors = await validateValues(c, forValidation, { db: ctx.db, collections: ctx.collections, isNew: false, originalId: String(current.id), uploads, existingFiles });
     for (const [k, v] of Object.entries(fieldErrors)) if (!(k in errors)) errors[k] = v;
     if (Object.keys(errors).length) throw badRequest("Failed to update record.", sortedErrors(errors));
+    await validateHooks(modelEv, c, "Failed to update record.");
 
     const stored = { ...values };
     let refreshTokenKey = false;
@@ -434,8 +453,7 @@ export async function updateRecord(ctx: RecordContext, c: Collection, id: string
   };
   const modelEv = { app: undefined as unknown, record: rec, model: rec, collection: new CollectionRef(c), next: async () => undefined as unknown };
   const withModelHooks = () => trigger("onModelUpdate", modelEv, c.name, () => trigger("onRecordUpdate", modelEv, c.name, core));
-  if (reqEv) await trigger("onRecordUpdateRequest", reqEv, c.name, withModelHooks);
-  else await withModelHooks();
+  await withAfterError("Update", modelEv, c, () => (reqEv ? trigger("onRecordUpdateRequest", reqEv, c.name, withModelHooks) : withModelHooks()));
   await trigger("onRecordAfterUpdateSuccess", modelEv, c.name, async () => undefined);
   await trigger("onModelAfterUpdateSuccess", modelEv, c.name, async () => undefined);
   const fresh = await one(ctx.db, `SELECT * FROM ${ident(c.name)} WHERE id = ?`, [id]);
@@ -470,12 +488,36 @@ export async function deleteRecord(ctx: RecordContext, c: Collection, id: string
   };
   const modelEv = { app: undefined as unknown, record: rec, model: rec, collection: new CollectionRef(c), next: async () => undefined as unknown };
   const withModelHooks = () => trigger("onModelDelete", modelEv, c.name, () => trigger("onRecordDelete", modelEv, c.name, core));
-  if (reqEv) await trigger("onRecordDeleteRequest", reqEv, c.name, withModelHooks);
-  else await withModelHooks();
+  await withAfterError("Delete", modelEv, c, () => (reqEv ? trigger("onRecordDeleteRequest", reqEv, c.name, withModelHooks) : withModelHooks()));
   await trigger("onRecordAfterDeleteSuccess", modelEv, c.name, async () => undefined);
   await trigger("onModelAfterDeleteSuccess", modelEv, c.name, async () => undefined);
 }
 
+
+
+// ---- hook plumbing shared by create/update/delete ------------------------------------------------
+type ModelEvent = { app: unknown; record: HookRecord; model: HookRecord; collection: CollectionRef; next: () => Promise<unknown> };
+// OnModelValidate / OnRecordValidate run after the built-in checks; a thrown error fails the write like PocketBase
+async function validateHooks(ev: ModelEvent, c: Collection, failMsg: string) {
+  if (!hasHandlers("onModelValidate", c.name) && !hasHandlers("onRecordValidate", c.name)) return;
+  try {
+    await trigger("onModelValidate", ev, c.name, () => trigger("onRecordValidate", ev, c.name, async () => undefined));
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw badRequest(failMsg);
+  }
+}
+// OnRecordAfter{Create,Update,Delete}Error and the Model twins fire when the operation failed, then the error propagates
+async function withAfterError(op: "Create" | "Update" | "Delete", ev: ModelEvent, c: Collection, run: () => Promise<unknown>) {
+  try { await run(); } catch (err) {
+    const errEv = { ...ev, error: err, next: async () => undefined as unknown };
+    try {
+      await trigger(`onRecordAfter${op}Error`, errEv, c.name, async () => undefined);
+      await trigger(`onModelAfter${op}Error`, errEv, c.name, async () => undefined);
+    } catch (hookErr) { console.error(`voidbase: onRecordAfter${op}Error handler failed`, hookErr); }
+    throw err;
+  }
+}
 
 // ---- cascade delete planning --------------------------------------------------------------------
 interface DeletePlan { statements: D1PreparedStatement[]; deleted: { c: Collection; row: Row }[]; overlay: Map<string, Row> }

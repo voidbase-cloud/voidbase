@@ -6,7 +6,7 @@ import { loadSettings } from "../settings";
 import type { AppEnv } from "../types";
 import { CollectionRef, HookRecord } from "./record";
 import {
-  $apis, $app, $filesystem, $http, $security, BadRequestError, ForbiddenError, InternalServerError, MailerMessage, NotFoundError,
+  $apis, $app, $dbx, $filesystem, $http, $security, BadRequestError, ForbiddenError, InternalServerError, MailerMessage, NotFoundError,
   RecordUpsertFormFactory, RequestEvent, UnauthorizedError, ValidationError, authToHookRecord, cronAdd, cronRemove, hookStore,
   crons, eventHooks, makeOs, onEvent, routerAdd, routerUse, routes, type HookMiddleware,
 } from "./runtime";
@@ -26,7 +26,7 @@ function fieldClass(type?: string) {
 function buildGlobals(): Record<string, unknown> {
   const g: Record<string, unknown> = {
     $app, $apis, $http, $os, $filesystem, $security,
-    $mails: {}, $template: { loadFiles: () => ({ render: () => "" }) }, $dbx: {},
+    $mails: {}, $template: { loadFiles: () => ({ render: () => "" }) }, $dbx,
     routerAdd, routerUse, cronAdd, cronRemove,
     migrate: () => { /* migrations are applied by the migrations runner, not at hook load */ },
     Record: class Record extends HookRecord { constructor(collection: CollectionRef, data?: { [k: string]: unknown }) { super(collection, data ?? {}); } },

@@ -2,13 +2,21 @@
 // data holds per-field validation errors: { field: { code, message } }
 export type FieldErrors = Record<string, { code: string; message: string }>;
 
+// PocketBase passes messages through inflector.Sentenize: capitalized, ending with punctuation.
+export function sentenize(message: string): string {
+  const m = message.trim();
+  if (!m) return m;
+  const cap = m[0]!.toUpperCase() + m.slice(1);
+  return /[.!?]$/.test(cap) ? cap : cap + ".";
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
     public data: FieldErrors | Record<string, unknown> = {},
   ) {
-    super(message);
+    super(sentenize(message));
   }
   toJSON() {
     return { data: this.data, message: this.message, status: this.status };

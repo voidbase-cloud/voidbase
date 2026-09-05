@@ -49,7 +49,7 @@
       "id": "d5",
       "date": "2026-09-05",
       "title": "Realtime on void/sse over a D1 change feed",
-      "choice": "PocketBase framing is written by void/sse. Fanout is a _changes table in D1 appended inside the write batch and polled by one multiplexed poller per isolate every one to two seconds. void/live stays an opt-in low-latency transport behind the same front. No sidecar, no custom Durable Object.",
+      "choice": "PocketBase framing is written by void/sse. Fanout is a _changes table in D1 appended inside the write batch and polled about once a second by each open stream from inside its own request (Workers tie timers and stream writers to the request that created them); streams in one isolate share the last read. void/live stays an opt-in low-latency transport behind the same front. No sidecar, no custom Durable Object.",
       "why": "void/live holds one Durable Object per connection, billed for wall-clock duration at about $4 per always-connected client per month. The change feed costs about $0.02 per client per month and $0 when nobody is connected, and it keeps the self-host deploy path open. Revised the same day after pricing the first version."
     },
     {
@@ -859,9 +859,10 @@
             "prod"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "partial",
           "milestone": "m4",
-          "verify": "Starter's slugDefault and auditlog hooks fire"
+          "verify": "Starter's slugDefault and auditlog hooks fire",
+          "notes": "Model and record create/update/delete hooks, *Request hooks and AfterSuccess fire around the record service (the starter auditlog hook writes through them); Validate, Enrich and AfterError pending."
         },
         {
           "id": "rec.conformance",
@@ -1423,7 +1424,7 @@
             "starter"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m4",
           "verify": "SDK realtime.isConnected becomes true against voidbase"
         },
@@ -1436,7 +1437,7 @@
             "starter"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m4"
         },
         {
@@ -1448,20 +1449,21 @@
             "starter"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m4"
         },
         {
           "id": "rt.poller",
-          "title": "One multiplexed poller per isolate: a single D1 read per interval serves every open stream in that isolate; adaptive one to two second interval; cursor per stream",
+          "title": "Per-connection poll loop inside its own request (Workers bind timers and stream writers to the request that made them); loops in one isolate share the last change-feed read so D1 sees about one query per second per isolate; cursor per stream",
           "surface": "module-level poller, SELECT … FROM _changes WHERE id > ?",
           "oracles": [
             "sdk",
             "starter"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m4"
+          "status": "done",
+          "milestone": "m4",
+          "notes": "Rewritten after the first shared setInterval died with the connection that created it. Verified by test/conformance/realtime.ts and the starter list updating live."
         },
         {
           "id": "rt.hydrate",
@@ -1472,7 +1474,7 @@
             "starter"
           ],
           "hours": 4,
-          "status": "todo",
+          "status": "done",
           "milestone": "m4",
           "verify": "Starter posts list updates live in a second tab; a non-owner never receives a private record"
         },
@@ -1485,7 +1487,7 @@
             "starter"
           ],
           "hours": 1,
-          "status": "todo",
+          "status": "done",
           "milestone": "m4"
         },
         {
@@ -1902,7 +1904,7 @@
             "starter"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m4"
         },
         {
@@ -1914,8 +1916,9 @@
             "prod"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m4"
+          "status": "partial",
+          "milestone": "m4",
+          "notes": "Record and model hooks (create/update/delete, *Request, AfterSuccess) fire around the records service with e.next() chaining; collection, mailer, realtime, and auth-request events are registered but not yet triggered."
         },
         {
           "id": "hk.app",
@@ -1926,8 +1929,9 @@
             "prod"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m4"
+          "status": "partial",
+          "milestone": "m4",
+          "notes": "findCollectionByNameOrId, save (RecordUpsertForm.submit), settings, newMailClient verified through the starter's hooks; findRecordById/findRecordsByFilter/delete/runInTransaction implemented, not yet exercised."
         },
         {
           "id": "hk.models",
@@ -1938,7 +1942,7 @@
             "prod"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "done",
           "milestone": "m4"
         },
         {
@@ -1949,8 +1953,9 @@
             "starter"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m4"
+          "status": "partial",
+          "milestone": "m4",
+          "notes": "requireAuth verified; requireSuperuserAuth, requireGuestOnly, requireSuperuserOrOwnerAuth implemented, not yet exercised."
         },
         {
           "id": "hk.utils",
@@ -1961,7 +1966,7 @@
             "prod"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "done",
           "milestone": "m4"
         },
         {
@@ -1972,21 +1977,22 @@
             "starter"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "done",
           "milestone": "m4",
           "verify": "Starter's main.pb.js runs untouched"
         },
         {
           "id": "hk.migrations",
-          "title": "JS migrations runner: migrate(up, down) with importCollections and model helpers, tracked in _migrations",
+          "title": "JS migrations runner: migrate(up, down) with importCollections and $app helpers, tracked in _pbMigrations",
           "surface": "pb_migrations/*.js",
           "oracles": [
             "starter",
             "admin"
           ],
           "hours": 3,
-          "status": "todo",
-          "milestone": "m4"
+          "status": "done",
+          "milestone": "m4",
+          "notes": "pb_migrations/*.js bundled as virtual:voidbase-migrations and applied at bootstrap; the starter snapshot migration runs against a fresh database and is a no-op on an existing one. Verified by restart plus test/starter-smoke.ts."
         },
         {
           "id": "hk.go",
@@ -2200,7 +2206,7 @@
             "starter"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "done",
           "milestone": "m4"
         },
         {
@@ -2233,8 +2239,9 @@
             "starter"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m4"
+          "status": "partial",
+          "milestone": "m4",
+          "notes": "Verified by test/starter-smoke.ts: home config, login, posts list with thumbnails, live list update from an API create and from Generate, post view, audit log tab, hello, delete flow. The edit form crashes upstream in Svelte 5 (FileInput renders an undefined children snippet) against PocketBase too; signup and OAuth2 pending."
         },
         {
           "id": "st.e2e",
@@ -2245,8 +2252,9 @@
             "prod"
           ],
           "hours": 3,
-          "status": "todo",
-          "milestone": "m4"
+          "status": "partial",
+          "milestone": "m4",
+          "notes": "sk/tests/smoke.test.ts is stale against the starter UI (Create New, Recent Posts), so test/starter-smoke.ts drives the starter instead; CI wiring pending."
         }
       ]
     },
@@ -2265,7 +2273,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (20), collections.ts (28), records.ts (88 replayed fixtures incl. filters, rules, modifiers, auth records, multipart files) diff against PocketBase 0.40.2; test/panel-*.ts drive the unmodified panel headlessly."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), realtime.ts, panel-smoke, panel-collections, panel-records and starter-smoke all green on 2026-09-05."
         },
         {
           "id": "prod.sdk-suite",

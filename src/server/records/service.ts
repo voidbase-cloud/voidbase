@@ -14,6 +14,8 @@ import { deleteAllRecordFiles, deleteFiles, normalizeFilename, putUpload, sniffM
 import { recordToJSON } from "./json";
 import { parseFields, pick } from "./picker";
 import { autogenerate, normalizeInput, rowToValues, toColumn, uniqueStrings, validateValues, type FieldError, type RecordErrors, type Upload } from "./values";
+import { CollectionRef, HookRecord } from "../hooks/record";
+import { trigger, type RequestEvent } from "../hooks/runtime";
 
 export interface RecordContext {
   db: D1Database;
@@ -22,6 +24,8 @@ export interface RecordContext {
   superuser: boolean;
   request: RequestInfo;
   collections: Map<string, Collection>;
+  // present when called from an HTTP route: builds the JSVM RequestEvent for *Request hooks
+  hookEvent?: (record: HookRecord, collection: Collection) => RequestEvent;
 }
 
 export interface ListQuery { page: number; perPage: number; skipTotal: boolean; sort: string; filter: string; expand: string; fields: string }
@@ -141,6 +145,7 @@ async function toUpload(file: File): Promise<Upload> {
 }
 
 const isFile = (v: unknown): v is File => typeof File !== "undefined" && v instanceof File;
+const isUpload = (v: unknown): v is Upload => !!v && typeof v === "object" && "bytes" in (v as object) && "name" in (v as object);
 
 async function prepareInput(c: Collection, current: Record<string, unknown>, body: RawBody): Promise<Prepared> {
   const fields = c.fields as Field[];
@@ -176,6 +181,7 @@ async function prepareInput(c: Collection, current: Record<string, unknown>, bod
       const names: string[] = [];
       for (const item of list) {
         if (isFile(item)) { const up = await toUpload(item); (uploads[name] ??= new Map()).set(up.name, up); names.push(up.name); }
+        else if (isUpload(item)) { (uploads[name] ??= new Map()).set(item.name, item); names.push(item.name); }
         else if (typeof item === "string" && item.trim()) { const s = item.trim(); if (s.startsWith("[")) { try { names.push(...(JSON.parse(s) as unknown[]).map(String)); continue; } catch { /* plain name */ } } names.push(s); }
       }
       const cur = (values[name] as string[] | undefined) ?? [];
@@ -223,6 +229,8 @@ function defaults(c: Collection): Record<string, unknown> {
 }
 
 // ---- rules against not-yet-saved values (create rule, manage rule) ---------------------------------
+export async function recordMatchesRule(ctx: RecordContext, c: Collection, rule: string, values: Record<string, unknown>): Promise<boolean> { return ruleMatchesValues(ctx, c, rule, values); }
+
 async function ruleMatchesValues(ctx: RecordContext, c: Collection, rule: string, values: Record<string, unknown>): Promise<boolean> {
   const dummy = `${c.name}__dry${randomString(6).toLowerCase()}`;
   let compiled;
@@ -268,6 +276,16 @@ function authFormErrors(c: Collection, p: Prepared, original: Record<string, unk
   return errors;
 }
 
+// ---- change feed -----------------------------------------------------------------------------------
+function changeStmt(db: D1Database, c: Collection, action: "create" | "update" | "delete", row: Row) {
+  return stmt(db, "INSERT INTO `_changes` (collection, recordId, action, data, created) VALUES (?, ?, ?, ?, ?)", [c.name, String(row.id), action, JSON.stringify(row), nowString()]);
+}
+function valuesToRow(c: Collection, values: Record<string, unknown>): Row {
+  const row: Row = {};
+  for (const f of c.fields as Field[]) row[f.name] = toColumn(f, values[f.name]);
+  return row;
+}
+
 // ---- errors ---------------------------------------------------------------------------------------
 const sortedErrors = (e: RecordErrors) => Object.fromEntries(Object.entries(e).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) as unknown as FieldErrors;
 
@@ -300,30 +318,50 @@ export async function createRecord(ctx: RecordContext, c: Collection, body: RawB
     throw badRequest("Failed to create record.");
   }
   const manage = await hasManageAccess(ctx, c, p.values);
-  const errors: RecordErrors = { ...authFormErrors(c, p, null, manage) };
-  const fieldErrors = await validateValues(c, p.values, { db: ctx.db, collections: ctx.collections, isNew: true, uploads: p.uploads, existingFiles: {} });
-  for (const [k, v] of Object.entries(fieldErrors)) if (!(k in errors)) errors[k] = v;
-  if (c.type === "auth" && p.values.id) {
-    const clash = await one(ctx.db, `SELECT 1 AS x FROM ${ident(c.name)} WHERE id = ?`, [p.values.id]);
-    if (clash) errors.id = { code: "validation_pk_invalid", message: "The record primary key is invalid or already exists." };
-  }
-  if (Object.keys(errors).length) throw badRequest("Failed to create record.", sortedErrors(errors));
-
-  const stored = { ...p.values };
-  for (const f of fields) if (f.type === "password") stored[f.name] = stored[f.name] ? await hashPassword(String(stored[f.name])) : "";
-  const cols = fields.map((f) => ident(f.name));
-  const params = fields.map((f) => toColumn(f, stored[f.name]));
-  try {
-    await stmt(ctx.db, `INSERT INTO ${ident(c.name)} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`, params).run();
-  } catch (err) {
-    const col = uniqueViolation(err);
-    if (col) throw badRequest("Failed to create record.", { [col]: { code: "validation_not_unique", message: "Value must be unique." } } as unknown as FieldErrors);
-    if (String((err as Error)?.message).includes("PRIMARY KEY")) throw badRequest("Failed to create record.", { id: { code: "validation_pk_invalid", message: "The record primary key is invalid or already exists." } } as unknown as FieldErrors);
-    throw sqlError(err);
-  }
-  await storeUploads(ctx, c, String(p.values.id), p.uploads);
-  const row = await one(ctx.db, `SELECT * FROM ${ident(c.name)} WHERE id = ?`, [p.values.id]);
+  const rec = new HookRecord(new CollectionRef(c), {}, { isNew: true });
+  rec.values = p.values;
+  const reqEv = ctx.hookEvent?.(rec, c);
+  const core = async () => {
+    const values = rec.values; // hooks may have changed it
+    const errors: RecordErrors = { ...authFormErrors(c, { ...p, values }, null, manage) };
+    const fieldErrors = await validateValues(c, values, { db: ctx.db, collections: ctx.collections, isNew: true, uploads: mergeUploads(p.uploads, rec.uploads), existingFiles: {} });
+    for (const [k, v] of Object.entries(fieldErrors)) if (!(k in errors)) errors[k] = v;
+    if (c.type === "auth" && values.id) {
+      const clash = await one(ctx.db, `SELECT 1 AS x FROM ${ident(c.name)} WHERE id = ?`, [values.id]);
+      if (clash) errors.id = { code: "validation_pk_invalid", message: "The record primary key is invalid or already exists." };
+    }
+    if (Object.keys(errors).length) throw badRequest("Failed to create record.", sortedErrors(errors));
+    const stored = { ...values };
+    for (const f of fields) if (f.type === "password") stored[f.name] = stored[f.name] ? await hashPassword(String(stored[f.name])) : "";
+    const cols = fields.map((f) => ident(f.name));
+    const params = fields.map((f) => toColumn(f, stored[f.name]));
+    try {
+      await ctx.db.batch([stmt(ctx.db, `INSERT INTO ${ident(c.name)} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`, params), changeStmt(ctx.db, c, "create", valuesToRow(c, stored))]);
+    } catch (err) {
+      const col = uniqueViolation(err);
+      if (col) throw badRequest("Failed to create record.", { [col]: { code: "validation_not_unique", message: "Value must be unique." } } as unknown as FieldErrors);
+      if (String((err as Error)?.message).includes("PRIMARY KEY")) throw badRequest("Failed to create record.", { id: { code: "validation_pk_invalid", message: "The record primary key is invalid or already exists." } } as unknown as FieldErrors);
+      throw sqlError(err);
+    }
+    await storeUploads(ctx, c, String(values.id), mergeUploads(p.uploads, rec.uploads));
+    rec.markAsNotNew();
+    rec.setOriginal(values);
+  };
+  const modelEv = { app: undefined as unknown, record: rec, model: rec, collection: new CollectionRef(c), next: async () => undefined as unknown };
+  const withModelHooks = () => trigger("onModelCreate", modelEv, c.name, () => trigger("onRecordCreate", modelEv, c.name, core));
+  if (reqEv) await trigger("onRecordCreateRequest", reqEv, c.name, withModelHooks);
+  else await withModelHooks();
+  await trigger("onRecordAfterCreateSuccess", modelEv, c.name, async () => undefined);
+  await trigger("onModelAfterCreateSuccess", modelEv, c.name, async () => undefined);
+  const row = await one(ctx.db, `SELECT * FROM ${ident(c.name)} WHERE id = ?`, [rec.values.id]);
   return (await enrich(ctx, c, [row!], opts))[0];
+}
+
+function mergeUploads(a: Record<string, Map<string, Upload>>, b: Record<string, Upload[]>): Record<string, Map<string, Upload>> {
+  const out: Record<string, Map<string, Upload>> = {};
+  for (const [k, m] of Object.entries(a)) out[k] = new Map(m);
+  for (const [k, list] of Object.entries(b)) { const m = out[k] ?? (out[k] = new Map()); for (const up of list) m.set(up.name, up); }
+  return out;
 }
 
 async function storeUploads(ctx: RecordContext, c: Collection, id: string, uploads: Record<string, Map<string, Upload>>) {
@@ -346,46 +384,60 @@ export async function updateRecord(ctx: RecordContext, c: Collection, id: string
   for (const f of fields) if (f.type === "autodate" && f.onUpdate) p.values[f.name] = now;
   ctx.request.body = { ...p.values };
   const manage = await hasManageAccess(ctx, c, current);
-  const errors: RecordErrors = { ...authFormErrors(c, p, current, manage) };
-  if (c.type === "auth" && !manage && !errors.oldPassword && (p.plain.password || p.plain.passwordConfirm) && p.plain.oldPassword) {
-    if (!(await verifyPassword(p.plain.oldPassword, String(row.password ?? "")))) errors.oldPassword = { code: "validation_invalid_old_password", message: "Missing or invalid old password." };
-  }
-  const forValidation = { ...p.values };
-  for (const f of fields) if (f.type === "password") forValidation[f.name] = p.plainPasswords[f.name] ?? "";
-  const existingFiles: Record<string, string[]> = {};
-  for (const f of fields) if (f.type === "file") { const v = current[f.name]; existingFiles[f.name] = Array.isArray(v) ? (v as string[]) : v ? [String(v)] : []; }
-  const fieldErrors = await validateValues(c, forValidation, { db: ctx.db, collections: ctx.collections, isNew: false, originalId: String(current.id), uploads: p.uploads, existingFiles });
-  for (const [k, v] of Object.entries(fieldErrors)) if (!(k in errors)) errors[k] = v;
-  if (Object.keys(errors).length) throw badRequest("Failed to update record.", sortedErrors(errors));
+  const rec = new HookRecord(new CollectionRef(c), {}, { isNew: false });
+  rec.values = p.values;
+  rec.setOriginal(current);
+  const reqEv = ctx.hookEvent?.(rec, c);
+  const core = async () => {
+    const values = rec.values;
+    const errors: RecordErrors = { ...authFormErrors(c, { ...p, values }, current, manage) };
+    if (c.type === "auth" && !manage && !errors.oldPassword && (p.plain.password || p.plain.passwordConfirm) && p.plain.oldPassword) {
+      if (!(await verifyPassword(p.plain.oldPassword, String(row.password ?? "")))) errors.oldPassword = { code: "validation_invalid_old_password", message: "Missing or invalid old password." };
+    }
+    const forValidation = { ...values };
+    for (const f of fields) if (f.type === "password") forValidation[f.name] = p.plainPasswords[f.name] ?? "";
+    const existingFiles: Record<string, string[]> = {};
+    for (const f of fields) if (f.type === "file") { const v = current[f.name]; existingFiles[f.name] = Array.isArray(v) ? (v as string[]) : v ? [String(v)] : []; }
+    const uploads = mergeUploads(p.uploads, rec.uploads);
+    const fieldErrors = await validateValues(c, forValidation, { db: ctx.db, collections: ctx.collections, isNew: false, originalId: String(current.id), uploads, existingFiles });
+    for (const [k, v] of Object.entries(fieldErrors)) if (!(k in errors)) errors[k] = v;
+    if (Object.keys(errors).length) throw badRequest("Failed to update record.", sortedErrors(errors));
 
-  const stored = { ...p.values };
-  let refreshTokenKey = false;
-  for (const f of fields) {
-    if (f.type !== "password") continue;
-    const plain = p.plainPasswords[f.name];
-    if (plain) { stored[f.name] = await hashPassword(plain); if (f.name === "password") refreshTokenKey = true; }
-    else stored[f.name] = row[f.name] ?? "";
-  }
-  if (c.type === "auth" && p.touched.has("email") && p.values.email !== current.email) refreshTokenKey = true;
-  if (refreshTokenKey) stored.tokenKey = randomString(50);
-  const setCols = fields.filter((f) => f.name !== "id").map((f) => `${ident(f.name)} = ?`);
-  const params = fields.filter((f) => f.name !== "id").map((f) => toColumn(f, stored[f.name]));
-  try {
-    await stmt(ctx.db, `UPDATE ${ident(c.name)} SET ${setCols.join(", ")} WHERE id = ?`, [...params, id]).run();
-  } catch (err) {
-    const col = uniqueViolation(err);
-    if (col) throw badRequest("Failed to update record.", { [col]: { code: "validation_not_unique", message: "Value must be unique." } } as unknown as FieldErrors);
-    throw sqlError(err);
-  }
-  await storeUploads(ctx, c, id, p.uploads);
-  for (const f of fields) {
-    if (f.type !== "file") continue;
-    const before = existingFiles[f.name] ?? [];
-    const afterV = stored[f.name];
-    const after = Array.isArray(afterV) ? (afterV as string[]) : afterV ? [String(afterV)] : [];
-    const removed = before.filter((n) => !after.includes(n));
-    if (removed.length) { try { await deleteFiles(ctx.storage, c.id, id, removed); } catch (err) { console.error("voidbase: file delete failed", err); } }
-  }
+    const stored = { ...values };
+    let refreshTokenKey = false;
+    for (const f of fields) {
+      if (f.type !== "password") continue;
+      const plain = p.plainPasswords[f.name];
+      if (plain) { stored[f.name] = await hashPassword(plain); if (f.name === "password") refreshTokenKey = true; }
+      else stored[f.name] = row[f.name] ?? "";
+    }
+    if (c.type === "auth" && p.touched.has("email") && values.email !== current.email) refreshTokenKey = true;
+    if (refreshTokenKey) stored.tokenKey = randomString(50);
+    const setCols = fields.filter((f) => f.name !== "id").map((f) => `${ident(f.name)} = ?`);
+    const params = fields.filter((f) => f.name !== "id").map((f) => toColumn(f, stored[f.name]));
+    try {
+      await ctx.db.batch([stmt(ctx.db, `UPDATE ${ident(c.name)} SET ${setCols.join(", ")} WHERE id = ?`, [...params, id]), changeStmt(ctx.db, c, "update", { ...valuesToRow(c, stored), id })]);
+    } catch (err) {
+      const col = uniqueViolation(err);
+      if (col) throw badRequest("Failed to update record.", { [col]: { code: "validation_not_unique", message: "Value must be unique." } } as unknown as FieldErrors);
+      throw sqlError(err);
+    }
+    await storeUploads(ctx, c, id, uploads);
+    for (const f of fields) {
+      if (f.type !== "file") continue;
+      const before = existingFiles[f.name] ?? [];
+      const afterV = stored[f.name];
+      const after = Array.isArray(afterV) ? (afterV as string[]) : afterV ? [String(afterV)] : [];
+      const removed = before.filter((n) => !after.includes(n));
+      if (removed.length) { try { await deleteFiles(ctx.storage, c.id, id, removed); } catch (err) { console.error("voidbase: file delete failed", err); } }
+    }
+  };
+  const modelEv = { app: undefined as unknown, record: rec, model: rec, collection: new CollectionRef(c), next: async () => undefined as unknown };
+  const withModelHooks = () => trigger("onModelUpdate", modelEv, c.name, () => trigger("onRecordUpdate", modelEv, c.name, core));
+  if (reqEv) await trigger("onRecordUpdateRequest", reqEv, c.name, withModelHooks);
+  else await withModelHooks();
+  await trigger("onRecordAfterUpdateSuccess", modelEv, c.name, async () => undefined);
+  await trigger("onModelAfterUpdateSuccess", modelEv, c.name, async () => undefined);
   const fresh = await one(ctx.db, `SELECT * FROM ${ident(c.name)} WHERE id = ?`, [id]);
   return (await enrich(ctx, c, [fresh!], opts))[0];
 }
@@ -396,26 +448,54 @@ export async function deleteRecord(ctx: RecordContext, c: Collection, id: string
   if (c.deleteRule === null && !ctx.superuser) throw forbidden(SUPERUSER_ONLY_MSG);
   const row = await fetchRecord(ctx, c, id, c.deleteRule);
   if (!row) throw notFound();
-  // relations pointing at this record: cascade deletes, otherwise unlink
-  for (const other of new Set(ctx.collections.values())) {
-    for (const f of other.fields as Field[]) {
-      if (f.type !== "relation" || f.collectionId !== c.id) continue;
-      const col = `${ident(other.name)}.${ident(f.name)}`;
-      const match = isMultiple(f) ? `EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(${col}) THEN ${col} ELSE json_array(${col}) END) WHERE value = ?)` : `${col} = ?`;
-      if (f.cascadeDelete) {
-        const refs = await all<{ id: string }>(ctx.db, `SELECT id FROM ${ident(other.name)} WHERE ${match}`, [id]);
-        for (const r of refs) await deleteRecord({ ...ctx, superuser: true }, other, r.id).catch(() => {});
-      } else if (isMultiple(f)) {
-        const refs = await all<Row>(ctx.db, `SELECT id, ${ident(f.name)} AS v FROM ${ident(other.name)} WHERE ${match}`, [id]);
-        for (const r of refs) {
-          const list = (Array.isArray(r.v) ? r.v : JSON.parse(String(r.v || "[]"))) as string[];
-          await stmt(ctx.db, `UPDATE ${ident(other.name)} SET ${ident(f.name)} = ? WHERE id = ?`, [JSON.stringify(list.filter((x) => x !== id)), r.id]).run();
+  const rec = HookRecord.fromRow(c, row);
+  const reqEv = ctx.hookEvent?.(rec, c);
+  const core = async () => {
+    // relations pointing at this record: cascade deletes, otherwise unlink
+    for (const other of new Set(ctx.collections.values())) {
+      for (const f of other.fields as Field[]) {
+        if (f.type !== "relation" || f.collectionId !== c.id) continue;
+        const col = `${ident(other.name)}.${ident(f.name)}`;
+        const match = isMultiple(f) ? `EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(${col}) THEN ${col} ELSE json_array(${col}) END) WHERE value = ?)` : `${col} = ?`;
+        if (f.cascadeDelete) {
+          const refs = await all<{ id: string }>(ctx.db, `SELECT id FROM ${ident(other.name)} WHERE ${match}`, [id]);
+          for (const r of refs) await deleteRecord({ ...ctx, superuser: true, hookEvent: undefined }, other, r.id).catch(() => {});
+        } else if (isMultiple(f)) {
+          const refs = await all<Row>(ctx.db, `SELECT id, ${ident(f.name)} AS v FROM ${ident(other.name)} WHERE ${match}`, [id]);
+          for (const r of refs) {
+            const list = (Array.isArray(r.v) ? r.v : JSON.parse(String(r.v || "[]"))) as string[];
+            await stmt(ctx.db, `UPDATE ${ident(other.name)} SET ${ident(f.name)} = ? WHERE id = ?`, [JSON.stringify(list.filter((x) => x !== id)), r.id]).run();
+          }
+        } else {
+          await stmt(ctx.db, `UPDATE ${ident(other.name)} SET ${ident(f.name)} = '' WHERE ${match}`, [id]).run();
         }
-      } else {
-        await stmt(ctx.db, `UPDATE ${ident(other.name)} SET ${ident(f.name)} = '' WHERE ${match}`, [id]).run();
       }
     }
+    await ctx.db.batch([stmt(ctx.db, `DELETE FROM ${ident(c.name)} WHERE id = ?`, [id]), changeStmt(ctx.db, c, "delete", row)]);
+    try { await deleteAllRecordFiles(ctx.storage, c.id, id); } catch (err) { console.error("voidbase: file cleanup failed", err); }
+  };
+  const modelEv = { app: undefined as unknown, record: rec, model: rec, collection: new CollectionRef(c), next: async () => undefined as unknown };
+  const withModelHooks = () => trigger("onModelDelete", modelEv, c.name, () => trigger("onRecordDelete", modelEv, c.name, core));
+  if (reqEv) await trigger("onRecordDeleteRequest", reqEv, c.name, withModelHooks);
+  else await withModelHooks();
+  await trigger("onRecordAfterDeleteSuccess", modelEv, c.name, async () => undefined);
+  await trigger("onModelAfterDeleteSuccess", modelEv, c.name, async () => undefined);
+}
+
+// ---- programmatic saves from hooks ($app.save / RecordUpsertForm.submit) -------------------------
+export async function saveHookRecord(ctx: RecordContext, rec: HookRecord): Promise<HookRecord> {
+  const c = rec.collection().data;
+  const body: Record<string, unknown> = {};
+  for (const f of c.fields as Field[]) {
+    if (f.type === "autodate") continue;
+    if (f.type === "password") { const v = rec.values[f.name]; if (v && !String(v).startsWith("$2")) body[f.name] = v; continue; }
+    if (f.type === "file") { body[f.name] = [...((rec.values[f.name] as string[] | string | undefined) ? ([] as string[]).concat(rec.values[f.name] as string[]) : []).filter((n) => !(rec.uploads[f.name] ?? []).some((u) => u.name === n)), ...(rec.uploads[f.name] ?? [])]; continue; }
+    body[f.name] = rec.values[f.name];
   }
-  await stmt(ctx.db, `DELETE FROM ${ident(c.name)} WHERE id = ?`, [id]).run();
-  try { await deleteAllRecordFiles(ctx.storage, c.id, id); } catch (err) { console.error("voidbase: file cleanup failed", err); }
+  const sctx: RecordContext = { ...ctx, superuser: true, hookEvent: undefined };
+  const out = rec.isNew() ? await createRecord(sctx, c, body, {}) : await updateRecord(sctx, c, rec.id, body, {});
+  const row = await one(ctx.db, `SELECT * FROM ${ident(c.name)} WHERE id = ?`, [String(out.id)]);
+  const saved = HookRecord.fromRow(c, row!);
+  rec.values = saved.values; rec.setOriginal(saved.values); rec.markAsNotNew();
+  return rec;
 }

@@ -31,7 +31,11 @@ const cases: Case[] = [
   { name: "superusers records", path: "/api/collections/_superusers/records?perPage=1&sort=-@rowid", auth: "super" },
   { name: "superusers records skipTotal", path: "/api/collections/_superusers/records?perPage=1&skipTotal=1", auth: "super" },
   { name: "superusers records anon", path: "/api/collections/_superusers/records" },
-  { name: "unknown api route", path: "/api/nope", auth: "super", skip: "the starter's pb_hooks override PocketBase's default 404 message" },
+  { name: "unknown api route (hook catch-all)", path: "/api/nope", auth: "super" },
+  { name: "hook /api/config", path: "/api/config" },
+  { name: "hook /api/hello as user", path: "/api/hello", auth: "user" },
+  { name: "hook /api/hello anon", path: "/api/hello" },
+  { name: "hook unknown POST", method: "POST", path: "/api/nope", body: {}, auth: "super" },
 ];
 
 const VOLATILE = new Set(["id", "created", "updated", "token", "tokenKey", "exp", "realIP", "canBackup", "possibleProxyHeader", "secret", "recordRef", "collectionRef"]);
@@ -68,6 +72,7 @@ const tokens: Record<string, Record<string, string>> = { pb: {}, vb: {} };
 tokens.pb!.super = await login(PB, SUPER, "_superusers");
 tokens.vb!.super = await login(VB, SUPER, "_superusers");
 try { tokens.pb!.user = await login(PB, USER, "users"); } catch { /* optional */ }
+try { tokens.vb!.user = await login(VB, USER, "users"); } catch { /* optional */ }
 
 let pass = 0, fail = 0, skipped = 0;
 for (const c of cases) {

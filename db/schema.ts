@@ -91,3 +91,26 @@ export const authOrigins = sqliteTable(
   { ...refCols, fingerprint: text("fingerprint").notNull().default("") },
   (t) => [uniqueIndex("idx_authOrigins_unique_pairs").on(t.collectionRef, t.recordRef, t.fingerprint)],
 );
+
+// Realtime change feed (decision d5): appended inside the record write batch, polled by open SSE streams.
+export const changes = sqliteTable(
+  "_changes",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    collection: text("collection").notNull(),
+    recordId: text("recordId").notNull(),
+    action: text("action").notNull(), // create | update | delete
+    data: text("data"), // record JSON at the time of the change (deletes cannot be re-read)
+    created: text("created").notNull().default(now),
+  },
+  (t) => [index("idx__changes_collection").on(t.collection, t.id)],
+);
+
+// Connected SSE clients and their subscriptions (the POST can land on any isolate).
+export const realtimeClients = sqliteTable("_realtime_clients", {
+  id: text("id").primaryKey().notNull(),
+  subscriptions: text("subscriptions").notNull().default("[]"),
+  token: text("token").notNull().default(""),
+  created: text("created").notNull().default(now),
+  updated: text("updated").notNull().default(now),
+});

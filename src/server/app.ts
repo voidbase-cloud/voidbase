@@ -6,14 +6,21 @@ import { collectionToJSON, findCollection, listCollections, loadCollections, typ
 import type { Field } from "./collections/fields";
 import { createRecord, deleteRecord, listRecords, updateRecord, viewRecord, type ListQuery, type RecordContext } from "./records/service";
 import { fromColumn } from "./records/values";
+import { hookGlobals, hookMiddleware, loadHooks, mountHookRoutes } from "./hooks";
+import { applyPendingMigrations } from "./hooks/migrations";
+import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
+import { CollectionRef, HookRecord } from "./hooks/record";
+import { saveHookRecord } from "./records/service";
+import { compileFilter, renderJoin } from "./filter/compile";
+import { connect as realtimeConnect, setSubscriptions as realtimeSetSubscriptions } from "./realtime";
 import oauth2Providers from "./collections/oauth2-providers.json";
 import scaffolds from "./collections/scaffolds.json";
-import { ident, one } from "./db";
+import { all, ident, one } from "./db";
 import { ApiError, badRequest, forbidden, notFound } from "./errors";
 import { randomIdSuffix } from "./ids";
 import { createCollection, deleteCollection, importCollections, truncateCollection, updateCollection } from "./collections/service";
 import { loadSettings, publicSettings } from "./settings";
-import type { AppEnv } from "./types";
+import type { AppEnv, Row } from "./types";
 
 export const app = new Hono<AppEnv>();
 
@@ -28,10 +35,11 @@ app.use("*", async (c, next) => {
 });
 
 app.use("*", async (c, next) => {
-  await ensureBootstrapped(c.env.DB);
+  await ensureBootstrapped(c.env.DB, (db) => applyPendingMigrations(db, hookGlobals()));
   c.set("auth", await loadAuth(c));
   await next();
 });
+app.use("*", hookMiddleware() as never);
 
 app.onError((err, c) => {
   if (err instanceof ApiError) return err.response();
@@ -158,6 +166,8 @@ app.get("/api/collections/:collection/auth-methods", async (c) => {
 });
 
 // --- records --------------------------------------------------------------
+export async function recordContextFor(c: Context<AppEnv>): Promise<RecordContext> { return recordContext(c); }
+
 async function recordContext(c: Context<AppEnv>): Promise<RecordContext> {
   const auth = c.get("auth");
   const headers: Record<string, string> = {};
@@ -171,6 +181,7 @@ async function recordContext(c: Context<AppEnv>): Promise<RecordContext> {
     superuser: isSuperuser(auth),
     request: { auth: auth ? { collection: auth.collection, row: auth.row } : null, method: c.req.method, query, headers, body: {}, context: "default" },
     collections: await loadCollections(c.env.DB),
+    hookEvent: (record, collection) => Object.assign(new RequestEvent(c, authToHookRecord(auth)), { record, collection: new CollectionRef(collection) }),
   };
 }
 
@@ -232,6 +243,10 @@ app.delete("/api/collections/:collection/records/:id", async (c) => {
   await deleteRecord(ctx, collection, c.req.param("id"));
   return c.body(null, 204);
 });
+
+// --- realtime -------------------------------------------------------------
+app.get("/api/realtime", (c) => realtimeConnect(c));
+app.post("/api/realtime", (c) => realtimeSetSubscriptions(c));
 
 // --- files ----------------------------------------------------------------
 app.get("/api/files/:collection/:recordId/:filename", async (c) => {
@@ -305,3 +320,33 @@ function sortBy<T extends object>(items: T[], sort: string, allowed: string[]): 
   }
   return out;
 }
+
+// --- pb_hooks runtime ------------------------------------------------------
+installServices({
+  saveRecord: async (rec) => saveHookRecord(await hookStore.getStore()!.ctx(), rec),
+  deleteRecord: async (rec) => { const ctx = await hookStore.getStore()!.ctx(); await deleteRecord({ ...ctx, superuser: true, hookEvent: undefined }, rec.collection().data, rec.id); },
+  findRecordById: async (collection, id) => {
+    const ctx = await hookStore.getStore()!.ctx();
+    const coll = ctx.collections.get(collection);
+    if (!coll) return null;
+    const row = await one(ctx.db, `SELECT * FROM ${ident(coll.name)} WHERE id = ? LIMIT 1`, [id]);
+    return row ? HookRecord.fromRow(coll, row) : null;
+  },
+  findRecordsByFilter: async (collection, filter, sort, limit, offset, params) => {
+    const ctx = await hookStore.getStore()!.ctx();
+    const coll = ctx.collections.get(collection);
+    if (!coll) return [];
+    let where = "1=1"; let ps: unknown[] = []; let joins = "";
+    if (filter.trim()) {
+      const bound = filter.replace(/\{:(\w+)\}/g, (_m, k: string) => JSON.stringify(params?.[k] ?? ""));
+      const compiled = compileFilter(bound, { base: coll, collections: ctx.collections, request: ctx.request, allowHiddenFields: true });
+      where = compiled.where; ps = compiled.params; joins = compiled.joins.map(renderJoin).join(" ");
+    }
+    const order = sort.trim() ? sort.split(",").map((s) => { const d = s.trim().startsWith("-"); const n = s.trim().replace(/^[+-]/, ""); return `${ident(coll.name)}.${ident(n)} ${d ? "DESC" : "ASC"}`; }).join(", ") : `${ident(coll.name)}.rowid ASC`;
+    const rows = await all(ctx.db, `SELECT DISTINCT ${ident(coll.name)}.* FROM ${ident(coll.name)} ${joins} WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`, [...ps, limit > 0 ? limit : 1000, offset]);
+    return rows.map((r: Row) => HookRecord.fromRow(coll, r));
+  },
+  sendMail: async (msg) => { console.log("voidbase: mail (not delivered, mailer lands in milestone five):", msg.subject, "->", msg.to.map((t) => t.address).join(",")); },
+});
+loadHooks();
+mountHookRoutes(app);

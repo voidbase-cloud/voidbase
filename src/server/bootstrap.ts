@@ -7,16 +7,18 @@ import { hashPassword } from "./password";
 import { ensureSettingsRow } from "./settings";
 
 let pending: Promise<void> | null = null;
+type AfterSystem = (db: D1Database) => Promise<unknown>;
 
 // Runs once per isolate; idempotent across isolates (INSERT OR IGNORE on unique keys).
-export function ensureBootstrapped(db: D1Database): Promise<void> {
-  return (pending ??= bootstrap(db).catch((err) => {
+// `afterSystem` runs after the system tables exist (used for the bundled pb_migrations).
+export function ensureBootstrapped(db: D1Database, afterSystem?: AfterSystem): Promise<void> {
+  return (pending ??= bootstrap(db, afterSystem).catch((err) => {
     pending = null;
     throw err;
   }));
 }
 
-async function bootstrap(db: D1Database): Promise<void> {
+async function bootstrap(db: D1Database, afterSystem?: AfterSystem): Promise<void> {
   const existing = new Set((await all<{ name: string }>(db, "SELECT name FROM `_collections` WHERE system = 1")).map((r) => r.name));
   const now = nowString();
   for (const c of systemCollections()) {
@@ -26,6 +28,7 @@ async function bootstrap(db: D1Database): Promise<void> {
   if (existing.size === 0) invalidateCollections();
   await ensureSettingsRow(db);
   await upsertSuperuserFromEnv(db);
+  if (afterSystem) await afterSystem(db);
 }
 
 export async function insertCollection(db: D1Database, c: Collection, now = nowString()): Promise<void> {

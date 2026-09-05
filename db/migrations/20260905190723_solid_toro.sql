@@ -1,0 +1,1 @@
+ALTER TABLE `_changes` ADD `data` text;

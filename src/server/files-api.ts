@@ -2,7 +2,7 @@
 // let a client fetch protected files with ?token=... The files route uses `protectedAccess` for the check.
 import type { Context, Hono } from "hono";
 import { findAuthRecordByToken } from "./auth";
-import { realIP } from "./auth-response";
+import { ipInList, realIP } from "./hardening";
 import type { Collection } from "./collections/model";
 import { unauthorized } from "./errors";
 import { HookRecord } from "./hooks/record";
@@ -40,7 +40,7 @@ export async function protectedAccess(c: Context<AppEnv>, ctx: RecordContext, co
   let auth = token ? await findAuthRecordByToken(c.env.DB, token, "file") : null;
   if (auth && auth.collection.name === "_superusers") {
     const allowed = (await loadSettings(c.env.DB)).superuserIPs;
-    if (allowed.length && !allowed.includes(realIP(c))) auth = null;
+    if (allowed.length && !ipInList(allowed, await realIP(c))) auth = null;
   }
   const superuser = !!auth && auth.collection.name === "_superusers";
   const viewRule = collection.viewRule;

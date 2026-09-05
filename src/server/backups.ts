@@ -4,7 +4,7 @@
 import type { Context, Hono } from "hono";
 import { unzipSync, zipSync } from "fflate";
 import { findAuthRecordByToken, requireSuperuser } from "./auth";
-import { realIP } from "./auth-response";
+import { ipInList, realIP } from "./hardening";
 import { invalidateCollections, loadCollections } from "./collections/model";
 import { planCreate } from "./collections/service";
 import { createViewSQL } from "./collections/ddl";
@@ -174,7 +174,7 @@ export function mountBackupsApi(app: Hono<AppEnv>) {
     const auth = await findAuthRecordByToken(c.env.DB, c.req.query("token") ?? "", "file");
     if (!auth || auth.collection.name !== "_superusers") throw forbidden("Insufficient permissions to access the resource.");
     const allowed = (await loadSettings(c.env.DB)).superuserIPs;
-    if (allowed.length && !allowed.includes(realIP(c))) throw forbidden("Insufficient permissions to access the resource.");
+    if (allowed.length && !ipInList(allowed, await realIP(c))) throw forbidden("Insufficient permissions to access the resource.");
     const key = c.req.param("key") ?? "";
     const obj = await c.env.STORAGE.get(PREFIX + key);
     if (!obj) throw new ApiError(404, "The requested resource wasn't found.", {});

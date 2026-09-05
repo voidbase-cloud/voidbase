@@ -22,6 +22,7 @@ import { mountLogsApi, requestLogger } from "./logs";
 import { mountCronsApi } from "./crons";
 import { mountBackupsApi } from "./backups";
 import { mountSqlApi } from "./sql";
+import { bodyLimitMiddleware, rateLimitMiddleware } from "./hardening";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import { saveHookRecord } from "./records/service";
@@ -46,6 +47,7 @@ app.use("*", async (c, next) => {
   c.header("X-Content-Type-Options", "nosniff");
   c.header("X-Frame-Options", "SAMEORIGIN");
   c.header("X-Xss-Protection", "1; mode=block");
+  c.header("Cross-Origin-Opener-Policy", "same-origin");
 });
 
 app.use("*", async (c, next) => {
@@ -54,6 +56,8 @@ app.use("*", async (c, next) => {
   await next();
 });
 app.use("*", requestLogger());
+app.use("*", bodyLimitMiddleware());
+app.use("*", rateLimitMiddleware());
 app.use("*", hookMiddleware() as never);
 
 app.onError((err, c) => {

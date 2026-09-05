@@ -23,8 +23,8 @@ export async function recordAuthResponse(c: Context<AppEnv>, ctx: RecordContext,
   const token = options.token ?? (await newAuthToken({ collection, row }));
   const db = c.env.DB;
   if (collection.name === "_superusers") {
-    const allowed = (await loadSettings(db)).superuserIPs;
-    if (allowed.length && !ipInList(allowed, realIP(c))) throw forbidden();
+    const settings = await loadSettings(db);
+    if (settings.superuserIPs.length && !ipInList(settings.superuserIPs, realIPWith(settings, c))) throw forbidden();
   }
   // authRule: "" lets everyone in, a filter restricts, null (superusers only) blocks regular logins
   const rawRule = (collection.options as Record<string, unknown>).authRule;
@@ -60,21 +60,8 @@ export async function recordAuthResponse(c: Context<AppEnv>, ctx: RecordContext,
 
 const sortKeys = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 
-export function realIP(c: Context<AppEnv>): string {
-  return c.req.header("CF-Connecting-IP") ?? c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() ?? c.req.header("X-Real-IP") ?? "127.0.0.1";
-}
-function ipInList(list: string[], ip: string): boolean {
-  for (const entry of list) {
-    if (!entry.includes("/")) { if (entry === ip) return true; continue; }
-    const [net, bitsStr] = entry.split("/"); const bits = Number(bitsStr);
-    const a = ipv4(net ?? ""), b = ipv4(ip);
-    if (a === null || b === null) continue;
-    const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
-    if (((a & mask) >>> 0) === ((b & mask) >>> 0)) return true;
-  }
-  return false;
-}
-const ipv4 = (s: string): number | null => { const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s); if (!m) return null; return ((Number(m[1]) << 24) | (Number(m[2]) << 16) | (Number(m[3]) << 8) | Number(m[4])) >>> 0; };
+export { realIP } from "./hardening";
+import { ipInList, realIP, realIPWith } from "./hardening";
 
 // checkMFA: first method opens an MFA session (401 {mfaId}); a *different* method within the duration closes it
 async function checkMFA(c: Context<AppEnv>, ctx: RecordContext, collection: Collection, row: Row, method: string, body: Record<string, unknown>): Promise<string> {
@@ -107,7 +94,7 @@ async function checkMFA(c: Context<AppEnv>, ctx: RecordContext, collection: Coll
 // authAlert: fingerprint = hash(ip + user agent); a new fingerprint on a record with previous origins mails the alert
 async function authAlert(c: Context<AppEnv>, collection: Collection, row: Row) {
   const db = c.env.DB;
-  const ip = realIP(c);
+  const ip = await realIP(c);
   let ua = c.req.header("User-Agent") ?? "";
   if (ua.length > 200) ua = ua.slice(0, 200) + "...";
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip + ua)));

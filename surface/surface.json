@@ -193,9 +193,10 @@
             "prod"
           ],
           "hours": 1,
-          "status": "todo",
+          "status": "done",
           "milestone": "m6",
-          "verify": "SMTP password unreadable in the _params row"
+          "verify": "SMTP password unreadable in the _params row",
+          "notes": "VOIDBASE_ENCRYPTION_KEY (16/24/32 chars) stores the settings row AES-GCM encrypted (nonce || ciphertext, base64) like PocketBase's --encryptionEnv; plaintext rows still load, so the key can be introduced later. test/unit/settings-encryption.test.ts."
         },
         {
           "id": "platform.panel-static",
@@ -280,9 +281,10 @@
             "prod"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "done",
           "milestone": "m6",
-          "verify": "Headers match PocketBase's defaults on every response"
+          "verify": "Headers match PocketBase's defaults on every response",
+          "notes": "Error recovery (onError with PocketBase's envelope), auth token loading, CORS, security headers (X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Cross-Origin-Opener-Policy as in 0.40), 32 MB body limit (413), rate limits, request logging."
         },
         {
           "id": "platform.deploy-void",
@@ -875,8 +877,9 @@
             "prod"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "records.ts replays 88 recorded PocketBase fixtures; cascade.ts, batch.ts, protected-files.ts, manage-rule.ts and views.ts add live comparisons."
         }
       ]
     },
@@ -1045,8 +1048,9 @@
             "prod"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "partial",
+          "milestone": "m6",
+          "notes": "40 recorded filter/sort fixtures in records.ts plus 27 live comparisons in filters-extra.ts (any-match, :each/:length, via, expands) and the logs data.* filters; a several-hundred-expression corpus is still open."
         }
       ]
     },
@@ -1302,8 +1306,9 @@
             "admin"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "Per-collection authToken/verificationToken/passwordResetToken/emailChangeToken/fileToken secrets and durations sign and verify every token type; authAlert config drives the login alert. auth-flows.ts, otp-mfa.ts, protected-files.ts."
         },
         {
           "id": "auth.hooks",
@@ -1581,8 +1586,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "All meta fields validated and saved through PATCH /api/settings; appName/appURL/sender* drive the emails, hideControls is stored. settings.ts."
         },
         {
           "id": "set.smtp",
@@ -1630,8 +1636,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "Batch settings validated (required when enabled, minimums) and enforced by /api/batch (enabled, maxRequests). settings.ts and batch.ts."
         },
         {
           "id": "set.ratelimits",
@@ -1642,8 +1649,9 @@
             "prod"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "src/server/hardening.ts: PocketBase's rule matching (collection:tag and *:tag labels per route, method+path and path labels, prefix rules against the first label only), audiences, superuser and excludedIPs exemptions, fixed windows per client IP. Counters are per isolate (approximate across isolates; PocketBase's are per process). test/conformance/hardening.ts 12/12."
         },
         {
           "id": "set.trusted-proxy",
@@ -1654,8 +1662,9 @@
             "prod"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "realIP resolves settings.trustedProxy.headers (last header value, leftmost or rightmost valid IP) and falls back to CF-Connecting-IP; used by rate limits, superuser IP allowlist, auth origins and logs. hardening.ts."
         },
         {
           "id": "set.logs",
@@ -1665,8 +1674,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "maxDays, minLevel, logIP and logAuthId honoured by the request logger and the cleanup cron. logs-crons.ts."
         },
         {
           "id": "set.backups",
@@ -1676,8 +1686,9 @@
             "admin"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "cron (parser-validated), cronMaxKeep and the backups S3 section validated; the cron drives __pbAutoBackup__. settings.ts, backups.ts."
         },
         {
           "id": "set.apple",
@@ -1759,8 +1770,9 @@
             "prod"
           ],
           "hours": 0.5,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "__pbLogsCleanup__ every 6 hours deletes rows older than logs.maxDays; minLevel filters at write time."
         }
       ]
     },
@@ -1829,8 +1841,9 @@
             "admin"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "__pbAutoBackup__ registered from settings.backups.cron, @auto_pb_backup_ names, oldest beyond cronMaxKeep removed."
         },
         {
           "id": "bak.gate",
@@ -1872,8 +1885,9 @@
             "prod"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "__pbDBOptimize__ (no-op on D1), __pbMFACleanup__, __pbOTPCleanup__, __pbLogsCleanup__, __pbAutoBackup__ and voidbase's __vbChangesCleanup__ on the minute trigger."
         },
         {
           "id": "cron.api",
@@ -2315,7 +2329,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), providers.ts (32), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), backups.ts (17), sql.ts (7), manage-rule.ts (5), filters-extra.ts (27), views.ts (11), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, panel-admin, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), providers.ts (32), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), backups.ts (17), sql.ts (7), manage-rule.ts (5), filters-extra.ts (27), views.ts (11), hardening.ts (12), realtime.ts, fresh-db.ts (17), unit tests, panel-smoke, panel-collections, panel-records, panel-admin, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-06."
         },
         {
           "id": "prod.sdk-suite",

@@ -849,8 +849,9 @@
             "admin"
           ],
           "hours": 5,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "POST /api/batch with create, update, upsert (PUT) and delete dispatched through the same handlers, multipart requests.N.field files with @jsonPayload, settings.batch limits and PocketBase's error shape. D1 has no interactive transactions, so a failure rolls back with recorded undo statements (delete created rows, restore updated/deleted rows, drop created files); reads inside the batch see earlier writes; cascades and deleted files are not undone. test/conformance/batch.ts 9/9."
         },
         {
           "id": "rec.hooks",
@@ -1395,8 +1396,9 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "POST /api/files/token (fileToken secret and duration) and ?token= checks on protected fields with the view rule in the protectedFile context, superusers subject to the IP allowlist. test/conformance/protected-files.ts 9/9."
         },
         {
           "id": "file.cleanup",
@@ -2292,7 +2294,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
         },
         {
           "id": "prod.sdk-suite",

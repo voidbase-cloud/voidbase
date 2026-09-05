@@ -16,6 +16,8 @@ import { authWithOAuth2, mountOAuth2Redirect } from "./oauth2";
 import { mountSettingsApi } from "./settings-api";
 import { mountAuthFlows } from "./auth-flows";
 import { mountAuthExtra } from "./auth-extra";
+import { mountFilesApi, protectedAccess } from "./files-api";
+import { BATCH_CONTEXT_HEADER, BATCH_CONTEXT_TOKEN, mountBatch } from "./batch";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import { saveHookRecord } from "./records/service";
@@ -195,7 +197,7 @@ async function recordContext(c: Context<AppEnv>): Promise<RecordContext> {
     storage: c.env.STORAGE,
     auth,
     superuser: isSuperuser(auth),
-    request: { auth: auth ? { collection: auth.collection, row: auth.row } : null, method: c.req.method, query, headers, body: {}, context: "default" },
+    request: { auth: auth ? { collection: auth.collection, row: auth.row } : null, method: c.req.method, query, headers, body: {}, context: c.req.header(BATCH_CONTEXT_HEADER) === BATCH_CONTEXT_TOKEN ? "batch" : "default" },
     collections: await loadCollections(c.env.DB),
     hookEvent: (record, collection) => Object.assign(new RequestEvent(c, authToHookRecord(auth)), { record, collection: new CollectionRef(collection) }),
   };
@@ -205,7 +207,14 @@ async function readRecordBody(c: Context<AppEnv>): Promise<Record<string, unknow
   const ct = c.req.header("content-type") ?? "";
   try {
     if (ct.includes("multipart/form-data") || ct.includes("application/x-www-form-urlencoded")) {
-      return (await c.req.parseBody({ all: true })) as Record<string, unknown>;
+      const parsed = (await c.req.parseBody({ all: true })) as Record<string, unknown>;
+      // PocketBase merges a "@jsonPayload" form field (JSON) with the other fields and files
+      if (typeof parsed["@jsonPayload"] === "string") {
+        const payload = JSON.parse(parsed["@jsonPayload"] as string) as Record<string, unknown>;
+        delete parsed["@jsonPayload"];
+        return { ...payload, ...parsed };
+      }
+      return parsed;
     }
     const text = await c.req.text();
     if (!text.trim()) return {};
@@ -277,10 +286,7 @@ app.get("/api/files/:collection/:recordId/:filename", async (c) => {
     return Array.isArray(v) ? v.includes(filename) : v === filename;
   });
   if (!field) throw notFound();
-  if (field.protected && !isSuperuser(c.get("auth"))) {
-    // protected files require a file token (milestone five); superusers may always fetch
-    throw notFound();
-  }
+  if (field.protected && !(await protectedAccess(c, await recordContext(c), collection, row))) throw notFound();
   const key = `${collection.id}/${row.id}/${filename}`;
   let served: Awaited<ReturnType<typeof resolveServedFile>>;
   try {
@@ -389,6 +395,8 @@ const authDeps = {
 };
 mountAuthFlows(app, authDeps);
 mountAuthExtra(app, authDeps);
+mountFilesApi(app);
+mountBatch(app);
 
 // --- pb_hooks runtime ------------------------------------------------------
 const valuesToRowFor = (c: Collection, values: Record<string, unknown>): Row => { const row: Row = {}; for (const f of c.fields as Field[]) row[f.name] = toColumn(f, values[f.name]); return row; };

@@ -21,7 +21,9 @@ const ACTIONS: { re: RegExp; kind: "upsert" | "create" | "update" | "delete" }[]
   { re: /^DELETE \/api\/collections\/([^/?]+)\/records\/([^/?]+)(\?.*)?$/, kind: "delete" },
 ];
 export const BATCH_CONTEXT_HEADER = "x-voidbase-internal-context";
-export const BATCH_CONTEXT_TOKEN = crypto.randomUUID(); // per isolate; external requests cannot forge it
+// per isolate; external requests cannot forge it. Generated lazily: Workers forbid random values at module scope.
+let batchToken: string | null = null;
+export const batchContextToken = () => (batchToken ??= crypto.randomUUID());
 
 export function mountBatch(app: Hono<AppEnv>) {
   app.post("/api/batch", async (c) => {
@@ -60,7 +62,7 @@ export function mountBatch(app: Hono<AppEnv>) {
       const headers = new Headers(c.req.raw.headers);
       headers.delete("content-type"); headers.delete("content-length");
       for (const [k, v] of Object.entries(ir.headers ?? {})) if (k.toLowerCase() !== "authorization") headers.set(k, v);
-      headers.set(BATCH_CONTEXT_HEADER, BATCH_CONTEXT_TOKEN);
+      headers.set(BATCH_CONTEXT_HEADER, batchContextToken());
       let body: BodyInit | undefined;
       const reqFiles = files.get(i);
       if (reqFiles && reqFiles.length) {

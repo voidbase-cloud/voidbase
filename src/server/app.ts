@@ -17,7 +17,7 @@ import { mountSettingsApi } from "./settings-api";
 import { mountAuthFlows } from "./auth-flows";
 import { mountAuthExtra } from "./auth-extra";
 import { mountFilesApi, protectedAccess } from "./files-api";
-import { BATCH_CONTEXT_HEADER, BATCH_CONTEXT_TOKEN, mountBatch } from "./batch";
+import { BATCH_CONTEXT_HEADER, batchContextToken, mountBatch } from "./batch";
 import { mountLogsApi, requestLogger } from "./logs";
 import { mountCronsApi } from "./crons";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
@@ -200,7 +200,7 @@ async function recordContext(c: Context<AppEnv>): Promise<RecordContext> {
     storage: c.env.STORAGE,
     auth,
     superuser: isSuperuser(auth),
-    request: { auth: auth ? { collection: auth.collection, row: auth.row } : null, method: c.req.method, query, headers, body: {}, context: c.req.header(BATCH_CONTEXT_HEADER) === BATCH_CONTEXT_TOKEN ? "batch" : "default" },
+    request: { auth: auth ? { collection: auth.collection, row: auth.row } : null, method: c.req.method, query, headers, body: {}, context: c.req.header(BATCH_CONTEXT_HEADER) === batchContextToken() ? "batch" : "default" },
     collections: await loadCollections(c.env.DB),
     hookEvent: (record, collection) => Object.assign(new RequestEvent(c, authToHookRecord(auth)), { record, collection: new CollectionRef(collection) }),
   };

@@ -21,6 +21,7 @@ import { BATCH_CONTEXT_HEADER, batchContextToken, mountBatch } from "./batch";
 import { mountLogsApi, requestLogger } from "./logs";
 import { mountCronsApi } from "./crons";
 import { mountBackupsApi } from "./backups";
+import { mountSqlApi } from "./sql";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import { saveHookRecord } from "./records/service";
@@ -404,6 +405,7 @@ mountBatch(app);
 mountLogsApi(app);
 mountCronsApi(app);
 mountBackupsApi(app);
+mountSqlApi(app);
 
 // --- pb_hooks runtime ------------------------------------------------------
 const valuesToRowFor = (c: Collection, values: Record<string, unknown>): Row => { const row: Row = {}; for (const f of c.fields as Field[]) row[f.name] = toColumn(f, values[f.name]); return row; };

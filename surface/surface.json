@@ -1915,9 +1915,9 @@
             "sdk"
           ],
           "hours": 1,
-          "status": "out",
+          "status": "done",
           "milestone": "m5",
-          "notes": "PocketBase has no SQL console or raw SQL endpoint; kept out to stay a faithful replacement (D1 has its own console in the Cloudflare dashboard)."
+          "notes": "POST /api/sql (apis/sql.go): superuser-only, query required and at most 5000 chars, write statements report affectedRows, reads return up to 1000 rows with every cell as a string and column types from the table declarations. test/conformance/sql.ts 7/7 against the reference (which does have the endpoint)."
         }
       ]
     },
@@ -2096,8 +2096,9 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "Record modal actions: Send verification email (mail delivered) and Impersonate (token generated) verified; send password reset shares the same flow. test/panel-admin.ts against the unmodified 0.40 panel."
         },
         {
           "id": "pnl.api-preview",
@@ -2119,8 +2120,9 @@
             "admin"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "Logs page lists rows (sort -@rowid, data.* filters) and draws the hourly chart from /api/logs/stats. test/panel-admin.ts against the unmodified 0.40 panel."
         },
         {
           "id": "pnl.settings-app",
@@ -2130,8 +2132,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "Application settings form saves through PATCH /api/settings. test/panel-admin.ts against the unmodified 0.40 panel."
         },
         {
           "id": "pnl.settings-mail",
@@ -2141,8 +2144,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "Mail settings page; the Send test email modal delivers through SMTP (verified against the sink). test/panel-admin.ts against the unmodified 0.40 panel."
         },
         {
           "id": "pnl.settings-storage",
@@ -2152,8 +2156,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "partial",
+          "milestone": "m5",
+          "notes": "Storage settings page renders and saves; the S3 connection test is not implemented (files live in R2)."
         },
         {
           "id": "pnl.settings-backups",
@@ -2163,8 +2168,9 @@
             "admin"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "Backups page: initialize with a name, listed, delete through the row menu (create/delete verified in the UI; download and restore verified through the API). test/panel-admin.ts against the unmodified 0.40 panel."
         },
         {
           "id": "pnl.settings-crons",
@@ -2174,8 +2180,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "Crons page lists the jobs and runs one. test/panel-admin.ts against the unmodified 0.40 panel."
         },
         {
           "id": "pnl.settings-sql",
@@ -2185,9 +2192,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "out",
+          "status": "done",
           "milestone": "m5",
-          "notes": "PocketBase has no SQL console or raw SQL endpoint; kept out to stay a faithful replacement (D1 has its own console in the Cloudflare dashboard)."
+          "notes": "SQL console executes a query and renders the result table. test/panel-admin.ts against the unmodified 0.40 panel."
         },
         {
           "id": "pnl.import-export",
@@ -2197,8 +2204,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "todo",
-          "milestone": "m5"
+          "status": "done",
+          "milestone": "m5",
+          "notes": "Export renders the collections JSON; the import page renders (a full import run is covered by the collections import conformance). test/panel-admin.ts against the unmodified 0.40 panel."
         },
         {
           "id": "pnl.branding",
@@ -2306,7 +2314,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), providers.ts (32), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), backups.ts (17), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), providers.ts (32), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), backups.ts (17), sql.ts (7), manage-rule.ts (5), realtime.ts, fresh-db.ts (17), panel-smoke, panel-collections, panel-records, panel-admin, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-05."
         },
         {
           "id": "prod.sdk-suite",

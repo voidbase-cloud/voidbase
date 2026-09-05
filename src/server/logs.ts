@@ -104,7 +104,7 @@ export function mountLogsApi(app: Hono<AppEnv>) {
     if (sortParam) {
       order = sortParam.split(",").map((s) => s.trim()).filter(Boolean).map((s) => {
         const desc = s.startsWith("-"); const name = s.replace(/^[+-]/, "");
-        if (name === "rowid") return `\`_logs\`.rowid ${desc ? "DESC" : "ASC"}`;
+        if (name === "rowid" || name === "@rowid") return `\`_logs\`.rowid ${desc ? "DESC" : "ASC"}`; // the panel sorts by -@rowid
         if (name.startsWith("data.")) return `json_extract(\`_logs\`.data, '$.${name.slice(5).replace(/'/g, "")}') ${desc ? "DESC" : "ASC"}`;
         if (!["id", "created", "message", "level"].includes(name)) throw badRequest("Invalid sort format.");
         return `\`_logs\`.\`${name}\` ${desc ? "DESC" : "ASC"}`;

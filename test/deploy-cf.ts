@@ -1,7 +1,7 @@
 // `voidbase deploy --dry-run` against test/cf-mock.ts: token help without a token, account resolution, idempotent
 // D1/R2 provisioning, cloud/ generation with a real-id wrangler.jsonc, superuser credentials file.
 //   bun test/cf-mock.ts &   then   bun test/deploy-cf.ts
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 const MOCK = "http://127.0.0.1:5197"; const BIN = resolve(import.meta.dir, "../bin/voidbase.ts"); const PKG = resolve(import.meta.dir, ".."); const PROJECT = `${PKG}/.cloud/shopdemo-backend`;
@@ -21,7 +21,7 @@ try {
   const cfg = existsSync(`${PROJECT}/wrangler.jsonc`) ? readFileSync(`${PROJECT}/wrangler.jsonc`, "utf8") : "";
   const parsed = cfg ? JSON.parse(cfg.replace(/^\/\/.*\n/, "")) as { name: string; account_id: string; d1_databases: { database_id: string; database_name: string }[]; r2_buckets: { bucket_name: string }[] } : null;
   check("first dry run: resources created, project + wrangler.jsonc written inside the voidbase package", first.code === 0 && /D1 .*-db created/.test(first.out) && /R2 .*-storage created/.test(first.out) && !!parsed && parsed.account_id === "acc123" && /^[0-9a-f-]{36}$/.test(parsed.d1_databases[0]!.database_id) && parsed.r2_buckets[0]!.bucket_name === `${parsed.name}-storage` && existsSync(`${PROJECT}/vite.config.ts`) && !existsSync(`${dir}/cloud`), first.out.slice(0, 300));
-  check("hooks and migrations point at the consumer's directories, AUDITLOG is the only baked var", readFileSync(`${PROJECT}/vite.config.ts`, "utf8").includes(`${dir}/pb_hooks`) && /^(AUDITLOG=.*)?$/.test(readFileSync(`${PROJECT}/.env`, "utf8").trim()), readFileSync(`${PROJECT}/vite.config.ts`, "utf8").slice(0, 200));
+  check("hooks and migrations point at the consumer's directories, AUDITLOG is the only baked var", readFileSync(`${PROJECT}/vite.config.ts`, "utf8").includes(`${realpathSync(dir)}/pb_hooks`) && /^(AUDITLOG=.*)?$/.test(readFileSync(`${PROJECT}/.env`, "utf8").trim()), readFileSync(`${PROJECT}/vite.config.ts`, "utf8").slice(0, 200));
   check("worker name derives from the parent directory (vb -> <parent>-backend)", !!parsed && parsed.name === "shopdemo-backend", parsed?.name ?? "");
   check("dry run stops before secrets and deploying, reports the workers.dev url", first.out.includes("dry run") && first.out.includes(".testsub.workers.dev"), first.out.slice(-200));
   const creds = JSON.parse(readFileSync(`${dir}/pb_data/.superuser-credentials`, "utf8")) as { email: string; password: string };

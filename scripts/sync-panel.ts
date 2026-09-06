@@ -61,3 +61,6 @@ if (brandDir) {
   }
   console.log(`branding from ${brand}: ${applied.length ? applied.join(", ") : "nothing to apply (expected logo.svg, logo_white.svg, favicon.png or brand.json)"}`);
 }
+// Cloudflare 404-page handling: the panel index doubles as its 404 page (PocketBase serves the panel for any /_/ path)
+import { copyFileSync } from "node:fs";
+if (existsSync(`${dest}/index.html`)) copyFileSync(`${dest}/index.html`, `${dest}/404.html`);

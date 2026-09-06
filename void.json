@@ -7,6 +7,6 @@
     ]
   },
   "routing": {
-    "notFound": "none"
+    "notFound": "404-page"
   }
 }

@@ -1,7 +1,7 @@
 // Copies a static app build (default: the SvelteKit starter's adapter-static output) into public/ so the same
 // Worker serves the app at / and the PocketBase admin panel at /_/. Everything but public/_ is replaced.
 //   bun run app:sync            # uses VOIDBASE_APP_DIR or ../pocketbase-sveltekit-starter/sk/build
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 const src = resolve(process.env.VOIDBASE_APP_DIR ?? `${import.meta.dir}/../../pocketbase-sveltekit-starter/sk/build`);
@@ -18,3 +18,5 @@ for (const entry of readdirSync(src)) {
   cpSync(`${src}/${entry}`, `${dest}/${entry}`, { recursive: true });
 }
 console.log(`synced app ${src} -> ${dest} (${statSync(`${dest}/index.html`).size} bytes index.html)`);
+// Cloudflare 404-page handling: deep links get index.html (status 404) from the asset layer, never from the Worker
+if (!existsSync(`${dest}/404.html`)) copyFileSync(`${dest}/index.html`, `${dest}/404.html`);

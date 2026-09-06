@@ -226,7 +226,7 @@
           "status": "done",
           "milestone": "m4",
           "verify": "Deep link to /posts/ loads the starter",
-          "notes": "`bun run app:sync` copies a static app build (default: the starter's adapter-static output) into public/ next to the panel at public/_. middleware/01.request-context.ts puts the Worker first and, with routing.notFound = none, answers misses the way PocketBase's Static handler does: the exact file when it exists, otherwise index.html (200) for the app and /_/index.html for the panel, while /api keeps JSON 404s. Same behaviour in dev and in vp preview; verified by test/fresh-db.ts, panel-smoke and starter-smoke against port 5180. Asset-first serving (Worker scoped to /api) was tried on 2026-09-06 and rejected: Void's generated entry passes GET 404s through env.ASSETS.fetch, which applies not_found_handling, so unknown /api paths became index.html 200 in preview and on a deployed probe; worker-first plus routing.notFound none stays (docs/platform.md item 1)."
+          "notes": "`bun run app:sync` copies a static app build (default: the starter's adapter-static output) into public/ next to the panel at public/_. On Cloudflare everything outside /api is served by the asset layer without invoking the Worker (void.json routing.notFound \"404-page\"; hooks-plugin writes 404.html copies of index.html and _/index.html at build time, the sync scripts write them for dev), so deep links get the SPA shell with status 404 and unknown /api paths keep their JSON 404 for API clients (verified on a deployed probe and in vp preview by test/fresh-db.ts; docs/differences.md). `voidbase serve` keeps PocketBase's 200 index fallback (src/server/static.ts)."
         },
         {
           "id": "platform.health",
@@ -264,7 +264,8 @@
           "hours": 2,
           "status": "done",
           "milestone": "m1",
-          "verify": "Rules referencing @request.auth.id evaluate"
+          "verify": "Rules referencing @request.auth.id evaluate",
+          "notes": " The former middleware/01.request-context.ts (worker-first static serving) was removed on 2026-09-06 in favour of asset-first serving (see platform.app-static)."
         },
         {
           "id": "platform.dev-loop",

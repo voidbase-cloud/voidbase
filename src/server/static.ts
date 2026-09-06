@@ -1,4 +1,4 @@
-// PocketBase static serving for everything outside /api: the matching file when there is one, otherwise the app's
+// PocketBase static serving for `voidbase serve` (Bun) for everything outside /api (on Cloudflare the asset layer does this, see docs/differences.md): the matching file when there is one, otherwise the app's
 // index.html (200); the admin panel under /_/ falls back to its own index.html; /api keeps its JSON 404s.
 const PASSTHROUGH = ["/api/", "/__void", "/cdn-cgi/"];
 export interface AssetFetcher { fetch(req: Request): Promise<Response> }

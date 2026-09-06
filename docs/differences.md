@@ -53,3 +53,16 @@ PocketBase. WebP output is not produced: JPEG in, JPEG out; PNG in, PNG out.
 reports `CF-Connecting-IP`: Workers set that header themselves and voidbase already uses it as the client IP,
 so the panel's "behind a reverse proxy" reminder only fires for other proxy headers you have not listed in
 `settings.trustedProxy`.
+
+## Static files on Cloudflare
+
+PocketBase serves `--publicDir` itself: an existing file, otherwise `index.html` with status 200, and the admin panel's
+index for any `/_/` path. On Cloudflare, voidbase hands everything outside `/api` to the static asset layer, which
+never invokes the Worker (assets are free and skip the isolate; see docs/platform.md). Cloudflare answers a miss with
+the nearest `404.html`, so the build ships `404.html` copies of `index.html` and of `_/index.html`:
+
+- deep links (`/posts/abc/`) get the SPA shell with **status 404** instead of PocketBase's 200 (the body is identical; the
+  client router boots as usual, and this is the shape SvelteKit documents for Cloudflare);
+- a browser navigating to an unknown `/api/...` URL gets that HTML page with status 404, while API clients (anything
+  without `text/html` in `Accept`) get PocketBase's JSON 404;
+- `voidbase serve` (Bun) keeps PocketBase's exact semantics, including the 200 index fallback.

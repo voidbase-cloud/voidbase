@@ -107,6 +107,6 @@ then `test/fresh-db.ts` and the starter smoke. The same scripts run locally agai
 - `src/server/` is the server: collections model, auth, settings, records, bootstrap.
 - `db/schema.ts` defines only the system tables. User collections are rows in `_collections` and tables created at runtime, as in PocketBase.
 - `public/_` is the panel build, synced, never edited (`bun run panel:sync --brand <dir>` for an optional logo/title/docs-link swap).
-- `middleware/01.request-context.ts` serves assets and the SPA fallback for everything outside `/api`.
+- Everything outside `/api` is served by Cloudflare's asset layer without invoking the Worker; deep links get the SPA shell through `404.html` copies of `index.html` (written at build time by `hooks-plugin.ts` and by the sync scripts).
 - `crons/every-minute.ts` runs PocketBase's maintenance jobs and `cronAdd` jobs.
 - `hooks-plugin.ts` bundles `pb_hooks` and `pb_migrations` into the Worker at build time.

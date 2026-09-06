@@ -53,9 +53,11 @@ try {
   const panel = await fetch(`${base}/_/`);
   check("admin panel served at /_/", panel.status === 200 && (panel.headers.get("content-type") ?? "").includes("text/html"), String(panel.status));
   const spa = await fetch(`${base}/posts/`, { headers: { accept: "text/html,*/*;q=0.8" } }); // a browser navigation
-  check("app SPA fallback at /posts/ for HTML navigations", spa.status === 200 && (spa.headers.get("content-type") ?? "").includes("text/html"), String(spa.status));
+  check("app SPA shell at /posts/ from the asset layer (404-page handling: status 404, index.html body)", spa.status === 404 && (spa.headers.get("content-type") ?? "").includes("text/html") && (await spa.text()).includes("<html"), String(spa.status));
   const nonHtml = await fetch(`${base}/missing.js`);
-  check("index fallback for any missing non-API path (PocketBase Static semantics)", nonHtml.status === 200 && (nonHtml.headers.get("content-type") ?? "").includes("text/html"), String(nonHtml.status));
+  check("missing non-API path answered by the asset layer with the 404 shell", nonHtml.status === 404 && (nonHtml.headers.get("content-type") ?? "").includes("text/html"), String(nonHtml.status));
+  const panelDeep = await fetch(`${base}/_/deep/link`);
+  check("panel index for any /_/ path (its own 404.html)", panelDeep.status === 404 && (await panelDeep.text()).includes("<html"), String(panelDeep.status));
   const versionJson = await fetch(`${base}/_app/version.json`);
   check("real asset under _app/ served as JSON", versionJson.status === 200 && (versionJson.headers.get("content-type") ?? "").includes("json"), `${versionJson.status} ${versionJson.headers.get("content-type")}`);
   // hooks from test/fixtures/hooks: $apis guards, $app helpers, enrich/validate/after-error events
@@ -96,7 +98,9 @@ try {
   const boom = await fetch(`${base}/api/hooktest/boom`);
   check("hook route exception -> generic 500", boom.status === 500 && ((await boom.json()) as { message: string }).message === "Something went wrong while processing your request.", String(boom.status));
   const api404 = await fetch(`${base}/api/nope`, { headers: { accept: "text/html,*/*;q=0.8" } });
-  check("unknown /api path stays a JSON 404", api404.status === 404 && (api404.headers.get("content-type") ?? "").includes("json"), String(api404.status));
+  check("unknown /api path on a browser navigation: 404 with the HTML page", api404.status === 404 && (api404.headers.get("content-type") ?? "").includes("text/html"), `${api404.status} ${api404.headers.get("content-type")}`);
+  const apiJson404 = await fetch(`${base}/api/nope`);
+  check("unknown /api path for API clients stays a JSON 404", apiJson404.status === 404 && (apiJson404.headers.get("content-type") ?? "").includes("json"), `${apiJson404.status} ${apiJson404.headers.get("content-type")}`);
 } catch (err) {
   console.error("fresh-db: aborted:", err instanceof Error ? err.message : err);
   console.error("--- preview log tail ---\n" + (await Bun.file(logPath).text()).split("\n").slice(-25).join("\n"));

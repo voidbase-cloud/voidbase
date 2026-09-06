@@ -12,7 +12,6 @@
     "./app": "./src/server/app.ts",
     "./crons": "./src/server/crons.ts",
     "./plugin": "./hooks-plugin.ts",
-    "./middleware": "./middleware/01.request-context.ts",
     "./schema": "./db/schema.ts",
     "./env": "./env.ts",
     "./scripts/*": "./scripts/*",

@@ -9,7 +9,7 @@ Drizzle migrations in `db/migrations/`, and PocketBase-style `pb_migrations` run
 ```bash
 bun install
 bun run panel:sync                      # unmodified PocketBase admin panel -> public/_  (see --brand in scripts/sync-panel.ts)
-bun run app:sync                        # optional: a built SvelteKit/SPA app -> public/  (served with SPA fallback)
+bun run app:sync                        # optional: a built SvelteKit/SPA app -> public/  (deep links get index.html as the 404 page)
 bun run build                           # vp build; bundles pb_hooks and pb_migrations into the Worker
 ```
 

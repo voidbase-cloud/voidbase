@@ -2,7 +2,7 @@
 // Hook files are written against PocketBase's synchronous JSVM API; here I/O is async, so each file is
 // transformed with the TypeScript compiler API: calls to known I/O methods get `await`, the functions that
 // contain them become `async`, and the change propagates to callers (also across files via exported names).
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 const PLATFORM_MODULES = ["env", "log", "sse", "sockets", "hooks", "migrations", "photon"];
@@ -187,14 +187,32 @@ export function compileMigrationsDir(dir: string): string {
   return `export const migrationsDir = ${JSON.stringify(dir)};\nexport const migrations = [${out.join(",\n")}];\n`;
 }
 
+/** Copies index.html to 404.html (and _/index.html to _/404.html) so Cloudflare's 404-page handling serves the SPA shells. */
+export function writeNotFoundShells(dir: string): string[] {
+  const written: string[] = [];
+  for (const sub of ["", "_/"]) {
+    const index = join(dir, sub, "index.html"); const notFound = join(dir, sub, "404.html");
+    if (existsSync(index) && !existsSync(notFound)) { copyFileSync(index, notFound); written.push(`${sub}404.html`); }
+  }
+  return written;
+}
+
 export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string } = {}): Plugin {
   const dir = resolve(options.dir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks");
   const migrationsDir = resolve(options.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations");
   const here = resolve(fileURLToPath(new URL(".", import.meta.url)));
+  let clientOut = "";
   return {
     name: "voidbase-pb-hooks",
     // the Workers build takes the workers flavour of every #platform module (package.json "imports" covers Bun/Node)
     config() { return { resolve: { alias: PLATFORM_MODULES.map((n) => ({ find: `#platform/${n}`, replacement: resolve(here, "src/platform/workers", `${n}.ts`) })) } }; },
+    configResolved(config) { clientOut = resolve(config.root, config.environments?.client?.build?.outDir ?? config.build.outDir); },
+    // Asset-first on Cloudflare: the asset layer answers every request outside /api, so the Worker is never invoked
+    // for static files. PocketBase's index fallback for deep links is expressed as Cloudflare's `not_found_handling:
+    // "404-page"` (void.json routing.notFound): the nearest 404.html is served with status 404, so the SPA shell and the
+    // panel's index are copied to 404.html at build time. Unknown /api paths keep their JSON 404 (the binding returns a
+    // 404 for them, which Void's entry only swaps for the HTML page on browser navigations).
+    closeBundle() { writeNotFoundShells(clientOut); },
     resolveId(id) { return id === VIRTUAL ? RESOLVED : id === VIRTUAL_MIGRATIONS ? RESOLVED_MIGRATIONS : null; },
     load(id) {
       if (id === RESOLVED) {

@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.2.0](https://github.com/voidbase-cloud/voidbase/compare/v0.1.0...v0.2.0) (2026-09-06)
+
+
+### Features
+
+* **cli:** prebuilt executables with voidbase update, PocketBase-style release archives ([48eef41](https://github.com/voidbase-cloud/voidbase/commit/48eef41f080092cd4c3bdb533e58fa83bfec1026))
+
 ## 0.1.0
 
 First release candidate: PocketBase 0.40 wire compatibility on Cloudflare Workers (D1, R2, cron) via Void.

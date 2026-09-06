@@ -49,7 +49,11 @@ voidbase deploy                              # --name <worker>, --account <id> w
 A static site is served at `/` by the same Worker when there is one: `./pb_public` (PocketBase's convention, picked up
 automatically when the directory exists, exactly like `voidbase serve`), `--public-dir <dir>` or
 `VOIDBASE_DEPLOY_PUBLIC_DIR`. Build it first: the directory needs an `index.html`. Unknown paths get its `404.html`
-(a copy of `index.html` unless the build made one) with status 404, `/api` and `/_/` are untouched.
+(a copy of `index.html` unless the build made one) with status 404, `/api` and `/_/` are untouched. A `_redirects`
+file in that directory (Netlify/Pages syntax, `source destination [status]`) becomes edge redirect rules evaluated
+before the assets and the Worker; a source may name a host, which is how one Worker behind several custom domains
+answers differently per hostname, e.g. `https://api.example.com/  /_/  302` sends the API hostname's root to the
+admin panel while the site keeps serving on the apex.
 
 ```bash
 voidbase deploy --public-dir ../sk/build     # a build that lives elsewhere

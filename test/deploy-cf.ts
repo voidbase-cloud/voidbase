@@ -38,8 +38,11 @@ try {
   const noBuild = run(["deploy", "--dry-run", "--public-dir", "../sk/missing"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
   check("--public-dir without an index.html is refused before anything is touched", noBuild.code === 1 && /no index\.html \(build the site first\)/.test(noBuild.out), noBuild.out.slice(-200));
   mkdirSync(`${dir}/pb_public`); writeFileSync(`${dir}/pb_public/index.html`, "<title>site</title>");
+  writeFileSync(`${dir}/pb_public/_redirects`, "# per-host rules\nhttps://api.example.com/  /_/  302\nhttps://www.example.com/*  https://example.com/:splat  301!\n/old  /new\n/ignored  /x  200\n");
   const pbPublic = run(["deploy", "--dry-run", "--name", "public-demo"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
   check("./pb_public is picked up by default, like PocketBase", pbPublic.code === 0 && /would sync the panel and pb_public into/.test(pbPublic.out), pbPublic.out.slice(-300));
+  const voidJson = JSON.parse(readFileSync(`${PKG}/.cloud/public-demo/void.json`, "utf8")) as { routing?: { redirects?: Record<string, { to: string; status: number }> } };
+  check("_redirects in the public dir becomes Void's host-aware routing.redirects (3xx only, default 302)", JSON.stringify(voidJson.routing?.redirects) === JSON.stringify({ "https://api.example.com/": { to: "/_/", status: 302 }, "https://www.example.com/*": { to: "https://example.com/:splat", status: 301 }, "/old": { to: "/new", status: 302 } }), JSON.stringify(voidJson.routing));
   rmSync(`${dir}/pb_public`, { recursive: true, force: true });
   const twoDomains = run(["deploy", "--dry-run", "--name", "site-demo", "--domain", "example.com, api.example.com"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
   check("--domain takes a list: the first is the URL, all are attached after the upload", twoDomains.code === 0 && /custom domains example\.com, api\.example\.com \(workers\.dev off\)/.test(twoDomains.out) && /https:\/\/example\.com/.test(twoDomains.out), twoDomains.out.slice(-300));

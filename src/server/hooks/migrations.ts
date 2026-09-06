@@ -50,6 +50,8 @@ async function runPending(db: D1Database, globals: Record<string, unknown>): Pro
       throw err;
     }
     invalidateCollections();
+    // the next migration must see what this one created (PocketBase reloads its collections cache the same way)
+    const store = hookStore.getStore(); if (store) { const fresh = await loadCollections(db); store.collections.clear(); for (const [k, v] of fresh) store.collections.set(k, v); }
     await stmt(db, "INSERT OR IGNORE INTO `_pbMigrations` (file, applied) VALUES (?, ?)", [m.name, Date.now()]).run();
     done.push(m.name);
   }

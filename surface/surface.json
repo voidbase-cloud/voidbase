@@ -294,9 +294,10 @@
             "prod"
           ],
           "hours": 2,
-          "status": "todo",
+          "status": "partial",
           "milestone": "m6",
-          "verify": "Panel reachable at the .void.app URL"
+          "verify": "Panel reachable at the .void.app URL",
+          "notes": "docs/deploy.md documents `void deploy` with secrets and post-deploy steps; the build is production-shaped (vp preview runs it in workerd via test/fresh-db.ts). The actual deploy needs a Void account login and has not been run yet."
         },
         {
           "id": "platform.deploy-cf",
@@ -306,9 +307,10 @@
             "prod"
           ],
           "hours": 3,
-          "status": "todo",
+          "status": "partial",
           "milestone": "m6",
-          "verify": "Same build live on a custom Cloudflare account, DO included"
+          "verify": "Same build live on a custom Cloudflare account, DO included",
+          "notes": "docs/deploy.md documents `void deploy --backend cloudflare --provision` (wrangler auth, pinned account, wrangler secrets, CI without provision). Not executed: needs Cloudflare credentials."
         }
       ]
     },
@@ -2392,8 +2394,9 @@
             "prod"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "docs/differences.md: D1 batches instead of transactions, 100 bound params / 100 columns, per-isolate rate limits, polling realtime cost model, cron semantics, CPU and body limits, SMTP ports, thumbs, backups format, not-implemented list, health semantics."
         },
         {
           "id": "prod.docs",
@@ -2403,8 +2406,9 @@
             "prod"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "README (run, verify, tests, layout), docs/deploy.md (Void platform and self-hosted Cloudflare), docs/differences.md, docs/hooks.md (events, globals, migrations, local testing), docs/migrating.md (schema export/import, data, hooks, settings, clients)."
         },
         {
           "id": "prod.cli",
@@ -2436,8 +2440,9 @@
             "prod"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "COMPAT.md: verified versions (panel 0.40.2, reference 0.39.11 binary with 0.40.2 source, SDK 0.28, Void 0.10.13, compat date), endpoint matrix with status, hooks coverage, how to track upstream."
         },
         {
           "id": "prod.release",

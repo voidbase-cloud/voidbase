@@ -57,6 +57,9 @@ publish_npm() {
   local smoke; smoke=$(mktemp -d)
   (cd "$smoke" && bun init -y >/dev/null && bun add "$tarball" && bunx voidbase help | head -n 5 && node -e "const p=require('$PKG/package.json'); if (p.version !== '$VERSION') throw new Error('version mismatch: ' + p.version)") || return 1
   [ -n "${NPM_TOKEN:-}" ] || { echo "NPM_TOKEN is not set"; return 1; }
+  # a dry run of a version that is already on npm: npm refuses to "publish over" it even without publishing, so the
+  # rehearsal ends here (the real flow skips publishing altogether for a published version)
+  if [ -n "$DRY" ] && [ "$on_npm" = 1 ]; then echo "npm publish: $PKG@$VERSION is already published, the dry run skips the publish commands"; return 0; fi
   local npmrc; npmrc=$(mktemp); printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$npmrc"
   local provenance=""; [ "$BACKEND" = github ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && provenance="--provenance"
   echo "npm publish: provenance ${provenance:-off (only GitHub Actions can mint the OIDC token)}, dry run ${DRY:-no}"

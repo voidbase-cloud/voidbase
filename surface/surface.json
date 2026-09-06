@@ -1051,9 +1051,9 @@
             "prod"
           ],
           "hours": 4,
-          "status": "partial",
+          "status": "done",
           "milestone": "m6",
-          "notes": "40 recorded filter/sort fixtures in records.ts plus 27 live comparisons in filters-extra.ts (any-match, :each/:length, via, expands) and the logs data.* filters; a several-hundred-expression corpus is still open."
+          "notes": "test/conformance/filter-corpus.ts generates 1753 expressions (every operator x every field type x several values, :lower/:each/:length modifiers, relation paths, back-relations, JSON paths, macros, literals, field-vs-field, grouping, whitespace and syntax errors, @request.* and @collection.*) on a purpose-built pair of collections and compares matched labels or error status between the reference PocketBase and voidbase: 1753/1753 identical. Plus the 40 recorded cases in records.ts and 27 in filters-extra.ts."
         }
       ]
     },

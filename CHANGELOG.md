@@ -3,6 +3,18 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.2.2](https://github.com/voidbase-cloud/voidbase/compare/v0.2.1...v0.2.2) (2026-09-06)
+
+
+### Bug Fixes
+
+* **migrations:** later pb_migrations see collections created earlier in the same run ([35b0e94](https://github.com/voidbase-cloud/voidbase/commit/35b0e9499c0862de5c5c76d1696c2104cc205b32))
+
+
+### Documentation
+
+* **surface:** template marketplace in the control plane ([48b09ae](https://github.com/voidbase-cloud/voidbase/commit/48b09ae5d74b760fcdb64c3315b4df7d61e5ab81))
+
 ## [0.2.1](https://github.com/voidbase-cloud/voidbase/compare/v0.2.0...v0.2.1) (2026-09-06)
 
 

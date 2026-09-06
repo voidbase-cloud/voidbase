@@ -48,6 +48,20 @@ ci(release): compile release notes with release-please
 3. The `publish` job of the same run then installs, typechecks, runs the unit and cloud-rest tests, packs, smoke-
    installs the tarball and runs the CLI from it, publishes to npm (`--provenance` when the repository is public)
    and to GitHub Packages, and attaches the tarball to the release.
+4. The `executables` job builds the prebuilt executables for every platform (`scripts/build-exe.ts`: Bun
+   cross-compiles from one runner; the panel, the system migrations and the hooks typings are embedded), smokes the
+   runner's own build (`test/exe-smoke.ts`: serve with pb_hooks, the panel from the embedded zip, a thumbnail through
+   the wasm, then `voidbase update` against a mock GitHub API), attaches `voidbase_<version>_<os>_<arch>.zip` for
+   linux/darwin/windows × amd64/arm64 (plus musl builds) and `checksums.txt` to the release, attests each archive
+   with `actions/attest-build-provenance`, and puts the release notes in PocketBase's shape: the
+   `./voidbase update` hint first, then the compiled notes.
+
+The layout mirrors PocketBase's releases: the zip holds the executable, `CHANGELOG.md` and `LICENSE`;
+`checksums.txt` is goreleaser's format (`<sha256>  <file>`), which `voidbase update` checks before replacing the
+executable. Verify an archive's provenance with `gh attestation verify voidbase_X.Y.Z_linux_amd64.zip --owner
+voidbase-cloud`. For the "Immutable" badge and the release attestation GitHub adds itself, enable immutable releases
+once in the repository settings (Settings > General > Releases); it is a setting, not something the workflow can
+turn on.
 
 `.release-please-manifest.json` holds the released version (0.1.0 was cut by hand and its notes written by hand;
 everything after it is compiled). `release-please-config.json` maps commit types to changelog sections.

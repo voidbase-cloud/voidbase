@@ -1,4 +1,6 @@
-# Releases compiled from Conventional Commits (docs/releasing.md).
+# Releases compiled from Conventional Commits (docs/releasing.md), laid out like PocketBase's: the notes open with
+# the `./voidbase update` hint, the assets are voidbase_<version>_<os>_<arch>.zip per platform plus checksums.txt,
+# each archive carries a build provenance attestation, and the npm package goes out in the same run.
 #   push to master   -> release-please keeps a "chore(master): release X.Y.Z" PR up to date (CHANGELOG.md, package.json);
 #                       merging it tags vX.Y.Z, creates the GitHub release with the notes, and the publish job runs
 #   release published -> a release cut by hand (gh release create vX.Y.Z --notes ...) publishes the same way
@@ -19,7 +21,8 @@ permissions:
   contents: write        # the release PR's commits, tags and release assets
   pull-requests: write   # the release PR
   packages: write        # GitHub Packages
-  id-token: write        # npm provenance
+  id-token: write        # npm provenance and the build attestations
+  attestations: write    # provenance attestations for the release archives
 jobs:
   release-please:
     if: github.event_name == 'push'
@@ -94,8 +97,65 @@ jobs:
           echo "//npm.pkg.github.com/:_authToken=\${NODE_AUTH_TOKEN}" >> .npmrc
           npm publish "$(ls voidbase-cloud-voidbase-*.tgz)" --registry=https://npm.pkg.github.com $DRY_RUN
           rm -f .npmrc
-      - name: Attach the tarball to the release
+      - name: Attach the npm tarball to the release
         if: ${{ env.DRY_RUN == '' && env.TAG != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$TAG" voidbase-cloud-voidbase-*.tgz --clobber
+  executables:
+    # PocketBase-style prebuilt executables: one zip per platform (the executable, CHANGELOG.md, LICENSE) plus
+    # checksums.txt, attached to the release with a build provenance attestation each
+    needs: [release-please]
+    if: always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'release' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'yes' || '' }}
+      TAG: ${{ needs.release-please.outputs.tag_name || github.event.release.tag_name || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name || github.event.release.tag_name || github.ref }}
+      # the executable smoke serves the unmodified starter's pb_hooks and pb_migrations
+      - uses: actions/checkout@v4
+        with: { repository: spinspire/pocketbase-sveltekit-starter, path: starter }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.3.14" }
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Build every platform
+        run: |
+          bun run panel:sync
+          bun scripts/build-exe.ts --targets all --out dist/release
+          cat dist/release/checksums.txt
+      - name: Smoke the executable for this runner
+        run: bun test/exe-smoke.ts
+        env:
+          STARTER_VB_DIR: ${{ github.workspace }}/starter/pb
+      - name: Attest the archives
+        if: ${{ env.DRY_RUN == '' }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/release/*.zip
+            dist/release/checksums.txt
+      - name: Attach the archives to the release
+        if: ${{ env.DRY_RUN == '' && env.TAG != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" dist/release/*.zip dist/release/checksums.txt --clobber
+      - name: Release notes in PocketBase's shape
+        if: ${{ env.DRY_RUN == '' && env.TAG != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # the hint PocketBase opens every release with (`voidbase update` strips it again when printing the notes),
+          # then the notes release-please compiled from the commits (or the hand-written ones of a manual release)
+          gh release view "$TAG" --json body --jq .body > body.md
+          if ! grep -q "voidbase update" body.md; then
+            { printf '> _To update the prebuilt executable you can run `./voidbase update`._\n\n'; cat body.md; } > notes.md
+            gh release edit "$TAG" --notes-file notes.md
+          fi
+      - uses: actions/upload-artifact@v4
+        if: ${{ env.DRY_RUN != '' }}
+        with: { name: executables-dry-run, path: dist/release/checksums.txt }

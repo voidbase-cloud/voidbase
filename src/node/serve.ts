@@ -1,25 +1,31 @@
 // `voidbase serve`: the PocketBase-shaped single process. The same Hono app that runs on Cloudflare, with D1 on
 // bun:sqlite, R2 on the filesystem, SMTP on node sockets and the cron scheduler on a timer.
 //   import { serve } from "@voidbase-cloud/voidbase";  serve({ http: "127.0.0.1:8090", dir: "pb_data", publicDir: "../sk/build" });
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { d1, openDatabase } from "./d1";
 import { fsBucket } from "./storage";
 import { assetsFetcher } from "./assets";
 import { ensurePanelDir } from "./panel";
+import { embedded } from "./embedded";
 
 export interface ServeOptions { http?: string; dir?: string; hooksDir?: string; migrationsDir?: string; publicDir?: string; quiet?: boolean }
 const PKG = resolve(import.meta.dir, "../..");
 
 // system tables: the same SQL migrations Void applies on Cloudflare
-export function applySystemMigrations(db: ReturnType<typeof openDatabase>): number {
+export function readSystemMigrations(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const f of readdirSync(`${PKG}/db/migrations`).filter((f) => f.endsWith(".sql")).sort()) out[f] = readFileSync(`${PKG}/db/migrations/${f}`, "utf8");
+  return out;
+}
+export function applySystemMigrations(db: ReturnType<typeof openDatabase>, migrations: Record<string, string> = readSystemMigrations()): number {
   db.exec("CREATE TABLE IF NOT EXISTS `_vb_migrations` (name TEXT PRIMARY KEY, applied TEXT NOT NULL)");
   const done = new Set((db.query("SELECT name FROM `_vb_migrations`").all() as { name: string }[]).map((r) => r.name));
   let applied = 0;
-  for (const f of readdirSync(`${PKG}/db/migrations`).filter((f) => f.endsWith(".sql")).sort()) {
+  for (const f of Object.keys(migrations).sort()) {
     if (done.has(f)) continue;
     db.transaction(() => {
-      for (const statement of readFileSync(`${PKG}/db/migrations/${f}`, "utf8").split("--> statement-breakpoint")) if (statement.trim()) db.exec(statement);
+      for (const statement of migrations[f]!.split("--> statement-breakpoint")) if (statement.trim()) db.exec(statement);
       db.query("INSERT INTO `_vb_migrations` (name, applied) VALUES (?, ?)").run(f, new Date().toISOString());
     })();
     applied++;
@@ -49,10 +55,12 @@ export async function openLocal(opts: ServeOptions) {
   mkdirSync(dir, { recursive: true });
   process.env.VOIDBASE_HOOKS_DIR = resolve(opts.hooksDir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks");
   process.env.VOIDBASE_MIGRATIONS_DIR = resolve(opts.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations");
-  // pb_data/types.d.ts for editor support in pb_hooks (PocketBase's JSVM typings)
-  try { if (!existsSync(`${dir}/types.d.ts`)) copyFileSync(`${PKG}/types/pb_data.d.ts`, `${dir}/types.d.ts`); } catch { /* optional */ }
+  // pb_data/types.d.ts for editor support in pb_hooks (PocketBase's JSVM typings); a standalone executable carries
+  // the typings and the system migrations itself (src/node/embedded.ts)
+  const emb = await embedded();
+  try { if (!existsSync(`${dir}/types.d.ts`)) writeFileSync(`${dir}/types.d.ts`, emb?.typesDts ?? readFileSync(`${PKG}/types/pb_data.d.ts`, "utf8")); } catch { /* optional */ }
   const sqlite = openDatabase(`${dir}/data.db`);
-  applySystemMigrations(sqlite);
+  applySystemMigrations(sqlite, emb?.migrations ?? readSystemMigrations());
   const env = { DB: d1(sqlite), STORAGE: fsBucket(`${dir}/storage`), ASSETS: assetsFetcher({ panelDir: await ensurePanelDir(), publicDir: opts.publicDir ? resolve(opts.publicDir) : undefined }) };
   return { dir, sqlite, env };
 }

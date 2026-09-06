@@ -5,6 +5,12 @@
 import { existsSync, mkdirSync, writeFileSync, cpSync } from "node:fs";
 import { resolve } from "node:path";
 import { exportAll } from "../scripts/export";
+import { embedded, isExecutable } from "../src/node/embedded";
+
+// the version: the executable carries it, a checkout reads package.json
+async function currentVersion(): Promise<string> { return (await embedded())?.version ?? (JSON.parse(await Bun.file(resolve(import.meta.dir, "../package.json")).text()) as { version: string }).version; }
+// the prebuilt executable serves; the Cloudflare toolchain (Void, Vite, wrangler) comes with the npm package
+const TOOLCHAIN = new Set(["dev", "build", "preview", "deploy", "bundle", "release", "cloud", "panel", "app", "init", "seed-user"]);
 
 const ROOT = resolve(`${import.meta.dir}/..`);
 const argv = process.argv.slice(2);
@@ -32,6 +38,9 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      stores the superuser as worker secrets and runs void deploy --backend cloudflare
   deploy --void                      deploy to the Void platform instead (void auth login first)
   token                              print the Cloudflare dashboard link that creates VOIDBASE_DEPLOY_CF_API_KEY
+  update [--dir pb_data] [--backup]  prebuilt executable only: fetch the latest GitHub release for this platform, verify
+                                     its checksum and replace the executable (--backup zips pb_data first)
+  version                            print the version
   bundle [--out dir] [--version v]   build the generic Worker + panel as a release directory (default .cloud/releases/<v>)
          [--push http://vb --token t]  and optionally push it into a voidbase control plane (POST /api/vbcloud/releases)
   release push <dir> --url http://vb --token <superuser token>   push a built release ( --no-activate keeps the current one)
@@ -59,8 +68,16 @@ async function login(): Promise<string> {
   return String(r.json.token);
 }
 
+if (cmd && TOOLCHAIN.has(cmd) && isExecutable()) { console.error(`"${cmd}" needs the Cloudflare toolchain, which comes with the npm package, not the prebuilt executable:\n  bunx @voidbase-cloud/voidbase ${argv.join(" ")}`); process.exit(1); }
 switch (cmd) {
   case undefined: case "help": case "--help": console.log(HELP); break;
+  case "version": case "--version": console.log(await currentVersion()); break;
+  case "update": {
+    if (!isExecutable()) { console.error("voidbase update replaces the prebuilt executable; this is a checkout or an npm install: update the package instead (bun update @voidbase-cloud/voidbase)."); process.exit(1); }
+    const { update } = await import("../src/node/update");
+    await update({ currentVersion: await currentVersion(), dataDir: resolve(flags.dir ?? "pb_data"), backup: !!flags.backup });
+    break;
+  }
   case "token": { const { tokenHelp } = await import("../src/node/deploy-cf"); console.log(tokenHelp()); break; }
   case "bundle": {
     const { buildRelease, pushRelease } = await import("../src/node/bundle");

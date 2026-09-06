@@ -113,7 +113,8 @@
     "check": "void prepare && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "pack:check": "npm pack --dry-run",
     "prepublishOnly": "bun run check && bun test",
-    "prepare": "husky || true"
+    "prepare": "husky || true",
+    "build:exe": "bun scripts/build-exe.ts"
   },
   "dependencies": {
     "@cf-wasm/photon": "^0.4.0",

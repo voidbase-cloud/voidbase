@@ -28,6 +28,13 @@ bun add @voidbase-cloud/voidbase        # the package: library, CLI (`voidbase`)
 bunx @voidbase-cloud/voidbase serve     # or run the CLI without installing
 ```
 
+Or, like PocketBase, a single prebuilt executable from the
+[releases](https://github.com/voidbase-cloud/voidbase/releases): `voidbase_<version>_<os>_<arch>.zip` for Linux,
+macOS and Windows (amd64 and arm64; musl builds for Alpine), with the admin panel, the system migrations and the hooks
+typings inside, so `./voidbase serve` needs nothing else. `./voidbase update` fetches the latest release for the
+platform, verifies its checksum and replaces the executable (`--backup` zips `pb_data` first). The Cloudflare
+toolchain (`deploy`, `bundle`, `dev`) stays with the npm package.
+
 Commits follow Conventional Commits (enforced by husky and CI); release-please turns them into a release PR,
 and merging it publishes to npm (with provenance once the repository is public) and GitHub Packages with the
 compiled notes; see [docs/releasing.md](docs/releasing.md).

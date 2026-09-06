@@ -3,6 +3,7 @@ import { logger } from "#platform/log";
 import type { Hono, MiddlewareHandler } from "hono";
 import { files, hooks, hooksDir, modules } from "#platform/hooks";
 import { loadCollections } from "../collections/model";
+import { dispatch, registerJobHandler, type Job } from "../jobs";
 import { loadSettings } from "../settings";
 import type { AppEnv } from "../types";
 import { CollectionRef, HookRecord } from "./record";
@@ -28,6 +29,10 @@ function buildGlobals(): Record<string, unknown> {
   const g: Record<string, unknown> = {
     $app, $apis, $http, $os, $filesystem, $security,
     $mails: {}, $template: { loadFiles: () => ({ render: () => "" }) }, $dbx,
+    // voidbase extensions a hook cannot get at otherwise: the Cloudflare bindings of the request, cron tick or
+    // migration running now, and the background jobs queue
+    $env: () => (hookStore.getStore()?.env ?? {}) as Record<string, unknown>,
+    $jobs: { queueJob: (job: Job) => dispatch(job), onJob: (type: Job["type"], fn: Parameters<typeof registerJobHandler>[1]) => registerJobHandler(type, fn) },
     routerAdd, routerUse, cronAdd, cronRemove,
     migrate: () => { /* migrations are applied by the migrations runner, not at hook load */ },
     Record: class Record extends HookRecord { constructor(collection: CollectionRef, data?: { [k: string]: unknown }) { super(collection, data ?? {}); } },

@@ -1,23 +1,35 @@
-// Runs a Void app's server code inside voidbase. The generated `.voidbase/void-app.ts` imports the app's own
-// route/middleware/cron/queue modules and hands them here; nothing in this file knows the app's shape.
+// Runs a Void app's server code inside voidbase, from a pb_hooks file.
+//
+// This module is bundled into `.voidbase/pb_hooks/void-app.js` together with the app's own routes, so it must not
+// import anything from voidbase: a hook runs in a sandbox whose `require` reaches only its sibling hook files.
+// Everything it needs from the host arrives as the `HookApi` argument, which the generated `.pb.js` wrapper fills
+// in from the hook globals. Its only imports are Void's own runtime, which is bundled along with it.
 //
 // Two things make Void code run unchanged:
-//   - routes register through `routerAdd`, the same registry pb_hooks use, because voidbase mounts a catch-all
-//     dispatcher for it (src/server/hooks/index.ts) and anything added to the Hono app after boot sits behind that
-//     catch-all and would never match. The dispatcher hands the handler its RequestEvent, whose `.c` is the real
-//     Hono context Void handlers expect.
+//   - routes register through `routerAdd`, the registry every pb_hooks route uses, and the RequestEvent it hands
+//     the handler carries `.c`, the real Hono context Void handlers expect;
 //   - every handler body runs inside `withRuntimeEnv`, Void's AsyncLocalStorage for bindings, so `void/db`,
 //     `void/storage`, `void/env` and `void/queues` resolve against voidbase's D1 and R2 with no shim.
 import { withRuntimeEnv } from "void/_env";
 import { convertReturnValue } from "void/response";
 import type { Context } from "hono";
-import type { VoidbaseApp } from "../server/api";
-import { currentBindings } from "../server/api";
-import { dispatch, registerJobHandler } from "../server/jobs";
-import type { Bindings } from "../server/types";
 
 type Handler = (c: Context) => unknown;
 type Middleware = (c: Context, next: () => Promise<void>) => unknown;
+type Bindings = Record<string, unknown>;
+
+/** What the generated hook wrapper passes in, taken from the hook globals. */
+export interface HookApi {
+  routerAdd(method: string, path: string, handler: (e: { c: Context }) => unknown): void;
+  cronAdd(id: string, expr: string, fn: () => unknown): void;
+  /** $env: the bindings of the request, cron tick or job running now */
+  env(): Bindings;
+  /** $jobs: voidbase's background queue */
+  jobs: {
+    queueJob(job: { type: "queue"; queue: string; body: unknown }): Promise<unknown>;
+    onJob(type: "queue", fn: (env: Bindings, job: { queue: string; body: unknown }) => Promise<void>): void;
+  };
+}
 
 export interface MountedRoute {
   url: string;
@@ -53,18 +65,18 @@ export interface MountSpec {
 }
 
 /** Producer bindings for the app's queues, overlaid on the real env so `void/queues` and `c.env.QUEUE_X` both work. */
-function queueBindings(queues: MountedQueue[], env: Bindings): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
+function queueBindings(api: HookApi, queues: MountedQueue[]): Bindings {
+  const out: Bindings = {};
   for (const q of queues) {
     out[q.binding] = {
-      send: (body: unknown) => dispatch({ type: "queue", queue: q.name, body }, { env }),
-      sendBatch: async (messages: Iterable<{ body: unknown }>) => { for (const m of messages) await dispatch({ type: "queue", queue: q.name, body: m.body }, { env }); },
+      send: (body: unknown) => api.jobs.queueJob({ type: "queue", queue: q.name, body }),
+      sendBatch: async (messages: Iterable<{ body: unknown }>) => { for (const m of messages) await api.jobs.queueJob({ type: "queue", queue: q.name, body: m.body }); },
     };
   }
   return out;
 }
 
-/** Pulls `:param` and `[...splat]` values out of the path the dispatcher matched. */
+/** Pulls `:param` and `[...splat]` values out of the path the router matched. */
 function paramsOf(route: MountedRoute, path: string): Record<string, string> {
   const pattern = route.hookPath.split("/");
   const actual = path.split("/");
@@ -78,7 +90,7 @@ function paramsOf(route: MountedRoute, path: string): Record<string, string> {
 }
 
 /** The Hono context a Void handler sees: real context, with the route's params and the queue bindings overlaid. */
-function voidContext(c: Context, params: Record<string, string>, env: Record<string, unknown>): Context {
+function voidContext(c: Context, params: Record<string, string>, env: Bindings): Context {
   const bind = <T extends object>(target: T, prop: string | symbol) => {
     const value = Reflect.get(target, prop, target);
     return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
@@ -115,15 +127,15 @@ async function runChain(c: Context, middleware: Middleware[], handler: Handler):
   return c.res;
 }
 
-export function mountVoidApp(app: VoidbaseApp, spec: MountSpec): void {
+export function mountVoidApp(api: HookApi, spec: MountSpec): void {
   const { routes = [], middleware = [], crons = [], queues = [] } = spec;
-  const envFor = (base: Bindings): Record<string, unknown> => (queues.length ? { ...base, ...queueBindings(queues, base) } : (base as unknown as Record<string, unknown>));
+  const envFor = (base: Bindings): Bindings => (queues.length ? { ...base, ...queueBindings(api, queues) } : base);
 
   for (const route of routes) {
     for (const method of route.methods) {
       const handler = route.mod[method] as Handler | undefined;
       if (typeof handler !== "function") continue;
-      app.hooks.routerAdd(method === "ALL" ? "ANY" : method, route.hookPath, async (e: { c: Context }) => {
+      api.routerAdd(method === "ALL" ? "ANY" : method, route.hookPath, async (e) => {
         const c = e.c;
         const env = envFor(c.env as Bindings);
         const ctx = voidContext(c, paramsOf(route, new URL(c.req.url).pathname), env);
@@ -133,9 +145,9 @@ export function mountVoidApp(app: VoidbaseApp, spec: MountSpec): void {
   }
 
   for (const cron of crons) {
-    // cronAdd's callback takes no arguments: the bindings come from the hook store the cron runner opens.
-    app.hooks.cronAdd(cron.name, cron.expr, async () => {
-      const env = (currentBindings() ?? {}) as Bindings;
+    // cronAdd's callback takes no arguments: the bindings come from the hook store the cron runner opens
+    api.cronAdd(cron.name, cron.expr, async () => {
+      const env = api.env();
       const controller = { cron: cron.expr, scheduledTime: Date.now() };
       await withRuntimeEnv(envFor(env), () => cron.handler(controller, env));
     });
@@ -145,7 +157,7 @@ export function mountVoidApp(app: VoidbaseApp, spec: MountSpec): void {
     const byName = new Map(queues.map((q) => [q.name, q]));
     // One handler for every app queue: voidbase carries the message on its own jobs queue (or runs it inline when
     // the deploy has none), so a Void consumer sees a one-message batch. A throw is the retry signal.
-    registerJobHandler("queue", async (env, job) => {
+    api.jobs.onJob("queue", async (env, job) => {
       const q = byName.get(job.queue);
       if (!q) throw new Error(`voidbase: no consumer for queue "${job.queue}"`);
       let retry = false;

@@ -11,7 +11,8 @@
 // generated main.ts into its own Worker on deploy, so the app's server code is bundled there instead.
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { writeVoidbaseApp, type GenerateOptions } from "./codegen";
+import { bundleHookApp } from "./bundle";
+import { generateHookWrapper, hasServerCode, writeVoidbaseApp, type GenerateOptions } from "./codegen";
 import { scanVoidApp, type VoidManifest } from "./scan";
 
 export interface AdapterOptions extends GenerateOptions {
@@ -25,16 +26,30 @@ export interface AdapterOptions extends GenerateOptions {
   quiet?: boolean;
 }
 
-export interface AdaptResult { manifest: VoidManifest; written: string[]; copied: number }
+export interface AdaptResult { manifest: VoidManifest; written: string[]; copied: number; bundleBytes: number }
 
 /** Runs the whole conversion once. Exported so `voidbase adapt` and the tests do not need Vite. */
-export function adapt(root: string, opts: AdapterOptions & { clientDir?: string } = {}): AdaptResult {
+export async function adapt(root: string, opts: AdapterOptions & { clientDir?: string } = {}): Promise<AdaptResult> {
   const manifest = scanVoidApp({ root, dev: false });
   const { written } = writeVoidbaseApp(manifest, { pkg: opts.pkg, migrations: opts.migrations });
+
+  // routes/, middleware/, crons/ and queues/ become one bundled hook: a hook cannot import from npm, and Void's
+  // handlers do (see src/adapter/bundle.ts)
+  let bundleBytes = 0;
+  if (hasServerCode(manifest)) {
+    const hooks = join(root, ".voidbase", "pb_hooks");
+    mkdirSync(hooks, { recursive: true });
+    const { code, bytes } = await bundleHookApp(join(root, ".voidbase", "void-entry.ts"), root);
+    writeFileSync(join(hooks, "void-app.js"), code);
+    writeFileSync(join(hooks, "void-app.pb.js"), generateHookWrapper());
+    written.push(".voidbase/pb_hooks/void-app.js", ".voidbase/pb_hooks/void-app.pb.js");
+    bundleBytes = bytes;
+  }
+
   const publicDir = resolve(root, opts.publicDir ?? ".voidbase/pb_public");
   const client = opts.clientDir ? resolve(root, opts.clientDir) : firstExisting([join(root, "dist", "client"), join(root, "public")]);
   const copied = client ? syncPublic(client, publicDir) : 0;
-  return { manifest, written, copied };
+  return { manifest, written, copied, bundleBytes };
 }
 
 const firstExisting = (paths: string[]) => paths.find((p) => existsSync(p) && statSync(p).isDirectory());
@@ -81,10 +96,10 @@ export function voidbaseAdapter(options: AdapterOptions = {}) {
       writeVoidbaseApp(manifest, { pkg: options.pkg, migrations: options.migrations });
     },
     // fires once per built environment; the work is idempotent and the client builds last, so report only then
-    closeBundle(this: { environment?: { name?: string } }) {
+    async closeBundle(this: { environment?: { name?: string } }) {
       const clientDir = options.clientDir ?? (clientOut && existsSync(resolve(root, clientOut)) ? clientOut : undefined);
-      const { manifest, copied } = adapt(root, { ...options, clientDir });
-      const counts = `${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)`;
+      const { manifest, copied, bundleBytes } = await adapt(root, { ...options, clientDir });
+      const counts = `${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)${bundleBytes ? ` -> pb_hooks/void-app.js (${Math.round(bundleBytes / 1024)} kB)` : ""}`;
       if (!hasClient || this.environment?.name === "client") {
           log(`${manifest.mode === "static" ? "static site" : counts}; ${copied} entr(ies) into ${options.publicDir ?? ".voidbase/pb_public"}`);
         for (const u of manifest.unsupported) console.warn(`voidbase: ${u.what} is not carried over — ${u.why}`);

@@ -32,15 +32,13 @@ export interface VoidMigration { file: string; name: string }
 export interface VoidbaseExtras {
   /** src/voidbase/register.ts, exporting `register(app)`: extensions in TypeScript, composed into the app's main.ts */
   register?: string;
-  /** vb_hooks/: PocketBase JS hooks, copied into the generated app as they are */
-  hooksDir?: string;
   /** vb_migrations/: PocketBase JS migrations, copied in beside the ones generated from db/migrations */
   migrationsDir?: string;
 }
-/** The project's TypeScript extensions live under Void's `src/`. The two PocketBase directories sit at the project
- * root next to Void's own `db/`, because that is what they are the counterpart of: schema and hooks as source. */
+/** The project's TypeScript extensions live under Void's `src/`. PocketBase migrations sit at the project root
+ * next to Void's own `db/`, because that is what they are the counterpart of. Hooks need no directory of their
+ * own: `routes/`, `middleware/`, `crons/` and `queues/` are compiled into the generated app's pb_hooks. */
 export const REGISTER_DIR = "src/voidbase";
-export const HOOKS_DIR = "vb_hooks";
 export const MIGRATIONS_DIR = "vb_migrations";
 
 /** paths voidbase serves itself; an app route under one of these never reaches the app (PocketBase answers first) */
@@ -165,13 +163,12 @@ export function scanVoidApp(opts: ScanOptions = {}): VoidManifest {
   const register = ["register.ts", "register.js"].map((f) => (existsSync(join(root, REGISTER_DIR, f)) ? `${REGISTER_DIR}/${f}` : undefined)).find(Boolean);
   const extras: VoidbaseExtras = {
     register,
-    hooksDir: isDir(join(root, HOOKS_DIR)) ? HOOKS_DIR : undefined,
     migrationsDir: isDir(join(root, MIGRATIONS_DIR)) ? MIGRATIONS_DIR : undefined,
   };
 
   const collisions = routes.filter((r) => RESERVED_PREFIXES.some((p) => r.url === p || r.url.startsWith(p + "/"))).map((r) => r.url);
   // "static" means nothing has to run: no Void server code and no voidbase extensions of the app's own
-  const mode = routes.length || middleware.length || crons.length || queues.length || extras.register || extras.hooksDir ? "server" : "static";
+  const mode = routes.length || middleware.length || crons.length || queues.length || extras.register ? "server" : "static";
   return { root, mode, routes, middleware, crons, queues, migrations, extras, unsupported, collisions };
 }
 

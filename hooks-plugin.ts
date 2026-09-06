@@ -21,10 +21,11 @@ const ASYNC_PROPS = new Set([
   "findAuthRecordByEmail", "findAuthRecordByToken", "expandRecord", "expandRecords",
   "fileFromURL", "fileFromBytes", "fileFromPath", "bindBody", "requestInfo",
   "importCollections",
+  "queueJob", // $jobs.queueJob hands work to the jobs queue
 ]);
 
 export const HOOK_GLOBALS = [
-  "$app", "$apis", "$http", "$os", "$filesystem", "$security", "$mails", "$template", "$dbx",
+  "$app", "$apis", "$http", "$os", "$filesystem", "$security", "$mails", "$template", "$dbx", "$env", "$jobs",
   "routerAdd", "routerUse", "cronAdd", "cronRemove", "migrate",
   "Record", "Collection", "RecordUpsertForm", "MailerMessage", "DateTime", "RequestInfo",
   "Field", "TextField", "EditorField", "NumberField", "BoolField", "EmailField", "URLField", "DateField", "AutodateField", "SelectField", "FileField", "RelationField", "JSONField", "GeoPointField", "PasswordField",
@@ -126,10 +127,15 @@ function transform(sf: ts.SourceFile, asyncNames: Set<string>, asyncFns: Set<ts.
   return out;
 }
 
+// Generated bundles in pb_hooks must skip the await insertion below: it rewrites calls by method name (`delete`,
+// `next`, `send` ...), which in ordinary bundled code turns the wrong functions async and breaks their callers. A
+// file whose first line is `// voidbase:raw` is emitted as it stands, with only module/exports/require in scope.
+const isRaw = (code: string) => /^\s*\/\/\s*voidbase:raw\b/.test(code);
+
 export function compileHooksDir(dir: string): string {
   const files = readDir(dir);
   const sources = new Map<string, ts.SourceFile>();
-  for (const f of files) if (f.kind !== "file") sources.set(f.name, ts.createSourceFile(f.name, f.code, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS));
+  for (const f of files) if (f.kind !== "file" && !isRaw(f.code)) sources.set(f.name, ts.createSourceFile(f.name, f.code, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS));
   const asyncNames = new Set<string>();
   const asyncFns = new Set<ts.Node>();
   for (let i = 0; i < 20; i++) {
@@ -143,6 +149,11 @@ export function compileHooksDir(dir: string): string {
   const raw: string[] = [];
   for (const f of files) {
     if (f.kind === "file") { raw.push(`${JSON.stringify(f.name)}: ${JSON.stringify(f.code)}`); continue; }
+    if (isRaw(f.code)) {
+      // no destructure of every global: a bundle declares its own names and would collide with them
+      modules.push(`${JSON.stringify(basename(f.name, ".js"))}: async function (__g) { const { module, exports, require } = __g;\n${f.code}\nreturn module.exports; }`);
+      continue;
+    }
     const body = transform(sources.get(f.name)!, asyncNames, asyncFns);
     if (f.kind === "hook") hooks.push(`{ name: ${JSON.stringify(f.name)}, run: async function (__g) { ${destructure}\n${body}\n} }`);
     else modules.push(`${JSON.stringify(basename(f.name, ".js"))}: async function (__g) { ${destructure}\n${body}\nreturn module.exports; }`);

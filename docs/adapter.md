@@ -21,11 +21,11 @@ export default defineConfig({ plugins: [voidPlugin(), voidbaseAdapter()] });
   main.ts             voidbase composed with the project's server code
   package.json
   .gitignore          pb_data/
-  pb_hooks/           copied from the project's vb_hooks/
+  pb_hooks/           routes/, middleware/, crons/ and queues/, compiled
   pb_migrations/      the project's vb_migrations/, plus one file per Drizzle migration
   pb_public/          the client build, served at /
   pb_data/            created on first run
-  void-app.ts         the glue: imports routes/, middleware/, crons/, queues/
+  void-entry.ts       what the bundler builds into pb_hooks/void-app.js
   tsconfig.json       the fragment the project's tsconfig extends
   shim-db.ts          void/db and void/queues at runtime (see below)
   shim-queues.ts
@@ -41,43 +41,48 @@ cd .voidbase && bunx voidbase deploy          # one Cloudflare Worker with all t
 
 ## What the project owns
 
-The project root is Void's, with two additions that are the voidbase counterpart of Void's own `db/`: source
-directories the adapter compiles into the generated app. All three are optional.
+The project root is Void's, with one addition that is the voidbase counterpart of Void's `db/`, plus one place for
+extensions that need npm. Both are optional.
 
 | path | what it does |
 | --- | --- |
 | `vb_migrations/` | PocketBase JS migrations, copied into the generated `pb_migrations/` beside the ones generated from `db/migrations` |
-| `vb_hooks/` | PocketBase JS hooks, copied into the generated `pb_hooks/` as they are |
-| `src/voidbase/register.ts` | `export function register(app)`: extensions in TypeScript (anything that needs npm), composed into the generated `main.ts` |
+| `src/voidbase/register.ts` | `export function register(app)`: PocketBase event hooks and anything else in TypeScript, composed into the generated `main.ts` |
 
-The naming is deliberate: `vb_*` at the root is *source*, the way `db/migrations` is source; `pb_*` inside
-`.voidbase/` is what gets generated from it, the way `dist/` is.
+There is no hooks directory to write by hand: `routes/`, `middleware/`, `crons/` and `queues/` **are** the hooks.
+The adapter compiles them into `.voidbase/pb_hooks/`, so the generated app carries its whole route surface where a
+PocketBase app carries it.
 
-### Why routes and middleware are not compiled into pb_hooks
+### How Void code becomes a hook
 
-`routes/` and `middleware/` become registrations on the same router that `pb_hooks` feed, but through the generated
-`void-app.ts` that `main.ts` imports, not as files under `pb_hooks/`. That is a limit of PocketBase's hook model,
-not a shortcut:
+A pb_hooks file runs in a sandbox with PocketBase's globals and a `require` that reaches only its sibling hook
+files. A Void route imports from npm. Three things close that gap:
 
-- A hook file runs in a sandbox with PocketBase's globals, `module`/`exports`, and a `require` that resolves only
-  its sibling files in `pb_hooks`. It cannot import from npm.
-- A Void route can. `defineHandler`, `void/db`, `void/storage` and `void/env` are npm modules, and `void/_env` — the
-  binding context every one of them reads — imports `AsyncLocalStorage` from `node:async_hooks` at module scope.
-- Bundling them into a hook file does not get around it. voidbase embeds each hook's source as a function body, so
-  a `require("node:async_hooks")` inside it is a call to the sandbox's `require` at runtime, with nothing to
-  resolve; and every hook file goes through the await-insertion transform, which rewrites calls by method name
-  (`delete`, `next`, `send`) and would corrupt bundled code.
+1. **One bundle.** `routes/`, `middleware/`, `crons/` and `queues/` are built into a single CommonJS file,
+   `pb_hooks/void-app.js`, with everything they import (Void's runtime, Drizzle, the app's own modules) inlined.
+   The `void` specifier is rewritten to `void/handler` so the Vite plugin does not come with it, and the tsconfig
+   aliases Void generates (`@schema`, and the `void/db` / `void/queues` shims) are applied by the bundler.
+2. **No node builtins.** `node:async_hooks`, which Void's binding context needs, is rewritten to read
+   `globalThis.AsyncLocalStorage`; voidbase's hook runtime publishes it there on both runtimes. Any other builtin
+   fails the build with the name of the file that imported it.
+3. **No rewriting of the bundle.** Every hook file normally goes through an await-insertion pass that rewrites
+   calls by method name (`delete`, `next`, `send`), which would corrupt bundled code. The generated file opens with
+   `// voidbase:raw`, and the compiler leaves it alone.
 
-So the split follows what each side can express: hand-written PocketBase hooks in `vb_hooks/`, and Void's own
-routing through the generated module. Both end up in the same registry, and both serve on the same paths.
+`pb_hooks/void-app.pb.js` is the small hook beside it: the one place the hook globals are in scope. It requires the
+bundle and hands it `routerAdd`, `cronAdd`, `$env` (the bindings of the request or cron tick running now) and
+`$jobs` (voidbase's background queue).
+
+`main.ts` is left with the project's own `register()`, if it has one.
+
 
 ## What maps to what
 
 | Void | voidbase | notes |
 | --- | --- | --- |
 | `index.html`, `public/`, the client build | `.voidbase/pb_public/` | served at `/`; `404.html` is copied from `index.html` so a deep link behaves the same on Bun and on the asset layer |
-| `routes/**/*.ts` | Hono routes on the running app | `[id]` → `:id`, `[...rest]` → catch-all, `(group)/` stripped, `_file.ts` ignored, `.dev.ts` / `.prod.ts` honoured |
-| `middleware/*.ts` | the same chain, in file order | scoped to the app's own routes (see below) |
+| `routes/**/*.ts` | `.voidbase/pb_hooks/void-app.js` | `[id]` → `:id`, `[...rest]` → catch-all, `(group)/` stripped, `_file.ts` ignored, `.dev.ts` / `.prod.ts` honoured |
+| `middleware/*.ts` | the same bundle, chained in file order | scoped to the app's own routes (see below) |
 | `crons/*.ts` | `cronAdd(<file name>, cron, handler)` | listed by `GET /api/crons`, runnable with `POST /api/crons/<name>` |
 | `queues/*.ts` | a voidbase job per message | `void/queues` and `c.env.QUEUE_<NAME>` produce; the consumer runs on the jobs queue, or inline where there is none |
 | `db/schema.ts` + `void/db` | Drizzle over voidbase's D1 | the same database PocketBase's collections live in |
@@ -98,9 +103,9 @@ from Void's declarations, and passes every other mapping (`@schema`, `void/route
 
 The adapter looks at what the project actually has:
 
-- **Static.** No `routes/`, `middleware/`, `crons/`, `queues/`, `vb_hooks/` or `src/voidbase/register.ts`. The generated app is
+- **Static.** No `routes/`, `middleware/`, `crons/`, `queues/` or `src/voidbase/register.ts`. The generated app is
   `main.ts` plus `pb_public`, and `main.ts` registers nothing.
-- **Server.** Anything else. `void-app.ts` is generated and `main.ts` registers it along with
+- **Server.** Anything else. The bundle and its hook go into `pb_hooks/`, and `main.ts` registers
   `src/voidbase/register.ts`. `voidbase deploy`, run from `.voidbase/`, composes that `main.ts` into the Worker, so
   the same code serves on Cloudflare.
 
@@ -112,10 +117,9 @@ runtime. Pages that still render per request have nowhere to run here, and the b
 Void's `defineHandler` returns a plain Hono handler, and voidbase's app is Hono, so handlers run unchanged. Two
 details make that true rather than nearly true:
 
-- Routes register through `routerAdd`, the registry PocketBase's JS hooks use. voidbase mounts a catch-all
-  dispatcher for it, so anything added to the Hono app after boot would sit behind that catch-all and never match.
-  The dispatcher hands the handler the real Hono context, and the adapter overlays the route's own parameters on
-  `c.req.param()`.
+- Routes register through `routerAdd`, the registry every pb_hooks route uses. The RequestEvent it hands the
+  handler carries `.c`, the real Hono context, and the adapter overlays the route's own parameters on
+  `c.req.param()`, since the hook router matched a pattern rather than Hono's own.
 - Every handler, cron and queue consumer runs inside `withRuntimeEnv`, Void's binding context. That is why
   `void/db`, `void/storage`, `void/env` and `void/queues` resolve against voidbase's D1 and R2 with no shim of
   their own, and why `c.env` carries the app's queue producers.

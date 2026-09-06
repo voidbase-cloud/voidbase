@@ -1,6 +1,10 @@
 // The JSVM-compatible global API for pb_hooks files, plus the registries their calls populate.
 // Per-request state ($app's database, the request) is carried by AsyncLocalStorage.
 import { AsyncLocalStorage } from "node:async_hooks";
+// A generated pb_hooks bundle (src/adapter) cannot import anything: the hook sandbox resolves only its sibling
+// files. Void's runtime needs AsyncLocalStorage, so the bundle reads it here, from the one place both runtimes
+// already have it (Bun natively, Workers through nodejs_compat).
+(globalThis as { AsyncLocalStorage?: unknown }).AsyncLocalStorage ??= AsyncLocalStorage;
 import type { Context } from "hono";
 import type { Collection } from "../collections/model";
 import { ApiError } from "../errors";

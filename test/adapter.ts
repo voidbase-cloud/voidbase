@@ -38,34 +38,37 @@ try {
   check("middleware keeps its numeric order, crons and queues are named after their files", m.middleware.map((x) => x.name).join() === "01.first,02.second" && m.crons[0]?.name === "tick" && m.queues[0]?.name === "mail", JSON.stringify([m.middleware.map((x) => x.name), m.crons.map((c) => c.name), m.queues.map((q) => q.name)]));
   check("the queue producer binding follows Void's naming", m.queues[0]?.binding === "QUEUE_MAIL", m.queues[0]?.binding ?? "");
   check("an app with server code is not a static build", m.mode === "server" && m.migrations.length === 1, `${m.mode} ${m.migrations.length}`);
-  check("the project's own voidbase side is found: src/voidbase/register.ts, vb_hooks/, vb_migrations/", m.extras.register === "src/voidbase/register.ts" && m.extras.hooksDir === "vb_hooks" && m.extras.migrationsDir === "vb_migrations", JSON.stringify(m.extras));
+  check("the project's own voidbase side is found: src/voidbase/register.ts and vb_migrations/", m.extras.register === "src/voidbase/register.ts" && m.extras.migrationsDir === "vb_migrations", JSON.stringify(m.extras));
 
   // ---- the conversion, through the Vite plugin the app actually uses ---------------------------------------------
   // --bun: Vite's config loader hands the config to the runtime, and voidbase ships TypeScript sources
   const build = Bun.spawnSync(["bunx", "--bun", "vite", "build"], { cwd: WORK, env: process.env, stdout: "pipe", stderr: "pipe" });
   const buildOut = build.stdout.toString() + build.stderr.toString();
   check("vite build succeeds with voidbaseAdapter() in the plugin list", build.exitCode === 0, buildOut.slice(-600));
-  const generated = readFileSync(`${WORK}/.voidbase/void-app.ts`, "utf8");
-  check("generated glue imports the app's own modules and mounts them", generated.includes('from "../routes/api/hello"') && generated.includes("mountVoidApp(app, {"), generated.slice(0, 200));
+  const generated = readFileSync(`${WORK}/.voidbase/void-entry.ts`, "utf8");
+  check("the bundle entry imports the app's own modules and mounts them", generated.includes('from "../routes/api/hello"') && generated.includes("mountVoidApp(api, {"), generated.slice(0, 200));
+  const bundle = readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.js`, "utf8");
+  check("routes and middleware are compiled into a pb_hooks bundle, marked so the hook transform leaves it alone", bundle.startsWith("// voidbase:raw") && /module\.exports/.test(bundle) && !/require\("node:async_hooks"\)/.test(bundle) && /globalThis/.test(bundle), bundle.slice(0, 120));
+  check("the hook that registers it uses only hook globals", /require\(`\$\{__hooks\}\/void-app\.js`\)/.test(readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.pb.js`, "utf8")), readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.pb.js`, "utf8").slice(-200));
   const mainTs = readFileSync(`${WORK}/.voidbase/main.ts`, "utf8");
   check("the generated app is PocketBase-shaped: main.ts, package.json, .gitignore, pb_hooks, pb_migrations, pb_public", ["main.ts", "package.json", ".gitignore", "pb_hooks", "pb_migrations", "pb_public"].every((f) => existsSync(`${WORK}/.voidbase/${f}`)), readdirSync(`${WORK}/.voidbase`).join(" "));
-  check("its main.ts registers both the Void glue and the project's own register()", /registerVoidApp\(app\)/.test(mainTs) && /from "\.\.\/src\/voidbase\/register"/.test(mainTs), mainTs.slice(0, 300));
+  check("its main.ts carries only the project's own register(): the Void code is in pb_hooks", !/registerVoidApp/.test(mainTs) && /from "\.\.\/src\/voidbase\/register"/.test(mainTs), mainTs.slice(0, 300));
   check("nothing is generated into the project root: it stays a plain Void app", !existsSync(`${WORK}/main.ts`) && !existsSync(`${WORK}/pb_hooks`) && !existsSync(`${WORK}/pb_public`) && !existsSync(`${WORK}/pb_migrations`), readdirSync(WORK).join(" "));
-  check("vb_hooks/ and vb_migrations/ are copied in as the generated app's pb_hooks and pb_migrations", existsSync(`${WORK}/.voidbase/pb_hooks/greet.pb.js`) && existsSync(`${WORK}/.voidbase/pb_migrations/1800000001_marker.js`), readdirSync(`${WORK}/.voidbase/pb_migrations`).join(" "));
+  check("vb_migrations/ is copied in as the generated app's pb_migrations", existsSync(`${WORK}/.voidbase/pb_migrations/1800000001_marker.js`), readdirSync(`${WORK}/.voidbase/pb_migrations`).join(" "));
   const migration = readFileSync(`${WORK}/.voidbase/pb_migrations/0001_outbox.void.js`, "utf8");
   check("a Drizzle migration becomes a PocketBase migration, split on its statement markers", /CREATE TABLE/.test(migration) && /CREATE INDEX/.test(migration) && (migration.match(/execSQL/g) ?? []).length === 2, migration.slice(0, 160));
   check("the static build lands in .voidbase/pb_public, with a 404 shell for the asset layer", existsSync(`${WORK}/.voidbase/pb_public/index.html`) && existsSync(`${WORK}/.voidbase/pb_public/robots.txt`) && existsSync(`${WORK}/.voidbase/pb_public/404.html`), readdirSync(`${WORK}/.voidbase/pb_public`).join(" "));
   check("void/db and void/queues get runtime shims, because Void maps them to declaration files", existsSync(`${WORK}/.voidbase/shim-db.ts`) && existsSync(`${WORK}/.voidbase/shim-queues.ts`) && /shim-queues/.test(readFileSync(`${WORK}/.voidbase/tsconfig.json`, "utf8")), "");
 
   // a second pass must not duplicate or drift
-  const again = adapt(WORK, { quiet: true, clientDir: "dist/client" });
-  check("converting again is idempotent", readFileSync(`${WORK}/.voidbase/void-app.ts`, "utf8") === generated && again.manifest.routes.length === m.routes.length, "");
+  const again = await adapt(WORK, { quiet: true, clientDir: "dist/client" });
+  check("converting again is idempotent", readFileSync(`${WORK}/.voidbase/void-entry.ts`, "utf8") === generated && again.manifest.routes.length === m.routes.length, "");
 
   // ---- a static app: nothing to run, so nothing is generated to run it ------------------------------------------
   const staticApp = resolve(PKG, "test/.tmp/static-app");
   mkdirSync(`${staticApp}/public`, { recursive: true });
   writeFileSync(`${staticApp}/public/index.html`, "<h1>ssg</h1>");
-  const s1 = adapt(staticApp, { quiet: true });
+  const s1 = await adapt(staticApp, { quiet: true });
   check("an app with no server code is static: a generated app with pb_public and no glue", s1.manifest.mode === "static" && existsSync(`${staticApp}/.voidbase/pb_public/index.html`) && existsSync(`${staticApp}/.voidbase/main.ts`) && !existsSync(`${staticApp}/.voidbase/void-app.ts`) && !existsSync(`${staticApp}/main.ts`), JSON.stringify({ mode: s1.manifest.mode, copied: s1.copied }));
 
   // ---- the app, running ------------------------------------------------------------------------------------------
@@ -111,8 +114,6 @@ try {
 
   const fromRegister = await get("/api/from-register");
   check("the project's own register() is composed into the generated app", fromRegister.json.register === true, JSON.stringify(fromRegister));
-  const fromHook = await get("/api/from-hook");
-  check("a PocketBase JS hook from src/voidbase/pb_hooks answers", fromHook.json.hook === true, JSON.stringify(fromHook));
   const marker = await get("/api/marker");
   check("the project's own pb_migration ran alongside the generated ones", marker.json.marker === 0, JSON.stringify(marker));
   const root = await get("/");

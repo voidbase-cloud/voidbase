@@ -18,16 +18,16 @@ export interface GenerateOptions {
   pkg?: string;
 }
 
+/** The bundle entry: imports the app's own modules and hands them to the hook runtime. Bundled into pb_hooks. */
 export function generateServerModule(m: VoidManifest, opts: GenerateOptions = {}): string {
   const pkg = opts.pkg ?? ADAPTER_PACKAGE;
-  const lines: string[] = [BANNER, "//", "// Void app -> voidbase: routes, middleware, crons and queues, mounted on the running app.", ""];
-  lines.push(`import type { VoidbaseApp } from "${pkg}";`);
-  lines.push(`import { mountVoidApp } from "${pkg}/adapter";`);
+  const lines: string[] = [BANNER, "//", "// The project's routes, middleware, crons and queues, as one module for the generated pb_hooks bundle.", ""];
+  lines.push(`import { mountVoidApp, type HookApi } from "${pkg}/adapter";`);
   m.routes.forEach((r, i) => lines.push(`import * as ${ident("route", i)} from "${importPath(r.file)}";`));
   m.middleware.forEach((x, i) => lines.push(`import ${ident("middleware", i)} from "${importPath(x.file)}";`));
   m.crons.forEach((x, i) => lines.push(`import * as ${ident("cron", i)} from "${importPath(x.file)}";`));
   m.queues.forEach((x, i) => lines.push(`import ${ident("queue", i)} from "${importPath(x.file)}";`));
-  lines.push("", "export function register(app: VoidbaseApp): void {", "  mountVoidApp(app, {");
+  lines.push("", "export function register(api: HookApi): void {", "  mountVoidApp(api, {");
 
   lines.push("    routes: [");
   m.routes.forEach((r, i) => {
@@ -50,23 +50,33 @@ export function generateServerModule(m: VoidManifest, opts: GenerateOptions = {}
   return lines.join("\n");
 }
 
-/** The generated app's entry: the Void glue, the app's own voidbase extensions, and a Bun runner. */
+/** The pb_hooks file that registers the bundle: the one place the hook globals are in scope. */
+export function generateHookWrapper(): string {
+  return `${BANNER}
+// The project's routes, middleware, crons and queues. The code itself is in void-app.js beside this file, bundled
+// because a hook cannot import from npm; this is where the hook globals it needs are in scope.
+const voidApp = require(\`\${__hooks}/void-app.js\`);
+
+voidApp.register({ routerAdd, cronAdd, env: $env, jobs: $jobs });
+`;
+}
+
+/** The generated app's entry: the app's own voidbase extensions, and a Bun runner. */
 export function generateMainEntry(m: VoidManifest, opts: GenerateOptions = {}): string {
   const pkg = opts.pkg ?? ADAPTER_PACKAGE;
-  const hasGlue = m.mode === "server" && (m.routes.length || m.middleware.length || m.crons.length || m.queues.length);
   const lines = [
     BANNER,
     "//",
     "// The voidbase app this Void project builds into: `bun .voidbase/main.ts` runs it, `voidbase deploy` from this",
     "// directory ships it. Edit the project, not this file.",
+    "//",
+    "// routes/, middleware/, crons/ and queues/ are not registered here: they are compiled into pb_hooks.",
     `import type { VoidbaseApp } from "${pkg}";`,
   ];
-  if (hasGlue) lines.push('import { register as registerVoidApp } from "./void-app";');
   if (m.extras.register) lines.push(`import { register as registerApp } from "${importPath(m.extras.register)}";`);
   lines.push("", "export function register(app: VoidbaseApp) {");
-  if (hasGlue) lines.push("  registerVoidApp(app); // routes/, middleware/, crons/, queues/");
   if (m.extras.register) lines.push(`  registerApp(app); // ${m.extras.register}`);
-  if (!hasGlue && !m.extras.register) lines.push("  // nothing to register: the project has no server code of its own");
+  else lines.push("  // nothing to register: the project has no TypeScript extensions of its own");
   lines.push("}", "");
   lines.push(`if (import.meta.main) {
   // the Bun runtime, imported dynamically (and hidden from the bundler) because \`voidbase deploy\` composes this
@@ -174,6 +184,9 @@ export interface WriteResult { written: string[]; removed: string[] }
 
 const OUT = ".voidbase";
 
+/** whether anything under Void's server conventions has to run */
+export const hasServerCode = (m: VoidManifest) => !!(m.routes.length || m.middleware.length || m.crons.length || m.queues.length);
+
 /** Writes the whole generated app under `<root>/.voidbase`. Everything in there is build output. */
 export function writeVoidbaseApp(m: VoidManifest, opts: GenerateOptions & { migrations?: boolean } = {}): WriteResult {
   const written: string[] = [];
@@ -204,18 +217,12 @@ export function writeVoidbaseApp(m: VoidManifest, opts: GenerateOptions & { migr
     if (/"void\/queues"/.test(tsconfig)) put("shim-queues.ts", generateQueuesShim());
   }
 
-  if (m.routes.length || m.middleware.length || m.crons.length || m.queues.length) put("void-app.ts", generateServerModule(m, opts));
-  else drop("void-app.ts"); // the project lost its last route: leave no stale glue for main.ts to import
-
-  // pb_hooks: the project's own, copied in as they are
+  // routes/, middleware/, crons/ and queues/ become a pb_hooks bundle; this is the module the bundler builds
   drop("pb_hooks");
-  if (m.extras.hooksDir) {
-    cpSync(join(m.root, m.extras.hooksDir), join(m.root, OUT, "pb_hooks"), { recursive: true });
-    written.push(`${OUT}/pb_hooks`);
-    removed.pop(); // it was replaced, not dropped
-  }
+  if (hasServerCode(m)) put("void-entry.ts", generateServerModule(m, opts));
+  else drop("void-entry.ts");
 
-  // pb_migrations: the project's own, plus one per Drizzle migration
+  // pb_migrations: the project's vb_migrations/, plus one per Drizzle migration
   const migrationsOut = join(m.root, OUT, "pb_migrations");
   drop("pb_migrations");
   if (m.extras.migrationsDir) {

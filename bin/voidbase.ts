@@ -116,7 +116,7 @@ switch (cmd) {
   case "adapt": {
     const { adapt } = await import("../src/adapter/index");
     const root = resolve(sub ?? ".");
-    const { manifest, written, copied } = adapt(root, { publicDir: flags["public-dir"], migrations: !flags["no-migrations"], quiet: true });
+    const { manifest, written, copied } = await adapt(root, { publicDir: flags["public-dir"], migrations: !flags["no-migrations"], quiet: true });
     for (const u of manifest.unsupported) console.warn(`not carried over: ${u.what} — ${u.why}`);
     for (const c of manifest.collisions) console.warn(`shadowed by voidbase's own API, the app route never runs: ${c}`);
     console.log(`${manifest.mode === "static" ? "static" : "server"} app at ${root}`);

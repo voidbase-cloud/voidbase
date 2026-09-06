@@ -77,6 +77,10 @@ try {
   check("env: sets a variable and a secret on both CI triggers, secrets never echoed", envSet.code === 0 && (envSet.out.match(/FOO=bar SEC=\(secret\)/g) ?? []).length === 2 && !envSet.out.includes("SEC=1") && s.buildEnv[prod.trigger_uuid].SEC.is_secret === true, envSet.out);
   const envOne = cfb(["env", "--worker", "voidbase-release", "--trigger", "voidbase-release (master)", "CI_BROWSER=0"]);
   check("env --trigger: one trigger only, secrets shown as (secret)", envOne.code === 0 && /CI_BROWSER=0/.test(envOne.out) && /GH_TOKEN=\(secret\)/.test(envOne.out) && !envOne.out.includes("gh-test"), envOne.out);
+  const hotOn = cfb(["hot", "on", "--budget", "45"]); s = await state();
+  check("hot on: CI_HOT=1 and the budget on both CI triggers", hotOn.code === 0 && [prod, preview].every((t) => s.buildEnv[t.trigger_uuid]?.CI_HOT?.value === "1" && s.buildEnv[t.trigger_uuid]?.CI_HOT_BUDGET?.value === "45") && !s.buildEnv[rel.trigger_uuid]?.CI_HOT, hotOn.out);
+  const hotOff = cfb(["hot", "off"]); s = await state();
+  check("hot off: CI_HOT=0", hotOff.code === 0 && s.buildEnv[prod.trigger_uuid]?.CI_HOT?.value === "0" && /run every check/.test(hotOff.out), hotOff.out);
   // scripts/gh-release.ts against the mock's GitHub releases
   const view = ghr(["view", "v9.9.9"]);
   check("gh-release view: the release with its assets", view.code === 0 && JSON.parse(view.out).tag_name === "v9.9.9" && JSON.parse(view.out).assets.length === 0, view.out);

@@ -13,7 +13,7 @@ build deploys.
 | install | `bun install --frozen-lockfile` |
 | commitlint | the commits the push or pull request introduces (`--last` when there is nothing to compare with) |
 | oracles | the starter (`scripts/ci-oracles.sh`: `STARTER_DIR`, else the sibling checkout, else a shallow clone in the cache), the panel (`panel:sync`), the starter's frontend build next to it (`app:sync`), `void prepare` |
-| plan | `scripts/ci-plan.ts`: which of the following steps and suites this run needs (below) |
+| plan | `scripts/ci-plan.ts`: which of the following steps and suites this run needs (below); hot mode trims the list to a time budget |
 | typecheck, unit | `tsc --noEmit`, `bun test` |
 | browser | a Chrome for the panel and starter suites (`scripts/ci-browser.sh`, below); `CI_BROWSER=0` skips them |
 | boot | the run's `.env`, `void db migrate`, the dev server on 5180 (`CI_PORT`), the app user |
@@ -29,27 +29,48 @@ runs the same flow with `bun run ci`.
 
 ## Incremental runs (`scripts/ci-plan.ts`)
 
-A full run takes about ten minutes on the build image, three quarters of it the two suite passes, so a run only
-repeats what its changes can affect. Every step and every suite lists the areas of the repository it depends on
-(`deps`, `harness`, `config`, `server`, `node`, `cloud`, `mocks`, one area per test entry point, and so on; `bun
-scripts/ci-plan.ts explain` prints them with their hashes). An area's hash comes from the git blob ids of its files,
-so it is exact and costs nothing; the combined hash of a key's inputs is compared with the one recorded by the last
-green run, and the key runs only when they differ. The record is the deployed status page of master
-(`CI_STATUS_URL`, the CI Worker's `status.json`, whose `verified` map holds the hash each step and suite last
-passed on); on a dev machine it is `ci/public/status.json` from the previous run. What passed gets this run's
-hashes, what was skipped keeps the previous record's, so a chain of partial runs stays sound. The oracle sync, the
-servers, the reference and Chrome happen only when a selected step needs them.
+A full run takes about nine minutes on the build image, most of it the two suite passes, so a run only repeats the
+checks its changes reach. Every check has a set of files: the import closure of its test entry point plus the runtime
+it exercises, resolved through the same import graph (`#platform/*` follows the `workerd` condition for the Workers
+server and the default one for the Bun runtime), so `src/node/deploy-cf.ts` reaches the deploy dry run, the
+executable smoke, typecheck and the unit tests and nothing else, while a file of the server reaches every suite on
+both runtimes. File hashes come from git blob ids, so they are exact and cost nothing; the combined hash of a check's
+files is compared with the one the last green run recorded, and the check runs only when they differ. The record is
+the deployed status page of master (`CI_STATUS_URL`, the CI Worker's `status.json`, whose `verified` map holds the
+hash each check last passed on); on a dev machine it is `ci/public/status.json` from the previous run. What passed
+gets this run's hashes, what was skipped keeps the previous record's, so a chain of partial runs stays sound. The
+oracle sync, the servers, the reference and Chrome happen only when a selected check needs them.
 
 | change | what runs |
 | --- | --- |
 | docs, README, surface, `ci/`, `.github/` | commit messages and the plan: about half a minute |
 | one suite's file | that suite on both runtimes, with the servers it needs |
-| `src/node` (CLI, deploy, executables) | typecheck, unit, the deploy dry run, the executable smoke, the Bun pass |
+| `src/node/deploy-cf.ts`, `src/cloud` | typecheck, unit, the deploy dry run, the executable smoke, cloud-rest: under two minutes |
+| `src/node/serve.ts`, `bin/voidbase.ts` | the Bun pass and the executable smoke |
 | `src/server`, `routes`, the app config, the harness | everything |
 
-Uncommitted changes never match a record, so a dirty working tree reruns what it touches. `CI_PLAN=full` (or the
-`--full` flag) runs everything regardless; the same happens when the record cannot be fetched. Only the repository's
-own files are hashed: a new commit of the starter oracle is picked up by the next full run.
+`bun scripts/ci-plan.ts affected <file>` prints the checks a file reaches; `explain` prints every check with its
+file count and hash. Uncommitted changes never match a record, so a dirty working tree reruns what it touches.
+`CI_PLAN=full` (or `--full`) runs everything regardless, and so does a commit whose message carries `Tests: all`; the
+same happens when the record cannot be fetched. Only the repository's own files are hashed: a new commit of the
+starter oracle is picked up by the next full run.
+
+## Hot mode
+
+The suites test the server as a black box, so a server change reaches all of them and a full run is the honest
+answer. During a development phase that is too slow, so hot mode keeps every run within a time budget:
+`bun scripts/cf-builds.ts hot on` (`--budget 60` to change the default of sixty seconds; `hot off` to return to
+full runs). With hot mode on, a run does typecheck and the unit tests always, then whatever the commits name, then
+the suites of the commits' scopes, then the cheapest of the remaining selected checks until the budget is spent,
+using the durations the last run recorded (`status.json`, `suites[].seconds`). The Bun pass, the browser suites and
+the starter smoke wait for a normal run. Deferred checks are listed on the status page and are never marked verified,
+so the first run after `hot off` does them all.
+
+The commits steer it: a Conventional Commit scope (`fix(records): ...`) puts that area's suites first
+(`SCOPE_KEYS` in the planner maps every scope of `commitlint.config.js` to suites), a `Tests:` trailer names checks
+that are never deferred (`Tests: thumbs s3`, `Tests: bun` for the Bun pass, `Tests: browser`), and `Tests: all`
+forces a full run. A commit that edits a suite's file always runs that suite. The messages of every commit since the
+last green run count, not only the last one.
 
 ## What is kept between runs
 
@@ -147,7 +168,9 @@ takes 7.5 minutes on GitHub's 4 vCPU and gets 2 on the Free plan, and the two pr
 4. `bun scripts/cf-builds.ts build --branch master --follow` runs the first build and streams its log; `status`,
    `builds`, `logs <uuid>`, `cancel <uuid>` and `env` cover the rest (the header of the script lists them).
 5. From then on every push and pull request goes through the workflow. `gh variable set CF_BUILDS_WAIT --body 1`
-   makes the workflow wait for the builds it started.
+   makes the workflow wait for the builds it started; `gh variable set CF_RELEASE_ON_PUSH --body 0` stops starting a
+   release build on every push (the free plan runs one build at a time, so that build otherwise queues in front of
+   the next CI build); releases then come from the `release` event or Run workflow.
 
 `test/cf-builds.ts` runs the CLI against `test/cf-mock.ts`, whose Builds endpoints follow the request and response
 shapes of Cloudflare's API reference; the live API is exercised the first time the App and the user token exist.

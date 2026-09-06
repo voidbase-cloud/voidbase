@@ -1,7 +1,9 @@
 # GitHub only starts builds; Cloudflare Workers Builds runs them (docs/ci.md): scripts/ci.sh for every push to master
 # and every pull request (the CI project, whose deploy is the status page and, for a pull request, a preview URL),
 # scripts/release.sh for every push to master and every published release (the release project). The variables and the
-# secret below are written by `bun scripts/cf-builds.ts setup --github`; until they exist the job is skipped.
+# secret below are written by `bun scripts/cf-builds.ts setup --github`; until they exist the job is skipped. With the
+# repository variable CF_RELEASE_ON_PUSH=0 a push starts the CI build only (releases then come from the release event
+# or a manual run), which keeps the single build slot of the free plan for CI.
 name: cloudflare
 on:
   push:
@@ -41,7 +43,7 @@ jobs:
             uuids="${uuids:-} $1=$uuid"
           }
           case "${{ github.event_name }}" in
-            push) start ci "${{ vars.CF_CI_TRIGGER_MASTER }}"; start release "${{ vars.CF_RELEASE_TRIGGER_MASTER }}" ;;
+            push) start ci "${{ vars.CF_CI_TRIGGER_MASTER }}"; [ "${{ vars.CF_RELEASE_ON_PUSH }}" = "0" ] && echo "release: not started on pushes (CF_RELEASE_ON_PUSH=0)" || start release "${{ vars.CF_RELEASE_TRIGGER_MASTER }}" ;;
             pull_request) start ci "${{ vars.CF_CI_TRIGGER_BRANCHES }}" ;;
             release) start release "${{ vars.CF_RELEASE_TRIGGER_MASTER }}" ;;
             workflow_dispatch)

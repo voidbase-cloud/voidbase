@@ -9,7 +9,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, write
 import { resolve } from "node:path";
 
 interface Step { name: string; result: "ok" | "fail" | "skip"; seconds: number; log: string }
-interface Suite { step: string; name: string; result: "PASS" | "FAIL"; detail: string }
+interface Suite { step: string; name: string; result: "PASS" | "FAIL"; detail: string; seconds?: number }
 
 const ROOT = resolve(import.meta.dir, "..");
 const [cmd = "render", ...rest] = process.argv.slice(2);
@@ -58,13 +58,13 @@ function readSuites(steps: Step[]): Suite[] {
   for (const s of steps) {
     if (!s.name.startsWith("suites") || !s.log || !existsSync(s.log)) continue;
     for (const line of readFileSync(s.log, "utf8").split("\n")) {
-      const m = line.match(/^(PASS|FAIL)\s{2}(\S+)\s*(.*)$/);
-      if (m) suites.push({ step: s.name, name: m[2]!, result: m[1] as Suite["result"], detail: m[3]!.trim() });
+      const m = line.match(/^(PASS|FAIL)\s{2}(\S+)\s*(.*?)\s*(?:\[(\d+)s\])?$/);
+      if (m) suites.push({ step: s.name, name: m[2]!, result: m[1] as Suite["result"], detail: m[3]!.trim(), ...(m[4] ? { seconds: Number(m[4]) } : {}) });
     }
   }
   return suites;
 }
-interface Plan { commit?: string; full?: boolean; previous?: { source: string; commit: string } | null; previousVerified?: Record<string, string>; hashes?: Record<string, string>; decisions?: Record<string, { run: boolean; reason: string }> }
+interface Plan { commit?: string; full?: boolean; hot?: { budget: number; deferred: string[] } | null; signals?: { scopes: string[]; tests: string[]; changed: string[] }; previous?: { source: string; commit: string } | null; previousVerified?: Record<string, string>; hashes?: Record<string, string>; decisions?: Record<string, { run: boolean; reason: string }> }
 function readPlan(): Plan | null { const f = resolve(ROOT, ".void/ci-plan.json"); return existsSync(f) ? (JSON.parse(readFileSync(f, "utf8")) as Plan) : null; }
 /** the input hashes the next run may trust: this run's for what passed, the previous record's for what was skipped */
 function verifiedHashes(plan: Plan | null, steps: Step[], suites: Suite[]): Record<string, string> {
@@ -89,13 +89,14 @@ function render() {
   const ok = steps.length > 0 && steps.every((s) => s.result !== "fail");
   const verified = verifiedHashes(plan, steps, suites);
   const decided = Object.values(plan?.decisions ?? {}); const ranCount = decided.filter((d) => d.run).length;
-  const planLine = plan ? (plan.full ? "full run" : plan.previous ? `${ranCount} of ${decided.length} checks ran; the rest unchanged since ${plan.previous.commit ? plan.previous.commit.slice(0, 10) : "the last green run"}` : `${ranCount} checks ran (no previous record)`) : "";
+  const hotLine = plan?.hot ? `; hot mode (budget ${plan.hot.budget}s): ${plan.hot.deferred.length} deferred` : "";
+  const planLine = plan ? (plan.full ? "full run" : plan.previous ? `${ranCount} of ${decided.length} checks ran; the rest unchanged since ${plan.previous.commit ? plan.previous.commit.slice(0, 10) : "the last green run"}${hotLine}` : `${ranCount} checks ran (no previous record)${hotLine}`) : "";
   const total = steps.reduce((a, s) => a + s.seconds, 0);
   rmSync(out, { recursive: true, force: true }); mkdirSync(out, { recursive: true });
   const logsDir = resolve(ROOT, ".void/ci-logs");
   if (existsSync(logsDir)) cpSync(logsDir, resolve(out, "logs"), { recursive: true });
   const shots = existsSync(resolve(out, "logs")) ? readdirSync(resolve(out, "logs"), { recursive: true }).map(String).filter((f) => f.endsWith(".png")) : [];
-  const status = { ...meta, ok, seconds: total, plan: planLine, steps, suites: suites.map(({ step, name, result, detail }) => ({ step, name, result, detail })), screenshots: shots.map((f) => `logs/${f}`), verified };
+  const status = { ...meta, ok, seconds: total, plan: planLine, hot: plan?.hot ?? null, steps, suites: suites.map(({ step, name, result, detail, seconds }) => ({ step, name, result, detail, ...(seconds !== undefined ? { seconds } : {}) })), screenshots: shots.map((f) => `logs/${f}`), verified };
   writeFileSync(resolve(out, "status.json"), JSON.stringify(status, null, 2) + "\n");
   writeFileSync(resolve(out, "badge.svg"), badge(kind === "release" ? "release" : "ci", ok ? "passing" : "failing", ok ? "#1a7f4b" : "#b3261e"));
   const commitUrl = `https://github.com/${meta.repository}/commit/${meta.commit}`;
@@ -106,7 +107,8 @@ function render() {
 <h2>Steps</h2>
 <table><tr><th>step</th><th>result</th><th class="r">time</th><th></th></tr>${steps.map((s) => `<tr><td>${esc(s.name)}</td><td class="${s.result}">${s.result === "ok" ? "passed" : s.result === "fail" ? "failed" : `skipped${plan?.decisions?.[`step:${s.name}`]?.reason ? ` (${esc(plan.decisions[`step:${s.name}`]!.reason)})` : ""}`}</td><td class="r">${s.result === "skip" ? "" : fmt(s.seconds)}</td><td>${logLink(s)}</td></tr>`).join("")}</table>
 ${suites.length ? `<h2>Suites</h2>
-<table><tr><th>suite</th><th>runtime</th><th>result</th><th>last line</th></tr>${suites.map((s) => `<tr><td>${esc(s.name)}</td><td>${s.step === "suites" ? "Workers (dev)" : s.step === "suites-bun" ? "Bun" : esc(s.step)}</td><td class="${s.result === "PASS" ? "ok" : "fail"}">${s.result}</td><td>${esc(s.detail)}</td></tr>`).join("")}</table>` : ""}
+<table><tr><th>suite</th><th>runtime</th><th>result</th><th class="r">time</th><th>last line</th></tr>${suites.map((s) => `<tr><td>${esc(s.name)}</td><td>${s.step === "suites" ? "Workers (dev)" : s.step === "suites-bun" ? "Bun" : esc(s.step)}</td><td class="${s.result === "PASS" ? "ok" : "fail"}">${s.result}</td><td class="r">${s.seconds !== undefined ? fmt(s.seconds) : ""}</td><td>${esc(s.detail)}</td></tr>`).join("")}</table>` : ""}
+${plan?.hot?.deferred.length ? `<h2>Deferred by hot mode</h2><p>${plan.hot.deferred.map(esc).join(", ")}: not verified for this commit; they run when hot mode is off or when the budget allows.</p>` : ""}
 ${shots.length ? `<h2>Screenshots</h2>
 <div class="shots">${shots.map((f) => `<figure><a href="logs/${esc(f)}"><img src="logs/${esc(f)}" alt="${esc(f)}" loading="lazy"></a><figcaption>${esc(f)}</figcaption></figure>`).join("")}</div>` : ""}
 <h2>Files</h2>

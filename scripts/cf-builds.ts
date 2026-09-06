@@ -8,6 +8,7 @@
 //   bun scripts/cf-builds.ts logs <build-uuid> [--follow]
 //   bun scripts/cf-builds.ts cancel <build-uuid>
 //   bun scripts/cf-builds.ts env [--worker voidbase-ci] [--trigger <name>] KEY=value ... [--secret KEY=value] ...
+//   bun scripts/cf-builds.ts hot on|off [--budget 60]          hot mode on the CI triggers (docs/ci.md): CI_HOT and CI_HOT_BUDGET
 // Auth: CLOUDFLARE_BUILDS_TOKEN, a *user* API token (My Profile > API Tokens) with "Workers Builds Configuration: Edit"
 // and "Workers Scripts: Edit"; the Builds API rejects account-owned tokens. CLOUDFLARE_ACCOUNT_ID picks the account when
 // the token reaches several. `setup` stores the release project's secrets from the environment when they are set:
@@ -214,5 +215,10 @@ try {
       const now = (await cf.json<EnvVars>("GET", `${A}/builds/triggers/${t.trigger_uuid}/environment_variables`)).result ?? {};
       console.log(`${name} "${t.trigger_name}": ${Object.entries(now).map(([k, v]) => `${k}=${v.is_secret ? "(secret)" : v.value}`).join(" ") || "(no variables)"}`);
     }
-  } else die("usage: bun scripts/cf-builds.ts setup|status|build|builds|logs|cancel|env ... (see the header of the script)");
+  } else if (cmd === "hot") {
+    const on = positional[0] === "on"; if (!on && positional[0] !== "off") die("usage: bun scripts/cf-builds.ts hot on|off [--budget 60]");
+    const tag = await workerTag(CI); const vars: EnvVars = { CI_HOT: { value: on ? "1" : "0", is_secret: false }, ...(args.budget ? { CI_HOT_BUDGET: { value: args.budget, is_secret: false } } : {}) };
+    for (const t of await triggers(tag)) await setEnv(t.trigger_uuid, vars);
+    console.log(`hot mode ${on ? "on" : "off"} for ${CI}${args.budget ? ` (budget ${args.budget}s)` : ""}: the next builds ${on ? "keep the checks within the budget and defer the rest" : "run every check the changes reach"}`);
+  } else die("usage: bun scripts/cf-builds.ts setup|status|build|builds|logs|cancel|env|hot ... (see the header of the script)");
 } catch (e) { guide(e); }

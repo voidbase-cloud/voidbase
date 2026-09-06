@@ -148,7 +148,7 @@ release: `provisionInstance(cf, { account, name, release, superuser })` creates 
 assets through an upload session and the script with its bindings, DO migration, cron trigger and workers.dev
 subdomain, tagged `voidbase` + `voidbase-release:<version>`; `destroyInstance` removes all of it (worker first,
 bucket last, emptied before); `listVoidbaseWorkers` finds instances by tag. The token is the user's OAuth access token
-(`cloudflare` OAuth2 provider, see `voidbase-site/vb/cloud`) or an API token with the same permissions.
+(`cloudflare` OAuth2 provider, see `voidbase-site/cloud`) or an API token with the same permissions.
 `test/cloud-rest.ts` exercises it against `test/cf-mock.ts`. The hub and the queue are decided when the release
 is bundled (`voidbase bundle --no-hub` / `--no-queue`), not per instance: an instance can leave them out at
 provisioning, but cannot add what the release does not carry. Tokens a control plane keeps go to rest sealed

@@ -16,7 +16,6 @@
     "./schema": "./db/schema.ts",
     "./env": "./env.ts",
     "./scripts/*": "./scripts/*",
-    "./db/migrations/*": "./db/migrations/*",
     "./package.json": "./package.json",
     ".": "./src/node/serve.ts",
     "./serve": "./src/node/serve.ts",
@@ -102,15 +101,15 @@
     "bcryptjs": "^3.0.2",
     "fflate": "^0.8.3",
     "hono": "^4.11.9",
-    "typescript": "^5.9.3"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250903.0",
-    "@types/bun": "^1.4.1",
-    "playwright": "^1.63.0",
-    "pocketbase": "0.28.0",
+    "typescript": "^5.9.3",
+    "void": "^0.10.13",
     "vite": "^8.0.10",
     "vite-plus": "^0.1.21",
-    "void": "^0.10.13"
+    "@cloudflare/workers-types": "^4.20250903.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.1",
+    "playwright": "^1.63.0",
+    "pocketbase": "0.28.0"
   }
 }

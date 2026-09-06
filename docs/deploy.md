@@ -43,10 +43,11 @@ voidbase deploy --public-dir ../sk/build     # --name <worker>, --account <id> w
 ```
 
 What it does, in order: resolves the account through the token, creates `<name>-db` (D1) and `<name>-storage`
-(R2) if they do not exist, writes the Void project into `cloud/` (`voidbase cloud init`) with a `wrangler.jsonc`
-carrying the real ids, stores the superuser as worker secrets (from `VOIDBASE_SUPERUSER_*` / `PB_SUPERUSER_*`, or a
-generated password saved in `cloud/.superuser-credentials`; the local dev default `changeme123` never goes live),
-syncs the admin panel and your frontend build into `cloud/public`, and runs `void deploy --backend cloudflare`,
+(R2) if they do not exist, writes the Void project inside the voidbase package
+(`node_modules/voidbase/.cloud/<name>`, nothing appears in your tree) with a `wrangler.jsonc` carrying the real
+ids, stores the superuser as worker secrets (from `VOIDBASE_SUPERUSER_*` / `PB_SUPERUSER_*`, or a generated
+password saved in `pb_data/.superuser-credentials`; the local dev default `changeme123` never goes live), syncs
+the admin panel and your frontend build into that project, and runs `void deploy --backend cloudflare`,
 which builds, applies the D1 migrations and uploads the Worker with its cron trigger. It ends with the
 `https://<name>.<your-subdomain>.workers.dev` URL and a health check. Re-running is idempotent: existing resources
 and credentials are reused. `--dry-run` does everything except install, secrets and the upload.
@@ -69,11 +70,13 @@ makes the deploy live; secrets go through `void secret put`. Continuous deploys:
 OIDC) or the Void GitHub app. Operations: `void project logs --level error`, `void project requests --status 5xx`,
 `void project rollback`.
 
-## Option C: by hand with wrangler
+## Option C: a visible Void project
 
-`wrangler login` (or `CLOUDFLARE_API_TOKEN`), `CLOUDFLARE_ACCOUNT_ID`, then `void deploy --backend cloudflare
---provision` from `cloud/` (interactive shells only; commit the `wrangler.jsonc` it writes for CI). Every `.env*`
-file this backend loads ships as plaintext worker vars, so keep secrets in `wrangler secret put`.
+`voidbase cloud init [dir]` writes the same project into your tree, importing the `voidbase` package by name, for
+people who want to edit it (extra routes, bindings, a custom domain in `wrangler.jsonc`). Deploy it with
+`voidbase deploy --dir <dir>`, or by hand: `wrangler login`, `CLOUDFLARE_ACCOUNT_ID`, then
+`void deploy --backend cloudflare --provision` (interactive shells only; commit the `wrangler.jsonc` it writes for
+CI). Every `.env*` file that backend loads ships as plaintext worker vars, so keep secrets in `wrangler secret put`.
 
 ## After deploying
 

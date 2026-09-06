@@ -26,7 +26,8 @@ Permissions the link pre-selects: Workers Scripts (edit), D1 (edit), Workers R2 
 If the link format ever changes, pick those four by hand at https://dash.cloudflare.com/?to=/:account/api-tokens
 (reference: https://developers.cloudflare.com/fundamentals/api/reference/permissions/).`;
 
-export interface DeployOptions { name?: string; account?: string; dir?: string; publicDir?: string; dryRun?: boolean; regenerate?: boolean; superuserEmail?: string; superuserPassword?: string; log?: (line: string) => void }
+export interface DeployOptions { name?: string; account?: string; dir?: string; // dir: a visible project instead of <package>/.cloud/<slug>
+  publicDir?: string; dryRun?: boolean; regenerate?: boolean; superuserEmail?: string; superuserPassword?: string; log?: (line: string) => void }
 
 interface CfResponse<T> { success: boolean; errors: { code: number; message: string }[]; result: T }
 async function cf<T>(token: string, method: string, path: string, body?: unknown): Promise<CfResponse<T>> {
@@ -78,7 +79,7 @@ function projectName(): string {
 const randomPassword = () => { const a = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const b = crypto.getRandomValues(new Uint8Array(20)); return Array.from(b, (x) => a[x % a.length]).join(""); };
 
 // Bun only loads the .env of the working directory; the starter keeps its PB_* and deploy variables one level up.
-const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD"];
+const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
 export function loadEnvFiles(files = [".env", "../.env"]): string[] {
   const loaded: string[] = [];
   for (const f of files) {
@@ -93,7 +94,7 @@ export function loadEnvFiles(files = [".env", "../.env"]): string[] {
   return loaded;
 }
 
-export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ name: string; account: string; url: string | null; wranglerConfig: string }> {
+export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ name: string; account: string; url: string | null; wranglerConfig: string; project: string }> {
   const log = opts.log ?? ((l: string) => console.log(l));
   const fromFiles = loadEnvFiles(); if (fromFiles.length) log(`from .env: ${fromFiles.join(", ")}`);
   const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || ""; // empty means unset
@@ -104,15 +105,21 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const db = await ensureD1(token, account.id, `${name}-db`); log(`D1 ${name}-db ${db.created ? "created" : "exists"} (${db.uuid})`);
   const bucket = await ensureR2(token, account.id, `${name}-storage`); log(`R2 ${name}-storage ${bucket.created ? "created" : "exists"}`);
 
-  // the Void project: generated once, regenerated on request; wrangler.jsonc carries the real ids
-  const cloud = resolve(opts.dir ?? "cloud");
-  if (opts.regenerate || !existsSync(`${cloud}/vite.config.ts`)) { const r = writeCloudProject(cloud); log(`wrote ${r.files} files to ${cloud}`); }
+  // the Void project lives inside the voidbase package (<package>/.cloud/<slug>), not in the consumer's tree:
+  // its entry files import this package by relative path and resolve `void`/`vite` by walking up to node_modules
+  const PKG = resolve(import.meta.dir, "../.."); const cloud = opts.dir ? resolve(opts.dir) : resolve(PKG, ".cloud", name);
+  const consumer = resolve(".");
+  writeCloudProject(cloud, opts.dir ? "package" : "internal", { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations") });
   const wranglerConfig = JSON.stringify({ name, account_id: account.id, d1_databases: [{ binding: "DB", database_name: `${name}-db`, database_id: db.uuid, migrations_dir: "./db/migrations" }], r2_buckets: [{ binding: "STORAGE", bucket_name: `${name}-storage` }] }, null, 2) + "\n";
   writeFileSync(`${cloud}/wrangler.jsonc`, `// written by voidbase deploy; ids are real resources on account ${account.id}\n${wranglerConfig}`);
-  if (existsSync(`${cloud}/.env`)) log("note: cloud/.env ships as plaintext worker vars; keep secrets out of it (voidbase deploy stores the superuser as secrets)");
+  // non-secret worker vars the hooks read (AUDITLOG for the starter); secrets never go here
+  const vars = ["AUDITLOG"].filter((k) => process.env[k]).map((k) => `${k}=${process.env[k]}\n`).join("");
+  writeFileSync(`${cloud}/.env`, vars);
+  log(`project: ${cloud}`);
 
-  // superuser: from the environment (PB_* is what the starter's entrypoint uses) or generated once and kept locally
-  const credFile = `${cloud}/.superuser-credentials`;
+  // superuser: from the environment (PB_* is what the starter's entrypoint uses) or generated once and kept in pb_data
+  const dataDir = resolve(consumer, process.env.VOIDBASE_DATA_DIR || "pb_data"); mkdirSync(dataDir, { recursive: true });
+  const credFile = `${dataDir}/.superuser-credentials`;
   let email = opts.superuserEmail || process.env.VOIDBASE_SUPERUSER_EMAIL || process.env.PB_SUPERUSER_EMAIL || "";
   let password = opts.superuserPassword || process.env.VOIDBASE_SUPERUSER_PASSWORD || process.env.PB_SUPERUSER_PASSWORD || "";
   const saved = existsSync(credFile) ? (JSON.parse(readFileSync(credFile, "utf8")) as { email: string; password: string }) : null;
@@ -121,25 +128,25 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   if (!email) email = "admin@example.com";
   if (!password || password === "changeme123") { password = randomPassword(); log(`generated a superuser password for ${email} (saved in ${credFile}; change it after the first login)`); }
   writeFileSync(credFile, JSON.stringify({ email, password }, null, 2) + "\n", { mode: 0o600 });
-  const gi = `${cloud}/.gitignore`; if (existsSync(gi) && !readFileSync(gi, "utf8").includes(".superuser-credentials")) writeFileSync(gi, readFileSync(gi, "utf8") + ".superuser-credentials\n");
 
   const url = await workersSubdomain(token, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null));
-  if (opts.dryRun) { log(`dry run: would install ${cloud}, sync the panel${opts.publicDir ? ` and ${opts.publicDir}` : ""}, put 2 secrets and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig }; }
+  if (opts.dryRun) { log(`dry run: would sync the panel${opts.publicDir ? ` and ${opts.publicDir}` : ""} into ${cloud}/public, put 2 secrets and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig, project: cloud }; }
 
-  const env = { ...process.env, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: account.id, VOIDBASE_SUPERUSER_EMAIL: email, VOIDBASE_SUPERUSER_PASSWORD: password };
-  const sh = async (cmd: string[], input?: string) => { const p = Bun.spawn(cmd, { cwd: cloud, env, stdin: input === undefined ? "inherit" : new TextEncoder().encode(input), stdout: "inherit", stderr: "inherit" }); const code = await p.exited; if (code !== 0) throw new Error(`${cmd.join(" ")} exited with ${code}`); };
-  if (!existsSync(`${cloud}/node_modules/void`)) { log("installing the cloud project"); await sh(["bun", "install"]); }
+  // the toolchain comes with the voidbase package (void, and wrangler through void)
+  const voidDir = resolve(Bun.resolveSync("void/package.json", PKG), "..");
+  const voidBin = resolve(voidDir, "..", ".bin", "void"); const wrangler = resolve(Bun.resolveSync("wrangler/package.json", voidDir), "..", "bin", "wrangler.js");
+  // values also exported in the shell are stripped from baked vars by the Cloudflare backend, so keep the vars file clean instead
+  const env: Record<string, string | undefined> = { ...process.env, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: account.id, VOIDBASE_SUPERUSER_EMAIL: email, VOIDBASE_SUPERUSER_PASSWORD: password };
+  delete env.AUDITLOG;
+  const sh = async (cmd: string[], input?: string) => { const p = Bun.spawn(cmd, { cwd: cloud, env: env as Record<string, string>, stdin: input === undefined ? "inherit" : new TextEncoder().encode(input), stdout: "inherit", stderr: "inherit" }); const code = await p.exited; if (code !== 0) throw new Error(`${cmd.join(" ")} exited with ${code}`); };
   mkdirSync(`${cloud}/public`, { recursive: true });
-  await sh(["bun", `${resolve(import.meta.dir, "../../scripts/sync-panel.ts")}`, "--dest", `${cloud}/public/_`]);
-  if (opts.publicDir) await sh(["bun", `${resolve(import.meta.dir, "../../scripts/sync-app.ts")}`, "--dest", `${cloud}/public`], undefined).catch((e) => log(`frontend build not synced: ${e instanceof Error ? e.message : e}`));
-  // secrets on the (draft) worker, never in vars: the values above are exported in the shell too, which makes the
-  // Cloudflare backend strip them from any .env it bakes
-  const wrangler = `${cloud}/node_modules/.bin/wrangler`;
-  for (const [k, v] of [["VOIDBASE_SUPERUSER_EMAIL", email], ["VOIDBASE_SUPERUSER_PASSWORD", password]] as const) await sh([wrangler, "secret", "put", k, "--name", name], v + "\n");
-  await sh([`${cloud}/node_modules/.bin/void`, "deploy", "--backend", "cloudflare"]);
+  await sh(["bun", resolve(PKG, "scripts/sync-panel.ts"), "--dest", `${cloud}/public/_`]);
+  if (opts.publicDir) await sh(["bun", resolve(PKG, "scripts/sync-app.ts"), "--dest", `${cloud}/public`], undefined).catch((e) => log(`frontend build not synced: ${e instanceof Error ? e.message : e}`));
+  for (const [k, v] of [["VOIDBASE_SUPERUSER_EMAIL", email], ["VOIDBASE_SUPERUSER_PASSWORD", password]] as const) await sh(["bun", wrangler, "secret", "put", k, "--name", name], v + "\n");
+  await sh([voidBin, "deploy", "--backend", "cloudflare"]);
   if (url) {
     const ok = await fetch(`${url}/api/health`).then((r) => r.status).catch(() => 0);
     log(`\nlive: ${url}  (health ${ok || "not reachable yet"})\n├─ REST API:  ${url}/api/\n└─ Dashboard: ${url}/_/   sign in as ${email} (password in ${credFile})`);
   } else log("deployed; workers.dev subdomain not enabled on this account, add a route or enable it in the dashboard");
-  return { name, account: account.id, url, wranglerConfig };
+  return { name, account: account.id, url, wranglerConfig, project: cloud };
 }

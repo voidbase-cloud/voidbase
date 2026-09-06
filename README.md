@@ -14,8 +14,8 @@ bunx voidbase serve --http 127.0.0.1:8090 --dir pb_data --hooksDir pb_hooks --mi
 
 One Bun process, SQLite in `pb_data/data.db`, files in `pb_data/storage/`, the admin panel at `/_/`, the same
 `pb_hooks` and `pb_migrations` you would give PocketBase (`--dev` restarts on hook changes, `voidbase superuser
-upsert email pass` works offline on `pb_data`). The Cloudflare deployment runs the same code on D1 and R2: put a
-`voidbase cloud init` project next to your hooks and `void deploy` it (see docs/deploy.md). The PocketBase-shaped
+upsert email pass` works offline on `pb_data`). The Cloudflare deployment runs the same code on D1 and R2 with
+`voidbase deploy` from the same directory (see docs/deploy.md). The PocketBase-shaped
 consumer is `pocketbase-sveltekit-starter/vb`.
 
 ## Run locally (this checkout, Workers dev server)
@@ -65,8 +65,9 @@ provider variables.
 ## Go live
 
 `voidbase token` prints a Cloudflare dashboard link that creates `VOIDBASE_DEPLOY_CF_API_KEY` with the right
-permissions pre-selected; with that variable set, `voidbase deploy` provisions D1 and R2, writes the Void project,
-stores the superuser as secrets and uploads the Worker. See [docs/deploy.md](docs/deploy.md).
+permissions pre-selected; with that variable set, `voidbase deploy` provisions D1 and R2, generates the Void project
+inside the package (`node_modules/voidbase/.cloud/<name>`), stores the superuser as secrets and uploads the Worker.
+Your directory stays `pb_hooks` + `pb_migrations` + `pb_data`, like a PocketBase folder. See [docs/deploy.md](docs/deploy.md).
 
 ## Continuous integration
 

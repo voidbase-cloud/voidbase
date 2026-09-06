@@ -3,7 +3,12 @@
 // Only sizes declared on the field (plus the default 100x100) are honoured; anything else, a non-image original
 // or a failed generation serves the original, exactly like PocketBase. Generated thumbs are cached in R2 under
 // {collection}/{record}/thumbs_{filename}/{size}_{filename}. Resizing runs in Photon (Rust -> wasm).
-import { PhotonImage, SamplingFilter, crop, resize } from "#platform/photon";
+import type { PhotonImage as PhotonImageT } from "#platform/photon";
+// Photon (Rust -> wasm) is loaded on the first thumbnail so every other request keeps a small cold start
+let photonModule: Promise<typeof import("#platform/photon")> | null = null;
+const photon = () => (photonModule ??= import("#platform/photon"));
+let P: Awaited<ReturnType<typeof photon>>; // set by createThumb before the helpers below run
+type PhotonImage = PhotonImageT;
 
 export const THUMB_SIZE_RE = /^(\d+)x(\d+)(t|b|f)?$/;
 export const IMAGE_CONTENT_TYPES = ["image/png", "image/jpg", "image/jpeg", "image/gif", "image/webp"];
@@ -57,7 +62,7 @@ export async function resolveServedFile(storage: R2Bucket, key: string, filename
       if (!original) return null;
       try {
         const bytes = new Uint8Array(await original.arrayBuffer());
-        const thumb = createThumb(bytes, originalType, thumbSize);
+        const thumb = await createThumb(bytes, originalType, thumbSize);
         await storage.put(thumbKey, thumb.bytes, { httpMetadata: { contentType: thumb.contentType } });
         const range = parseRange(rangeHeader, thumb.bytes.byteLength);
         if (range === "invalid") throw new RangeNotSatisfiable(thumb.bytes.byteLength, thumb.contentType, servedName);
@@ -75,12 +80,13 @@ export async function resolveServedFile(storage: R2Bucket, key: string, filename
 }
 
 // Output format follows PocketBase: JPEG stays JPEG, everything else (png, webp, gif) is encoded as PNG.
-export function createThumb(bytes: Uint8Array, contentType: string, thumbSize: string): { bytes: Uint8Array; contentType: string } {
+export async function createThumb(bytes: Uint8Array, contentType: string, thumbSize: string): Promise<{ bytes: Uint8Array; contentType: string }> {
+  P = await photon();
   const m = THUMB_SIZE_RE.exec(thumbSize);
   if (!m) throw new Error("thumb size must be in WxH, WxHt, WxHb or WxHf format");
   const width = Number(m[1]), height = Number(m[2]), resizeType = m[3] ?? "";
   if (width === 0 && height === 0) throw new Error("thumb width and height cannot be zero at the same time");
-  const img = PhotonImage.new_from_byteslice(bytes);
+  const img = P.PhotonImage.new_from_byteslice(bytes);
   try {
     let out: PhotonImage;
     if (width === 0 || height === 0) out = resizeTo(img, width, height);
@@ -101,7 +107,7 @@ function resizeTo(img: PhotonImage, w: number, h: number): PhotonImage {
   if (w === 0) w = roundHalfUp((h * sw) / sh);
   if (h === 0) h = roundHalfUp((w * sh) / sw);
   if (w === sw && h === sh) return img;
-  return resize(img, w, h, SamplingFilter.Triangle);
+  return P.resize(img, w, h, P.SamplingFilter.Triangle);
 }
 
 // imaging.Fit: scale down to fit inside the box, never upscale (int truncation as in Go)
@@ -111,7 +117,7 @@ function fit(img: PhotonImage, maxW: number, maxH: number): PhotonImage {
   const srcAspect = sw / sh, maxAspect = maxW / maxH;
   let nw: number, nh: number;
   if (srcAspect > maxAspect) { nw = maxW; nh = Math.trunc(nw / srcAspect); } else { nh = maxH; nw = Math.trunc(nh * srcAspect); }
-  return resize(img, Math.max(1, nw), Math.max(1, nh), SamplingFilter.Triangle);
+  return P.resize(img, Math.max(1, nw), Math.max(1, nh), P.SamplingFilter.Triangle);
 }
 
 // imaging.Fill: sources of at least 100x100 are cropped to the target aspect first and then resized;
@@ -125,7 +131,7 @@ function fill(img: PhotonImage, w: number, h: number, anchor: "center" | "top" |
     if (srcAspect < dstAspect) ch = Math.trunc(Math.max(1, (sw * h) / w) + 0.5);
     else cw = Math.trunc(Math.max(1, (sh * w) / h) + 0.5);
     const cropped = cropAnchor(img, cw, ch, anchor);
-    try { return resize(cropped, w, h, SamplingFilter.Triangle); } finally { if (cropped !== img) cropped.free(); }
+    try { return P.resize(cropped, w, h, P.SamplingFilter.Triangle); } finally { if (cropped !== img) cropped.free(); }
   }
   const tmp = srcAspect < dstAspect ? resizeTo(img, w, 0) : resizeTo(img, 0, h);
   try { return cropAnchor(tmp, w, h, anchor); } finally { if (tmp !== img) tmp.free(); }
@@ -138,5 +144,5 @@ function cropAnchor(img: PhotonImage, w: number, h: number, anchor: "center" | "
   const y = anchor === "top" ? 0 : anchor === "bottom" ? sh - h : Math.trunc((sh - h) / 2);
   const x1 = Math.max(0, x), y1 = Math.max(0, y), x2 = Math.min(sw, x + w), y2 = Math.min(sh, y + h);
   if (x1 === 0 && y1 === 0 && x2 === sw && y2 === sh) return img;
-  return crop(img, x1, y1, x2, y2);
+  return P.crop(img, x1, y1, x2, y2);
 }

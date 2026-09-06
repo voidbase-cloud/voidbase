@@ -27,6 +27,7 @@ import { mountBackupsApi } from "./backups";
 import { mountSqlApi } from "./sql";
 import { bodyLimitMiddleware, rateLimitMiddleware, realIPWith } from "./hardening";
 import { backupActive } from "./backups";
+import { maintenanceIfDue } from "./crons";
 import { s3Bucket } from "./storage/s3";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
@@ -65,6 +66,7 @@ app.use("*", async (c, next) => {
   if (s3.enabled) c.env = { ...c.env, STORAGE: s3Bucket(s3) };
   if (!served) { served = true; await trigger("onBootstrap", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined); await trigger("onServe", { app: undefined as unknown, router: app, next: async () => undefined as unknown }, null, async () => undefined); }
   c.set("auth", await loadAuth(c));
+  try { maintenanceIfDue(c.env, (p) => c.executionCtx.waitUntil(p)); } catch { /* no execution context */ }
   await next();
 });
 app.use("*", requestLogger());

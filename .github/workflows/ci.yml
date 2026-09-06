@@ -13,6 +13,7 @@ jobs:
       VOIDBASE_HOOKS_DIR: ../pocketbase-sveltekit-starter/pb/pb_hooks
       VOIDBASE_MIGRATIONS_DIR: ../pocketbase-sveltekit-starter/pb/pb_migrations
       AUDITLOG: posts,users
+      VOIDBASE_LOG_MIN_LEVEL: "0"
       CHROME_PATH: /usr/bin/google-chrome
     steps:
       - uses: actions/checkout@v4

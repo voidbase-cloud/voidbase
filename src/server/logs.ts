@@ -1,6 +1,9 @@
 // Logs (apis/logs.go + apis/middlewares.go logRequest): every API request writes a _logs row after the response,
 // app-level messages go through appLog, and the superuser API lists, filters, views, aggregates and truncates them.
 import type { Context, Hono, MiddlewareHandler } from "hono";
+import { env as voidEnv, defaultLogMinLevel } from "#platform/env";
+// the platform default for request logs, overridable per deployment (PocketBase levels: -4 debug, 0 info, 4 warn, 8 error)
+const envLogMinLevel = () => { const v = (voidEnv as Record<string, unknown>).VOIDBASE_LOG_MIN_LEVEL; const n = v === undefined || v === "" ? NaN : Number(v); return Number.isFinite(n) ? n : defaultLogMinLevel; };
 import type { Collection } from "./collections/model";
 import { all, one, run, stmt } from "./db";
 import { ApiError, badRequest, notFound } from "./errors";
@@ -63,7 +66,7 @@ async function logRequest(c: Context<AppEnv>, started: number, err: unknown): Pr
     data.remoteIP = c.req.header("CF-Connecting-IP") ?? "127.0.0.1";
   }
   const level = failed ? LEVEL.error : LEVEL.info;
-  if (level < settings.logs.minLevel) return;
+  if (level < Math.max(settings.logs.minLevel, envLogMinLevel())) return;
   let message = method + " ";
   try { message += decodeURIComponent(requestUri); } catch { message += requestUri; }
   await run(c.env.DB, "INSERT INTO `_logs` (id, created, data, message, level) VALUES (?, ?, ?, ?, ?)", [randomId(), nowString(), JSON.stringify(sorted(data)), message, level]);

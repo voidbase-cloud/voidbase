@@ -152,6 +152,24 @@ export function compileHooksDir(dir: string): string {
 
 // pb_migrations/*.js: each file calls migrate(up, down); the same await insertion applies (app.importCollections,
 // app.save, app.delete ... are I/O here), so `up` becomes async and the runner can await it.
+// The cron expressions registered by the hooks (cronAdd(id, expr, fn)) are known at build time: they become the
+// Worker's cron triggers, so an app without cron hooks needs no every-minute trigger. PocketBase macros are expanded.
+const CRON_MACROS: Record<string, string> = { "@yearly": "0 0 1 1 *", "@annually": "0 0 1 1 *", "@monthly": "0 0 1 * *", "@weekly": "0 0 * * 0", "@daily": "0 0 * * *", "@midnight": "0 0 * * *", "@hourly": "0 * * * *" };
+export function extractCronExpressions(dir: string): string[] {
+  const out = new Set<string>();
+  for (const f of readDir(dir)) {
+    if (f.kind === "file") continue;
+    for (const m of f.code.matchAll(/cronAdd\s*\(\s*["'`][^"'`]*["'`]\s*,\s*["'`]([^"'`]+)["'`]/g)) out.add(CRON_MACROS[m[1]!.trim()] ?? m[1]!.trim());
+  }
+  return [...out];
+}
+// Cloudflare allows 5 triggers per Worker: the hook expressions (plus an hourly tick that runs PocketBase's
+// maintenance and a backups cron configured in settings) or, when there are too many, every minute.
+export function cronTriggers(dir: string): string[] {
+  const fromHooks = extractCronExpressions(dir);
+  return fromHooks.length > 4 ? ["* * * * *"] : [...new Set(["0 * * * *", ...fromHooks])];
+}
+
 export function compileMigrationsDir(dir: string): string {
   const files = readDir(dir).filter((f) => f.kind !== "file");
   const sources = new Map<string, ts.SourceFile>();

@@ -297,7 +297,8 @@ function authFormErrors(c: Collection, p: Prepared, original: Record<string, unk
 
 // ---- change feed -----------------------------------------------------------------------------------
 function changeStmt(db: D1Database, c: Collection, action: "create" | "update" | "delete", row: Row) {
-  return stmt(db, "INSERT INTO `_changes` (collection, recordId, action, data, created) VALUES (?, ?, ?, ?, ?)", [c.name, String(row.id), action, JSON.stringify(row), nowString()]);
+  // written only while a realtime client exists: idle apps and imports pay no change-feed rows
+  return stmt(db, "INSERT INTO `_changes` (collection, recordId, action, data, created) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM `_realtime_clients`)", [c.name, String(row.id), action, JSON.stringify(row), nowString()]);
 }
 function valuesToRow(c: Collection, values: Record<string, unknown>): Row {
   const row: Row = {};

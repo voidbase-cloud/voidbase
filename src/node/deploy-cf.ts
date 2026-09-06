@@ -113,7 +113,8 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const entry = ["main.ts", "main.js"].map((f) => resolve(consumer, f)).find((f) => existsSync(f) && /export\s+(async\s+)?function\s+register\b|export\s*\{[^}]*\bregister\b/.test(readFileSync(f, "utf8")));
   if (entry) log(`composing ${entry} (register) into the Worker`);
   writeCloudProject(cloud, opts.dir ? "package" : "internal", { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), entry });
-  const wranglerConfig = JSON.stringify({ name, account_id: account.id, d1_databases: [{ binding: "DB", database_name: `${name}-db`, database_id: db.uuid, migrations_dir: "./db/migrations" }], r2_buckets: [{ binding: "STORAGE", bucket_name: `${name}-storage` }] }, null, 2) + "\n";
+  // Smart Placement runs the Worker next to its D1 database: PocketBase-shaped requests are several dependent queries
+  const wranglerConfig = JSON.stringify({ name, account_id: account.id, placement: { mode: "smart" }, d1_databases: [{ binding: "DB", database_name: `${name}-db`, database_id: db.uuid, migrations_dir: "./db/migrations" }], r2_buckets: [{ binding: "STORAGE", bucket_name: `${name}-storage` }] }, null, 2) + "\n";
   writeFileSync(`${cloud}/wrangler.jsonc`, `// written by voidbase deploy; ids are real resources on account ${account.id}\n${wranglerConfig}`);
   // non-secret worker vars the hooks read (AUDITLOG for the starter); secrets never go here
   const vars = ["AUDITLOG"].filter((k) => process.env[k]).map((k) => `${k}=${process.env[k]}\n`).join("");

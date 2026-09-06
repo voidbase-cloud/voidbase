@@ -13,6 +13,9 @@ export default defineEnv({
   // Bearer key). When set it takes precedence over settings.smtp; the panel's "Send test email" goes through it too.
   VOIDBASE_MAIL_HTTP_URL: string().optional(),
   VOIDBASE_MAIL_HTTP_KEY: string().optional(),
+  // Request log threshold on this deployment (PocketBase levels: -4 debug, 0 info, 4 warn, 8 error). Cloudflare defaults
+  // to 4 because every request log is a billed D1 row; the Bun runtime defaults to 0. settings.logs.minLevel still applies.
+  VOIDBASE_LOG_MIN_LEVEL: string().optional(),
   // Optional error alerts: unhandled request errors (HTTP 500) are POSTed as JSON to this webhook
   VOIDBASE_ALERT_WEBHOOK_URL: string().optional(),
   // PocketBase's --encryptionEnv equivalent: when set (16, 24 or 32 chars) the settings row is stored AES-GCM encrypted

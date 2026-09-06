@@ -58,8 +58,32 @@ export function matches(expr: string, date: Date): boolean {
 export async function runDue(env: AppEnv["Bindings"], date: Date): Promise<string[]> {
   const ran: string[] = [];
   const settings = await loadSettings(env.DB);
-  for (const job of allJobs(settings.backups.cron)) if (matches(job.expr, date)) { await runJob(env, job); ran.push(job.id); }
+  // triggers fire at the hook expressions and hourly: catch every job due since the previous tick (at most an hour)
+  const from = new Date(Math.max(lastTick ?? 0, date.getTime() - 3600_000)); lastTick = date.getTime();
+  for (const job of allJobs(settings.backups.cron)) {
+    const due = job.id.startsWith("__pb") || job.id.startsWith("__vb") ? matches(job.expr, date) || dueWithin(job.expr, from, date) : matches(job.expr, date) || dueWithin(job.expr, from, date);
+    if (due) { await runJob(env, job); ran.push(job.id); }
+  }
   return ran;
+}
+let lastTick: number | null = null;
+function dueWithin(expr: string, from: Date, to: Date): boolean {
+  for (let t = Math.ceil(from.getTime() / 60_000) * 60_000; t < Math.floor(to.getTime() / 60_000) * 60_000; t += 60_000) if (matches(expr, new Date(t))) return true;
+  return false;
+}
+
+// Lazy maintenance: PocketBase's cleanups (and an overdue backups cron) run from a request at most once an hour per
+// isolate, so an app with no cron hooks needs no trigger to stay tidy and an idle app runs nothing at all.
+let lastMaintenance = 0;
+export function maintenanceIfDue(env: AppEnv["Bindings"], waitUntil: (p: Promise<unknown>) => void): void {
+  const now = Date.now();
+  if (now - lastMaintenance < 3600_000) return;
+  lastMaintenance = now;
+  waitUntil((async () => {
+    const settings = await loadSettings(env.DB);
+    const since = new Date(now - 3600_000);
+    for (const job of allJobs(settings.backups.cron)) if (!hookCrons.has(job.id) && dueWithin(job.expr, since, new Date(now))) await runJob(env, job);
+  })());
 }
 
 export function mountCronsApi(app: Hono<AppEnv>) {

@@ -11,7 +11,7 @@ assets, live, WebSockets, queues, KV and SSE frame what Void exposes today.
 
 | Per request or per event | Cost driver | Today |
 | --- | --- | --- |
-| Every asset request (panel, app bundle, images) | a Worker invocation ($0.30 per million beyond 10 million) plus CPU | `middleware/` makes Void route **everything** worker-first (`run_worker_first: ['/**']`), so assets are billed like API calls |
+| Every asset request (panel, app bundle, images) | a Worker invocation ($0.30 per million beyond 10 million) plus a few microseconds of CPU | `middleware/` makes Void route **everything** worker-first (`run_worker_first: ['/**']`), so assets are billed like API calls (kept: see item 1) |
 | Every API request | one `_logs` row written ($1 per million rows) | request logging at `minLevel: 0` writes a row per request; on a 10 million-request app that is $10 of log writes, more than the requests themselves |
 | Every record write | one extra `_changes` row for realtime | written whether or not anyone is subscribed |
 | Every minute, every app | a cron invocation (a billable request + CPU) | 43,200 invocations per app per month even when idle; 500 apps make 21.6 million, above the included 10 million |
@@ -21,12 +21,19 @@ assets, live, WebSockets, queues, KV and SSE frame what Void exposes today.
 
 ## Improvements, ranked by effect
 
-1. **Assets off the Worker.** Serve the panel, the frontend build and uploads' public files from Cloudflare's asset
-   layer with the Worker scoped to `/api`. Void does this automatically for apps with only `/api` routes (asset-first
-   with the SPA fallback, `run_worker_first` on `/api` and `/api/*`); the `middleware/` file that exists only to
-   emulate PocketBase's `--publicDir` fallback is what forces worker-first. Drop it on the Cloudflare path (the Bun
-   runtime keeps `src/server/static.ts`): the panel is hash-routed so `/_/` resolves to its own `index.html`, and
-   the app's deep links get the platform SPA fallback. Asset requests then cost nothing and skip the isolate.
+1. **Assets off the Worker: tried and rejected.** Void serves apps with only `/api` routes asset-first
+   (`run_worker_first: ["/api", "/api/*"]`, `not_found_handling: "single-page-application"`), so dropping
+   `middleware/` would take every asset request off the Worker. It cannot keep PocketBase's contract: Void's
+   generated Worker entry passes every GET 404 through `env.ASSETS.fetch`, and Cloudflare applies
+   `not_found_handling` (and `_redirects` rules) to binding fetches too, so an unknown `/api/...` path came back as
+   `index.html` with status 200 in `vp preview` and on a deployed probe Worker. `not_found_handling: "none"` keeps the
+   JSON 404s but then nothing serves the SPA shell for deep links (a `_redirects` `/* / 200` rule is applied to
+   binding fetches as well, and any non-`/api` route or middleware flips Void back to worker-first). The
+   worker-first shape stays: `middleware/01.request-context.ts` answers static requests itself with the binding's
+   own headers (ETag, revalidation) and `routing.notFound: "none"` disables Void's worker-side rewrite, which is
+   what keeps `/api` 404s JSON (test/fresh-db.ts checks both). Cost of keeping it: one Worker request per asset
+   beyond the free 10 million a month, about $3 per 10 million; the CPU is a binding fetch. Revisit if Void adds
+   a way to exclude paths from the generated fallback, or with the router-plus-R2 design below.
 2. **Log writes are the biggest D1 cost.** Default `settings.logs.minLevel` to warnings on Cloudflare (4xx, 5xx,
    slow requests), keep the full log opt-in from the panel, and offer a sink that is built for this volume:
    Workers Logs or Analytics Engine ($0.25 per million data points, queryable in the dashboard) instead of D1 rows.
@@ -60,8 +67,20 @@ assets, live, WebSockets, queues, KV and SSE frame what Void exposes today.
     Object classes, so this waits for Void support or a wrangler-deployed hub. The current poll costs $0.003 per
     isolate-month, so this is a latency improvement, not a cost one.
 
-Applying 1 to 4 changes the bill of a typical app from "every request and every minute" to "API requests and
+Applying 2 to 4 changes the bill of a typical app from "every request and every minute" to "API requests and
 rows actually written", and 5 and 6 are the two latency wins visible to users.
+
+### Status (implemented 2026-09-06)
+
+| Item | State | Where |
+| --- | --- | --- |
+| 1 assets off the Worker | rejected, worker-first kept (evidence above) | `middleware/01.request-context.ts`, `void.json` `routing.notFound` |
+| 2 log threshold | done: request rows are written only at or above `max(settings.logs.minLevel, VOIDBASE_LOG_MIN_LEVEL)`; the Workers default is 4 (warnings: 4xx, 5xx, slow requests), the Bun runtime and the test suites keep 0 | `src/server/logs.ts`, `#platform/env` `defaultLogMinLevel`, `env.ts` |
+| 3 change feed only with listeners | done: the `_changes` insert is a conditional `INSERT ... SELECT ... WHERE EXISTS (SELECT 1 FROM _realtime_clients)` inside the same write batch, so it costs no extra round trip and writes no row when nobody is subscribed | `src/server/records/service.ts` |
+| 4 crons only when needed | done: the hooks plugin reads every `cronAdd` expression at build time and registers them as the Worker's triggers (macros expanded; more than 4 falls back to every minute), plus one hourly tick; PocketBase's maintenance jobs (log and file cleanup, token purge, backups) also run lazily on the next request when overdue, and a tick catches every job due since the last one | `hooks-plugin.ts` `cronTriggers`, `crons/every-minute.ts`, `src/server/crons.ts` |
+| 5 Smart Placement | done for `voidbase deploy` (`placement: { mode: "smart" }` in the generated wrangler config). Caveat from Cloudflare: with `run_worker_first` the whole Worker is placed as one unit, so asset requests from far users travel to the placed region as well; browsers cache those, API latency wins | `src/node/deploy-cf.ts` |
+| 6 lazy wasm | done: Photon is imported on the first thumbnail request | `src/server/records/thumbs.ts` |
+
 
 ## Beyond 500 apps per account: one Worker, one Durable Object per app
 

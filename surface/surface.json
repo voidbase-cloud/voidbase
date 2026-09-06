@@ -226,7 +226,7 @@
           "status": "done",
           "milestone": "m4",
           "verify": "Deep link to /posts/ loads the starter",
-          "notes": "`bun run app:sync` copies a static app build (default: the starter's adapter-static output) into public/ next to the panel at public/_. middleware/01.request-context.ts puts the Worker first and, with routing.notFound = none, answers misses the way PocketBase's Static handler does: the exact file when it exists, otherwise index.html (200) for the app and /_/index.html for the panel, while /api keeps JSON 404s. Same behaviour in dev and in vp preview; verified by test/fresh-db.ts, panel-smoke and starter-smoke against port 5180."
+          "notes": "`bun run app:sync` copies a static app build (default: the starter's adapter-static output) into public/ next to the panel at public/_. middleware/01.request-context.ts puts the Worker first and, with routing.notFound = none, answers misses the way PocketBase's Static handler does: the exact file when it exists, otherwise index.html (200) for the app and /_/index.html for the panel, while /api keeps JSON 404s. Same behaviour in dev and in vp preview; verified by test/fresh-db.ts, panel-smoke and starter-smoke against port 5180. Asset-first serving (Worker scoped to /api) was tried on 2026-09-06 and rejected: Void's generated entry passes GET 404s through env.ASSETS.fetch, which applies not_found_handling, so unknown /api paths became index.html 200 in preview and on a deployed probe; worker-first plus routing.notFound none stays (docs/platform.md item 1)."
         },
         {
           "id": "platform.health",
@@ -315,7 +315,7 @@
           "status": "partial",
           "milestone": "m6",
           "verify": "Same build live on a custom Cloudflare account, DO included",
-          "notes": "`voidbase deploy` is the primary go-live path: VOIDBASE_DEPLOY_CF_API_KEY (created through a Cloudflare dashboard deep link with the four permissions pre-selected: Workers Scripts edit, D1 edit, Workers R2 Storage edit, Account Settings read; `voidbase token` prints it), account resolution, idempotent D1/R2 provisioning over the REST API, cloud/ generation with a real-id wrangler.jsonc, superuser as worker secrets (never the dev default), panel + frontend sync, then `void deploy --backend cloudflare`, health check and URL. src/node/deploy-cf.ts, verified by test/deploy-cf.ts against test/cf-mock.ts (10 cases: no token -> link, wrong token, provisioning, idempotence, naming, credentials). The live upload itself still waits for a free D1 slot on this account (34/limit) or another account."
+          "notes": "`voidbase deploy` is the primary go-live path: VOIDBASE_DEPLOY_CF_API_KEY (created through a Cloudflare dashboard deep link with the four permissions pre-selected: Workers Scripts edit, D1 edit, Workers R2 Storage edit, Account Settings read; `voidbase token` prints it), account resolution, idempotent D1/R2 provisioning over the REST API, cloud/ generation with a real-id wrangler.jsonc, superuser as worker secrets (never the dev default), panel + frontend sync, then `void deploy --backend cloudflare`, health check and URL. src/node/deploy-cf.ts, verified by test/deploy-cf.ts against test/cf-mock.ts (10 cases: no token -> link, wrong token, provisioning, idempotence, naming, credentials). The live upload itself still waits for a free D1 slot on this account (34/limit) or another account. The generated wrangler config enables Smart Placement (docs/platform.md item 5)."
         }
       ]
     },
@@ -1402,7 +1402,7 @@
           "status": "done",
           "milestone": "m4",
           "verify": "Starter post thumbnails render at 100x100",
-          "notes": "Photon (Rust to wasm, @cf-wasm/photon) reproduces disintegration/imaging: fill crop center/top/bottom, fit without upscaling, one-sided resize; JPEG stays JPEG, everything else becomes PNG; only declared sizes plus 100x100; non-images and failures fall back to the original; cached in R2 under thumbs_{file}/ and removed with the file. test/conformance/thumbs.ts: 58/58 against PocketBase (dimensions, types, names, ranges). GIF thumbs come out as PNG here (PocketBase re-encodes GIF)."
+          "notes": "Photon (Rust to wasm, @cf-wasm/photon) reproduces disintegration/imaging: fill crop center/top/bottom, fit without upscaling, one-sided resize; JPEG stays JPEG, everything else becomes PNG; only declared sizes plus 100x100; non-images and failures fall back to the original; cached in R2 under thumbs_{file}/ and removed with the file. test/conformance/thumbs.ts: 58/58 against PocketBase (dimensions, types, names, ranges). GIF thumbs come out as PNG here (PocketBase re-encodes GIF). Photon is imported lazily on the first thumbnail request (docs/platform.md item 6)."
         },
         {
           "id": "file.protected",
@@ -1471,7 +1471,8 @@
           ],
           "hours": 2,
           "status": "done",
-          "milestone": "m4"
+          "milestone": "m4",
+          "notes": " Since 2026-09-06 the insert is conditional on a row in _realtime_clients (INSERT ... SELECT ... WHERE EXISTS, same batch), so idle apps write no feed rows (docs/platform.md item 3)."
         },
         {
           "id": "rt.subs",
@@ -1760,7 +1761,7 @@
           "hours": 3,
           "status": "done",
           "milestone": "m5",
-          "notes": "requestLogger middleware writes a _logs row after every API response through waitUntil (PocketBase's data keys: type, execTime, url, method, status, referer, userAgent, auth, authId, userIP, remoteIP, error and details on failures), honouring logs.maxDays, minLevel, logIP and logAuthId; appLog for application messages; the logs and realtime stream routes are skipped like SkipSuccessActivityLog."
+          "notes": "requestLogger middleware writes a _logs row after every API response through waitUntil (PocketBase's data keys: type, execTime, url, method, status, referer, userAgent, auth, authId, userIP, remoteIP, error and details on failures), honouring logs.maxDays, minLevel, logIP and logAuthId; appLog for application messages; the logs and realtime stream routes are skipped like SkipSuccessActivityLog. Rows are written only at or above max(settings.logs.minLevel, VOIDBASE_LOG_MIN_LEVEL); the Workers default is 4 (warnings and errors), Bun and the suites use 0 (docs/platform.md item 2)."
         },
         {
           "id": "log.api",
@@ -1890,7 +1891,7 @@
           "hours": 3,
           "status": "done",
           "milestone": "m5",
-          "notes": "crons/every-minute.ts (Cloudflare cron trigger) matches every registered expression against the minute: PocketBase's __pbDBOptimize__, __pbMFACleanup__, __pbOTPCleanup__, __pbLogsCleanup__, voidbase's __vbChangesCleanup__ (change feed and stale stream rows) and cronAdd jobs from pb_hooks, each inside a superuser hook store. Cron triggers do not fire in local dev; fired through /__void/scheduled with the dev trigger token."
+          "notes": "crons/every-minute.ts (Cloudflare cron trigger) matches every registered expression against the minute: PocketBase's __pbDBOptimize__, __pbMFACleanup__, __pbOTPCleanup__, __pbLogsCleanup__, voidbase's __vbChangesCleanup__ (change feed and stale stream rows) and cronAdd jobs from pb_hooks, each inside a superuser hook store. Cron triggers do not fire in local dev; fired through /__void/scheduled with the dev trigger token. The hooks plugin turns every cronAdd expression into a Worker trigger at build time (hourly tick added; more than 4 expressions fall back to every minute), maintenance jobs also run lazily on the next request when overdue, and a tick catches every job due since the last one (docs/platform.md item 4)."
         },
         {
           "id": "cron.system",

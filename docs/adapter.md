@@ -21,8 +21,8 @@ export default defineConfig({ plugins: [voidPlugin(), voidbaseAdapter()] });
   main.ts             voidbase composed with the project's server code
   package.json
   .gitignore          pb_data/
-  pb_hooks/           copied from src/voidbase/pb_hooks
-  pb_migrations/      src/voidbase/pb_migrations, plus one file per Drizzle migration
+  pb_hooks/           copied from the project's vb_hooks/
+  pb_migrations/      the project's vb_migrations/, plus one file per Drizzle migration
   pb_public/          the client build, served at /
   pb_data/            created on first run
   void-app.ts         the glue: imports routes/, middleware/, crons/, queues/
@@ -41,14 +41,35 @@ cd .voidbase && bunx voidbase deploy          # one Cloudflare Worker with all t
 
 ## What the project owns
 
-Everything at the project root is Void's. What belongs to voidbase instead lives in one place, `src/voidbase/`,
-and all of it is optional:
+The project root is Void's, with two additions that are the voidbase counterpart of Void's own `db/`: source
+directories the adapter compiles into the generated app. All three are optional.
 
 | path | what it does |
 | --- | --- |
-| `src/voidbase/register.ts` | `export function register(app)`: the project's own hooks, routes and event handlers, called from the generated `main.ts` |
-| `src/voidbase/pb_hooks/` | PocketBase JS hooks, copied into the generated app as they are |
-| `src/voidbase/pb_migrations/` | PocketBase JS migrations, copied in beside the ones generated from `db/migrations` |
+| `vb_migrations/` | PocketBase JS migrations, copied into the generated `pb_migrations/` beside the ones generated from `db/migrations` |
+| `vb_hooks/` | PocketBase JS hooks, copied into the generated `pb_hooks/` as they are |
+| `src/voidbase/register.ts` | `export function register(app)`: extensions in TypeScript (anything that needs npm), composed into the generated `main.ts` |
+
+The naming is deliberate: `vb_*` at the root is *source*, the way `db/migrations` is source; `pb_*` inside
+`.voidbase/` is what gets generated from it, the way `dist/` is.
+
+### Why routes and middleware are not compiled into pb_hooks
+
+`routes/` and `middleware/` become registrations on the same router that `pb_hooks` feed, but through the generated
+`void-app.ts` that `main.ts` imports, not as files under `pb_hooks/`. That is a limit of PocketBase's hook model,
+not a shortcut:
+
+- A hook file runs in a sandbox with PocketBase's globals, `module`/`exports`, and a `require` that resolves only
+  its sibling files in `pb_hooks`. It cannot import from npm.
+- A Void route can. `defineHandler`, `void/db`, `void/storage` and `void/env` are npm modules, and `void/_env` — the
+  binding context every one of them reads — imports `AsyncLocalStorage` from `node:async_hooks` at module scope.
+- Bundling them into a hook file does not get around it. voidbase embeds each hook's source as a function body, so
+  a `require("node:async_hooks")` inside it is a call to the sandbox's `require` at runtime, with nothing to
+  resolve; and every hook file goes through the await-insertion transform, which rewrites calls by method name
+  (`delete`, `next`, `send`) and would corrupt bundled code.
+
+So the split follows what each side can express: hand-written PocketBase hooks in `vb_hooks/`, and Void's own
+routing through the generated module. Both end up in the same registry, and both serve on the same paths.
 
 ## What maps to what
 
@@ -77,7 +98,7 @@ from Void's declarations, and passes every other mapping (`@schema`, `void/route
 
 The adapter looks at what the project actually has:
 
-- **Static.** No `routes/`, `middleware/`, `crons/`, `queues/` and no `src/voidbase/`. The generated app is
+- **Static.** No `routes/`, `middleware/`, `crons/`, `queues/`, `vb_hooks/` or `src/voidbase/register.ts`. The generated app is
   `main.ts` plus `pb_public`, and `main.ts` registers nothing.
 - **Server.** Anything else. `void-app.ts` is generated and `main.ts` registers it along with
   `src/voidbase/register.ts`. `voidbase deploy`, run from `.voidbase/`, composes that `main.ts` into the Worker, so

@@ -30,14 +30,18 @@ export interface VoidMigration { file: string; name: string }
 
 /** Where a Void app keeps what belongs to voidbase rather than to Void. All of it is optional. */
 export interface VoidbaseExtras {
-  /** src/voidbase/register.ts, exporting `register(app)`: the app's own hooks, routes and event handlers */
+  /** src/voidbase/register.ts, exporting `register(app)`: extensions in TypeScript, composed into the app's main.ts */
   register?: string;
-  /** src/voidbase/pb_hooks: PocketBase JS hooks, copied into the generated app as-is */
+  /** vb_hooks/: PocketBase JS hooks, copied into the generated app as they are */
   hooksDir?: string;
-  /** src/voidbase/pb_migrations: PocketBase JS migrations, copied in beside the ones generated from db/migrations */
+  /** vb_migrations/: PocketBase JS migrations, copied in beside the ones generated from db/migrations */
   migrationsDir?: string;
 }
-export const EXTRAS_DIR = "src/voidbase";
+/** The project's TypeScript extensions live under Void's `src/`. The two PocketBase directories sit at the project
+ * root next to Void's own `db/`, because that is what they are the counterpart of: schema and hooks as source. */
+export const REGISTER_DIR = "src/voidbase";
+export const HOOKS_DIR = "vb_hooks";
+export const MIGRATIONS_DIR = "vb_migrations";
 
 /** paths voidbase serves itself; an app route under one of these never reaches the app (PocketBase answers first) */
 export const RESERVED_PREFIXES = ["/api/backups", "/api/batch", "/api/collections", "/api/crons", "/api/files", "/api/health", "/api/logs", "/api/realtime", "/api/settings", "/_/"];
@@ -158,11 +162,11 @@ export function scanVoidApp(opts: ScanOptions = {}): VoidManifest {
   if (grepImports(root, "void/kv")) unsupported.push({ what: "void/kv", why: "voidbase binds D1 and R2 only; keep key-value data in a collection" });
   if (grepImports(root, "void/isr")) unsupported.push({ what: "void/isr", why: "ISR caches through the Void platform's dispatch worker, which a voidbase app does not have" });
 
-  const extra = (rel: string) => (existsSync(join(root, EXTRAS_DIR, rel)) ? `${EXTRAS_DIR}/${rel}` : undefined);
+  const register = ["register.ts", "register.js"].map((f) => (existsSync(join(root, REGISTER_DIR, f)) ? `${REGISTER_DIR}/${f}` : undefined)).find(Boolean);
   const extras: VoidbaseExtras = {
-    register: ["register.ts", "register.js"].map(extra).find(Boolean),
-    hooksDir: isDir(join(root, EXTRAS_DIR, "pb_hooks")) ? `${EXTRAS_DIR}/pb_hooks` : undefined,
-    migrationsDir: isDir(join(root, EXTRAS_DIR, "pb_migrations")) ? `${EXTRAS_DIR}/pb_migrations` : undefined,
+    register,
+    hooksDir: isDir(join(root, HOOKS_DIR)) ? HOOKS_DIR : undefined,
+    migrationsDir: isDir(join(root, MIGRATIONS_DIR)) ? MIGRATIONS_DIR : undefined,
   };
 
   const collisions = routes.filter((r) => RESERVED_PREFIXES.some((p) => r.url === p || r.url.startsWith(p + "/"))).map((r) => r.url);

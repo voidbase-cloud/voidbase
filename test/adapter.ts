@@ -38,7 +38,7 @@ try {
   check("middleware keeps its numeric order, crons and queues are named after their files", m.middleware.map((x) => x.name).join() === "01.first,02.second" && m.crons[0]?.name === "tick" && m.queues[0]?.name === "mail", JSON.stringify([m.middleware.map((x) => x.name), m.crons.map((c) => c.name), m.queues.map((q) => q.name)]));
   check("the queue producer binding follows Void's naming", m.queues[0]?.binding === "QUEUE_MAIL", m.queues[0]?.binding ?? "");
   check("an app with server code is not a static build", m.mode === "server" && m.migrations.length === 1, `${m.mode} ${m.migrations.length}`);
-  check("src/voidbase is found: the project's own register, hooks and migrations", m.extras.register === "src/voidbase/register.ts" && m.extras.hooksDir === "src/voidbase/pb_hooks" && m.extras.migrationsDir === "src/voidbase/pb_migrations", JSON.stringify(m.extras));
+  check("the project's own voidbase side is found: src/voidbase/register.ts, vb_hooks/, vb_migrations/", m.extras.register === "src/voidbase/register.ts" && m.extras.hooksDir === "vb_hooks" && m.extras.migrationsDir === "vb_migrations", JSON.stringify(m.extras));
 
   // ---- the conversion, through the Vite plugin the app actually uses ---------------------------------------------
   // --bun: Vite's config loader hands the config to the runtime, and voidbase ships TypeScript sources
@@ -51,7 +51,7 @@ try {
   check("the generated app is PocketBase-shaped: main.ts, package.json, .gitignore, pb_hooks, pb_migrations, pb_public", ["main.ts", "package.json", ".gitignore", "pb_hooks", "pb_migrations", "pb_public"].every((f) => existsSync(`${WORK}/.voidbase/${f}`)), readdirSync(`${WORK}/.voidbase`).join(" "));
   check("its main.ts registers both the Void glue and the project's own register()", /registerVoidApp\(app\)/.test(mainTs) && /from "\.\.\/src\/voidbase\/register"/.test(mainTs), mainTs.slice(0, 300));
   check("nothing is generated into the project root: it stays a plain Void app", !existsSync(`${WORK}/main.ts`) && !existsSync(`${WORK}/pb_hooks`) && !existsSync(`${WORK}/pb_public`) && !existsSync(`${WORK}/pb_migrations`), readdirSync(WORK).join(" "));
-  check("the project's own pb_hooks and pb_migrations are copied in", existsSync(`${WORK}/.voidbase/pb_hooks/greet.pb.js`) && existsSync(`${WORK}/.voidbase/pb_migrations/1800000001_marker.js`), readdirSync(`${WORK}/.voidbase/pb_migrations`).join(" "));
+  check("vb_hooks/ and vb_migrations/ are copied in as the generated app's pb_hooks and pb_migrations", existsSync(`${WORK}/.voidbase/pb_hooks/greet.pb.js`) && existsSync(`${WORK}/.voidbase/pb_migrations/1800000001_marker.js`), readdirSync(`${WORK}/.voidbase/pb_migrations`).join(" "));
   const migration = readFileSync(`${WORK}/.voidbase/pb_migrations/0001_outbox.void.js`, "utf8");
   check("a Drizzle migration becomes a PocketBase migration, split on its statement markers", /CREATE TABLE/.test(migration) && /CREATE INDEX/.test(migration) && (migration.match(/execSQL/g) ?? []).length === 2, migration.slice(0, 160));
   check("the static build lands in .voidbase/pb_public, with a 404 shell for the asset layer", existsSync(`${WORK}/.voidbase/pb_public/index.html`) && existsSync(`${WORK}/.voidbase/pb_public/robots.txt`) && existsSync(`${WORK}/.voidbase/pb_public/404.html`), readdirSync(`${WORK}/.voidbase/pb_public`).join(" "));

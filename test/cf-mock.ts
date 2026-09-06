@@ -11,7 +11,7 @@ const USER_TOKEN = "cf-test-user-token"; const GH_REPO = { id: 1359087906, name:
 const UPLOAD_JWT = "upload-jwt", COMPLETION_JWT = "completion-jwt";
 interface Script { tag: string; metadata: Record<string, unknown>; modules: string[]; schedules: string[]; subdomain: boolean; assets: string[]; migrationTag: string | null; created_on: string; modified_on: string }
 interface Trigger { trigger_uuid: string; external_script_id: string; repo_connection_uuid: string; build_token_uuid: string; trigger_name: string; [k: string]: unknown }
-interface Build { build_uuid: string; status: string; created_on: string; trigger: { trigger_uuid: string; external_script_id: string }; build_trigger_metadata: { branch?: string; commit_hash?: string }; build_trigger_source: string }
+interface Build { build_uuid: string; status: string; build_outcome?: string; created_on: string; trigger: { trigger_uuid: string; external_script_id: string }; build_trigger_metadata: { branch?: string; commit_hash?: string }; build_trigger_source: string }
 interface GhRelease { id: number; tag_name: string; html_url: string; body: string; upload_url: string; assets: { id: number; name: string; size: number }[] }
 const d1 = new Map<string, string>(); const d1Migrations = new Map<string, string[]>(); const d1Queries = new Map<string, string[]>();
 const r2 = new Map<string, Set<string>>(); const queues = new Map<string, string>(); const consumers = new Map<string, Record<string, unknown>[]>();
@@ -59,8 +59,8 @@ Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, 
         if (m[2] === "environment_variables" && req.method === "PATCH") { const cur = buildEnv.get(t.trigger_uuid) ?? {}; Object.assign(cur, (await req.json()) as Record<string, { value: string; is_secret: boolean }>); buildEnv.set(t.trigger_uuid, cur); return ok(cur); }
         if (m[2] === "purge_build_cache" && req.method === "POST") return ok(null); } }
     { const m = p.match(new RegExp(`^${A}/builds/builds/([^/]+)(?:/(logs|cancel))?$`)); if (m) { const b = builds.get(m[1]!); if (!b) return err(404, 10000, "build not found");
-        if (m[2] === "logs" && req.method === "GET") { if (b.status === "queued") b.status = "running"; else if (b.status === "running") b.status = "success"; const lines = [{ ts: b.created_on, line: `Initializing build environment (${b.build_trigger_metadata.branch} ${b.build_trigger_metadata.commit_hash})` }, { ts: b.created_on, line: "Executing user build command: bun run ci" }, ...(b.status === "success" ? [{ ts: new Date().toISOString(), line: "Build completed" }] : [])]; return ok({ lines, truncated: false, status: b.status }); }
-        if (m[2] === "cancel" && req.method === "PUT") { b.status = "canceled"; return ok(b); }
+        if (m[2] === "logs" && req.method === "GET") { if (b.status === "queued") b.status = "running"; else if (b.status === "running") { b.status = "stopped"; b.build_outcome = "success"; } const lines = [[Date.parse(b.created_on), `Initializing build environment (${b.build_trigger_metadata.branch} ${b.build_trigger_metadata.commit_hash})`], [Date.parse(b.created_on), "Executing user build command: bun run ci"], ...(b.status === "stopped" ? [[Date.now(), "Build completed"]] : [])]; return ok({ lines, truncated: false, cursor: "c1", events: [] }); }
+        if (m[2] === "cancel" && req.method === "PUT") { b.status = "stopped"; b.build_outcome = "cancelled"; return ok(b); }
         if (!m[2] && req.method === "GET") return ok(b); } }
     return err(404, 7000, `no builds route for ${req.method} ${p}`);
   }

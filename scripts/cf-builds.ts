@@ -40,7 +40,7 @@ const CI_BUILD = "bash scripts/ci.sh", RELEASE_BUILD = "bash scripts/release.sh"
 const triggerNames = { ciMaster: `${CI} (${BRANCH})`, ciBranches: `${CI} (branches)`, releaseMaster: `${RELEASE} (${BRANCH})`, releaseDryRun: `${RELEASE} (dry run)` };
 
 interface Trigger { trigger_uuid: string; trigger_name: string; external_script_id?: string; build_command?: string; deploy_command?: string; root_directory?: string; branch_includes?: string[]; branch_excludes?: string[]; path_includes?: string[]; path_excludes?: string[]; build_caching_enabled?: boolean; [k: string]: unknown }
-interface Build { build_uuid: string; status?: string; created_on?: string; created_at?: string; build_trigger_metadata?: { branch?: string; commit_hash?: string; [k: string]: unknown }; [k: string]: unknown }
+interface Build { build_uuid: string; status?: string; build_outcome?: string; created_on?: string; created_at?: string; stopped_on?: string; build_trigger_metadata?: { branch?: string; commit_hash?: string; [k: string]: unknown }; [k: string]: unknown }
 type EnvVars = Record<string, { value: string; is_secret: boolean }>;
 
 const die = (m: string): never => { console.error(m); process.exit(1); };
@@ -82,13 +82,17 @@ async function ensureTrigger(tag: string, connection: string, buildToken: string
 async function setEnv(trigger: string, vars: EnvVars): Promise<void> { if (Object.keys(vars).length) await cf.json("PATCH", `${A}/builds/triggers/${trigger}/environment_variables`, vars); }
 async function latestBuild(tag: string): Promise<Build | null> { const r = await cf.json<Build[]>("GET", `${A}/builds/workers/${tag}/builds`); return (r.result ?? [])[0] ?? null; }
 const when = (b: Build) => b.created_on ?? b.created_at ?? "";
-const describe = (b: Build) => `${b.build_uuid}  ${(b.status ?? "?").padEnd(10)} ${(b.build_trigger_metadata?.branch ?? "").padEnd(12)} ${(b.build_trigger_metadata?.commit_hash ?? "").slice(0, 10).padEnd(10)} ${when(b)}`;
+// the live API ends a build with status "stopped" and build_outcome "success" | "fail"; older shapes put the outcome in status
+const outcome = (b: Build | null | undefined): string => { if (!b) return ""; const st = b.status ?? ""; if (st === "stopped") return b.build_outcome === "success" ? "success" : b.build_outcome ? `failed (${b.build_outcome})` : "stopped"; return FINAL.has(st) ? st : ""; };
+const describe = (b: Build) => `${b.build_uuid}  ${(outcome(b) || b.status || "?").padEnd(16)} ${(b.build_trigger_metadata?.branch ?? "").padEnd(12)} ${(b.build_trigger_metadata?.commit_hash ?? "").slice(0, 10).padEnd(10)} ${when(b)}`;
 async function printLogs(uuid: string, from = 0): Promise<{ next: number; status: string }> {
-  const r = await cf.json<{ lines?: ({ line?: string; message?: string; ts?: string } | string)[]; status?: string; build?: { status?: string } }>("GET", `${A}/builds/builds/${uuid}/logs`);
+  const r = await cf.json<{ lines?: ({ line?: string; message?: string; ts?: string } | string | [number, string])[]; status?: string; build?: { status?: string } }>("GET", `${A}/builds/builds/${uuid}/logs`);
   const lines = r.result?.lines ?? [];
-  for (const l of lines.slice(from)) console.log(typeof l === "string" ? l : `${l.ts ? l.ts + "  " : ""}${l.line ?? l.message ?? JSON.stringify(l)}`);
-  let status = r.result?.status ?? r.result?.build?.status ?? "";
-  if (!status) { const b = await cf.json<Build>("GET", `${A}/builds/builds/${uuid}`, undefined, [10000]).catch(() => null); status = b?.result?.status ?? ""; }
+  // the live API returns [unix ms, text] pairs; the mock returns {ts, line}
+  const text = (l: (typeof lines)[number]) => (typeof l === "string" ? l : Array.isArray(l) ? `${new Date(l[0]).toISOString().slice(11, 19)}  ${l[1]}` : `${l.ts ? l.ts + "  " : ""}${l.line ?? l.message ?? JSON.stringify(l)}`);
+  for (const l of lines.slice(from)) console.log(text(l));
+  let status = outcome({ build_uuid: uuid, status: r.result?.status ?? r.result?.build?.status, build_outcome: (r.result as { build_outcome?: string } | undefined)?.build_outcome });
+  if (!status) { const b = await cf.json<Build>("GET", `${A}/builds/builds/${uuid}`, undefined, [10000]).catch(() => null); status = outcome(b?.result); if (!status && b?.result?.status) status = ""; }
   return { next: lines.length, status };
 }
 const FINAL = new Set(["success", "failure", "failed", "canceled", "cancelled", "timed_out", "error"]);
@@ -96,11 +100,11 @@ async function follow(uuid: string): Promise<void> {
   let from = 0, status = "";
   for (;;) {
     const r = await printLogs(uuid, from); from = r.next; status = r.status;
-    if (FINAL.has(status)) break;
+    if (status) break;
     await Bun.sleep(Number(process.env.CF_BUILDS_POLL_MS ?? 5000));
   }
-  console.log(`build ${uuid}: ${status || "finished"}`);
-  if (status && status !== "success") process.exit(1);
+  console.log(`build ${uuid}: ${status}`);
+  if (status !== "success") process.exit(1);
 }
 
 try {
@@ -181,7 +185,7 @@ try {
     if (args.json) console.log(JSON.stringify(list, null, 2)); else { console.log(`${name}: ${list.length} builds`); for (const b of list) console.log("  " + describe(b)); }
   } else if (cmd === "logs") {
     const uuid = positional[0] ?? die("logs: build uuid missing");
-    if (args.follow) await follow(uuid); else { const r = await printLogs(uuid); if (r.status) console.log(`status: ${r.status}`); }
+    if (args.follow) await follow(uuid); else { const r = await printLogs(uuid); const b = await cf.json<Build>("GET", `${A}/builds/builds/${uuid}`, undefined, [10000]).catch(() => null); console.log(`status: ${r.status || b?.result?.status || "unknown"}`); }
   } else if (cmd === "cancel") {
     const uuid = positional[0] ?? die("cancel: build uuid missing");
     await cf.json("PUT", `${A}/builds/builds/${uuid}/cancel`); console.log(`build ${uuid} cancelled`);

@@ -62,7 +62,7 @@ try {
   const list = cfb(["builds"]);
   check("builds lists it", list.code === 0 && list.out.includes(uuid!) && /voidbase-ci: 1 builds/.test(list.out), list.out);
   const logs = cfb(["logs", uuid!]);
-  check("logs prints the build log lines and the status", logs.code === 0 && /Executing user build command: bun run ci/.test(logs.out) && /status: running/.test(logs.out), logs.out);
+  check("logs prints the timestamped build log lines and the status", logs.code === 0 && /\d\d:\d\d:\d\d  Executing user build command: bun run ci/.test(logs.out) && /status: running/.test(logs.out), logs.out);
   const follow = cfb(["build", "--commit", "abc1234", "--follow"]);
   check("build --commit --follow: waits for the end and reports success", follow.code === 0 && /Build completed/.test(follow.out) && /: success$/m.test(follow.out.trim()), follow.out);
   const dryBuild = cfb(["build", "--worker", "voidbase-release", "--dry-run"]);
@@ -70,7 +70,7 @@ try {
   const cancelMe = cfb(["build", "--worker", "voidbase-release", "--branch", "master"]).out.match(/build ([0-9a-f-]{36})/)?.[1];
   const cancel = cfb(["cancel", cancelMe!]);
   s = await state();
-  check("cancel: the build is cancelled", cancel.code === 0 && /cancelled/.test(cancel.out) && s.builds.find((b: { build_uuid: string }) => b.build_uuid === cancelMe)?.status === "canceled", cancel.out);
+  check("cancel: the build is stopped with outcome cancelled", cancel.code === 0 && /cancelled/.test(cancel.out) && s.builds.find((b: { build_uuid: string }) => b.build_uuid === cancelMe)?.build_outcome === "cancelled", cancel.out);
   const envSet = cfb(["env", "--worker", "voidbase-ci", "FOO=bar", "--secret", "SEC=1"]);
   s = await state();
   check("env: sets a variable and a secret on both CI triggers, secrets never echoed", envSet.code === 0 && (envSet.out.match(/FOO=bar SEC=\(secret\)/g) ?? []).length === 2 && !envSet.out.includes("SEC=1") && s.buildEnv[prod.trigger_uuid].SEC.is_secret === true, envSet.out);

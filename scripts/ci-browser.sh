@@ -28,14 +28,23 @@ fi
 LIBS="$PWD/.void/chrome-libs"; LIBDIR="$LIBS/usr/lib/x86_64-linux-gnu"
 missing() { LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$CHROME" 2>/dev/null | awk '/not found/ { print $1 }'; }
 if [ -n "$(missing)" ] || [ "${CI_BROWSER_LIBS:-}" = "always" ]; then
-  # what Playwright's `install-deps` would apt-get for chromium on Ubuntu 24.04 (playwright-core's nativeDeps table)
-  PKGS="libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2 libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 libfontconfig1 libfreetype6"
+  # what Playwright's `install-deps` would apt-get for chromium on Ubuntu 24.04 (playwright-core's nativeDeps table),
+  # plus every package they depend on that the machine lacks (libxtst6 pulls libxi6, and so on): resolved with apt-cache
+  # against a private apt root, fetched into it and unpacked, no root needed, nothing outside .void touched
+  PKGS="libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2 libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 libfontconfig1 libfreetype6 libxi6 libxtst6"
   log "shared libraries missing: $(missing | tr '\n' ' ')- unpacking Ubuntu packages into .void/chrome-libs"
   APTROOT="$PWD/.void/apt"; mkdir -p "$APTROOT/state/lists/partial" "$APTROOT/cache/archives/partial" "$APTROOT/debs" "$LIBS"
-  APT=(apt-get -q -o "Dir::State=$APTROOT/state" -o "Dir::Cache=$APTROOT/cache" -o Dir::State::status=/var/lib/dpkg/status -o Debug::NoLocking=1 -o APT::Sandbox::User=root)
-  "${APT[@]}" update >&2 2>&1 || log "apt-get update reported errors (continuing with what it fetched)"
+  APT_OPTS=(-q -o "Dir::State=$APTROOT/state" -o "Dir::Cache=$APTROOT/cache" -o Dir::State::status=/var/lib/dpkg/status -o Debug::NoLocking=1 -o APT::Sandbox::User=root)  # the image's docker-clean hook then fails to purge the system cache, harmlessly
+  apt-get "${APT_OPTS[@]}" update >&2 2>&1 || log "apt-get update reported errors (continuing with what it fetched)"
+  installed() { dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null | grep -q '^installed$'; }
+  # the transitive closure of PKGS, minus what the machine has (virtual packages in <angle brackets> are skipped)
   # shellcheck disable=SC2086
-  (cd "$APTROOT/debs" && "${APT[@]}" download $PKGS >&2 2>&1) || log "some packages did not download"
+  WANT=$(apt-cache "${APT_OPTS[@]}" depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances $PKGS 2>/dev/null | grep -oE "^[a-z0-9][a-z0-9+.-]*|Depends: [a-z0-9][a-z0-9+.-]*" | sed 's/^.*Depends: //' | sort -u)
+  [ -n "$WANT" ] || WANT="$PKGS"
+  NEED=""; for p in $WANT; do installed "$p" || NEED="$NEED $p"; done
+  log "packages to unpack: $(echo $NEED | wc -w) ($(echo $NEED | cut -c1-160)...)"
+  # shellcheck disable=SC2086
+  (cd "$APTROOT/debs" && apt-get "${APT_OPTS[@]}" download $NEED >&2 2>&1) || log "some packages did not download"
   for d in "$APTROOT"/debs/*.deb; do [ -f "$d" ] && dpkg-deb -x "$d" "$LIBS"; done
   still=$(missing); if [ -n "$still" ]; then log "still missing after unpacking: $(echo $still)"; exit 1; fi
   log "libraries unpacked under .void/chrome-libs ($(find "$LIBDIR" -name '*.so*' | wc -l) files)"

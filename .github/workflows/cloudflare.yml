@@ -59,10 +59,11 @@ jobs:
           for pair in $uuids; do
             name=${pair%%=*}; uuid=${pair#*=}; unknown=0
             while :; do
-              status=$(curl -sS "$API/builds/$uuid" -H "Authorization: Bearer $TOKEN" | jq -r '.result.status // empty')
+              # a finished build has status "stopped" and build_outcome "success" or "fail"
+              status=$(curl -sS "$API/builds/$uuid" -H "Authorization: Bearer $TOKEN" | jq -r 'if .result.status == "stopped" then (.result.build_outcome // "fail") else (.result.status // empty) end')
               case "$status" in
                 success) echo "$name: success"; break ;;
-                failure|failed|canceled|cancelled|timed_out|error) echo "$name: $status"; rc=1; break ;;
+                fail|failure|failed|canceled|cancelled|timed_out|error) echo "$name: $status"; rc=1; break ;;
                 "") unknown=$((unknown + 1)); [ "$unknown" -lt 10 ] || { echo "$name: cannot read the status of build $uuid; see the dashboard"; rc=1; break; } ;;
               esac
               sleep 30

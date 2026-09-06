@@ -1,27 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import { isCanonicalB64url, signJWT, verifyJWT } from "../../src/server/jwt";
+import { signJWT, verifyJWT } from "../../src/server/jwt";
 
 describe("jwt", () => {
-  test("a signed token verifies", async () => {
+  test("a signed token verifies; the wrong secret and a changed signature byte do not", async () => {
     const t = await signJWT({ id: "abc", type: "auth" }, "secret", 60);
     expect((await verifyJWT(t, "secret"))?.id).toBe("abc");
     expect(await verifyJWT(t, "other")).toBeNull();
+    const [h, b, sig] = t.split(".") as [string, string, string];
+    const tampered = `${h}.${b}.${sig.slice(0, 5)}${sig[5] === "A" ? "B" : "A"}${sig.slice(6)}`;
+    expect(await verifyJWT(tampered, "secret")).toBeNull();
   });
-  test("a flipped padding bit in the signature is rejected even though it decodes to the same bytes (Go rejects it)", async () => {
-    for (let i = 0; i < 40; i++) {  // enough tokens to hit signatures whose last character carries padding bits
+  test("padding bits of the last signature character do not count, like PocketBase's Go decoder", async () => {
+    // base64url of 32 bytes ends in a character with two padding bits; Go's RawURLEncoding (non-strict) ignores them
+    // and so does atob, so a token that only differs there is the same signature to both servers
+    let sameSeen = false;
+    for (let i = 0; i < 64 && !sameSeen; i++) {
       const t = await signJWT({ id: `u${i}`, type: "auth" }, "secret", 60);
       const [h, b, sig] = t.split(".") as [string, string, string];
-      const last = sig.at(-1)!; const flipped = last === "A" ? "B" : "A";
-      const tampered = `${h}.${b}.${sig.slice(0, -1)}${flipped}`;
-      expect(await verifyJWT(tampered, "secret")).toBeNull();
+      if (sig.at(-1) !== "A") continue;
+      sameSeen = true;
+      expect((await verifyJWT(`${h}.${b}.${sig.slice(0, -1)}B`, "secret"))?.id).toBe(`u${i}`);
     }
-  });
-  test("padding characters and non-canonical segments are rejected", async () => {
-    const t = await signJWT({ id: "abc", type: "auth" }, "secret", 60);
-    const [h, b, sig] = t.split(".") as [string, string, string];
-    expect(await verifyJWT(`${h}.${b}.${sig}=`, "secret")).toBeNull();
-    expect(isCanonicalB64url("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB")).toBe(false);
-    expect(isCanonicalB64url("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).toBe(true);
-    expect(isCanonicalB64url(sig)).toBe(true);
+    expect(sameSeen).toBe(true);
   });
 });

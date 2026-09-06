@@ -43,18 +43,10 @@ export function decodeJWT(token: string): JwtClaims | null {
   }
 }
 
-/** canonical base64url without padding, as Go's RawURLEncoding decoder demands: a segment whose trailing bits are not
- * zero (a padding bit flipped) decodes to the same bytes in JavaScript but is invalid to PocketBase */
-export function isCanonicalB64url(segment: string): boolean {
-  if (!/^[A-Za-z0-9_-]*$/.test(segment)) return false;
-  try { return b64urlEncode(b64urlDecode(segment)) === segment; } catch { return false; }
-}
-
 export async function verifyJWT(token: string, secret: string): Promise<JwtClaims | null> {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
   const [head, body, sig] = parts as [string, string, string];
-  if (!isCanonicalB64url(head) || !isCanonicalB64url(body) || !isCanonicalB64url(sig)) return null;
   let ok = false;
   try {
     ok = await crypto.subtle.verify("HMAC", await hmacKey(secret), b64urlDecode(sig), enc.encode(`${head}.${body}`));

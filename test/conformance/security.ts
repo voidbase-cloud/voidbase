@@ -51,7 +51,9 @@ const cases: { name: string; run: (c: Ctx) => Promise<Res> }[] = [
   // token misuse
   { name: "file token used as auth", run: async (c) => { const t = await call(c.base, "POST", "/api/files/token", { token: c.user }); const r = await call(c.base, "GET", `/api/collections/users/records/${c.userId}`, { token: String(t.json.token ?? "") }); return { status: r.status, message: r.message, extra: t.status }; } },
   { name: "superuser token on wrong-collection refresh", run: async (c) => { const r = await call(c.base, "POST", "/api/collections/users/auth-refresh", { token: c.su }); return { status: r.status, message: r.message }; } },
-  { name: "tampered token signature", run: async (c) => { const parts = c.user.split("."); const bad = `${parts[0]}.${parts[1]}.${parts[2]!.replace(/.$/, (ch) => (ch === "A" ? "B" : "A"))}`; const r = await call(c.base, "GET", `/api/collections/users/records/${c.userId}`, { token: bad }); return { status: r.status, message: r.message }; } },
+  // a middle character of the signature: its six bits all count, whereas the last character carries padding bits that
+  // both PocketBase's Go decoder and JavaScript's ignore, so flipping it changes nothing for one token in sixteen
+  { name: "tampered token signature", run: async (c) => { const parts = c.user.split("."); const bad = `${parts[0]}.${parts[1]}.${parts[2]!.replace(/^(.{5})(.)/, (_, p: string, ch: string) => p + (ch === "A" ? "B" : "A"))}`; const r = await call(c.base, "GET", `/api/collections/users/records/${c.userId}`, { token: bad }); return { status: r.status, message: r.message }; } },
   { name: "garbage authorization header", run: async (c) => { const r = await call(c.base, "GET", `/api/collections/users/records/${c.userId}`, { token: "Bearer not.a.jwt" }); return { status: r.status, message: r.message }; } },
   { name: "old token after password change", run: async (c) => {
     const fresh = await login(c.base, "users", "user@example.com", "changeme123");

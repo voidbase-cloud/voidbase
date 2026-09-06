@@ -135,8 +135,12 @@ export function scanVoidApp(opts: ScanOptions = {}): VoidManifest {
     ? readdirSync(migrationsDir).sort().filter((f) => f.endsWith(".sql")).map((f) => ({ file: `db/migrations/${f}`, name: basename(f, ".sql") }))
     : [];
 
+  // `output: "static"` prerenders every page to HTML at build time, which is exactly what pb_public wants; pages
+  // that still need rendering per request have no runtime here, so say so.
+  let voidOutput = "server";
+  try { voidOutput = (JSON.parse(readFileSync(join(root, "void.json"), "utf8")) as { output?: string }).output ?? "server"; } catch { /* no void.json */ }
   const unsupported: { what: string; why: string }[] = [];
-  if (isDir(join(root, "pages"))) unsupported.push({ what: "pages/", why: "server-rendered pages need Void's render pipeline; prerender them (they land in pb_public) or keep them in a separate Void deploy" });
+  if (isDir(join(root, "pages")) && voidOutput !== "static") unsupported.push({ what: "pages/", why: 'server-rendered pages need Void\'s render pipeline; set "output": "static" in void.json to prerender them into pb_public' });
   if (walk(join(root, "routes")).some((f) => f.endsWith(".ws.ts"))) unsupported.push({ what: "routes/**/*.ws.ts", why: "document WebSockets are Durable Objects; voidbase's realtime hub owns that binding" });
   if (grepImports(root, "void/kv")) unsupported.push({ what: "void/kv", why: "voidbase binds D1 and R2 only; keep key-value data in a collection" });
   if (grepImports(root, "void/isr")) unsupported.push({ what: "void/isr", why: "ISR caches through the Void platform's dispatch worker, which a voidbase app does not have" });

@@ -2,10 +2,16 @@
 import { existsSync, statSync } from "node:fs";
 import { join, normalize } from "node:path";
 export function assetsFetcher(opts: { panelDir: string; publicDir?: string }) {
+  // Cloudflare's asset layer resolves an extensionless path against `<path>.html` and `<path>/index.html`
+  // (html_handling "auto-trailing-slash"); a static site generator writes one shape or the other, so the Bun
+  // runtime tries both and a deep link behaves the same on either runtime.
+  const isFile = (p: string) => existsSync(p) && statSync(p).isFile();
   const file = (root: string, rel: string): string | null => {
     const p = normalize(join(root, rel));
     if (!p.startsWith(normalize(root))) return null;
-    if (existsSync(p) && statSync(p).isFile()) return p;
+    if (isFile(p)) return p;
+    const html = p.replace(/\/$/, "") + ".html";
+    if (html !== ".html" && isFile(html)) return html;
     const index = join(p, "index.html");
     return existsSync(index) ? index : null;
   };

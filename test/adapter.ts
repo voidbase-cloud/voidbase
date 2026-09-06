@@ -106,6 +106,10 @@ try {
 
   const root = await get("/");
   check("pb_public is served at / by the same process", root.status === 200 && root.text.includes("<h1>static</h1>"), `${root.status} ${root.text.slice(0, 60)}`);
+  // Void's SSG writes /faq as faq.html; Cloudflare's asset layer resolves that shape and so must the Bun runtime
+  writeFileSync(`${WORK}/pb_public/faq.html`, "<h1>faq</h1>");
+  const extensionless = await get("/faq");
+  check("an extensionless path resolves against <path>.html, like Cloudflare's asset layer", extensionless.status === 200 && extensionless.text.includes("<h1>faq</h1>"), `${extensionless.status} ${extensionless.text.slice(0, 40)}`);
   const robots = await get("/robots.txt");
   check("files from public/ ride along", robots.status === 200 && robots.text.includes("User-agent"), String(robots.status));
   const collections = await get("/api/collections?perPage=1");

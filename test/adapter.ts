@@ -1,5 +1,5 @@
-// The Void adapter end to end: convert test/fixtures/void-app into a voidbase app, boot it with the generated
-// main.ts and check that Void's own conventions still hold — route paths and params, middleware order, the
+// The Void adapter end to end: generate a voidbase app under .voidbase/ from test/fixtures/void-app, boot it with
+// the generated main.ts and check that Void's own conventions still hold — route paths and params, middleware order, the
 // runtime env behind void/storage and void/queues, a queue consumer, a cron job, Drizzle migrations, and the
 // static build under pb_public. PocketBase's own API must keep winning over an app route of the same shape.
 //   bun test/adapter.ts
@@ -38,6 +38,7 @@ try {
   check("middleware keeps its numeric order, crons and queues are named after their files", m.middleware.map((x) => x.name).join() === "01.first,02.second" && m.crons[0]?.name === "tick" && m.queues[0]?.name === "mail", JSON.stringify([m.middleware.map((x) => x.name), m.crons.map((c) => c.name), m.queues.map((q) => q.name)]));
   check("the queue producer binding follows Void's naming", m.queues[0]?.binding === "QUEUE_MAIL", m.queues[0]?.binding ?? "");
   check("an app with server code is not a static build", m.mode === "server" && m.migrations.length === 1, `${m.mode} ${m.migrations.length}`);
+  check("src/voidbase is found: the project's own register, hooks and migrations", m.extras.register === "src/voidbase/register.ts" && m.extras.hooksDir === "src/voidbase/pb_hooks" && m.extras.migrationsDir === "src/voidbase/pb_migrations", JSON.stringify(m.extras));
 
   // ---- the conversion, through the Vite plugin the app actually uses ---------------------------------------------
   // --bun: Vite's config loader hands the config to the runtime, and voidbase ships TypeScript sources
@@ -46,10 +47,14 @@ try {
   check("vite build succeeds with voidbaseAdapter() in the plugin list", build.exitCode === 0, buildOut.slice(-600));
   const generated = readFileSync(`${WORK}/.voidbase/void-app.ts`, "utf8");
   check("generated glue imports the app's own modules and mounts them", generated.includes('from "../routes/api/hello"') && generated.includes("mountVoidApp(app, {"), generated.slice(0, 200));
-  check("main.ts is written for the app to run and for voidbase deploy to compose", existsSync(`${WORK}/main.ts`) && /export function register/.test(readFileSync(`${WORK}/main.ts`, "utf8")), "");
-  const migration = readFileSync(`${WORK}/pb_migrations/0001_outbox.void.js`, "utf8");
+  const mainTs = readFileSync(`${WORK}/.voidbase/main.ts`, "utf8");
+  check("the generated app is PocketBase-shaped: main.ts, package.json, .gitignore, pb_hooks, pb_migrations, pb_public", ["main.ts", "package.json", ".gitignore", "pb_hooks", "pb_migrations", "pb_public"].every((f) => existsSync(`${WORK}/.voidbase/${f}`)), readdirSync(`${WORK}/.voidbase`).join(" "));
+  check("its main.ts registers both the Void glue and the project's own register()", /registerVoidApp\(app\)/.test(mainTs) && /from "\.\.\/src\/voidbase\/register"/.test(mainTs), mainTs.slice(0, 300));
+  check("nothing is generated into the project root: it stays a plain Void app", !existsSync(`${WORK}/main.ts`) && !existsSync(`${WORK}/pb_hooks`) && !existsSync(`${WORK}/pb_public`) && !existsSync(`${WORK}/pb_migrations`), readdirSync(WORK).join(" "));
+  check("the project's own pb_hooks and pb_migrations are copied in", existsSync(`${WORK}/.voidbase/pb_hooks/greet.pb.js`) && existsSync(`${WORK}/.voidbase/pb_migrations/1800000001_marker.js`), readdirSync(`${WORK}/.voidbase/pb_migrations`).join(" "));
+  const migration = readFileSync(`${WORK}/.voidbase/pb_migrations/0001_outbox.void.js`, "utf8");
   check("a Drizzle migration becomes a PocketBase migration, split on its statement markers", /CREATE TABLE/.test(migration) && /CREATE INDEX/.test(migration) && (migration.match(/execSQL/g) ?? []).length === 2, migration.slice(0, 160));
-  check("the static build lands in pb_public, with a 404 shell for the asset layer", existsSync(`${WORK}/pb_public/index.html`) && existsSync(`${WORK}/pb_public/robots.txt`) && existsSync(`${WORK}/pb_public/404.html`), readdirSync(`${WORK}/pb_public`).join(" "));
+  check("the static build lands in .voidbase/pb_public, with a 404 shell for the asset layer", existsSync(`${WORK}/.voidbase/pb_public/index.html`) && existsSync(`${WORK}/.voidbase/pb_public/robots.txt`) && existsSync(`${WORK}/.voidbase/pb_public/404.html`), readdirSync(`${WORK}/.voidbase/pb_public`).join(" "));
   check("void/db and void/queues get runtime shims, because Void maps them to declaration files", existsSync(`${WORK}/.voidbase/shim-db.ts`) && existsSync(`${WORK}/.voidbase/shim-queues.ts`) && /shim-queues/.test(readFileSync(`${WORK}/.voidbase/tsconfig.json`, "utf8")), "");
 
   // a second pass must not duplicate or drift
@@ -61,13 +66,13 @@ try {
   mkdirSync(`${staticApp}/public`, { recursive: true });
   writeFileSync(`${staticApp}/public/index.html`, "<h1>ssg</h1>");
   const s1 = adapt(staticApp, { quiet: true });
-  check("an app with no server code is static: pb_public only, no main.ts and no glue", s1.manifest.mode === "static" && existsSync(`${staticApp}/pb_public/index.html`) && !existsSync(`${staticApp}/main.ts`) && !existsSync(`${staticApp}/.voidbase/void-app.ts`), JSON.stringify({ mode: s1.manifest.mode, copied: s1.copied }));
+  check("an app with no server code is static: a generated app with pb_public and no glue", s1.manifest.mode === "static" && existsSync(`${staticApp}/.voidbase/pb_public/index.html`) && existsSync(`${staticApp}/.voidbase/main.ts`) && !existsSync(`${staticApp}/.voidbase/void-app.ts`) && !existsSync(`${staticApp}/main.ts`), JSON.stringify({ mode: s1.manifest.mode, copied: s1.copied }));
 
   // ---- the app, running ------------------------------------------------------------------------------------------
   const port = (() => { const s = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() }); const p = s.port; s.stop(true); return p; })();
   const base = `http://127.0.0.1:${port}`;
-  const env = { ...process.env, VOIDBASE_SUPERUSER_EMAIL: "root@example.com", VOIDBASE_SUPERUSER_PASSWORD: "root-password-1", VOIDBASE_USER_EMAIL: "", VOIDBASE_USER_PASSWORD: "", VOIDBASE_LOG_MIN_LEVEL: "8", VOIDBASE_HOOKS_DIR: `${WORK}/pb_hooks`, VOIDBASE_MIGRATIONS_DIR: `${WORK}/pb_migrations` };
-  procs.push(Bun.spawn(["bun", "main.ts", "--http", `127.0.0.1:${port}`, "--dir", `${WORK}/pb_data`], { cwd: WORK, env: env as Record<string, string>, stdout: "inherit", stderr: "inherit" }));
+  const env = { ...process.env, VOIDBASE_SUPERUSER_EMAIL: "root@example.com", VOIDBASE_SUPERUSER_PASSWORD: "root-password-1", VOIDBASE_USER_EMAIL: "", VOIDBASE_USER_PASSWORD: "", VOIDBASE_LOG_MIN_LEVEL: "8", VOIDBASE_HOOKS_DIR: `${WORK}/.voidbase/pb_hooks`, VOIDBASE_MIGRATIONS_DIR: `${WORK}/.voidbase/pb_migrations` };
+  procs.push(Bun.spawn(["bun", "main.ts", "--http", `127.0.0.1:${port}`, "--dir", `${WORK}/.voidbase/pb_data`], { cwd: `${WORK}/.voidbase`, env: env as Record<string, string>, stdout: "inherit", stderr: "inherit" }));
   for (let i = 0; i < 200; i++) { try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* booting */ } await Bun.sleep(200); }
 
   const get = async (path: string, init?: RequestInit) => { const r = await fetch(base + path, init); return { status: r.status, type: r.headers.get("content-type") ?? "", json: (await r.clone().json().catch(() => ({}))) as Record<string, unknown>, text: await r.text() }; };
@@ -104,10 +109,16 @@ try {
   const outbox2 = await get("/api/outbox");
   check("running the cron reaches the app's scheduled handler with the bindings", (outbox2.json.outbox as string[])?.includes("cron@example.com"), JSON.stringify(outbox2.json));
 
+  const fromRegister = await get("/api/from-register");
+  check("the project's own register() is composed into the generated app", fromRegister.json.register === true, JSON.stringify(fromRegister));
+  const fromHook = await get("/api/from-hook");
+  check("a PocketBase JS hook from src/voidbase/pb_hooks answers", fromHook.json.hook === true, JSON.stringify(fromHook));
+  const marker = await get("/api/marker");
+  check("the project's own pb_migration ran alongside the generated ones", marker.json.marker === 0, JSON.stringify(marker));
   const root = await get("/");
   check("pb_public is served at / by the same process", root.status === 200 && root.text.includes("<h1>static</h1>"), `${root.status} ${root.text.slice(0, 60)}`);
   // Void's SSG writes /faq as faq.html; Cloudflare's asset layer resolves that shape and so must the Bun runtime
-  writeFileSync(`${WORK}/pb_public/faq.html`, "<h1>faq</h1>");
+  writeFileSync(`${WORK}/.voidbase/pb_public/faq.html`, "<h1>faq</h1>");
   const extensionless = await get("/faq");
   check("an extensionless path resolves against <path>.html, like Cloudflare's asset layer", extensionless.status === 200 && extensionless.text.includes("<h1>faq</h1>"), `${extensionless.status} ${extensionless.text.slice(0, 40)}`);
   const robots = await get("/robots.txt");

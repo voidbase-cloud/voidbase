@@ -28,11 +28,11 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   superuser upsert <email> <password>  create or update a superuser: on the local data directory (--dir) or on a running
                                      instance (--url, --admin email:pass)
 
-  adapt [dir] [--public-dir pb_public] [--no-migrations]
-                                     convert a Void app in place into a voidbase app: the client build into pb_public,
-                                     routes/middleware/crons/queues into .voidbase/void-app.ts (registered by main.ts)
-                                     and db/migrations into pb_migrations. vite build does this too through the
-                                     voidbaseAdapter() plugin; this is the same pass without Vite.
+  adapt [dir] [--public-dir .voidbase/pb_public] [--no-migrations]
+                                     generate a voidbase app under .voidbase/ from a Void app: PocketBase's layout
+                                     (main.ts, package.json, pb_hooks, pb_migrations, pb_public) with the project's
+                                     routes/middleware/crons/queues and whatever src/voidbase/ adds. vite build does
+                                     this too through the voidbaseAdapter() plugin; this is the same pass without Vite.
   init [dir]                         scaffold .env, pb_hooks/, pb_migrations/ in a fresh checkout and sync the panel
   dev [--port 5180]                  start the Void dev server (vp dev)
   build | preview [--port 5181]      production build / run the built Worker locally (vp build / vp preview)
@@ -121,9 +121,9 @@ switch (cmd) {
     for (const c of manifest.collisions) console.warn(`shadowed by voidbase's own API, the app route never runs: ${c}`);
     console.log(`${manifest.mode === "static" ? "static" : "server"} app at ${root}`);
     console.log(`  ${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)`);
-    console.log(`  wrote ${written.join(", ") || "nothing"}${copied ? `, ${copied} entr(ies) into ${flags["public-dir"] ?? "pb_public"}` : ""}`);
-    if (manifest.mode === "server") console.log("  run it: voidbase serve --entry main.ts   (deploy: voidbase deploy)");
-    else console.log("  run it: voidbase serve   (pb_public is picked up automatically)");
+    console.log(`  wrote ${written.join(", ") || "nothing"}${copied ? `, ${copied} entr(ies) into ${flags["public-dir"] ?? ".voidbase/pb_public"}` : ""}`);
+    console.log("  run it:    bun .voidbase/main.ts --http 127.0.0.1:8090");
+    console.log("  deploy it: cd .voidbase && voidbase deploy");
     break;
   }
   case "init": {

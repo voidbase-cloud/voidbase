@@ -4,17 +4,18 @@
 //   import { voidbaseAdapter } from "@voidbase-cloud/voidbase/adapter/plugin";
 //   export default defineConfig({ plugins: [voidPlugin(), voidbaseAdapter()] });
 //
-// The client build (and everything in public/) lands in pb_public, which voidbase serves at `/`. Routes,
-// middleware, crons and queues become .voidbase/void-app.ts, which main.ts registers on the running app. Void's
-// own dist/ssr worker is left alone: voidbase composes main.ts into its own Worker on deploy, so the app's server
-// code is bundled there instead.
+// The whole voidbase app is generated under `.voidbase/`, in PocketBase's layout: the client build lands in
+// `.voidbase/pb_public` (served at `/`), routes/middleware/crons/queues become `.voidbase/void-app.ts` which the
+// generated `.voidbase/main.ts` registers, and `src/voidbase/` carries whatever the project owns on that side.
+// The project root stays a plain Void app. Void's own dist/ssr worker is left alone: voidbase composes the
+// generated main.ts into its own Worker on deploy, so the app's server code is bundled there instead.
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { writeVoidbaseApp, type GenerateOptions } from "./codegen";
 import { scanVoidApp, type VoidManifest } from "./scan";
 
 export interface AdapterOptions extends GenerateOptions {
-  /** where the built site goes; voidbase serves it at `/` (PocketBase's convention) */
+  /** where the built site goes inside the generated app; voidbase serves it at `/` */
   publicDir?: string;
   /** the client build to copy from; defaults to <outDir>/client, then dist/client */
   clientDir?: string;
@@ -30,7 +31,7 @@ export interface AdaptResult { manifest: VoidManifest; written: string[]; copied
 export function adapt(root: string, opts: AdapterOptions & { clientDir?: string } = {}): AdaptResult {
   const manifest = scanVoidApp({ root, dev: false });
   const { written } = writeVoidbaseApp(manifest, { pkg: opts.pkg, migrations: opts.migrations });
-  const publicDir = resolve(root, opts.publicDir ?? "pb_public");
+  const publicDir = resolve(root, opts.publicDir ?? ".voidbase/pb_public");
   const client = opts.clientDir ? resolve(root, opts.clientDir) : firstExisting([join(root, "dist", "client"), join(root, "public")]);
   const copied = client ? syncPublic(client, publicDir) : 0;
   return { manifest, written, copied };
@@ -85,11 +86,10 @@ export function voidbaseAdapter(options: AdapterOptions = {}) {
       const { manifest, copied } = adapt(root, { ...options, clientDir });
       const counts = `${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)`;
       if (!hasClient || this.environment?.name === "client") {
-        log(manifest.mode === "static" ? `static app: ${copied} entr(ies) in ${options.publicDir ?? "pb_public"}, no server code` : `${counts} -> .voidbase/void-app.ts; ${copied} entr(ies) in ${options.publicDir ?? "pb_public"}`);
+          log(`${manifest.mode === "static" ? "static site" : counts}; ${copied} entr(ies) into ${options.publicDir ?? ".voidbase/pb_public"}`);
         for (const u of manifest.unsupported) console.warn(`voidbase: ${u.what} is not carried over — ${u.why}`);
         for (const c of manifest.collisions) console.warn(`voidbase: ${c} is served by voidbase itself, so the app route never runs — move it off that path`);
       }
-      mkdirSync(join(root, ".voidbase"), { recursive: true }); // a static app may have nothing else in there
       writeFileSync(join(root, ".voidbase", "manifest.json"), JSON.stringify({ ...manifest, root: undefined }, null, 2) + "\n");
     },
   };

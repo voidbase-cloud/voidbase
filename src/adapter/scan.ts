@@ -28,6 +28,17 @@ export interface VoidQueue extends VoidModule {
 }
 export interface VoidMigration { file: string; name: string }
 
+/** Where a Void app keeps what belongs to voidbase rather than to Void. All of it is optional. */
+export interface VoidbaseExtras {
+  /** src/voidbase/register.ts, exporting `register(app)`: the app's own hooks, routes and event handlers */
+  register?: string;
+  /** src/voidbase/pb_hooks: PocketBase JS hooks, copied into the generated app as-is */
+  hooksDir?: string;
+  /** src/voidbase/pb_migrations: PocketBase JS migrations, copied in beside the ones generated from db/migrations */
+  migrationsDir?: string;
+}
+export const EXTRAS_DIR = "src/voidbase";
+
 /** paths voidbase serves itself; an app route under one of these never reaches the app (PocketBase answers first) */
 export const RESERVED_PREFIXES = ["/api/backups", "/api/batch", "/api/collections", "/api/crons", "/api/files", "/api/health", "/api/logs", "/api/realtime", "/api/settings", "/_/"];
 
@@ -40,6 +51,8 @@ export interface VoidManifest {
   crons: VoidModule[];
   queues: VoidQueue[];
   migrations: VoidMigration[];
+  /** the app's own voidbase side (src/voidbase/...) */
+  extras: VoidbaseExtras;
   /** directories the app has that this adapter cannot carry, with the reason */
   unsupported: { what: string; why: string }[];
   /** app routes shadowed by voidbase's own API */
@@ -145,9 +158,17 @@ export function scanVoidApp(opts: ScanOptions = {}): VoidManifest {
   if (grepImports(root, "void/kv")) unsupported.push({ what: "void/kv", why: "voidbase binds D1 and R2 only; keep key-value data in a collection" });
   if (grepImports(root, "void/isr")) unsupported.push({ what: "void/isr", why: "ISR caches through the Void platform's dispatch worker, which a voidbase app does not have" });
 
+  const extra = (rel: string) => (existsSync(join(root, EXTRAS_DIR, rel)) ? `${EXTRAS_DIR}/${rel}` : undefined);
+  const extras: VoidbaseExtras = {
+    register: ["register.ts", "register.js"].map(extra).find(Boolean),
+    hooksDir: isDir(join(root, EXTRAS_DIR, "pb_hooks")) ? `${EXTRAS_DIR}/pb_hooks` : undefined,
+    migrationsDir: isDir(join(root, EXTRAS_DIR, "pb_migrations")) ? `${EXTRAS_DIR}/pb_migrations` : undefined,
+  };
+
   const collisions = routes.filter((r) => RESERVED_PREFIXES.some((p) => r.url === p || r.url.startsWith(p + "/"))).map((r) => r.url);
-  const mode = routes.length || middleware.length || crons.length || queues.length ? "server" : "static";
-  return { root, mode, routes, middleware, crons, queues, migrations, unsupported, collisions };
+  // "static" means nothing has to run: no Void server code and no voidbase extensions of the app's own
+  const mode = routes.length || middleware.length || crons.length || queues.length || extras.register || extras.hooksDir ? "server" : "static";
+  return { root, mode, routes, middleware, crons, queues, migrations, extras, unsupported, collisions };
 }
 
 /** literal segments beat params beat wildcards, longer paths beat shorter (the hook router scores the same way) */

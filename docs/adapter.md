@@ -1,9 +1,9 @@
 # Running a Void app on voidbase
 
-A [Void](https://void.cloud) app and a voidbase app are shaped differently: Void puts server code in `routes/`,
+A [Void](https://void.cloud) app and a voidbase app are shaped differently. Void puts server code in `routes/`,
 `middleware/`, `crons/` and `queues/` and builds a Cloudflare Worker; voidbase is a PocketBase project, with the
-site in `pb_public/`, JS hooks in `pb_hooks/` and migrations in `pb_migrations/`. The adapter builds the first into
-the second, so the app keeps Void's file conventions and gains PocketBase's API, admin panel and collections.
+site in `pb_public/`, JS hooks in `pb_hooks/` and migrations in `pb_migrations/`. The adapter keeps the project a
+plain Void app and *generates* the voidbase one from it, whole, into a git-ignored `.voidbase/`.
 
 ```ts
 // vite.config.ts
@@ -14,40 +14,55 @@ import { voidbaseAdapter } from "@voidbase-cloud/voidbase/adapter/plugin";
 export default defineConfig({ plugins: [voidPlugin(), voidbaseAdapter()] });
 ```
 
-`vite build` then produces a voidbase app in place. `voidbase adapt` does the same pass without Vite, which is what
-CI and `voidbase serve` need when there is no client to build.
+`vite build` then writes [PocketBase's minimal layout](https://pocketbase.io/docs/going-to-production/#minimal-setup):
+
+```
+.voidbase/            generated; add it to .gitignore
+  main.ts             voidbase composed with the project's server code
+  package.json
+  .gitignore          pb_data/
+  pb_hooks/           copied from src/voidbase/pb_hooks
+  pb_migrations/      src/voidbase/pb_migrations, plus one file per Drizzle migration
+  pb_public/          the client build, served at /
+  pb_data/            created on first run
+  void-app.ts         the glue: imports routes/, middleware/, crons/, queues/
+  tsconfig.json       the fragment the project's tsconfig extends
+  shim-db.ts          void/db and void/queues at runtime (see below)
+  shim-queues.ts
+```
+
+`voidbase adapt` does the same pass without Vite, which is what CI and a pure-API project need.
 
 ```bash
-bun run build            # or: bunx voidbase adapt
-bunx voidbase serve --entry main.ts    # http://127.0.0.1:8090: the site, /api, and the panel at /_/
-bunx voidbase deploy                   # one Cloudflare Worker with all three
+bun run build                              # or: bunx voidbase adapt
+bun .voidbase/main.ts --http 127.0.0.1:8090   # the site, /api, and the panel at /_/
+cd .voidbase && bunx voidbase deploy          # one Cloudflare Worker with all three
 ```
+
+## What the project owns
+
+Everything at the project root is Void's. What belongs to voidbase instead lives in one place, `src/voidbase/`,
+and all of it is optional:
+
+| path | what it does |
+| --- | --- |
+| `src/voidbase/register.ts` | `export function register(app)`: the project's own hooks, routes and event handlers, called from the generated `main.ts` |
+| `src/voidbase/pb_hooks/` | PocketBase JS hooks, copied into the generated app as they are |
+| `src/voidbase/pb_migrations/` | PocketBase JS migrations, copied in beside the ones generated from `db/migrations` |
 
 ## What maps to what
 
 | Void | voidbase | notes |
 | --- | --- | --- |
-| `index.html`, `public/`, the client build | `pb_public/` | served at `/`; `404.html` is copied from `index.html` so a deep link behaves the same on Bun and on the asset layer |
+| `index.html`, `public/`, the client build | `.voidbase/pb_public/` | served at `/`; `404.html` is copied from `index.html` so a deep link behaves the same on Bun and on the asset layer |
 | `routes/**/*.ts` | Hono routes on the running app | `[id]` → `:id`, `[...rest]` → catch-all, `(group)/` stripped, `_file.ts` ignored, `.dev.ts` / `.prod.ts` honoured |
 | `middleware/*.ts` | the same chain, in file order | scoped to the app's own routes (see below) |
 | `crons/*.ts` | `cronAdd(<file name>, cron, handler)` | listed by `GET /api/crons`, runnable with `POST /api/crons/<name>` |
 | `queues/*.ts` | a voidbase job per message | `void/queues` and `c.env.QUEUE_<NAME>` produce; the consumer runs on the jobs queue, or inline where there is none |
 | `db/schema.ts` + `void/db` | Drizzle over voidbase's D1 | the same database PocketBase's collections live in |
-| `db/migrations/*.sql` | `pb_migrations/<name>.void.js` | applied and recorded like any other migration, on both runtimes |
+| `db/migrations/*.sql` | `.voidbase/pb_migrations/<name>.void.js` | applied and recorded like any other migration, on both runtimes |
 
-Generated files live in `.voidbase/` (git-ignore it, like `.void/`). `main.ts` is written once, on the first run,
-and never touched again: it is where your own hooks go.
-
-```
-.voidbase/void-app.ts     the glue: imports your modules, mounts them
-.voidbase/tsconfig.json   Void's tsconfig fragment, with two mappings repointed (see below)
-.voidbase/shim-db.ts      void/db at runtime, with Void's schema-aware types
-.voidbase/shim-queues.ts  void/queues at runtime
-.voidbase/manifest.json   what the last build found
-main.ts                   your composition entry, generated once
-```
-
-Point the app's `tsconfig.json` at the adapter's fragment so the editor and Bun agree:
+Point the project's `tsconfig.json` at the adapter's fragment so the editor and Bun agree:
 
 ```jsonc
 { "extends": "./.voidbase/tsconfig.json" }   // instead of "./.void/tsconfig.json"
@@ -60,13 +75,16 @@ from Void's declarations, and passes every other mapping (`@schema`, `void/route
 
 ## Two shapes of app
 
-The adapter looks at what the app actually has:
+The adapter looks at what the project actually has:
 
-- **Static.** No `routes/`, `middleware/`, `crons/` or `queues/`. The build is copied to `pb_public/` and nothing
-  else is generated: run it with plain `voidbase serve`, which picks `./pb_public` up on its own.
-- **Server.** Anything else. `.voidbase/void-app.ts` and `main.ts` are written too, and the app runs with
-  `voidbase serve --entry main.ts`. `voidbase deploy` composes `main.ts` into the Worker, so the same code serves
-  on Cloudflare.
+- **Static.** No `routes/`, `middleware/`, `crons/`, `queues/` and no `src/voidbase/`. The generated app is
+  `main.ts` plus `pb_public`, and `main.ts` registers nothing.
+- **Server.** Anything else. `void-app.ts` is generated and `main.ts` registers it along with
+  `src/voidbase/register.ts`. `voidbase deploy`, run from `.voidbase/`, composes that `main.ts` into the Worker, so
+  the same code serves on Cloudflare.
+
+Pages are prerendered when `void.json` sets `"output": "static"`; they land in `pb_public` as plain HTML and need no
+runtime. Pages that still render per request have nowhere to run here, and the build says so.
 
 ## How the server code runs
 
@@ -103,7 +121,7 @@ consumer that throws, or calls `retry()`, is retried by voidbase's job runner.
 
 | what | why |
 | --- | --- |
-| `pages/` | server-rendered pages need Void's render pipeline; prerender them and they land in `pb_public` |
+| `pages/` that render per request | prerender them with `"output": "static"` and they land in `pb_public`; there is no page renderer at runtime |
 | `routes/**/*.ws.ts` | document WebSockets are Durable Objects, and voidbase's realtime hub owns that binding |
 | `void/kv` | voidbase binds D1 and R2 only; a collection is the place for that data |
 | `void/isr` | ISR runs in the Void platform's dispatch worker, which a self-hosted app does not have |
@@ -112,9 +130,13 @@ consumer that throws, or calls `retry()`, is retried by voidbase's job runner.
 `bunx --bun vite build` (or `bun run build` with Bun as the package manager). `voidbase adapt` has no such
 constraint.
 
+**Nothing is written outside `.voidbase/`.** Delete the directory and the next build makes it again, so it belongs
+in `.gitignore` and never in review.
+
 ## Testing it
 
 `test/adapter.ts` converts `test/fixtures/void-app`, boots it with the generated `main.ts` and exercises the whole
-surface: route paths and parameters, literal-beats-parameter ordering, middleware order, `void/db` through the
-shim, `void/storage`, a queue round trip, a cron run, the Drizzle migration and the static build. Run it with
+surface: the generated layout, route paths and parameters, literal-beats-parameter ordering, middleware order,
+`void/db` through the shim, `void/storage`, a queue round trip, a cron run, both kinds of migration, the project's
+own `register()` and pb_hooks, and that nothing is written outside `.voidbase/`. Run it with
 `bun test/adapter.ts`, or as part of `bash scripts/ci.sh` (step `adapter`).

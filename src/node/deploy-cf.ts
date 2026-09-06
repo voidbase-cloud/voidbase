@@ -83,6 +83,13 @@ export async function ensureQueue(token: string, account: string, name: string):
   if (!made.success) return { id: null, created: false, reason: made.errors?.map((e) => `${e.code} ${e.message}`).join("; ") || "cannot create the queue" };
   return { id: made.result.queue_id, created: true };
 }
+// Rate-limit bindings that share a namespace_id share their counters across every Worker in the account (Cloudflare
+// docs), so each app derives its own id from its name: two voidbase instances never share a resource.
+export function rateLimitNamespace(name: string): string {
+  let h = 2166136261; // FNV-1a over the worker name, kept in the positive 31-bit range Cloudflare accepts
+  for (const ch of name) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  return String((h % 2147480000) + 1000);
+}
 export function parseRateLimit(spec: string | undefined): { limit: number; period: 10 | 60 } | null {
   const v = (spec ?? "").trim();
   if (!v || v === "0" || v === "off") return v ? null : { limit: 300, period: 10 };
@@ -157,7 +164,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     name, account_id: account.id, placement: { mode: "smart" },
     d1_databases: [{ binding: "DB", database_name: `${name}-db`, database_id: db.uuid, migrations_dir: "./db/migrations" }],
     r2_buckets: [{ binding: "STORAGE", bucket_name: `${name}-storage` }],
-    ...(rateLimit ? { ratelimits: [{ name: "RATE_LIMITER", namespace_id: "1001", simple: { limit: rateLimit.limit, period: rateLimit.period } }] } : {}),
+    ...(rateLimit ? { ratelimits: [{ name: "RATE_LIMITER", namespace_id: rateLimitNamespace(name), simple: { limit: rateLimit.limit, period: rateLimit.period } }] } : {}),
     ...(analytics ? { analytics_engine_datasets: [{ binding: "LOGS_ANALYTICS", dataset: `${name.replace(/-/g, "_")}_requests` }] } : {}),
   }, null, 2) + "\n";
   writeFileSync(`${cloud}/wrangler.jsonc`, `// written by voidbase deploy; ids are real resources on account ${account.id}\n${wranglerConfig}`);

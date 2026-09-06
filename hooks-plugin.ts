@@ -197,9 +197,13 @@ export function writeNotFoundShells(dir: string): string[] {
   return written;
 }
 
-export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string } = {}): Plugin {
+export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; hubEntry?: string } = {}): Plugin {
   const dir = resolve(options.dir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks");
   const migrationsDir = resolve(options.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations");
+  // hubEntry: the module exporting VoidbaseHub (src/server/hub.ts). Void generates the Worker entry (.void/entry.ts)
+  // and exports only its own classes, so the instance's Durable Object class is appended to that entry at bundle time;
+  // wrangler.jsonc declares the binding (HUB) and the new_sqlite_classes migration.
+  const hubEntry = options.hubEntry ? resolve(options.hubEntry) : "";
   const here = resolve(fileURLToPath(new URL(".", import.meta.url)));
   let clientOut = "";
   return {
@@ -213,6 +217,10 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string } 
     // panel's index are copied to 404.html at build time. Unknown /api paths keep their JSON 404 (the binding returns a
     // 404 for them, which Void's entry only swaps for the HTML page on browser navigations).
     closeBundle() { writeNotFoundShells(clientOut); },
+    transform(code, id) {
+      if (hubEntry && id.replace(/\\/g, "/").endsWith("/.void/entry.ts")) return { code: `${code}\nexport { VoidbaseHub } from ${JSON.stringify(hubEntry)};\n`, map: null };
+      return null;
+    },
     resolveId(id) { return id === VIRTUAL ? RESOLVED : id === VIRTUAL_MIGRATIONS ? RESOLVED_MIGRATIONS : null; },
     load(id) {
       if (id === RESOLVED) {

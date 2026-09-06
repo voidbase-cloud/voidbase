@@ -91,7 +91,7 @@ rows actually written", and 5 and 6 are the two latency wins visible to users.
 | 2b log sink | done, opt-in: Analytics Engine data point per request (`--analytics`); the account must enable Analytics Engine once, which is why it is not the default | `src/server/logs.ts`, `src/node/deploy-cf.ts` |
 | 8 KV | skipped: settings are cached per isolate and Smart Placement makes the remaining D1 read cheap | |
 | 9 rate limits | done: the rate-limit binding as a per-location ceiling per IP while rate limits are enabled (`--rate-limit`); eventually consistent by Cloudflare's design | `src/server/hardening.ts`, `src/node/deploy-cf.ts` |
-| 10 Durable Object hub | waiting on Void: its Cloudflare backend refuses custom Durable Object classes | |
+| 10 Durable Object hub | design settled, not built: a per-instance SQLite-backed class exported from the instance's own Worker (the plugin appends it to Void's generated entry; the root wrangler config declares the binding and migration, which Void's Cloudflare backend accepts). Verified in a workerd preview: socket accepted through the hibernation API, publish delivered. Void itself neither promises custom Durable Objects nor offers a cheaper primitive: `void/live` keeps one active object per open stream and caps a topic at 256 subscribers | `src/server/hub.ts`, `hooks-plugin.ts` `hubEntry` |
 
 
 ## Beyond 500 apps per account: one Worker, one Durable Object per app

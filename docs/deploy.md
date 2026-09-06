@@ -73,6 +73,14 @@ https://dash.cloudflare.com/?to=/:account/api-tokens).
 | `LOGS_ANALYTICS` (Workers Analytics Engine) | one data point per request (method, path, status, auth collection, error, execution time) at any log level, queryable in the dashboard and the SQL API at $0.25 per million points, while the panel's log keeps writing D1 rows from `VOIDBASE_LOG_MIN_LEVEL` up. The account has to enable Analytics Engine once, at https://dash.cloudflare.com/?to=/:account/workers/analytics-engine, or the upload fails with code 10089 | opt-in: `--analytics` / `VOIDBASE_DEPLOY_ANALYTICS=1` |
 | Smart Placement | the Worker runs next to its D1 database | always on |
 
+### Every instance is isolated
+
+Two voidbase instances on one account never share a resource. Everything the deploy creates is named or derived from
+the worker name: `<name>-db`, `<name>-storage`, `<name>-jobs`, the `<name>_requests` dataset, and the rate-limit
+binding's `namespace_id` is hashed from the name, because Cloudflare shares counters between bindings that reuse an
+id across Workers. The realtime hub, when it lands, is a Durable Object class exported from the instance's own Worker
+rather than a Worker shared by apps. `test/deploy-cf.ts` asserts the naming.
+
 ## Option B: the Void platform
 
 ```bash

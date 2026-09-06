@@ -47,6 +47,9 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun run panel:sync
+          # the starter's frontend build next to the panel, as a deployment ships it (the SPA shell the boot test checks)
+          (cd ../pocketbase-sveltekit-starter/sk && bun install --frozen-lockfile && bunx svelte-kit sync && bun run build)
+          bun run app:sync
           ./node_modules/.bin/void prepare
       - name: Typecheck and unit tests
         working-directory: voidbase
@@ -103,6 +106,7 @@ jobs:
         run: |
           echo "--- dev.log"; tail -n 80 .void/dev.log || true
           echo "--- reference"; tail -n 40 .void/reference/pb.log || true
+          echo "--- preview.log"; tail -n 60 .void/preview.log || true
           for f in .void/ci-logs/*.log; do echo "--- $f"; tail -n 30 "$f"; done
       - uses: actions/upload-artifact@v4
         if: always()

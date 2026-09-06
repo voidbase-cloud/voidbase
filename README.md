@@ -19,7 +19,7 @@ if (import.meta.main) { const app = await voidbase(parseServeArgs()); register(a
 ```
 
 `bun main.ts --http 127.0.0.1:8090` runs it; `voidbase deploy` composes `register` into the Worker as well.
-`pocketbase-sveltekit-starter/vb` is the worked example (audit log, `hooks` collection actions, passkeys).
+`voidbase-sveltekit-starter/vb` is the worked example (audit log, `hooks` collection actions, passkeys).
 
 ## Run it like PocketBase
 
@@ -32,7 +32,7 @@ One Bun process, SQLite in `pb_data/data.db`, files in `pb_data/storage/`, the a
 `pb_hooks` and `pb_migrations` you would give PocketBase (`--dev` restarts on hook changes, `voidbase superuser
 upsert email pass` works offline on `pb_data`). The Cloudflare deployment runs the same code on D1 and R2 with
 `voidbase deploy` from the same directory (see docs/deploy.md). The PocketBase-shaped
-consumer is `pocketbase-sveltekit-starter/vb`.
+consumer is `voidbase-sveltekit-starter/vb`.
 
 ## Run locally (this checkout, Workers dev server)
 
@@ -55,13 +55,14 @@ bun test/conformance/compare.ts          # same requests at both servers, JSON d
 bun test/panel-smoke.ts                  # headless login through the unmodified panel, screenshot to /tmp/panel.png
 ```
 
-## Use as a package (the starter's `vb/`)
+## The starter fork
 
-`pocketbase-sveltekit-starter/vb` is the reference consumer: a few one-line Void entry files import `voidbase/app`,
-`voidbase/middleware`, `voidbase/crons`, `voidbase/schema`, `voidbase/env` and the `pbHooksPlugin` from
-`voidbase/plugin`, with the project's own `pb_hooks/` and `pb_migrations/` next to them (package `exports`). Its
-`entrypoint.sh` is a drop-in for the PocketBase one: same `PB_*` environment, same port. The panel is fetched from the
-pinned PocketBase release when no local `ui/dist` is around (`scripts/sync-panel.ts`).
+`voidbase-sveltekit-starter` is the reference consumer: `pocketbase-sveltekit-starter` with `pb/` replaced by
+`vb/` (a PocketBase-shaped directory: `pb_hooks`, `pb_migrations`, `pb_data`, `main.ts`, `entrypoint.sh`) and
+nothing else changed. Its `vb/package.json` depends on this package; `bun run backend` in `sk` runs `voidbase serve`,
+`bun run dev:backend` runs `main.ts`, and `bun run deploy` in `vb` goes live on Cloudflare. The original
+`pocketbase-sveltekit-starter` checkout stays on upstream master as the PocketBase reference for the differential
+suites (`scripts/seed-reference.sh` runs its `pb/` against the reference binary).
 
 ## CLI
 

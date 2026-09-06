@@ -3,7 +3,7 @@
 #   scripts/starter.sh start [port] [backend]   scripts/starter.sh stop   scripts/starter.sh log
 set -u
 cd "$(dirname "$0")/.."
-SK="${STARTER_SK_DIR:-../pocketbase-sveltekit-starter/sk}"
+SK="${STARTER_SK_DIR:-../voidbase-sveltekit-starter/sk}"
 PORT="${2:-5174}"; BACKEND="${3:-http://127.0.0.1:5180}"
 PIDFILE=".void/starter.pid"; LOG=".void/starter.log"
 mkdir -p .void

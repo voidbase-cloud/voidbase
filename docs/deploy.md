@@ -35,7 +35,7 @@ Storage edit, Account Settings read):
 [Create VOIDBASE_DEPLOY_CF_API_KEY](https://dash.cloudflare.com/?to=/:account/api-tokens&permissionGroupKeys=%5B%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_r2%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_settings%22%2C%22type%22%3A%22read%22%7D%5D&name=VOIDBASE_DEPLOY_CF_API_KEY)
 
 `voidbase token` prints the same link. Then, in the directory that holds `pb_hooks/` and `pb_migrations/`
-(`pocketbase-sveltekit-starter/vb` for the starter):
+(`voidbase-sveltekit-starter/vb` for the starter):
 
 ```bash
 export VOIDBASE_DEPLOY_CF_API_KEY=...        # or put it in .env next to pb_hooks, or a CI secret

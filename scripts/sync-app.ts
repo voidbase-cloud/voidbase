@@ -15,6 +15,7 @@ mkdirSync(dest, { recursive: true });
 for (const entry of readdirSync(dest)) if (entry !== "_") rmSync(`${dest}/${entry}`, { recursive: true, force: true });
 for (const entry of readdirSync(src)) {
   if (entry === "_") { console.warn("skipping the app's /_ directory: that path belongs to the admin panel"); continue; }
+  if (entry === "_redirects") continue; // becomes void.json routing.redirects (host-aware); Cloudflare's asset layer would reject host sources
   cpSync(`${src}/${entry}`, `${dest}/${entry}`, { recursive: true });
 }
 console.log(`synced app ${src} -> ${dest} (${statSync(`${dest}/index.html`).size} bytes index.html)`);

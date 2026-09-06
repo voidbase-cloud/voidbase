@@ -8,8 +8,8 @@ const ROOT = resolve(import.meta.dir, "../..");
 // mode "package": a visible project importing the voidbase package (voidbase cloud init).
 // mode "internal": a project inside this package at .cloud/<slug>, importing ../../src etc. (voidbase deploy).
 export type RedirectRules = Record<string, { to: string; status: number }>;
-// Netlify/Pages-style `_redirects` (also what Void accepts): `source destination [status]`, `#` comments; a source may carry
-// a host (`https://api.example.com/`), which scopes the rule to that Host header. Only 3xx rules are taken here.
+// Netlify/Pages-style `_redirects`: `source destination [status]`, `#` comments; a source may carry a host
+// (`https://api.example.com/`), which scopes the rule to that Host header. 3xx rules become void.json routing.redirects.
 export function parseRedirects(text: string): RedirectRules {
   const rules: RedirectRules = {};
   for (const raw of text.split("\n")) {

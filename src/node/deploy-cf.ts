@@ -100,10 +100,12 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   // the static site next to the API: --public-dir, VOIDBASE_DEPLOY_PUBLIC_DIR, or ./pb_public when it exists (PocketBase's default)
   const publicDir = opts.publicDir || process.env.VOIDBASE_DEPLOY_PUBLIC_DIR || (existsSync(resolve("pb_public")) ? "pb_public" : undefined);
   if (publicDir && !existsSync(resolve(publicDir, "index.html"))) throw new Error(`public dir ${resolve(publicDir)} has no index.html (build the site first)`);
-  // <public dir>/_redirects: Netlify/Pages syntax, host-scoped sources allowed (`https://api.example.com/ /_/ 302`), applied
-  // by Void's edge rules before assets and the Worker: how one Worker answers differently per hostname
+  // <public dir>/_redirects: Netlify/Pages syntax, host-scoped sources allowed (`https://api.example.com/ /_/ 302`), which
+  // is how one Worker answers differently per hostname. The rules go into the generated void.json (Void applies them at
+  // the edge, before assets and the Worker); the file itself stays out of the uploaded assets, where Cloudflare's own
+  // _redirects handling rejects anything but relative sources (error 100324).
   const redirects = publicDir && existsSync(resolve(publicDir, "_redirects")) ? parseRedirects(readFileSync(resolve(publicDir, "_redirects"), "utf8")) : undefined;
-  if (redirects && Object.keys(redirects).length) log(`redirects: ${Object.entries(redirects).map(([from, r]) => `${from} -> ${r.to} (${r.status})`).join(", ")}`);
+  if (redirects && Object.keys(redirects).length) log(`redirects (${resolve(publicDir!, "_redirects")}): ${Object.entries(redirects).map(([from, r]) => `${from} -> ${r.to} (${r.status})`).join(", ")}`);
   let queue: string | false = false;
   if (wantQueue) {
     const q = await ensureQueue(api, account.id, `${name}-jobs`);

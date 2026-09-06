@@ -2308,9 +2308,9 @@
             "starter"
           ],
           "hours": 2,
-          "status": "partial",
+          "status": "done",
           "milestone": "m4",
-          "notes": "Verified by test/starter-smoke.ts, test/starter-passkeys.ts and test/starter-oauth2.ts: home config, password login, passkey register and login, OAuth2 popup sign-up, posts list with thumbnails, live list update from an API create and from Generate, post view, audit log tab, hello, delete flow. The edit form crashes upstream in Svelte 5 (FileInput renders an undefined children snippet) against PocketBase too; signup pending."
+          "notes": "test/starter-smoke.ts now covers home config, sign up through the Sign Up tab (record create + login) and sign out, password login, posts list with thumbnails, the Paginator ('page 1 of N'), live list update from an API create and from Generate, post view, audit log tab, UI reference page, hello, delete flow; test/starter-passkeys.ts and test/starter-oauth2.ts cover passkeys and OAuth2 sign-up. The starter's own post edit form with uploads is broken upstream in Svelte 5 (FileInput snippet) against PocketBase too, so uploads are exercised through the API and the SDK suite instead."
         },
         {
           "id": "st.e2e",

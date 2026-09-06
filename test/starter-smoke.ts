@@ -3,9 +3,9 @@
 //
 // The starter's own "New Post" edit form crashes in Svelte 5 (FileInput renders an undefined
 // `children` snippet) against PocketBase and voidbase alike, so the post is created through the
-// API and the starter is checked for what it does with it: realtime list update, view page,
-// audit log (hook-written), hello (hook route), generate (hook route with outbound http + files)
-// and the delete flow.
+// API and the starter is checked for what it does with it: sign up + sign out, sign in, realtime list update,
+// pagination, view page, audit log (hook-written), ui reference page, hello (hook route), generate (hook route
+// with outbound http + files) and the delete flow.
 import { chromium } from "playwright";
 
 const base = process.argv[2] ?? "http://127.0.0.1:5174";
@@ -35,6 +35,25 @@ await page.goto(`${base}/`, { waitUntil: "networkidle" });
 results.title = await page.title();
 results.footer = (await page.locator("footer").innerText()).replace(/\s+/g, " ").trim();
 
+// sign up through the LoginForm's Sign Up tab (creates the user, then signs in), then sign out
+const signupEmail = `smoke-${Date.now()}@example.com`;
+await page.getByRole("button", { name: /sign in/i }).first().click();
+await page.waitForSelector('form input[placeholder="Enter email or username"]', { timeout: 10000 });
+await page.locator('dialog[open] [role="tablist"] [role="tab"]:has-text("Sign Up")').first().click();
+await page.waitForSelector('form input[placeholder="Enter email"]', { timeout: 5000 });
+await page.fill('form input[placeholder="Enter email"]', signupEmail);
+await page.fill('form input[placeholder="Enter password"]', "changeme123");
+await page.fill('form input[placeholder="Confirm password"]', "changeme123");
+await page.fill('form input[placeholder="Your name"]', "Smoke Signup");
+await page.locator('form button[type="submit"]:has-text("Sign Up")').click();
+results.signedUp = await waitForText("Smoke Signup", 6000); // the badge shows the new user's name
+// the badge opens a dialog with the Sign Out button once signed in
+await page.locator("button.badge").first().click();
+await page.locator('dialog[open] button:has-text("Sign Out")').first().click();
+await page.waitForTimeout(800);
+results.signedOut = await page.getByRole("button", { name: /sign in/i }).first().isVisible().catch(() => false);
+await page.goto(`${base}/`, { waitUntil: "networkidle" });
+
 // login through the LoginBadge dialog
 await page.getByRole("button", { name: /sign in/i }).first().click();
 await page.waitForSelector('form input[placeholder="Enter email or username"]', { timeout: 10000 });
@@ -51,6 +70,7 @@ results.postsListed = await page.locator("a.post").count();
 const fileReqs = api.filter((l) => l.includes("GET /api/files/"));
 results.thumbStatus = fileReqs.length ? (fileReqs.every((l) => l.startsWith("200")) ? "200" : fileReqs.join(" | ")) : "none";
 results.realtimeSubscribed = api.some((l) => l.includes("GET /api/realtime")) && api.some((l) => l === "204 POST /api/realtime");
+results.pagination = /page 1 of \d+/.test((await page.locator('nav[aria-label="Pagination"]').first().innerText().catch(() => "")).replace(/\s+/g, " "));
 
 // create a post through the API as the same user; the open page must pick it up over realtime
 const auth = await fetch(`${base}/api/collections/users/auth-with-password`, {
@@ -92,6 +112,10 @@ await page.waitForTimeout(800);
 results.auditRows = await page.locator("table tbody tr").count();
 results.auditText = (await page.locator("table").innerText().catch(() => "")).replace(/\s+/g, " ").slice(0, 160);
 
+// ui reference page
+await page.goto(`${base}/ref-ui/`, { waitUntil: "networkidle" });
+results.refUi = (await text()).includes("UI Reference");
+
 // hello page: the starter's hook route with $apis.requireAuth()
 await page.goto(`${base}/hello/`, { waitUntil: "networkidle" });
 await page.waitForTimeout(600);
@@ -115,11 +139,15 @@ const since = new Date(stamp - 5000).toISOString().replace("T", " ");
 const leftovers = await fetch(`${base}/api/collections/posts/records?perPage=50&filter=${encodeURIComponent(`created >= "${since}"`)}`, { headers: { authorization: auth.token } }).then((r) => r.json()) as { items: { id: string }[] };
 for (const p of leftovers.items ?? []) await fetch(`${base}/api/collections/posts/records/${p.id}`, { method: "DELETE", headers: { authorization: auth.token } });
 results.cleanedUp = (leftovers.items ?? []).length;
+// remove the signed-up user (superuser API)
+const su = await fetch(`${base}/api/collections/_superusers/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: "admin@example.com", password: "changeme123" }) }).then((r) => r.json()) as { token: string };
+const signedUp = await fetch(`${base}/api/collections/users/records?filter=${encodeURIComponent(`email = '${signupEmail}'`)}`, { headers: { authorization: su.token } }).then((r) => r.json()) as { items: { id: string }[] };
+for (const u of signedUp.items ?? []) await fetch(`${base}/api/collections/users/records/${u.id}`, { method: "DELETE", headers: { authorization: su.token } });
 
 console.log(JSON.stringify(results, null, 1));
 console.log("api calls:", api.length, "| failed:", failed.length ? failed : "none");
 console.log("console errors:", consoleErrors.length ? consoleErrors.slice(0, 6) : "none");
-const ok = String(results.title).includes("Acme") && results.signedIn === true && Number(results.postsListed) >= 1
+const ok = String(results.title).includes("Acme") && results.signedUp === true && results.signedOut === true && results.signedIn === true && Number(results.postsListed) >= 1 && results.pagination === true && results.refUi === true
   && results.thumbStatus === "200" && results.realtimeSubscribed === true
   && results.createStatus === 200 && results.realtimeCreateSeen === true
   && results.viewHeadline === title && String(results.viewBody).startsWith("Created through the API")

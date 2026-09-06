@@ -19,3 +19,11 @@
 6. **Verify.** `bun test/conformance/compare.ts <pocketbaseURL> <voidbaseURL>` runs the same requests against
    both servers and diffs the JSON; the other suites under `test/conformance/` cover records, files, auth,
    realtime, settings, logs, crons, backups and SQL.
+
+## Leaving voidbase
+
+`bun scripts/export.ts <url> <outDir>` logs in as a superuser and writes `data.db` (SQLite with PocketBase's table
+and column layout, password hashes included), `collections.json` (import format) and `storage/` (every file as
+`{collectionId}/{recordId}/{filename}`), reading only through the API so it works against a deployed instance.
+Import `collections.json` into PocketBase, copy `storage/` into `pb_data/storage/` and load the rows from `data.db`.
+

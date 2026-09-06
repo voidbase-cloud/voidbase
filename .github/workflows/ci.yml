@@ -1,0 +1,72 @@
+name: ci
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VOIDBASE_SUPERUSER_EMAIL: admin@example.com
+      VOIDBASE_SUPERUSER_PASSWORD: changeme123
+      VOIDBASE_HOOKS_DIR: ../pocketbase-sveltekit-starter/pb/pb_hooks
+      VOIDBASE_MIGRATIONS_DIR: ../pocketbase-sveltekit-starter/pb/pb_migrations
+      AUDITLOG: posts,users
+      CHROME_PATH: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: voidbase }
+      # the two oracles: the starter (hooks, migrations, frontend) and PocketBase's committed panel build
+      - uses: actions/checkout@v4
+        with: { repository: spinspire/pocketbase-sveltekit-starter, path: pocketbase-sveltekit-starter }
+      - uses: actions/checkout@v4
+        with: { repository: pocketbase/pocketbase, ref: v0.40.2, path: pocketbase, sparse-checkout: ui/dist }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.3.14" }
+      - name: Install
+        working-directory: voidbase
+        run: |
+          bun install --frozen-lockfile
+          bun run panel:sync
+          ./node_modules/.bin/void prepare
+      - name: Typecheck and unit tests
+        working-directory: voidbase
+        run: |
+          bunx tsc --noEmit -p tsconfig.json
+          bun test
+      - name: Start voidbase (dev server on 5180)
+        working-directory: voidbase
+        run: |
+          ./node_modules/.bin/void db migrate
+          ./scripts/dev.sh start 5180
+          ./scripts/seed-app-user.sh http://127.0.0.1:5180
+      - name: Start the reference PocketBase (8090) and test helpers
+        working-directory: voidbase
+        run: |
+          ./scripts/seed-reference.sh .void/reference 8090 0.39.11 ../pocketbase-sveltekit-starter
+          (setsid nohup bun test/smtp-sink.ts > .void/sink.log 2>&1 &)
+          (setsid nohup bun test/mock-oidc.ts > .void/oidc.log 2>&1 &)
+          sleep 2
+      - name: Differential suites and panel tests
+        working-directory: voidbase
+        run: ./scripts/ci-suites.sh http://127.0.0.1:8090 http://127.0.0.1:5180
+      - name: Fresh-database boot (production build in workerd)
+        working-directory: voidbase
+        run: bun test/fresh-db.ts 5181
+      - name: Starter app smoke (unmodified pocketbase-sveltekit-starter against voidbase)
+        working-directory: voidbase
+        run: |
+          (cd ../pocketbase-sveltekit-starter/sk && bun install --frozen-lockfile && bunx svelte-kit sync)
+          ./scripts/starter.sh start 5174 http://127.0.0.1:5180
+          bun test/starter-smoke.ts http://127.0.0.1:5174 .void/ci-logs/starter.png
+      - name: Logs on failure
+        if: failure()
+        working-directory: voidbase
+        run: |
+          echo "--- dev.log"; tail -n 80 .void/dev.log || true
+          echo "--- reference"; tail -n 40 .void/reference/pb.log || true
+          for f in .void/ci-logs/*.log; do echo "--- $f"; tail -n 30 "$f"; done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: ci-logs, path: voidbase/.void/ci-logs, if-no-files-found: ignore }

@@ -2318,9 +2318,9 @@
             "prod"
           ],
           "hours": 3,
-          "status": "partial",
+          "status": "done",
           "milestone": "m4",
-          "notes": "sk/tests/smoke.test.ts is stale against the starter UI (Create New, Recent Posts), so test/starter-smoke.ts drives the starter instead; CI wiring pending."
+          "notes": "sk/tests is stale upstream, so CI runs voidbase's own Playwright suites instead: .github/workflows/ci.yml checks out the starter and PocketBase's panel build, starts voidbase (dev server, void db migrate, seed-app-user), a seeded reference PocketBase 0.39.11 (scripts/seed-reference.sh: release binary, starter pb_migrations/pb_hooks, superuser upsert, app user), the SMTP sink and the OIDC mock, then scripts/ci-suites.sh (22 differential suites + SDK suite + unit + 5 panel suites), test/fresh-db.ts and test/starter-smoke.ts. The whole runner was executed locally against a fresh reference on 8091 and a fresh voidbase on 5182: all suites green (the recorded records fixtures need user@example.com unverified, which the seed scripts now match)."
         }
       ]
     },
@@ -2432,8 +2432,9 @@
             "prod"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "bun scripts/export.ts <url> <outDir>: through the superuser API only (POST /api/sql paged by rowid, GET /api/files), writes data.db (SQLite with PocketBase's table/column layout incl. system auth tables and password hashes, views recreated), collections.json (import format) and storage/{collectionId}/{recordId}/{filename}. Verified against the dev server: 11 collections, 336 rows, 10 files."
         },
         {
           "id": "prod.compat-matrix",

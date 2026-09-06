@@ -34,6 +34,12 @@ unmodified `pocketbase-sveltekit-starter`. Helpers that must be running for some
 (SMTP 2525 / HTTP 2526) and `bun test/mock-oidc.ts` (5190). `bun test/fresh-db.ts` builds the production Worker
 with the fixture hooks and migrations and boots it on an empty D1.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` checks out the two oracles (the starter and PocketBase's panel build), starts voidbase and
+a seeded reference PocketBase (`scripts/seed-reference.sh`), and runs every suite through `scripts/ci-suites.sh`,
+then `test/fresh-db.ts` and the starter smoke. The same scripts run locally against any pair of servers.
+
 ## Docs
 
 - [docs/deploy.md](docs/deploy.md): Void platform or your own Cloudflare account.

@@ -37,10 +37,17 @@ export function pick(data: unknown, node: Node | null): unknown {
   for (const [k, v] of Object.entries(src).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const child = node.children.get(k) ?? star;
     if (!child) continue;
-    const value = child.children.size ? pick(v, child) : v;
+    const value = child.children.size ? pick(v, child) : sortDeep(v);
     out[k] = child.modifier ? child.modifier(value) : value;
   }
   return out;
+}
+
+// the whole picked document went through map[string]any in Go, so nested objects come back key-sorted too
+function sortDeep(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(sortDeep);
+  if (!v || typeof v !== "object") return v;
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, x]) => [k, sortDeep(x)]));
 }
 
 const INLINE = new Set(["a", "abbr", "acronym", "b", "bdo", "big", "br", "button", "cite", "code", "dfn", "em", "i", "img", "input", "kbd", "label", "map", "object", "output", "q", "samp", "select", "small", "span", "strong", "sub", "sup", "textarea", "time", "tt", "u", "var", "video"]);

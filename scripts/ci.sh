@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The whole CI flow in one script (docs/ci.md), the same on a dev machine, on GitHub Actions and on Cloudflare
-# Workers Builds: commit messages, typecheck and unit tests, the differential and panel suites against a reference
+# The whole CI flow in one script (docs/ci.md), the same on a dev machine and on Cloudflare Workers Builds (GitHub
+# Actions only starts the builds): commit messages, typecheck and unit tests, the differential and panel suites against a reference
 # PocketBase, the same suites on the Bun runtime, the deploy dry run, the production-build boots, the prebuilt
 # executable and the unmodified starter. Every step is recorded for the status page (ci/public, scripts/ci-status.ts);
 # the script stops at the first failed step and exits non-zero. It stops the servers it started when it ends.

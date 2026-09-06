@@ -1,0 +1,71 @@
+# GitHub only starts builds; Cloudflare Workers Builds runs them (docs/ci.md): scripts/ci.sh for every push to master
+# and every pull request (the CI project, whose deploy is the status page and, for a pull request, a preview URL),
+# scripts/release.sh for every push to master and every published release (the release project). The variables and the
+# secret below are written by `bun scripts/cf-builds.ts setup --github`; until they exist the job is skipped.
+name: cloudflare
+on:
+  push:
+    branches: [master]
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "the build to start for this ref"
+        type: choice
+        options: [ci, release, release-dry-run]
+        default: ci
+jobs:
+  start:
+    # no variables yet: nothing to start. Pull requests from forks: no secrets, and their commits are not in the connected repository.
+    if: vars.CF_ACCOUNT_ID != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      API: https://api.cloudflare.com/client/v4/accounts/${{ vars.CF_ACCOUNT_ID }}/builds
+      TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_TOKEN }}
+      COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      BRANCH: ${{ github.head_ref || (github.ref_type == 'branch' && github.ref_name) || '' }}
+      WAIT: ${{ vars.CF_BUILDS_WAIT }}
+    steps:
+      - name: Start the builds
+        run: |
+          start() {  # start <name> <trigger uuid>: one build of $COMMIT (on $BRANCH when the ref is a branch)
+            [ -n "$2" ] || { echo "$1: no trigger uuid in the repository variables (bun scripts/cf-builds.ts setup --github)"; exit 1; }
+            body=$(printf '{"commit_hash":"%s"%s}' "$COMMIT" "${BRANCH:+,\"branch\":\"$BRANCH\"}")
+            res=$(curl -sS "$API/triggers/$2/builds" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$body")
+            uuid=$(printf '%s' "$res" | jq -r '.result.build_uuid // empty')
+            [ -n "$uuid" ] || { echo "$1: no build started: $res"; exit 1; }
+            echo "$1: build $uuid ($(printf '%s' "$res" | jq -r '.result.status // "queued"')) of $COMMIT${BRANCH:+ on $BRANCH}"
+            uuids="${uuids:-} $1=$uuid"
+          }
+          case "${{ github.event_name }}" in
+            push) start ci "${{ vars.CF_CI_TRIGGER_MASTER }}"; start release "${{ vars.CF_RELEASE_TRIGGER_MASTER }}" ;;
+            pull_request) start ci "${{ vars.CF_CI_TRIGGER_BRANCHES }}" ;;
+            release) start release "${{ vars.CF_RELEASE_TRIGGER_MASTER }}" ;;
+            workflow_dispatch)
+              case "${{ inputs.project }}" in
+                ci) start ci "${{ github.ref_name == 'master' && vars.CF_CI_TRIGGER_MASTER || vars.CF_CI_TRIGGER_BRANCHES }}" ;;
+                release) start release "${{ vars.CF_RELEASE_TRIGGER_MASTER }}" ;;
+                release-dry-run) start release-dry-run "${{ vars.CF_RELEASE_TRIGGER_DRY_RUN }}" ;;
+              esac ;;
+          esac
+          echo "uuids=$uuids" >> "$GITHUB_ENV"
+      - name: Wait for the builds (repository variable CF_BUILDS_WAIT=1)
+        if: env.WAIT == '1'
+        run: |
+          rc=0
+          for pair in $uuids; do
+            name=${pair%%=*}; uuid=${pair#*=}; unknown=0
+            while :; do
+              status=$(curl -sS "$API/builds/$uuid" -H "Authorization: Bearer $TOKEN" | jq -r '.result.status // empty')
+              case "$status" in
+                success) echo "$name: success"; break ;;
+                failure|failed|canceled|cancelled|timed_out|error) echo "$name: $status"; rc=1; break ;;
+                "") unknown=$((unknown + 1)); [ "$unknown" -lt 10 ] || { echo "$name: cannot read the status of build $uuid; see the dashboard"; rc=1; break; } ;;
+              esac
+              sleep 30
+            done
+          done
+          exit $rc

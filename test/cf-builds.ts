@@ -1,9 +1,10 @@
 // scripts/cf-builds.ts and scripts/gh-release.ts against test/cf-mock.ts: the Builds API wants the user token, setup
-// connects the repository and creates the two Workers with three triggers and their variables (idempotently), builds
-// are triggered, listed, followed and cancelled, variables set; release assets are uploaded, replaced and the notes
-// rewritten through GitHub's API.
+// connects the repository and creates the two Workers with four triggers (push builds off, variables and secrets set,
+// idempotently) and stores the workflow's variables and secret in GitHub through a stubbed gh; builds are triggered,
+// listed, followed and cancelled, variables set; release assets are uploaded, replaced and the notes rewritten
+// through GitHub's API.
 //   bun test/cf-builds.ts        (starts its own cf-mock on a free port)
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 const probe = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() }); const PORT = probe.port; probe.stop(true);
@@ -27,18 +28,25 @@ try {
   let s = await state(); let w = await scripts();
   const byName = (n: string) => s.triggers.find((t: { trigger_name: string }) => t.trigger_name === n);
   const tagOf = (n: string) => w.find((x) => x.id === n)?.tag;
-  check("setup: repository connected, two Workers with tags, three triggers", setup.code === 0 && s.connections.length === 1 && s.connections[0].repo_id === "1359087906" && s.connections[0].provider_account_name === "voidbase-cloud" && !!tagOf("voidbase-ci") && !!tagOf("voidbase-release") && s.triggers.length === 3, setup.out.slice(0, 400));
-  const prod = byName("voidbase-ci (master)"), preview = byName("voidbase-ci (branches)"), rel = byName("voidbase-release (master)");
-  check("the CI production trigger: master, `bun run ci`, deploys the status Worker, cache on", prod?.external_script_id === tagOf("voidbase-ci") && prod.build_command === "bun run ci" && /wrangler deploy -c ci\/wrangler\.jsonc/.test(prod.deploy_command) && JSON.stringify(prod.branch_includes) === '["master"]' && prod.build_caching_enabled === true && prod.build_token_uuid === "bt-1", JSON.stringify(prod));
+  check("setup: repository connected, two Workers with tags, four triggers", setup.code === 0 && s.connections.length === 1 && s.connections[0].repo_id === "1359087906" && s.connections[0].provider_account_name === "voidbase-cloud" && !!tagOf("voidbase-ci") && !!tagOf("voidbase-release") && s.triggers.length === 4, setup.out.slice(0, 400));
+  const prod = byName("voidbase-ci (master)"), preview = byName("voidbase-ci (branches)"), rel = byName("voidbase-release (master)"), dry = byName("voidbase-release (dry run)");
+  check("the CI production trigger: master, scripts/ci.sh, deploys the status Worker, cache on", prod?.external_script_id === tagOf("voidbase-ci") && prod.build_command === "bash scripts/ci.sh" && /wrangler deploy -c ci\/wrangler\.jsonc/.test(prod.deploy_command) && JSON.stringify(prod.branch_includes) === '["master"]' && prod.build_caching_enabled === true && prod.build_token_uuid === "bt-1", JSON.stringify(prod));
   check("the CI preview trigger: every other branch, versions upload for a preview URL", preview?.external_script_id === tagOf("voidbase-ci") && /versions upload -c ci\/wrangler\.jsonc/.test(preview.deploy_command) && JSON.stringify(preview.branch_includes) === '["*"]' && JSON.stringify(preview.branch_excludes) === '["master"]', JSON.stringify(preview));
-  check("the release trigger: master, `bun run release`, on the release Worker", rel?.external_script_id === tagOf("voidbase-release") && rel.build_command === "bun run release" && JSON.stringify(rel.branch_includes) === '["master"]', JSON.stringify(rel));
-  check("build variables: BUN_VERSION on the CI triggers, the secrets on the release trigger", s.buildEnv[prod.trigger_uuid]?.BUN_VERSION?.value === "1.3.14" && s.buildEnv[preview.trigger_uuid]?.BUN_VERSION?.value === "1.3.14" && s.buildEnv[rel.trigger_uuid]?.GH_TOKEN?.value === "gh-test" && s.buildEnv[rel.trigger_uuid]?.GH_TOKEN?.is_secret === true && s.buildEnv[rel.trigger_uuid]?.NPM_TOKEN?.is_secret === true && !s.buildEnv[rel.trigger_uuid]?.GH_PACKAGES_TOKEN, JSON.stringify(s.buildEnv));
-  check("setup's summary names what it created and how to start the first build", /created/.test(setup.out) && /secrets stored: GH_TOKEN, NPM_TOKEN/.test(setup.out) && /cf-builds\.ts build --branch master --follow/.test(setup.out), setup.out.slice(-400));
+  check("the release triggers: master runs scripts/release.sh, the dry run trigger runs it with --dry-run and uploads a version", rel?.external_script_id === tagOf("voidbase-release") && rel.build_command === "bash scripts/release.sh" && JSON.stringify(rel.branch_includes) === '["master"]' && dry?.external_script_id === tagOf("voidbase-release") && dry.build_command === "bash scripts/release.sh --dry-run" && /versions upload/.test(dry.deploy_command) && JSON.stringify(dry.branch_excludes) === '["master"]', JSON.stringify([rel, dry]));
+  check("push events never build: every trigger's watch paths exclude everything", s.triggers.every((t: { path_includes: string[]; path_excludes: string[] }) => JSON.stringify(t.path_includes) === '["*"]' && JSON.stringify(t.path_excludes) === '["*"]'), JSON.stringify(s.triggers.map((t: { path_excludes: string[] }) => t.path_excludes)));
+  check("build variables: BUN_VERSION on the CI triggers, the secrets on both release triggers", s.buildEnv[prod.trigger_uuid]?.BUN_VERSION?.value === "1.3.14" && s.buildEnv[preview.trigger_uuid]?.BUN_VERSION?.value === "1.3.14" && s.buildEnv[rel.trigger_uuid]?.GH_TOKEN?.value === "gh-test" && s.buildEnv[rel.trigger_uuid]?.GH_TOKEN?.is_secret === true && s.buildEnv[rel.trigger_uuid]?.NPM_TOKEN?.is_secret === true && !s.buildEnv[rel.trigger_uuid]?.GH_PACKAGES_TOKEN && s.buildEnv[dry.trigger_uuid]?.NPM_TOKEN?.is_secret === true, JSON.stringify(s.buildEnv));
+  check("setup's summary names what it created, the workflow's variables and how to start the first build", /created/.test(setup.out) && /secrets stored: GH_TOKEN, NPM_TOKEN/.test(setup.out) && new RegExp(`CF_CI_TRIGGER_MASTER=${prod.trigger_uuid}`).test(setup.out) && new RegExp(`CF_RELEASE_TRIGGER_DRY_RUN=${dry.trigger_uuid}`).test(setup.out) && /cf-builds\.ts build --branch master --follow/.test(setup.out), setup.out.slice(-600));
+  // --github stores the variables and the secret through gh; a stub records the calls
+  const stubDir = mkdtempSync(join(tmpdir(), "vb-gh-")); const stubLog = `${stubDir}/calls.log`;
+  writeFileSync(`${stubDir}/gh`, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${stubLog}"\nif [ "$1" = secret ]; then cat >> "${stubLog}.stdin"; fi\n`); chmodSync(`${stubDir}/gh`, 0o755);
+  const withGh = cfb(["setup", "--github"], { GH_BIN: `${stubDir}/gh` });
+  const calls = existsSync(stubLog) ? readFileSync(stubLog, "utf8").trim().split("\n") : [];
+  check("setup --github: five repository variables and the secret over stdin, never as an argument", withGh.code === 0 && calls.filter((c) => c.startsWith("variable set ")).length === 5 && calls.some((c) => c === `variable set CF_ACCOUNT_ID --repo voidbase-cloud/voidbase --body acc123`) && calls.some((c) => c === `variable set CF_CI_TRIGGER_BRANCHES --repo voidbase-cloud/voidbase --body ${preview.trigger_uuid}`) && calls.some((c) => c === "secret set CLOUDFLARE_BUILDS_TOKEN --repo voidbase-cloud/voidbase") && !calls.some((c) => c.includes("cf-test-user-token")) && readFileSync(`${stubLog}.stdin`, "utf8") === "cf-test-user-token" && /variables CF_ACCOUNT_ID, .* and the secret CLOUDFLARE_BUILDS_TOKEN stored/.test(withGh.out), withGh.out.slice(-300) + "\n" + calls.join("\n"));
   const again = cfb(["setup"]);
   s = await state();
-  check("setup again: nothing duplicated, triggers updated in place", again.code === 0 && s.connections.length === 1 && s.triggers.length === 3 && (await scripts()).length === 2 && /updated/.test(again.out) && /exists/.test(again.out), again.out.slice(0, 300));
+  check("setup again: nothing duplicated, triggers updated in place", again.code === 0 && s.connections.length === 1 && s.triggers.length === 4 && (await scripts()).length === 2 && /updated/.test(again.out) && /exists/.test(again.out), again.out.slice(0, 300));
   const status = cfb(["status"]);
-  check("status lists both projects, their triggers and no builds yet", status.code === 0 && /voidbase-ci \(tag/.test(status.out) && /voidbase-release \(tag/.test(status.out) && (status.out.match(/trigger [0-9a-f-]{36}/g) ?? []).length === 3 && /no builds yet/.test(status.out), status.out);
+  check("status lists both projects, their triggers and no builds yet", status.code === 0 && /voidbase-ci \(tag/.test(status.out) && /voidbase-release \(tag/.test(status.out) && (status.out.match(/trigger [0-9a-f-]{36}/g) ?? []).length === 4 && /no builds yet/.test(status.out), status.out);
   const build = cfb(["build", "--branch", "master"]);
   const uuid = build.out.match(/build ([0-9a-f-]{36}) queued/)?.[1];
   check("build --branch master: queued through the master trigger", build.code === 0 && !!uuid && /trigger "voidbase-ci \(master\)"/.test(build.out), build.out);
@@ -50,6 +58,8 @@ try {
   check("logs prints the build log lines and the status", logs.code === 0 && /Executing user build command: bun run ci/.test(logs.out) && /status: running/.test(logs.out), logs.out);
   const follow = cfb(["build", "--commit", "abc1234", "--follow"]);
   check("build --commit --follow: waits for the end and reports success", follow.code === 0 && /Build completed/.test(follow.out) && /: success$/m.test(follow.out.trim()), follow.out);
+  const dryBuild = cfb(["build", "--worker", "voidbase-release", "--dry-run"]);
+  check("build --worker voidbase-release --dry-run: the dry run trigger", dryBuild.code === 0 && /trigger "voidbase-release \(dry run\)"/.test(dryBuild.out), dryBuild.out);
   const cancelMe = cfb(["build", "--worker", "voidbase-release", "--branch", "master"]).out.match(/build ([0-9a-f-]{36})/)?.[1];
   const cancel = cfb(["cancel", cancelMe!]);
   s = await state();

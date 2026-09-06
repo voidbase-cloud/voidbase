@@ -2492,15 +2492,15 @@
         },
         {
           "id": "prod.ci",
-          "title": "CI and release flows portable across GitHub Actions and Cloudflare Workers Builds",
-          "surface": "scripts/ci.sh, scripts/release.sh",
+          "title": "CI and release flows run on Cloudflare Workers Builds, GitHub Actions only starts them",
+          "surface": "scripts/ci.sh, scripts/release.sh, .github/workflows/cloudflare.yml",
           "oracles": [
             "prod"
           ],
           "hours": 6,
           "status": "partial",
           "milestone": "m6",
-          "notes": "One script per flow (scripts/ci.sh, scripts/release.sh; scripts/ci-lib.sh records steps, scripts/ci-status.ts renders ci/public as the status page and badge); the workflows only call them and skip when the repository variable CI_BACKEND is cloudflare. Workers Builds side: ci/wrangler.jsonc (the status Worker each project deploys), scripts/ci-browser.sh (Chrome without root on the build image), scripts/cf-builds.ts (connect, triggers, variables, builds, logs through the Builds API; test/cf-builds.ts against the mock). Partial: the GitHub App install and a user token are account-side steps, so no live Cloudflare build has run yet; provenance and attestations stay GitHub-only (OIDC)."
+          "notes": "One script per flow (scripts/ci.sh, scripts/release.sh; scripts/ci-lib.sh records steps, scripts/ci-status.ts renders ci/public as the status page and badge). Verified end to end on GitHub runners before the switch (runs 34043332142, 34043803920). .github/workflows/cloudflare.yml is the only workflow: it starts the CI build (push, pull request) and the release build (push to master, release published) through the Builds API and is skipped until `bun scripts/cf-builds.ts setup --github` has stored the variables; the triggers watch-path-exclude everything so pushes never build twice. Workers Builds side: ci/wrangler.jsonc (the status Worker each project deploys), scripts/ci-browser.sh (Chrome without root on the build image), scripts/cf-builds.ts (connect, four triggers, variables, builds, logs; test/cf-builds.ts, 25 checks, against the mock). Partial: the GitHub App install and a user token are Mahmood-side steps, so no live Cloudflare build has run; npm provenance and attestations are gone (OIDC)."
         }
       ]
     },

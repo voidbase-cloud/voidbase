@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# The release flow (docs/releasing.md) as one script for GitHub Actions and Cloudflare Workers Builds:
+# The release flow (docs/releasing.md) as one script, run by Cloudflare Workers Builds (or any machine):
 #   release-pr       keeps the "chore(master): release X.Y.Z" pull request up to date (every push to master)
 #   github-release   tags vX.Y.Z and creates the GitHub release with the compiled notes once that PR is merged
 #   publish          when release v<package.json version> exists and npm lacks that version: check, unit and cloud-rest
-#                    tests, pack, smoke install, npm publish (provenance on GitHub Actions), GitHub Packages, the tarball
-#                    on the release
+#                    tests, pack, smoke install, npm publish (provenance only where GitHub Actions' OIDC token exists),
+#                    GitHub Packages, the tarball on the release
 #   executables      when that release lacks checksums.txt: every platform, the exe smoke, the archives and checksums on
 #                    the release, the notes opened with the `./voidbase update` hint
 # Idempotent: a re-run after a partial failure does only what is still missing. Steps are recorded for the status page

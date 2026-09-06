@@ -1,9 +1,9 @@
 // Cloudflare Workers Builds for this repository through the Builds REST API (docs/ci.md): connects the GitHub
 // repository, creates the CI project and the release project (each a Worker that serves its status page) with their
 // triggers and build variables, triggers builds and follows their logs.
-//   bun scripts/cf-builds.ts setup [--repo voidbase-cloud/voidbase] [--ci voidbase-ci] [--release voidbase-release] [--branch master] [--no-release]
+//   bun scripts/cf-builds.ts setup [--repo voidbase-cloud/voidbase] [--ci voidbase-ci] [--release voidbase-release] [--branch master] [--no-release] [--github]
 //   bun scripts/cf-builds.ts status [--ci voidbase-ci] [--release voidbase-release]
-//   bun scripts/cf-builds.ts build [--worker voidbase-ci] [--branch master | --commit <sha>] [--follow]
+//   bun scripts/cf-builds.ts build [--worker voidbase-ci] [--branch master | --commit <sha>] [--trigger <name> | --dry-run] [--follow]
 //   bun scripts/cf-builds.ts builds [--worker voidbase-ci]
 //   bun scripts/cf-builds.ts logs <build-uuid> [--follow]
 //   bun scripts/cf-builds.ts cancel <build-uuid>
@@ -11,8 +11,10 @@
 // Auth: CLOUDFLARE_BUILDS_TOKEN, a *user* API token (My Profile > API Tokens) with "Workers Builds Configuration: Edit"
 // and "Workers Scripts: Edit"; the Builds API rejects account-owned tokens. CLOUDFLARE_ACCOUNT_ID picks the account when
 // the token reaches several. `setup` stores the release project's secrets from the environment when they are set:
-// GH_TOKEN (release-please, release assets), NPM_TOKEN or VOIDBASE_NPM_TOKEN, GH_PACKAGES_TOKEN. CLOUDFLARE_API_BASE
-// and GITHUB_API_URL point everything at test/cf-mock.ts.
+// GH_TOKEN (release-please, release assets), NPM_TOKEN or VOIDBASE_NPM_TOKEN, GH_PACKAGES_TOKEN. Push events never
+// build (the triggers' watch paths exclude everything): .github/workflows/cloudflare.yml starts builds through this
+// API, and `setup --github` stores what it needs in the repository (`gh variable set` / `gh secret set`; GH_BIN
+// overrides the gh binary). CLOUDFLARE_API_BASE and GITHUB_API_URL point everything at test/cf-mock.ts.
 import { CfApi, CfError, resolveAccount } from "../src/cloud/rest";
 
 const [cmd = "status", ...rest] = process.argv.slice(2);
@@ -34,6 +36,8 @@ const CI = args.ci ?? "voidbase-ci", RELEASE = args.release ?? "voidbase-release
 const BUN_VERSION = "1.3.14";  // the version CI pins (setup-bun in the workflows); the image's default is older
 const DEPLOY = "./node_modules/.bin/wrangler deploy -c ci/wrangler.jsonc";
 const PREVIEW = "./node_modules/.bin/wrangler versions upload -c ci/wrangler.jsonc";
+const CI_BUILD = "bash scripts/ci.sh", RELEASE_BUILD = "bash scripts/release.sh", DRY_RUN_BUILD = "bash scripts/release.sh --dry-run";
+const triggerNames = { ciMaster: `${CI} (${BRANCH})`, ciBranches: `${CI} (branches)`, releaseMaster: `${RELEASE} (${BRANCH})`, releaseDryRun: `${RELEASE} (dry run)` };
 
 interface Trigger { trigger_uuid: string; trigger_name: string; external_script_id?: string; build_command?: string; deploy_command?: string; root_directory?: string; branch_includes?: string[]; branch_excludes?: string[]; path_includes?: string[]; path_excludes?: string[]; build_caching_enabled?: boolean; [k: string]: unknown }
 interface Build { build_uuid: string; status?: string; created_on?: string; created_at?: string; build_trigger_metadata?: { branch?: string; commit_hash?: string; [k: string]: unknown }; [k: string]: unknown }
@@ -114,26 +118,41 @@ try {
     // 3. the projects: two Workers, three triggers
     const ci = await ensureWorker(CI);
     console.log(`Worker ${CI}: ${ci.created ? "created" : "exists"} (tag ${ci.tag})`);
-    const common = { root_directory: "/", path_includes: ["*"], path_excludes: [], build_caching_enabled: true };
-    const prod = await ensureTrigger(ci.tag, connection, buildToken, { trigger_name: `${CI} (${BRANCH})`, build_command: "bun run ci", deploy_command: DEPLOY, branch_includes: [BRANCH], branch_excludes: [], ...common });
-    const preview = await ensureTrigger(ci.tag, connection, buildToken, { trigger_name: `${CI} (branches)`, build_command: "bun run ci", deploy_command: PREVIEW, branch_includes: ["*"], branch_excludes: [BRANCH], ...common });
+    // watch paths that exclude everything: a push event never builds by itself; GitHub Actions (cloudflare.yml) and
+    // `build` start builds through the API, which the watch paths do not filter
+    const common = { root_directory: "/", path_includes: ["*"], path_excludes: ["*"], build_caching_enabled: true };
+    const prod = await ensureTrigger(ci.tag, connection, buildToken, { trigger_name: triggerNames.ciMaster, build_command: CI_BUILD, deploy_command: DEPLOY, branch_includes: [BRANCH], branch_excludes: [], ...common });
+    const preview = await ensureTrigger(ci.tag, connection, buildToken, { trigger_name: triggerNames.ciBranches, build_command: CI_BUILD, deploy_command: PREVIEW, branch_includes: ["*"], branch_excludes: [BRANCH], ...common });
     const vars: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false }, CI_BROWSER: { value: "1", is_secret: false } };
     await setEnv(prod.uuid, vars); await setEnv(preview.uuid, vars);
-    console.log(`  trigger ${prod.uuid} ${BRANCH}: ${prod.created ? "created" : "updated"}; build \`bun run ci\`, deploy \`${DEPLOY}\``);
+    console.log(`  trigger ${prod.uuid} ${BRANCH}: ${prod.created ? "created" : "updated"}; build \`${CI_BUILD}\`, deploy \`${DEPLOY}\``);
     console.log(`  trigger ${preview.uuid} other branches: ${preview.created ? "created" : "updated"}; deploy \`${PREVIEW}\` (preview URL on the pull request)`);
+    const github: Record<string, string> = { CF_ACCOUNT_ID: account.id, CF_CI_TRIGGER_MASTER: prod.uuid, CF_CI_TRIGGER_BRANCHES: preview.uuid };
     if (!args["no-release"]) {
       const rel = await ensureWorker(RELEASE);
       console.log(`Worker ${RELEASE}: ${rel.created ? "created" : "exists"} (tag ${rel.tag})`);
-      const t = await ensureTrigger(rel.tag, connection, buildToken, { trigger_name: `${RELEASE} (${BRANCH})`, build_command: "bun run release", deploy_command: DEPLOY, branch_includes: [BRANCH], branch_excludes: [], ...common });
+      const t = await ensureTrigger(rel.tag, connection, buildToken, { trigger_name: triggerNames.releaseMaster, build_command: RELEASE_BUILD, deploy_command: DEPLOY, branch_includes: [BRANCH], branch_excludes: [], ...common });
+      const dry = await ensureTrigger(rel.tag, connection, buildToken, { trigger_name: triggerNames.releaseDryRun, build_command: DRY_RUN_BUILD, deploy_command: PREVIEW, branch_includes: ["*"], branch_excludes: [BRANCH], ...common });
       const secrets: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false } };
       const gh = process.env.GH_TOKEN, npm = process.env.NPM_TOKEN ?? process.env.VOIDBASE_NPM_TOKEN, ghp = process.env.GH_PACKAGES_TOKEN;
       if (gh) secrets.GH_TOKEN = { value: gh, is_secret: true };
       if (npm) secrets.NPM_TOKEN = { value: npm, is_secret: true };
       if (ghp) secrets.GH_PACKAGES_TOKEN = { value: ghp, is_secret: true };
-      await setEnv(t.uuid, secrets);
-      console.log(`  trigger ${t.uuid} ${BRANCH}: ${t.created ? "created" : "updated"}; build \`bun run release\`; secrets stored: ${Object.keys(secrets).filter((k) => secrets[k]!.is_secret).join(", ") || "none (set GH_TOKEN and NPM_TOKEN in the environment and rerun, or `env --worker " + RELEASE + " --secret GH_TOKEN=...`)"}`);
+      await setEnv(t.uuid, secrets); await setEnv(dry.uuid, secrets);
+      const stored = Object.keys(secrets).filter((k) => secrets[k]!.is_secret).join(", ") || "none (set GH_TOKEN and NPM_TOKEN in the environment and rerun, or `env --worker " + RELEASE + " --secret GH_TOKEN=...`)";
+      console.log(`  trigger ${t.uuid} ${BRANCH}: ${t.created ? "created" : "updated"}; build \`${RELEASE_BUILD}\`; secrets stored: ${stored}`);
+      console.log(`  trigger ${dry.uuid} dry run: ${dry.created ? "created" : "updated"}; build \`${DRY_RUN_BUILD}\`, deploy \`${PREVIEW}\``);
+      github.CF_RELEASE_TRIGGER_MASTER = t.uuid; github.CF_RELEASE_TRIGGER_DRY_RUN = dry.uuid;
     }
-    console.log(`\ndone. Pushes to ${repo} now build on Cloudflare (${dash(CI)}); first build: bun scripts/cf-builds.ts build --branch ${BRANCH} --follow`);
+    if (args.github) {
+      // what .github/workflows/cloudflare.yml reads: the trigger uuids as variables, the user token as the secret (over stdin, never an argument)
+      const gh = process.env.GH_BIN ?? "gh";
+      const ghRun = (a: string[], stdin?: string) => { const p = Bun.spawnSync([gh, ...a], { stdin: stdin === undefined ? "ignore" : new TextEncoder().encode(stdin), stdout: "pipe", stderr: "pipe" }); if (p.exitCode !== 0) die(`${gh} ${a.slice(0, 3).join(" ")} failed: ${p.stderr.toString().trim() || p.stdout.toString().trim()}`); };
+      for (const [k, v] of Object.entries(github)) ghRun(["variable", "set", k, "--repo", repo, "--body", v]);
+      ghRun(["secret", "set", "CLOUDFLARE_BUILDS_TOKEN", "--repo", repo], token);
+      console.log(`GitHub ${repo}: variables ${Object.keys(github).join(", ")} and the secret CLOUDFLARE_BUILDS_TOKEN stored`);
+    } else console.log(`\nrepository variables for .github/workflows/cloudflare.yml (or rerun with --github to store them):\n${Object.entries(github).map(([k, v]) => `  ${k}=${v}`).join("\n")}\n  secret CLOUDFLARE_BUILDS_TOKEN=<this token>`);
+    console.log(`\ndone. Push events do not build by themselves; the workflow starts builds on ${dash(CI)}. First build: bun scripts/cf-builds.ts build --branch ${BRANCH} --follow`);
   } else if (cmd === "status") {
     for (const name of [CI, RELEASE]) {
       const w = (await workers()).find((s) => s.id === name);
@@ -146,7 +165,8 @@ try {
   } else if (cmd === "build") {
     const name = args.worker ?? CI; const tag = await workerTag(name);
     const ts = await triggers(tag); const branch = args.commit ? undefined : args.branch ?? BRANCH;
-    const t = args.trigger ? ts.find((x) => x.trigger_name === args.trigger) : ts.find((x) => (branch ? (x.branch_includes ?? []).includes(branch) : true)) ?? ts[0];
+    const wanted = args.trigger ?? (args["dry-run"] ? triggerNames.releaseDryRun : undefined);
+    const t = wanted ? ts.find((x) => x.trigger_name === wanted) : ts.find((x) => (branch ? (x.branch_includes ?? []).includes(branch) : true)) ?? ts[0];
     if (!t) die(`no trigger on ${name}`);
     const body = args.commit ? { commit_hash: args.commit, ...(args.branch ? { branch: args.branch } : {}) } : { branch };
     const r = await cf.json<{ build_uuid: string; status?: string; already_exists?: boolean }>("POST", `${A}/builds/triggers/${t.trigger_uuid}/builds`, body);

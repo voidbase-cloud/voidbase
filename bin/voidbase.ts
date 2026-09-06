@@ -64,12 +64,12 @@ switch (cmd) {
     // --dev: run the server as a child and restart it when pb_hooks / pb_migrations change (like modd for PocketBase)
     const { watch } = await import("node:fs");
     const childArgs = process.argv.slice(2).filter((a) => a !== "--dev");
-    let child: ReturnType<typeof Bun.spawn> | null = null; let timer: ReturnType<typeof setTimeout> | null = null;
     const entry = flags.entry ? resolve(flags.entry) : null;
+    let child: ReturnType<typeof Bun.spawn> | null = null; let timer: ReturnType<typeof setTimeout> | null = null;
     const entryArgs = childArgs.slice(1).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry");
     const start = () => { child = Bun.spawn(entry ? ["bun", entry, ...entryArgs] : ["bun", import.meta.path, ...childArgs], { stdio: ["inherit", "inherit", "inherit"], env: process.env }); };
     const restart = () => { if (timer) clearTimeout(timer); timer = setTimeout(() => { console.log("voidbase: hooks changed, restarting"); child?.kill(); start(); }, 300); };
-    for (const d of [flags.hooksDir ?? "pb_hooks", flags.migrationsDir ?? "pb_migrations"]) { try { watch(resolve(d), { recursive: true }, restart); } catch { /* directory may not exist yet */ } }
+    for (const d of [flags.hooksDir ?? "pb_hooks", flags.migrationsDir ?? "pb_migrations", ...(entry ? [entry] : [])]) { try { watch(resolve(d), { recursive: true }, restart); } catch { /* directory may not exist yet */ } }
     start();
     process.on("SIGINT", () => { child?.kill(); process.exit(0); }); process.on("SIGTERM", () => { child?.kill(); process.exit(0); });
     await new Promise(() => undefined);

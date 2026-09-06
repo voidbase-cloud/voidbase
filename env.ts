@@ -4,6 +4,9 @@ export default defineEnv({
   // First superuser, upserted at bootstrap when both are set (mirrors the starter's entrypoint).
   VOIDBASE_SUPERUSER_EMAIL: string().optional(),
   VOIDBASE_SUPERUSER_PASSWORD: string().optional(),
+  // A test user in `users`, created once at start when both are set (voidbase serve; the Worker ignores them)
+  VOIDBASE_USER_EMAIL: string().optional(),
+  VOIDBASE_USER_PASSWORD: string().optional(),
   // read by pb_hooks via $os.getenv (the starter's audit log uses AUDITLOG=posts,users)
   AUDITLOG: string().optional(),
   // Optional HTTP mail provider instead of SMTP (Resend-compatible JSON: POST {from,to,subject,html,text} with a

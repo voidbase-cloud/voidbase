@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { writeCloudProject } from "./cloud-init";
+import { loadEnv } from "./serve";
 
 const API = (process.env.CLOUDFLARE_API_BASE ?? "https://api.cloudflare.com/client/v4").replace(/\/$/, "");
 export const TOKEN_ENV = "VOIDBASE_DEPLOY_CF_API_KEY";
@@ -96,7 +97,7 @@ export function loadEnvFiles(files = [".env", "../.env"]): string[] {
 
 export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ name: string; account: string; url: string | null; wranglerConfig: string; project: string }> {
   const log = opts.log ?? ((l: string) => console.log(l));
-  const fromFiles = loadEnvFiles(); if (fromFiles.length) log(`from .env: ${fromFiles.join(", ")}`);
+  loadEnv(); const fromFiles = loadEnvFiles(); if (fromFiles.length) log(`from .env: ${fromFiles.join(", ")}`);
   const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || ""; // empty means unset
   if (!token) { log(`${TOKEN_ENV} is not set.\n\n${tokenHelp()}`); throw new Error(`${TOKEN_ENV} missing`); }
   const name = slug(opts.name || process.env.VOIDBASE_DEPLOY_NAME || projectName());

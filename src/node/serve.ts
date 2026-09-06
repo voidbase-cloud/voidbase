@@ -28,7 +28,23 @@ export function applySystemMigrations(db: ReturnType<typeof openDatabase>): numb
 }
 
 // Opens (and prepares) a data directory without serving: bindings for the CLI and for embedding.
+// Bun loads ./.env itself; a project that keeps its environment one level up (the SvelteKit starter) gets that too.
+// PB_* names from the PocketBase starter convention are accepted as aliases of the VOIDBASE_* ones.
+const ENV_ALIASES: Record<string, string> = { PB_SUPERUSER_EMAIL: "VOIDBASE_SUPERUSER_EMAIL", PB_SUPERUSER_PASSWORD: "VOIDBASE_SUPERUSER_PASSWORD", PB_USER_EMAIL: "VOIDBASE_USER_EMAIL", PB_USER_PASSWORD: "VOIDBASE_USER_PASSWORD", PB_ENCRYPTION_KEY: "VOIDBASE_ENCRYPTION_KEY" };
+export function loadEnv(files = [".env", "../.env"]): void {
+  for (const f of files) {
+    if (!existsSync(f)) continue;
+    for (const line of readFileSync(f, "utf8").split("\n")) {
+      const m = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line); if (!m) continue;
+      const key = m[1]!; const value = m[2]!.replace(/^(['"])(.*)\1$/, "$2");
+      if (!process.env[key]) process.env[key] = value;
+    }
+  }
+  for (const [alias, key] of Object.entries(ENV_ALIASES)) if (!process.env[key] && process.env[alias]) process.env[key] = process.env[alias];
+}
+
 export async function openLocal(opts: ServeOptions) {
+  loadEnv();
   const dir = resolve(opts.dir ?? "pb_data");
   mkdirSync(dir, { recursive: true });
   process.env.VOIDBASE_HOOKS_DIR = resolve(opts.hooksDir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks");
@@ -75,9 +91,26 @@ export async function voidbase(opts: ServeOptions = {}) {
     }
     // bootstrap now (system collections, settings, superuser from env, pb_migrations) instead of on the first request
     await fetch(`http://127.0.0.1:${port}/api/health`).catch(() => undefined);
+    await seedUser(port);
     return { server, env, stop: () => { clearTimeout(timer); server.stop(true); } };
   };
   return { ...api, env, dir, start };
+}
+
+// VOIDBASE_USER_EMAIL / VOIDBASE_USER_PASSWORD: a test user in the `users` collection, created once (the starter's
+// entrypoint used to do this with curl)
+async function seedUser(port: number): Promise<void> {
+  const email = process.env.VOIDBASE_USER_EMAIL, password = process.env.VOIDBASE_USER_PASSWORD;
+  const su = process.env.VOIDBASE_SUPERUSER_EMAIL, suPass = process.env.VOIDBASE_SUPERUSER_PASSWORD;
+  if (!email || !password || !su || !suPass) return;
+  const base = `http://127.0.0.1:${port}`;
+  const json = (r: Response) => r.json() as Promise<Record<string, unknown>>;
+  const auth = await fetch(`${base}/api/collections/_superusers/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: su, password: suPass }) }).then(json).catch(() => null);
+  const token = auth?.token ? String(auth.token) : ""; if (!token) return;
+  const existing = await fetch(`${base}/api/collections/users/records?perPage=1&filter=${encodeURIComponent(`email = '${email.replace(/'/g, "\\'")}'`)}`, { headers: { authorization: token } }).then(json).catch(() => null);
+  if (!existing || Number(existing.totalItems ?? 0) > 0 || existing.status === 404) return;
+  const r = await fetch(`${base}/api/collections/users/records`, { method: "POST", headers: { "content-type": "application/json", authorization: token }, body: JSON.stringify({ email, password, passwordConfirm: password }) });
+  console.log(r.status === 200 ? `voidbase: created user ${email}` : `voidbase: could not create user ${email}: ${r.status}`);
 }
 
 export async function serve(opts: ServeOptions = {}): Promise<VoidbaseServer> {

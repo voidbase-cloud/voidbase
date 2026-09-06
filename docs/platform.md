@@ -1,29 +1,73 @@
-# Scaling voidbase on Cloudflare: from one app to millions
+# Cheap, fast, idle-free: how voidbase should use Cloudflare
 
-How voidbase should use Cloudflare's primitives when the goal is a hosted platform where one customer creates
-thousands of voidbase apps and pays only for the ones that see traffic. Numbers come from Cloudflare's pricing
-and limits pages (Workers Paid plan, 2026); the Void guides for live, WebSockets, queues, KV and SSE frame what
-Void exposes today.
+One voidbase app is one Worker, one D1 database and one R2 bucket, deployed with `voidbase deploy`. That shape is
+right and stays: Cloudflare bills Workers per request, D1 per row and R2 per byte, so an app nobody uses costs
+its storage and nothing else, and the account limit of 500 Workers (raisable) is where "thousands of apps" is
+bounded. The improvements below make each app cheaper per request and faster, in the order of their effect.
+Numbers come from Cloudflare's pricing and limits pages (Workers Paid plan, 2026); the Void guides for static
+assets, live, WebSockets, queues, KV and SSE frame what Void exposes today.
 
-## Where the current design stops scaling
+## Where the money and the milliseconds go today
 
-Today one voidbase app is one Worker, one D1 database and one R2 bucket, deployed with `voidbase deploy`. That is
-right for "my backend on my account" and wrong for "thousands of apps":
-
-| Piece | Today | Why it does not reach thousands of apps |
+| Per request or per event | Cost driver | Today |
 | --- | --- | --- |
-| Compute | one Worker per app | 500 Workers per account; a deploy per app; hooks are baked per Worker (good isolation, expensive fleet) |
-| Database | one D1 per app | fine for data (D1 allows 50,000 databases, raisable to millions) but each needs an API call to create and a static binding to reach |
-| Realtime | SSE polls the `_changes` table about once a second per isolate | one D1 read per second per app while anyone is connected; latency bounded by the poll |
-| Crons | a cron trigger per Worker, every minute | runs for idle apps too; 5 triggers per Worker; Workers for Platforms user Workers cannot have triggers at all |
-| Files | one R2 bucket per app | works, but a bucket per app is provisioning noise; keys are already `collection/record/file` |
-| Config | worker vars and secrets | per-Worker, not per-tenant |
+| Every asset request (panel, app bundle, images) | a Worker invocation ($0.30 per million beyond 10 million) plus CPU | `middleware/` makes Void route **everything** worker-first (`run_worker_first: ['/**']`), so assets are billed like API calls |
+| Every API request | one `_logs` row written ($1 per million rows) | request logging at `minLevel: 0` writes a row per request; on a 10 million-request app that is $10 of log writes, more than the requests themselves |
+| Every record write | one extra `_changes` row for realtime | written whether or not anyone is subscribed |
+| Every minute, every app | a cron invocation (a billable request + CPU) | 43,200 invocations per app per month even when idle; 500 apps make 21.6 million, above the included 10 million |
+| Every request | several D1 round trips from wherever the Worker runs | D1 lives in one region; a Worker far from it pays 50 to 150 ms per query |
+| Every cold start | the Photon wasm is imported at module load | paid on requests that never touch an image |
+| While a client is connected | one D1 read per second per isolate (realtime poll) | $0.003 per isolate-month of reads: already cheap, but ~1 s latency |
 
-Idle cost is already near zero (a Worker costs nothing when idle, D1 bills rows and storage, R2 bills storage), so
-the problem is not the bill for idle apps; it is provisioning, fleet size, isolation and the always-on pieces
-(polling realtime, every-minute crons).
+## Improvements, ranked by effect
 
-## Target shape: a data plane of Durable Objects, a thin edge, queues behind
+1. **Assets off the Worker.** Serve the panel, the frontend build and uploads' public files from Cloudflare's asset
+   layer with the Worker scoped to `/api`. Void does this automatically for apps with only `/api` routes (asset-first
+   with the SPA fallback, `run_worker_first` on `/api` and `/api/*`); the `middleware/` file that exists only to
+   emulate PocketBase's `--publicDir` fallback is what forces worker-first. Drop it on the Cloudflare path (the Bun
+   runtime keeps `src/server/static.ts`): the panel is hash-routed so `/_/` resolves to its own `index.html`, and
+   the app's deep links get the platform SPA fallback. Asset requests then cost nothing and skip the isolate.
+2. **Log writes are the biggest D1 cost.** Default `settings.logs.minLevel` to warnings on Cloudflare (4xx, 5xx,
+   slow requests), keep the full log opt-in from the panel, and offer a sink that is built for this volume:
+   Workers Logs or Analytics Engine ($0.25 per million data points, queryable in the dashboard) instead of D1 rows.
+   PocketBase writes every request to its own SQLite file; on D1 every one of those is a billed row.
+3. **Change-feed rows only when someone listens.** Skip the `_changes` insert when `_realtime_clients` is empty
+   (cached per isolate for a few seconds). Idle apps and batch imports halve their write rows.
+4. **Crons only when needed.** The hooks bundle is built at deploy time, so the plugin knows every `cronAdd`
+   expression: register those as the Worker's triggers (PocketBase's cron syntax is Cloudflare's; up to 5 per
+   Worker, else fall back to every minute) plus one hourly trigger for PocketBase's maintenance jobs. Better still,
+   make the maintenance lazy (run on the next request when overdue) so an app with no `cronAdd` has no trigger.
+5. **Latency: put the Worker next to D1, or replicate reads.** Smart Placement (`placement: { mode: "smart" }`)
+   moves each app's Worker beside its database, turning five sequential queries from 500 ms into 25 ms for far
+   users; D1's Sessions API (`withSession("first-unconstrained")`) instead serves reads from replicas near the user
+   and sends writes to the primary. Smart Placement is the safer default for PocketBase-shaped traffic (a list
+   request runs several dependent queries); replication suits read-heavy global apps.
+6. **Lazy wasm.** Import Photon on the first thumbnail request rather than at module load: smaller cold start on
+   every other request.
+7. **Queues for the slow and the retryable.** Outbound mail, thumbnail pre-generation, the `hooks` collection's
+   HTTP and email actions, backups: a `queues/` consumer in the generated Void project, idempotency keys
+   (record id + action) since delivery is at-least-once. Reliability more than cost ($0.40 per million operations).
+8. **KV for what the edge reads on every request and tolerates 60 s of staleness**: the public `auth-methods`
+   answer, the settings snapshot, hostname-to-app when several apps share a Worker. Reads $0.50 per million;
+   D1 stays the source of truth.
+9. **Rate limits that are exact across isolates.** Cloudflare's rate-limiting binding is free and per-edge;
+   voidbase's counters are per isolate (documented as approximate). Use the binding when Void exposes it.
+10. **Realtime as push instead of poll (later).** A per-app Durable Object hub with hibernating WebSockets from
+    the edge Workers that hold the SSE streams (Workers bill per request, not wall-clock; the object sleeps between
+    pushes: Cloudflare's own example is 100 objects × 100 connections for about $10 per month). It removes the
+    poll and its latency. Void exposes Durable Objects only through `.ws.ts` rooms and `void/live` (256 subscribers
+    per topic, which a busy collection exceeds), and `void deploy --backend cloudflare` refuses custom Durable
+    Object classes, so this waits for Void support or a wrangler-deployed hub. The current poll costs $0.003 per
+    isolate-month, so this is a latency improvement, not a cost one.
+
+Applying 1 to 4 changes the bill of a typical app from "every request and every minute" to "API requests and
+rows actually written", and 5 and 6 are the two latency wins visible to users.
+
+## Beyond 500 apps per account: one Worker, one Durable Object per app
+
+Kept here for when the account limit becomes the constraint rather than something to raise.
+
+### A data plane of Durable Objects, a thin edge, queues behind
 
 ```
 browser / SDK ──► edge Worker (router)  ──► TenantObject (SQLite-backed Durable Object, one per app)
@@ -70,7 +114,7 @@ flow; egress is free.
 **Frontends** of tenant apps are static assets: serve them from R2 by hostname through the router, or, for
 tenants with their own code, through their Workers for Platforms user Worker.
 
-## What about tenant hooks
+### Tenant hooks
 
 `pb_hooks` are arbitrary JavaScript. Running many tenants' hooks inside one Worker is not acceptable isolation.
 Three tiers, cheapest first:
@@ -84,7 +128,7 @@ Three tiers, cheapest first:
    `voidbase deploy` builds today, uploaded through the dispatch API instead of `void deploy`.
 3. **Apps with heavy custom code**: the tenant's own account with `voidbase deploy`, which already works.
 
-## Cost sketch
+### Cost sketch
 
 Per tenant, idle: storage only. A 100 MB app is $0.02 per month of Durable Object storage and less of R2; the
 account's first 5 GB are included. One thousand idle apps: the fixed $5 Workers Paid minimum (plus $25 if the
@@ -95,7 +139,7 @@ requests are inside the included 10 million; rows read $0.001; rows written $0.0
 each write (100,000 object requests, $0.015) and hibernates otherwise. Under a dime. The platform's bill is
 proportional to activity, which is what lets the customer be charged that way too.
 
-## Fit with Void, and the honest gaps
+### Fit with Void, and the honest gaps
 
 Void exposes Durable Objects only through `.ws.ts` rooms (key-value storage) and `void/live` (SSE fanout,
 256 subscribers per topic), infers no dispatch namespace binding, and `void deploy --backend cloudflare` refuses
@@ -107,7 +151,7 @@ small apps, but PocketBase topics are per collection, so a busy app exceeds 256 
 tenant object's own hub has no such limit. If Void adds custom SQLite-backed Durable Object classes and a
 dispatch binding, the wrangler step goes away.
 
-## The order to build it
+### The order to build it
 
 Each step is independently useful and keeps every existing suite green.
 

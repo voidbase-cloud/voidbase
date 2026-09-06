@@ -1,9 +1,9 @@
 # GitHub only starts builds; Cloudflare Workers Builds runs them (docs/ci.md): scripts/ci.sh for every push to master
 # and every pull request (the CI project, whose deploy is the status page and, for a pull request, a preview URL),
 # scripts/release.sh for every push to master and every published release (the release project). The variables and the
-# secret below are written by `bun scripts/cf-builds.ts setup --github`; until they exist the job is skipped. With the
-# repository variable CF_RELEASE_ON_PUSH=0 a push starts the CI build only (releases then come from the release event
-# or a manual run), which keeps the single build slot of the free plan for CI.
+# secret below are written by `bun scripts/cf-builds.ts setup --github`; until they exist the job is skipped. A push
+# starts the release build only when it carries a releasable commit or the merge of the release PR, so docs, tests and
+# CI changes keep the single build slot of the free plan for CI (CF_RELEASE_ON_PUSH=always or 0 override that).
 name: cloudflare
 on:
   push:
@@ -43,7 +43,17 @@ jobs:
             uuids="${uuids:-} $1=$uuid"
           }
           case "${{ github.event_name }}" in
-            push) start ci "${{ vars.CF_CI_TRIGGER_MASTER }}"; [ "${{ vars.CF_RELEASE_ON_PUSH }}" = "0" ] && echo "release: not started on pushes (CF_RELEASE_ON_PUSH=0)" || start release "${{ vars.CF_RELEASE_TRIGGER_MASTER }}" ;;
+            push)
+              start ci "${{ vars.CF_CI_TRIGGER_MASTER }}"
+              # the release build only when the push can change a release: a releasable commit (feat, fix, perf, revert,
+              # a breaking change) refreshes the release PR, the merge of that PR publishes; CF_RELEASE_ON_PUSH=always
+              # starts it on every push, CF_RELEASE_ON_PUSH=0 never
+              releasable=$(jq -r '[.commits[].message] | map(select(test("^(feat|fix|perf|revert)(\\(|!|:)|^[a-z]+(\\([^)]*\\))?!:|^chore\\(master\\): release|^Merge pull request .*release-please"))) | length' "$GITHUB_EVENT_PATH")
+              case "${{ vars.CF_RELEASE_ON_PUSH }}" in
+                0) echo "release: not started on pushes (CF_RELEASE_ON_PUSH=0)" ;;
+                always) start release "${{ vars.CF_RELEASE_TRIGGER_MASTER }}" ;;
+                *) if [ "${releasable:-0}" -gt 0 ]; then start release "${{ vars.CF_RELEASE_TRIGGER_MASTER }}"; else echo "release: nothing releasable in this push (no feat, fix, perf, revert or release merge)"; fi ;;
+              esac ;;
             pull_request) start ci "${{ vars.CF_CI_TRIGGER_BRANCHES }}" ;;
             release) start release "${{ vars.CF_RELEASE_TRIGGER_MASTER }}" ;;
             workflow_dispatch)

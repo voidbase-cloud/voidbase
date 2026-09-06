@@ -100,7 +100,7 @@ for a build of the commit at hand through the Builds API (a few seconds of Actio
 
 | event | build started |
 | --- | --- |
-| push to master | `voidbase-ci` (master trigger) and `voidbase-release` (master trigger) |
+| push to master | `voidbase-ci` (master trigger); `voidbase-release` (master trigger) when the push carries a `feat`, `fix`, `perf`, `revert` or breaking commit, or the merge of the release PR |
 | pull request from a branch of this repository | `voidbase-ci` (branches trigger: a preview URL of the results) |
 | release published | `voidbase-release` (master trigger) for the tagged commit |
 | Actions > cloudflare > Run workflow | the chosen project: `ci`, `release` or `release-dry-run` |
@@ -168,9 +168,9 @@ takes 7.5 minutes on GitHub's 4 vCPU and gets 2 on the Free plan, and the two pr
 4. `bun scripts/cf-builds.ts build --branch master --follow` runs the first build and streams its log; `status`,
    `builds`, `logs <uuid>`, `cancel <uuid>` and `env` cover the rest (the header of the script lists them).
 5. From then on every push and pull request goes through the workflow. `gh variable set CF_BUILDS_WAIT --body 1`
-   makes the workflow wait for the builds it started; `gh variable set CF_RELEASE_ON_PUSH --body 0` stops starting a
-   release build on every push (the free plan runs one build at a time, so that build otherwise queues in front of
-   the next CI build); releases then come from the `release` event or Run workflow.
+   makes the workflow wait for the builds it started. A push starts the release build only when it can change a
+   release (a releasable commit refreshes the release PR, the merge of that PR publishes), so docs, test and CI pushes
+   keep the free plan's single build slot for CI; `CF_RELEASE_ON_PUSH=always` starts it on every push, `0` never.
 
 `test/cf-builds.ts` runs the CLI against `test/cf-mock.ts`, whose Builds endpoints follow the request and response
 shapes of Cloudflare's API reference; the live API is exercised the first time the App and the user token exist.

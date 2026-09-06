@@ -88,11 +88,15 @@ const when = (b: Build) => b.created_on ?? b.created_at ?? "";
 // the live API ends a build with status "stopped" and build_outcome "success" | "fail"; older shapes put the outcome in status
 const outcome = (b: Build | null | undefined): string => { if (!b) return ""; const st = b.status ?? ""; if (st === "stopped") return b.build_outcome === "success" ? "success" : b.build_outcome ? `failed (${b.build_outcome})` : "stopped"; return FINAL.has(st) ? st : ""; };
 const describe = (b: Build) => `${b.build_uuid}  ${(outcome(b) || b.status || "?").padEnd(16)} ${(b.build_trigger_metadata?.branch ?? "").padEnd(12)} ${(b.build_trigger_metadata?.commit_hash ?? "").slice(0, 10).padEnd(10)} ${when(b)}`;
+type LogLine = { line?: string; message?: string; ts?: string } | string | [number, string];
+interface LogsResult { lines?: LogLine[]; status?: string; build?: { status?: string } }
 async function printLogs(uuid: string, from = 0): Promise<{ next: number; status: string }> {
-  const r = await cf.json<{ lines?: ({ line?: string; message?: string; ts?: string } | string | [number, string])[]; status?: string; build?: { status?: string } }>("GET", `${A}/builds/builds/${uuid}/logs`);
+  // a build that is still queued has no log yet: treat a failed fetch as "nothing so far" and keep polling
+  const r = await cf.json<LogsResult>("GET", `${A}/builds/builds/${uuid}/logs`).catch((): { result: LogsResult } => ({ result: { lines: [] } }));
   const lines = r.result?.lines ?? [];
+  if (lines.length < from) return { next: from, status: "" };
   // the live API returns [unix ms, text] pairs; the mock returns {ts, line}
-  const text = (l: (typeof lines)[number]) => (typeof l === "string" ? l : Array.isArray(l) ? `${new Date(l[0]).toISOString().slice(11, 19)}  ${l[1]}` : `${l.ts ? l.ts + "  " : ""}${l.line ?? l.message ?? JSON.stringify(l)}`);
+  const text = (l: LogLine) => (typeof l === "string" ? l : Array.isArray(l) ? `${new Date(l[0]).toISOString().slice(11, 19)}  ${l[1]}` : `${l.ts ? l.ts + "  " : ""}${l.line ?? l.message ?? JSON.stringify(l)}`);
   for (const l of lines.slice(from)) console.log(text(l));
   let status = outcome({ build_uuid: uuid, status: r.result?.status ?? r.result?.build?.status, build_outcome: (r.result as { build_outcome?: string } | undefined)?.build_outcome });
   if (!status) { const b = await cf.json<Build>("GET", `${A}/builds/builds/${uuid}`, undefined, [10000]).catch(() => null); status = outcome(b?.result); if (!status && b?.result?.status) status = ""; }

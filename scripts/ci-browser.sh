@@ -35,8 +35,9 @@ if [ -n "$(missing)" ] || [ "${CI_BROWSER_LIBS:-}" = "always" ]; then
   # against a private apt root, fetched into it and unpacked, no root needed, nothing outside .void touched
   PKGS="libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2 libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 libfontconfig1 libfreetype6 libxi6 libxtst6"
   log "shared libraries missing: $(missing | tr '\n' ' ')- unpacking Ubuntu packages into $LIBS"
-  APTROOT="$CACHE/apt"; mkdir -p "$APTROOT/state/lists/partial" "$APTROOT/cache/archives/partial" "$APTROOT/debs" "$LIBS"
-  if ls "$APTROOT"/debs/*.deb >/dev/null 2>&1 && [ "${CI_BROWSER_LIBS:-}" != "refresh" ]; then log "packages already in the cache ($(ls "$APTROOT"/debs/*.deb | wc -l))"
+  # the package indexes are needed only to resolve and download; the downloaded packages are what the cache keeps
+  APTROOT="$PWD/.void/apt"; DEBS="$CACHE/debs"; mkdir -p "$APTROOT/state/lists/partial" "$APTROOT/cache/archives/partial" "$DEBS" "$LIBS"
+  if ls "$DEBS"/*.deb >/dev/null 2>&1 && [ "${CI_BROWSER_LIBS:-}" != "refresh" ]; then log "packages already in the cache ($(ls "$DEBS"/*.deb | wc -l))"
   else
     APT_OPTS=(-q -o "Dir::State=$APTROOT/state" -o "Dir::Cache=$APTROOT/cache" -o Dir::State::status=/var/lib/dpkg/status -o Debug::NoLocking=1 -o APT::Sandbox::User=root)  # the image's docker-clean hook then fails to purge the system cache, harmlessly
     apt-get "${APT_OPTS[@]}" update >&2 2>&1 || log "apt-get update reported errors (continuing with what it fetched)"
@@ -48,9 +49,9 @@ if [ -n "$(missing)" ] || [ "${CI_BROWSER_LIBS:-}" = "always" ]; then
     NEED=""; for p in $WANT; do installed "$p" || NEED="$NEED $p"; done
     log "packages to fetch: $(echo $NEED | wc -w) ($(echo $NEED | cut -c1-160)...)"
     # shellcheck disable=SC2086
-    (cd "$APTROOT/debs" && apt-get "${APT_OPTS[@]}" download $NEED >&2 2>&1) || log "some packages did not download"
+    (cd "$DEBS" && apt-get "${APT_OPTS[@]}" download $NEED >&2 2>&1) || log "some packages did not download"
   fi
-  for d in "$APTROOT"/debs/*.deb; do [ -f "$d" ] && dpkg-deb -x "$d" "$LIBS"; done
+  for d in "$DEBS"/*.deb; do [ -f "$d" ] && dpkg-deb -x "$d" "$LIBS"; done
   still=$(missing); if [ -n "$still" ]; then log "still missing after unpacking: $(echo $still)"; exit 1; fi
   log "libraries unpacked under $LIBS ($(find "$LIBDIR" -name '*.so*' | wc -l) files)"
 fi

@@ -19,7 +19,6 @@ BACKEND=$(ci_backend); export CI_BACKEND_NAME="$BACKEND"
 PORT="${CI_PORT:-5180}"; PB_PORT="${CI_PB_PORT:-8090}"; VB="http://127.0.0.1:$PORT"; PB="http://127.0.0.1:$PB_PORT"
 LOGS="$ROOT/.void/ci-logs"; rm -rf "$LOGS" "$CI_STEPS_TSV" .void/ci-plan.txt .void/ci-plan.json; mkdir -p "$LOGS"
 CI_CACHE_DIR="$(ci_cache_dir)"; export CI_CACHE_DIR; mkdir -p "$CI_CACHE_DIR"
-export XDG_CACHE_HOME="$CI_CACHE_DIR/xdg"   # scripts/sync-panel.ts keeps the panel tarball under it
 started_pb=0; booted=0
 echo "voidbase ci on $BACKEND: $(git rev-parse --short HEAD 2>/dev/null || echo '?') $(git log -1 --format=%s 2>/dev/null | cut -c1-80), bun $(bun --version)"
 echo "cache: $CI_CACHE_DIR ($(du -sh "$CI_CACHE_DIR" 2>/dev/null | cut -f1 || echo empty))"
@@ -54,7 +53,7 @@ commitlint_check() {  # the commits this run introduces; the last one when there
 }
 oracles() {  # the starter and the panel next to a production-shaped public/ (the SPA shell the boot test checks)
   . scripts/ci-oracles.sh
-  bun run panel:sync
+  XDG_CACHE_HOME="$CI_CACHE_DIR/xdg" bun run panel:sync   # scripts/sync-panel.ts keeps the panel tarball under it
   # the starter's frontend build is kept with the clone and reused while the starter's commit is the same
   local head stamp; head=$(git -C "$STARTER_DIR" rev-parse HEAD 2>/dev/null || echo none); stamp="$STARTER_DIR/sk/build/.voidbase-ci-stamp"
   if [ -d "$STARTER_DIR/sk/build" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$head" ]; then echo "starter frontend build reused ($head)"

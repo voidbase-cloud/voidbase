@@ -25,7 +25,7 @@ BRANCH="${WORKERS_CI_BRANCH:-${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEA
 VERSION=$(node -p "require('./package.json').version"); PKG="@voidbase-cloud/voidbase"
 RP=(bunx release-please@17.11.2); RP_ARGS=(--repo-url "$REPO" --token "${GH_TOKEN:-}" --target-branch master --config-file release-please-config.json --manifest-file .release-please-manifest.json)
 rm -rf .void/ci-logs "$CI_STEPS_TSV"; mkdir -p .void/ci-logs
-CI_CACHE_DIR="$(ci_cache_dir)"; export CI_CACHE_DIR; mkdir -p "$CI_CACHE_DIR"; export XDG_CACHE_HOME="$CI_CACHE_DIR/xdg"
+CI_CACHE_DIR="$(ci_cache_dir)"; export CI_CACHE_DIR; mkdir -p "$CI_CACHE_DIR"
 outputs() { if [ -n "${GITHUB_OUTPUT:-}" ]; then printf '%s\n' "$@" >> "$GITHUB_OUTPUT"; fi; }
 finish() { local rc=$?; render_status --kind release || true; if [ "$rc" = 0 ]; then echo "RELEASE FLOW DONE"; else echo "RELEASE FLOW FAILED (exit $rc)"; fi; }
 trap finish EXIT
@@ -75,7 +75,7 @@ else step publish publish_npm || exit 1; [ -z "$DRY" ] && outputs "published=tru
 
 build_executables() {
   . scripts/ci-oracles.sh
-  bun run panel:sync || return 1
+  XDG_CACHE_HOME="$CI_CACHE_DIR/xdg" bun run panel:sync || return 1
   bun scripts/build-exe.ts --targets all --out dist/release || return 1
   cat dist/release/checksums.txt
   STARTER_VB_DIR="$STARTER_DIR/pb" bun test/exe-smoke.ts || return 1

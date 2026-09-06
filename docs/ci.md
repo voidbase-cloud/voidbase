@@ -53,7 +53,7 @@ own files are hashed: a new commit of the starter oracle is picked up by the nex
 
 ## What is kept between runs
 
-`CI_CACHE_DIR` holds the downloads: Playwright's headless shell and the unpacked libraries, the apt lists and packages,
+`CI_CACHE_DIR` holds the downloads: Playwright's headless shell and the unpacked libraries, the Ubuntu packages,
 the starter clone with its `node_modules` and its frontend build (reused while the starter's commit is the same), the
 panel tarball (through `XDG_CACHE_HOME`) and the PocketBase archive of the reference. On a dev machine it is
 `~/.cache/voidbase-ci` and simply stays there. Workers Builds keeps nothing between builds but the package manager's

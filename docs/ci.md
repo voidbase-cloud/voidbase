@@ -18,7 +18,7 @@ build deploys.
 | typecheck, unit | `tsc --noEmit`, `bun test` |
 | browser | a Chrome for the panel and starter suites (`scripts/ci-browser.sh`, below); `CI_BROWSER=0` skips them |
 | boot | the run's `.env`, `void db migrate`, the dev server on 5180 (`CI_PORT`), the app user |
-| reference | PocketBase 0.39.11 on 8090 (`CI_PB_PORT`) seeded from the starter, the SMTP sink, the OIDC, S3 and Cloudflare API mocks; whatever already listens on a port is reused |
+| reference | PocketBase 0.39.11 on 8090 (`CI_PB_PORT`) freshly seeded from the starter (again before the Bun pass: the reference keeps state the suites cannot undo, such as a stored S3 secret), the SMTP sink, the OIDC, S3 and Cloudflare API mocks, awaited before a first mail warms the SMTP transport; whatever already listens on a port is reused |
 | suites | `scripts/ci-suites.sh`: every differential suite, the SDK suite, the panel suites |
 | suites-bun | the same suites against `voidbase serve` on 8093 (Bun, SQLite, local files), without the browser suites |
 | deploy-cf, fresh-db, mail-http, exe-smoke | the deploy dry run against the API mock, the fresh-database boot and the HTTP mail transport of the production build, the prebuilt executable and its update flow |

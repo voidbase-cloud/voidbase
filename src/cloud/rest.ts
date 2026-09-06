@@ -258,8 +258,16 @@ export async function destroyInstance(cf: CfApi, o: { account: string; name: str
   const log = o.log ?? (() => undefined); const res = instanceResources(o.name); const out: DestroyResult = { name: o.name, deleted: [], skipped: [], errors: [] };
   const attempt = async (label: string, fn: () => Promise<boolean>) => { try { (await fn()) ? out.deleted.push(label) : out.skipped.push(label); log(`${label}: ${out.deleted.includes(label) ? "deleted" : "not found"}`); } catch (e) { out.errors.push(`${label}: ${e instanceof Error ? e.message : e}`); log(`${label}: ${e instanceof Error ? e.message : e}`); } };
   await attempt(`custom domains of ${o.name}`, async () => (await detachCustomDomains(cf, o.account, o.name)).length > 0);
-  // the script first so nothing keeps serving with bindings that are about to vanish
-  await attempt(`worker ${o.name}`, async () => { const r = await cf.raw("DELETE", `/accounts/${o.account}/workers/scripts/${o.name}?force=true`); await r.text(); if (r.status === 404) return false; if (!r.ok) throw new Error(`HTTP ${r.status}`); return true; });
+  // Cloudflare refuses to delete a Worker that consumes a queue (10064) and a queue a Worker still binds (11005):
+  // the consumer goes first, then the script (so nothing keeps serving with bindings about to vanish), then the queue
+  await attempt(`queue consumer of ${o.name}`, async () => {
+    const q = await findQueue(cf, o.account, res.queue); if (!q) return false;
+    const consumers = await cf.json<{ consumer_id?: string; id?: string; script?: string; script_name?: string }[]>("GET", `/accounts/${o.account}/queues/${q.id}/consumers`);
+    let removed = false;
+    for (const c of consumers.result ?? []) { if ((c.script ?? c.script_name) !== o.name) continue; await cf.json("DELETE", `/accounts/${o.account}/queues/${q.id}/consumers/${c.consumer_id ?? c.id}`); removed = true; }
+    return removed;
+  });
+  await attempt(`worker ${o.name}`, async () => { const r = await cf.raw("DELETE", `/accounts/${o.account}/workers/scripts/${o.name}?force=true`); const body = await r.text(); if (r.status === 404) return false; if (!r.ok) throw new Error(`HTTP ${r.status} ${body.slice(0, 200)}`); return true; });
   await attempt(`queue ${res.queue}`, async () => { const q = await findQueue(cf, o.account, res.queue); if (!q) return false; await cf.json("DELETE", `/accounts/${o.account}/queues/${q.id}`); return true; });
   await attempt(`D1 ${res.db}`, async () => { const d = await findD1(cf, o.account, res.db); if (!d) return false; await cf.json("DELETE", `/accounts/${o.account}/d1/database/${d.uuid}`); return true; });
   await attempt(`R2 ${res.bucket}`, async () => {

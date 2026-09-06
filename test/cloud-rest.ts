@@ -67,8 +67,8 @@ try {
   await cf.raw("PUT", `/accounts/acc123/r2/buckets/shop-storage/objects/some/file.png`, { body: "x" }).then((x) => x.text());
   const d = await destroyInstance(cf, { account: "acc123", name: "shop", log });
   const s3 = await state();
-  check("destroy removes custom domains, worker, queue, D1 and the emptied bucket", d.deleted.length === 5 && d.errors.length === 0 && s3.domains.length === 0 && Object.keys(s3.scripts).length === 0 && s3.d1.length === 0 && s3.queues.length === 0 && Object.keys(s3.r2).length === 0, JSON.stringify(d));
+  check("destroy removes custom domains, the queue consumer, worker, queue, D1 and the emptied bucket", d.deleted.length === 6 && d.errors.length === 0 && s3.domains.length === 0 && Object.keys(s3.scripts).length === 0 && s3.d1.length === 0 && s3.queues.length === 0 && Object.keys(s3.r2).length === 0, JSON.stringify(d));
   const d2 = await destroyInstance(cf, { account: "acc123", name: "shop" });
-  check("destroying again reports nothing found, no errors", d2.deleted.length === 0 && d2.skipped.length === 5 && d2.errors.length === 0 && !(await workerExists(cf, "acc123", "shop")), JSON.stringify(d2));
+  check("destroying again reports nothing found, no errors", d2.deleted.length === 0 && d2.skipped.length === 6 && d2.errors.length === 0 && !(await workerExists(cf, "acc123", "shop")), JSON.stringify(d2));
 } finally { mock.kill(); rmSync(dir, { recursive: true, force: true }); }
 console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

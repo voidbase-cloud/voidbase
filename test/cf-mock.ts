@@ -75,11 +75,13 @@ Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, 
   if (p.startsWith(`${A}/queues`)) {
     if (bearer === `Bearer ${TOKEN_NOQUEUES}`) return err(403, 10000, "Authentication error: the token lacks Queues permissions");
     const m = p.match(new RegExp(`^${A}/queues/([^/]+)(/consumers)?$`));
+    const mc = p.match(new RegExp(`^${A}/queues/([^/]+)/consumers/([^/]+)$`));
+    if (mc && req.method === "DELETE") { const list = consumers.get(mc[1]!) ?? []; const i = list.findIndex((c) => c.consumer_id === mc[2]); if (i < 0) return err(404, 11000, "consumer not found"); list.splice(i, 1); return ok(null); }
     if (p === `${A}/queues` && req.method === "GET") return ok([...queues.entries()].map(([queue_name, queue_id]) => ({ queue_name, queue_id })));
     if (p === `${A}/queues` && req.method === "POST") { const { queue_name } = (await req.json()) as { queue_name: string }; if (queues.has(queue_name)) return err(400, 11009, "queue already exists"); const id = crypto.randomUUID().replace(/-/g, ""); queues.set(queue_name, id); return ok({ queue_name, queue_id: id }); }
-    if (m && !m[2] && req.method === "DELETE") { const name = [...queues.entries()].find(([, id]) => id === m[1])?.[0]; if (!name) return err(404, 11000, "queue not found"); queues.delete(name); consumers.delete(m[1]!); return ok(null); }
+    if (m && !m[2] && req.method === "DELETE") { const name = [...queues.entries()].find(([, id]) => id === m[1])?.[0]; if (!name) return err(404, 11000, "queue not found"); if ((consumers.get(m[1]!) ?? []).length) return err(400, 11005, `Cannot delete queue '${name}' that is still referenced by a binding in a Worker`); queues.delete(name); consumers.delete(m[1]!); return ok(null); }
     if (m && m[2] && req.method === "GET") return ok(consumers.get(m[1]!) ?? []);
-    if (m && m[2] && req.method === "POST") { const body = (await req.json()) as Record<string, unknown>; const list = consumers.get(m[1]!) ?? []; if (list.some((c) => c.script_name === body.script_name)) return err(400, 11010, "consumer already exists"); list.push(body); consumers.set(m[1]!, list); return ok(body); }
+    if (m && m[2] && req.method === "POST") { const body = (await req.json()) as Record<string, unknown>; const list = consumers.get(m[1]!) ?? []; if (list.some((c) => c.script_name === body.script_name)) return err(400, 11010, "consumer already exists"); const row = { consumer_id: crypto.randomUUID().replace(/-/g, ""), ...body }; list.push(row); consumers.set(m[1]!, list); return ok(row); }
   }
   // ---- d1
   if (p === `${A}/d1/database` && req.method === "GET") { const name = url.searchParams.get("name"); return ok([...d1.entries()].filter(([n]) => !name || n === name).map(([n, uuid]) => ({ name: n, uuid, version: "production" }))); }
@@ -115,7 +117,7 @@ Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, 
         scripts.set(name, { tag: s?.tag ?? crypto.randomUUID().replace(/-/g, ""), metadata, modules, schedules: s?.schedules ?? [], subdomain: s?.subdomain ?? false, assets: metadata.assets ? [...uploadedHashes] : (s?.assets ?? []), migrationTag: tag, created_on: s?.created_on ?? now, modified_on: now });
         return ok({ id: name, migration_tag: tag });
       }
-      if (!sub && req.method === "DELETE") { if (!s) return err(404, 10007, "workers.api.error.script_not_found"); scripts.delete(name); return ok(null); }
+      if (!sub && req.method === "DELETE") { if (!s) return err(404, 10007, "workers.api.error.script_not_found"); if ([...consumers.values()].some((l) => l.some((c) => c.script_name === name))) return err(403, 10064, "Cannot delete this Worker as it is a consumer for a Queue. Remove it from the Queue"); scripts.delete(name); return ok(null); }
       if (!sub && req.method === "GET") return s ? new Response("// script body", { headers: { "content-type": "application/javascript" } }) : err(404, 10007, "script not found");
       if (sub === "settings" && req.method === "GET") return s ? ok({ migration_tag: s.migrationTag, bindings: s.metadata.bindings, tags: s.metadata.tags }) : err(404, 10007, "script not found");
       if (sub === "assets-upload-session" && req.method === "POST") { const { manifest } = (await req.json()) as { manifest: Record<string, { hash: string; size: number }> }; const hashes = Object.values(manifest).map((e) => e.hash); const missing = hashes.filter((h) => !uploadedHashes.has(h)); if (!missing.length) return ok({ jwt: COMPLETION_JWT, buckets: [] }); pendingSessions.set(name, new Set(missing)); const buckets: string[][] = []; for (let i = 0; i < missing.length; i += 3) buckets.push(missing.slice(i, i + 3)); return ok({ jwt: UPLOAD_JWT, buckets }); }

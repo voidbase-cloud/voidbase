@@ -315,7 +315,7 @@
           "status": "partial",
           "milestone": "m6",
           "verify": "Same build live on a custom Cloudflare account, DO included",
-          "notes": "Attempted 2026-09-06 with the machine's wrangler OAuth login (account 1f9d4df6...): `wrangler r2 bucket create voidbase-storage` succeeded, `wrangler d1 create voidbase-db` failed with 'You have reached the maximum number of D1 databases for your account' (34 databases already exist), so the bucket was removed again to leave the account unchanged. wrangler.jsonc is committed with the worker name, account id and both bindings; once a D1 slot is freed (delete an unused database or upgrade), `void deploy --backend cloudflare --provision` completes the deploy. docs/deploy.md covers secrets and quotas."
+          "notes": "`voidbase deploy` is the primary go-live path: VOIDBASE_DEPLOY_CF_API_KEY (created through a Cloudflare dashboard deep link with the four permissions pre-selected: Workers Scripts edit, D1 edit, Workers R2 Storage edit, Account Settings read; `voidbase token` prints it), account resolution, idempotent D1/R2 provisioning over the REST API, cloud/ generation with a real-id wrangler.jsonc, superuser as worker secrets (never the dev default), panel + frontend sync, then `void deploy --backend cloudflare`, health check and URL. src/node/deploy-cf.ts, verified by test/deploy-cf.ts against test/cf-mock.ts (10 cases: no token -> link, wrong token, provisioning, idempotence, naming, credentials). The live upload itself still waits for a free D1 slot on this account (34/limit) or another account."
         }
       ]
     },

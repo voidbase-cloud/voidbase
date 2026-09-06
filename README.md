@@ -62,6 +62,12 @@ unmodified `pocketbase-sveltekit-starter`. Helpers that must be running for some
 with the fixture hooks and migrations and boots it on an empty D1; `bun test/mail-http.ts` does the same with the HTTP mail
 provider variables.
 
+## Go live
+
+`voidbase token` prints a Cloudflare dashboard link that creates `VOIDBASE_DEPLOY_CF_API_KEY` with the right
+permissions pre-selected; with that variable set, `voidbase deploy` provisions D1 and R2, writes the Void project,
+stores the superuser as secrets and uploads the Worker. See [docs/deploy.md](docs/deploy.md).
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` checks out the two oracles (the starter and PocketBase's panel build), starts voidbase and

@@ -26,41 +26,54 @@ Secrets and settings that must exist in production (declared in `env.ts`):
 Everything else (SMTP, OAuth2 providers, rate limits, backups cron, trusted proxy) is configured from the
 panel's Settings pages and stored in D1.
 
-## Option A: the Void platform
+## Go live on your Cloudflare account (primary path)
+
+One API token, one command. Create the token with this link; it opens the Cloudflare dashboard's token wizard for
+your account with the four permissions voidbase needs already selected (Workers Scripts edit, D1 edit, Workers R2
+Storage edit, Account Settings read):
+
+[Create VOIDBASE_DEPLOY_CF_API_KEY](https://dash.cloudflare.com/?to=/:account/api-tokens&permissionGroupKeys=%5B%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_r2%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_settings%22%2C%22type%22%3A%22read%22%7D%5D&name=VOIDBASE_DEPLOY_CF_API_KEY)
+
+`voidbase token` prints the same link. Then, in the directory that holds `pb_hooks/` and `pb_migrations/`
+(`pocketbase-sveltekit-starter/vb` for the starter):
+
+```bash
+export VOIDBASE_DEPLOY_CF_API_KEY=...        # or put it in .env next to pb_hooks, or a CI secret
+voidbase deploy --public-dir ../sk/build     # --name <worker>, --account <id> when the token reaches several accounts
+```
+
+What it does, in order: resolves the account through the token, creates `<name>-db` (D1) and `<name>-storage`
+(R2) if they do not exist, writes the Void project into `cloud/` (`voidbase cloud init`) with a `wrangler.jsonc`
+carrying the real ids, stores the superuser as worker secrets (from `VOIDBASE_SUPERUSER_*` / `PB_SUPERUSER_*`, or a
+generated password saved in `cloud/.superuser-credentials`; the local dev default `changeme123` never goes live),
+syncs the admin panel and your frontend build into `cloud/public`, and runs `void deploy --backend cloudflare`,
+which builds, applies the D1 migrations and uploads the Worker with its cron trigger. It ends with the
+`https://<name>.<your-subdomain>.workers.dev` URL and a health check. Re-running is idempotent: existing resources
+and credentials are reused. `--dry-run` does everything except install, secrets and the upload.
+
+Quotas to know: the Workers Free plan allows 10 D1 databases per account (paid plans 50,000) and 5 cron
+triggers per worker; voidbase needs one database, one bucket and one cron. Cloudflare's own permission reference is
+at https://developers.cloudflare.com/fundamentals/api/reference/permissions/ should the link's pre-selection ever
+stop matching (the token then needs exactly those four permissions, picked by hand at
+https://dash.cloudflare.com/?to=/:account/api-tokens).
+
+## Option B: the Void platform
 
 ```bash
 void auth login
-void project link             # or let `void deploy` create the project
-void secrets put VOIDBASE_SUPERUSER_EMAIL
-void secrets put VOIDBASE_SUPERUSER_PASSWORD
-void secrets put VOIDBASE_ENCRYPTION_KEY
-void deploy
+voidbase deploy --void            # void deploy from this checkout, or from cloud/ in a consumer
 ```
 
-`void deploy` builds, applies the Drizzle migrations to the remote D1, provisions D1/R2/cron from the source
-and makes the deploy live. The panel is then at `https://<project>.void.app/_/`. Continuous deploys: `void init
---github` writes `.github/workflows/void-deploy.yml` (GitHub OIDC, no long-lived token), or install the Void
-GitHub app (`void github install`, `void github connect`).
+`void deploy` builds, applies the Drizzle migrations to the remote D1, provisions D1/R2/cron from the source and
+makes the deploy live; secrets go through `void secret put`. Continuous deploys: `void init --github` (GitHub
+OIDC) or the Void GitHub app. Operations: `void project logs --level error`, `void project requests --status 5xx`,
+`void project rollback`.
 
-Operations: `void project logs --level error` (request handler errors, `console.error`), `void project
-requests --status 5xx` (edge-level failures), `void project rollback`.
+## Option C: by hand with wrangler
 
-## Option B: your own Cloudflare account
-
-```bash
-wrangler login                                   # or CLOUDFLARE_API_TOKEN with Workers, D1, R2 edit
-export CLOUDFLARE_ACCOUNT_ID=...                 # or account_id in wrangler.jsonc
-void deploy --backend cloudflare --provision     # first time: creates the D1 database, R2 bucket, cron trigger
-void deploy --backend cloudflare                 # afterwards
-```
-
-Keep secrets in `wrangler secret put VOIDBASE_SUPERUSER_PASSWORD` etc.: every `.env*` file this backend loads
-ships as plaintext worker vars (a value that is also exported in the shell with the same value is stripped, so
-`export VOIDBASE_SUPERUSER_PASSWORD=...` from `.env` before deploying and put the real one in a secret).
-`wrangler.jsonc` in the repo pins the worker name, account and the two bindings; `--provision` fills in the D1 id.
-Quotas to know: the Workers Free plan allows 10 D1 databases per account (paid plans 50,000) and 5 cron triggers
-per worker; voidbase needs one database, one bucket and one cron. `--provision` runs on a developer machine (it fails closed in CI); commit the
-`wrangler.jsonc` it writes, then CI can run `void deploy --backend cloudflare`.
+`wrangler login` (or `CLOUDFLARE_API_TOKEN`), `CLOUDFLARE_ACCOUNT_ID`, then `void deploy --backend cloudflare
+--provision` from `cloud/` (interactive shells only; commit the `wrangler.jsonc` it writes for CI). Every `.env*`
+file this backend loads ships as plaintext worker vars, so keep secrets in `wrangler secret put`.
 
 ## After deploying
 

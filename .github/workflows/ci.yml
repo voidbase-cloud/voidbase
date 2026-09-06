@@ -48,6 +48,7 @@ jobs:
           (setsid nohup bun test/smtp-sink.ts > .void/sink.log 2>&1 &)
           (setsid nohup bun test/mock-oidc.ts > .void/oidc.log 2>&1 &)
           (setsid nohup bun test/s3-mock.ts > .void/s3.log 2>&1 &)
+          (setsid nohup bun test/cf-mock.ts > .void/cf.log 2>&1 &)
           sleep 2
       - name: Differential suites and panel tests
         working-directory: voidbase
@@ -61,6 +62,9 @@ jobs:
           ./scripts/seed-app-user.sh http://127.0.0.1:8093
           CI_BROWSER=0 CI_LOGS=.void/ci-logs-bun ./scripts/ci-suites.sh http://127.0.0.1:8090 http://127.0.0.1:8093
           ./scripts/dev.sh start 5180
+      - name: voidbase deploy dry run against the Cloudflare API mock
+        working-directory: voidbase
+        run: bun test/deploy-cf.ts
       - name: Fresh-database boot (production build in workerd)
         working-directory: voidbase
         run: bun test/fresh-db.ts 5181

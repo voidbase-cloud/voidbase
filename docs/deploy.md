@@ -45,7 +45,8 @@ voidbase deploy --public-dir ../sk/build     # --name <worker>, --account <id> w
 What it does, in order: resolves the account through the token, creates `<name>-db` (D1) and `<name>-storage`
 (R2) if they do not exist, writes the Void project inside the voidbase package
 (`node_modules/voidbase/.cloud/<name>`, nothing appears in your tree) with a `wrangler.jsonc` carrying the real
-ids, stores the superuser as worker secrets (from `VOIDBASE_SUPERUSER_*` / `PB_SUPERUSER_*`, or a generated
+ids and, when the directory has a `main.ts` exporting `register(app)`, composes it into the Worker; stores the
+superuser as worker secrets (from `VOIDBASE_SUPERUSER_*` / `PB_SUPERUSER_*`, or a generated
 password saved in `pb_data/.superuser-credentials`; the local dev default `changeme123` never goes live), syncs
 the admin panel and your frontend build into that project, and runs `void deploy --backend cloudflare`,
 which builds, applies the D1 migrations and uploads the Worker with its cron trigger. It ends with the

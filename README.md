@@ -5,6 +5,22 @@ The unmodified PocketBase admin panel (0.40.2) and the unmodified `pocketbase` J
 
 Codename: `kanz-zjy`. Progress map: `surface/surface.json` rendered by `bun run surface`.
 
+## Use it like PocketBase as a framework
+
+```ts
+// main.ts
+import { voidbase, parseServeArgs, type VoidbaseApp } from "voidbase";
+export function register(app: VoidbaseApp) {
+  app.hooks.onRecordAfterCreateSuccess(async (e) => { /* ... */ }, "posts");   // the same on* functions pb_hooks get
+  app.router.get("/api/hello", (c) => c.json({ hello: "world" }));              // Hono-style routes
+  app.hooks.cronAdd("digest", "0 8 * * *", () => { /* ... */ });
+}
+if (import.meta.main) { const app = await voidbase(parseServeArgs()); register(app); await app.start(); }
+```
+
+`bun main.ts --http 127.0.0.1:8090` runs it; `voidbase deploy` composes `register` into the Worker as well.
+`pocketbase-sveltekit-starter/vb` is the worked example (audit log, `hooks` collection actions, passkeys).
+
 ## Run it like PocketBase
 
 ```bash

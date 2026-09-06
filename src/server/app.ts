@@ -15,7 +15,6 @@ import type { Settings } from "./settings";
 import { applyPendingMigrations } from "./hooks/migrations";
 import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
 import { deletePrefix } from "./records/files";
-import { mountWebAuthn } from "./webauthn";
 import { authWithOAuth2, mountOAuth2Redirect } from "./oauth2";
 import { mountSettingsApi } from "./settings-api";
 import { mountAuthFlows } from "./auth-flows";
@@ -463,7 +462,6 @@ function sortBy<T extends object>(items: T[], sort: string, allowed: string[]): 
 }
 
 // --- passkeys (the starter's Go webauthn routes, native here) ---------------
-mountWebAuthn(app);
 mountOAuth2Redirect(app);
 mountSettingsApi(app);
 const authDeps = {

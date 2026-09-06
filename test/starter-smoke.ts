@@ -67,7 +67,7 @@ results.signedIn = /Signed in as|user@example.com/.test(await text());
 const seedAuth = await fetch(`${base}/api/collections/users/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: "user@example.com", password: "changeme123" }) }).then((r) => r.json()) as { token: string; record: { id: string } };
 let seededPostId = "";
 if (((await fetch(`${base}/api/collections/posts/records?perPage=1`).then((r) => r.json())) as { totalItems: number }).totalItems === 0) {
-  const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mP8z8BQz8DAwMDAxMAAAB8ABKQP6iEAAAAASUVORK5CYII="), (c) => c.charCodeAt(0));
+  const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR4nGP4z8AAQv8ZYAwAQ84H+VjtZqAAAAAASUVORK5CYII="), (c) => c.charCodeAt(0));
   const fd = new FormData(); fd.append("title", "Seed post"); fd.append("slug", `seed-${Date.now()}`); fd.append("body", "Seeded by the smoke test."); fd.append("user", seedAuth.record.id); fd.append("files", new Blob([png], { type: "image/png" }), "seed.png");
   const seeded = await fetch(`${base}/api/collections/posts/records`, { method: "POST", headers: { authorization: seedAuth.token }, body: fd });
   seededPostId = seeded.status === 200 ? String(((await seeded.json()) as { id: string }).id) : "";

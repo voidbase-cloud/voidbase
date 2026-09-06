@@ -4,7 +4,7 @@
 const PB = process.argv[2] ?? "http://127.0.0.1:8090"; const VB = process.argv[3] ?? "http://127.0.0.1:5180";
 const MOCK = "http://127.0.0.1:5195";
 const CREDS = { identity: "admin@example.com", password: "changeme123" };
-const PNG = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mP8z8BQz8DAwMDAxMAAAB8ABKQP6iEAAAAASUVORK5CYII="), (c) => c.charCodeAt(0));
+const PNG = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR4nGP4z8AAQv8ZYAwAQ84H+VjtZqAAAAAASUVORK5CYII="), (c) => c.charCodeAt(0));
 class Server {
   h: Record<string, string> = {}; saved: Record<string, unknown> = {}; collId = ""; recId = ""; file = "";
   constructor(public base: string, public bucket: string) {}

@@ -99,7 +99,8 @@ export class RequestEvent {
   redirect(status: number, url: string) { return (this.written = this.c.redirect(url, status as 302)); }
   get(key: string) { return this.storeMap.get(key); }
   set(key: string, value: unknown) { this.storeMap.set(key, value); }
-  pathParam(name: string) { return this.c.req.param(name) ?? ""; }
+  params: Record<string, string> = {}; // set by the hook route dispatcher (Hono's catch-all carries no named params)
+  pathParam(name: string) { return this.params[name] ?? this.c.req.param(name) ?? ""; }
   queryParam(name: string) { return this.c.req.query(name) ?? ""; }
   hasSuperuserAuth() { return !!this.auth?.isSuperuser(); }
   realIP() { return this.c.req.header("CF-Connecting-IP") ?? this.c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() ?? ""; }
@@ -313,7 +314,7 @@ export function makeOs(files: Record<string, string>, hooksDir: string) {
 }
 
 export function routerAdd(method: string, path: string, handler: HookFn, ...middlewares: HookMiddleware[]) {
-  routes.push({ method: method.toUpperCase(), path: toHonoPath(path), handler, middlewares });
+  routes.push({ method: method.toUpperCase() === "ANY" ? "ALL" : method.toUpperCase(), path: toHonoPath(path), handler, middlewares });
 }
 export function routerUse(..._middlewares: HookMiddleware[]) { /* global hook middleware: milestone six */ }
 export function cronAdd(id: string, expr: string, fn: () => unknown) { crons.set(id, { expr, fn }); }

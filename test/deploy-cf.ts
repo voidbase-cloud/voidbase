@@ -8,6 +8,7 @@ const MOCK = "http://127.0.0.1:5197"; const BIN = resolve(import.meta.dir, "../b
 let pass = 0, fail = 0; const check = (l: string, ok: boolean, d = "") => { ok ? pass++ : fail++; console.log(`${ok ? "PASS" : "FAIL"}  ${l}${ok ? "" : "  " + d}`); };
 const root = mkdtempSync(join(tmpdir(), "vb-deploy-")); const dir = `${root}/shopdemo/vb`; mkdirSync(`${dir}/pb_hooks`, { recursive: true }); mkdirSync(`${dir}/pb_migrations`);
 writeFileSync(`${dir}/package.json`, JSON.stringify({ name: "vb", private: true, dependencies: { voidbase: "link:voidbase" } }));
+writeFileSync(`${dir}/main.ts`, `import { mountWebAuthn } from "${resolve(import.meta.dir, "../src/server/webauthn")}";\nexport function register(app: { router: unknown; hooks: Record<string, (...a: unknown[]) => unknown> }) { mountWebAuthn(app.router as never); app.hooks.routerAdd!("GET", "/api/ts-hello", (e: { json: (s: number, d: unknown) => unknown }) => e.json(200, { message: "hi" })); }\n`);
 const run = (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawnSync(["bun", BIN, ...args], { cwd: dir, env: { ...process.env, CLOUDFLARE_API_BASE: MOCK, VOIDBASE_DEPLOY_CF_API_KEY: "", CLOUDFLARE_API_TOKEN: "", VOIDBASE_SUPERUSER_EMAIL: "", VOIDBASE_SUPERUSER_PASSWORD: "", PB_SUPERUSER_EMAIL: "", PB_SUPERUSER_PASSWORD: "", VOIDBASE_HOOKS_DIR: "", VOIDBASE_MIGRATIONS_DIR: "", ...env } }); return { code: p.exitCode, out: new TextDecoder().decode(p.stdout) + new TextDecoder().decode(p.stderr) }; };
 try {
   await fetch(`${MOCK}/__calls`, { method: "DELETE" });
@@ -37,6 +38,6 @@ try {
   check("--name slug, --account, PB_SUPERUSER_* from the environment", named.code === 0 && named2.name === "my-shop-api" && creds3.email === "owner@example.com" && creds3.password === "s3cret-from-env", `${named2.name} ${JSON.stringify(creds3)} ${named.out.slice(0, 120)}`);
   // the generated project must build with the package's own toolchain (relative imports, no install of its own)
   const build = Bun.spawnSync(["bun", "x", "vp", "build"], { cwd: PROJECT, env: { ...process.env, VOIDBASE_PERSIST_TO: `${PROJECT}/.void-state` } });
-  check("generated project builds (vp build)", build.exitCode === 0 && existsSync(`${PROJECT}/dist`), new TextDecoder().decode(build.stderr).slice(-400));
+  check("generated project builds (vp build) with main.ts composed in", build.exitCode === 0 && existsSync(`${PROJECT}/dist`) && readFileSync(`${PROJECT}/routes/api/[...path].ts`, "utf8").includes("register(appApi())"), new TextDecoder().decode(build.stderr).slice(-400));
 } finally { rmSync(root, { recursive: true, force: true }); rmSync(`${PKG}/.cloud/my-shop-api`, { recursive: true, force: true }); rmSync(PROJECT, { recursive: true, force: true }); }
 console.log(`\n${pass} pass, ${fail} fail`); process.exit(fail ? 1 : 0);

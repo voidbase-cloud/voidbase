@@ -17,9 +17,11 @@
     "./env": "./env.ts",
     "./scripts/*": "./scripts/*",
     "./package.json": "./package.json",
-    ".": "./src/node/serve.ts",
+    ".": "./src/node/index.ts",
     "./serve": "./src/node/serve.ts",
-    "./static": "./src/server/static.ts"
+    "./static": "./src/server/static.ts",
+    "./api": "./src/server/api.ts",
+    "./passkeys": "./src/server/webauthn.ts"
   },
   "imports": {
     "#platform/env": {

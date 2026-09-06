@@ -1,3 +1,4 @@
+/// <reference types="@cloudflare/workers-types" />
 // R2Bucket on the filesystem: keys are paths under the root, object metadata lives in .meta/<key>.json.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";

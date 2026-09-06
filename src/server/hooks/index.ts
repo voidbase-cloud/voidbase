@@ -94,28 +94,46 @@ export function loadHooks() {
 }
 
 // Runs handlers registered with routerAdd. Registered after the core routes so PocketBase's own API wins.
+// Hook routes (routerAdd from pb_hooks or a project's main.ts) are served by one catch-all registered after the core
+// routes, matching against the live registry at request time. Hono builds its matcher on the first request and
+// ignores routes added afterwards, so registrations may happen at any time (a main.ts composes after the JS hooks).
+interface Compiled { route: (typeof routes)[number]; re: RegExp; keys: string[]; score: number }
+let compiled: Compiled[] | null = null; let compiledFor = -1;
+function compile(): Compiled[] {
+  if (compiled && compiledFor === routes.length) return compiled;
+  // Go's ServeMux picks the most specific pattern: literal segments beat params beat wildcards
+  const score = (p: string) => (p.includes("*") ? 0 : 1000) + p.split("/").filter((s) => s && !s.startsWith(":")).length * 10 + p.split("/").length;
+  compiled = routes.map((route) => {
+    const keys: string[] = [];
+    const src = route.path.split("/").map((seg) => {
+      if (seg === "*") return ".*";
+      if (seg.startsWith(":")) { keys.push(seg.slice(1)); return "([^/]+)"; }
+      return seg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }).join("/");
+    return { route, re: new RegExp(`^${src}/?$`), keys, score: score(route.path) };
+  }).sort((a, b) => b.score - a.score);
+  compiledFor = routes.length;
+  return compiled;
+}
 export function mountHookRoutes(app: Hono<AppEnv>) {
-  // Go's ServeMux picks the most specific pattern; Hono picks the first registered. Mount specific routes first.
-  const specificity = (p: string) => (p.includes("*") ? 0 : 1000) + p.split("/").filter((s) => s && !s.startsWith(":")).length * 10 + p.split("/").length;
-  const ordered = [...routes].sort((a, b) => specificity(b.path) - specificity(a.path));
-  for (const r of ordered) {
-    app.on(r.method, r.path, async (c) => {
+  app.all("*", async (c) => {
+    const path = new URL(c.req.url).pathname;
+    for (const { route, re, keys } of compile()) {
+      if (route.method !== "ALL" && route.method !== c.req.method) continue;
+      const m = re.exec(path); if (!m) continue;
       const ev = new RequestEvent(c, authToHookRecord(c.get("auth")));
-      const chain: HookMiddleware[] = [...r.middlewares, r.handler];
+      keys.forEach((k, i) => { ev.params[k] = decodeURIComponent(m[i + 1] ?? ""); });
+      const chain: HookMiddleware[] = [...route.middlewares, route.handler];
       let i = 0;
-      const next = async (): Promise<unknown> => {
-        const m = chain[i++];
-        if (!m) return undefined;
-        const fn = typeof m === "function" ? m : m.func;
-        return fn(ev);
-      };
+      const next = async (): Promise<unknown> => { const mw = chain[i++]; if (!mw) return undefined; return (typeof mw === "function" ? mw : mw.func)(ev); };
       ev.next = next;
       const result = await next();
       if (result instanceof Response) return result;
       if (ev.written) return ev.written;
       return c.body(null, 204);
-    });
-  }
+    }
+    return c.notFound();
+  });
 }
 
 // Per-request state for $app and friends.

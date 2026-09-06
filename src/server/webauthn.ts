@@ -78,7 +78,7 @@ async function takeSession(db: D1Database, userId: string): Promise<string | nul
   return s.expires > Date.now() ? s.challenge : null;
 }
 
-export function mountWebAuthn(app: Hono<AppEnv>) {
+export function mountWebAuthn(app: Pick<Hono<AppEnv>, "get" | "post"> | { get: (p: string, h: (c: Context<AppEnv>) => Promise<Response>) => void; post: (p: string, h: (c: Context<AppEnv>) => Promise<Response>) => void }) {
   app.get("/api/webauthn/registration-options", async (c) => {
     const user = await findUser(c.env.DB, c.req.query("usernameOrEmail") ?? "");
     if (!user) return c.json(RESPONSES.failed, 400);

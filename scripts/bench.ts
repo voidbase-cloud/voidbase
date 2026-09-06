@@ -8,7 +8,7 @@ const su = await fetch(`${url}/api/collections/_superusers/auth-with-password`, 
 const H = { authorization: su.token, "content-type": "application/json" };
 await fetch(`${url}/api/collections/ks_bench`, { method: "DELETE", headers: H });
 await fetch(`${url}/api/collections`, { method: "POST", headers: H, body: JSON.stringify({ name: "ks_bench", type: "base", listRule: "", viewRule: "", fields: [{ name: "title", type: "text" }, { name: "n", type: "number" }, { name: "pic", type: "file", maxSelect: 1, thumbs: ["100x100"] }] }) });
-const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mP8z8BQz8DAwMDAxMAAAB8ABKQP6iEAAAAASUVORK5CYII="), (c) => c.charCodeAt(0));
+const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR4nGP4z8AAQv8ZYAwAQ84H+VjtZqAAAAAASUVORK5CYII="), (c) => c.charCodeAt(0));
 const fd = new FormData(); fd.append("title", "seed"); fd.append("pic", new Blob([png], { type: "image/png" }), "dot.png");
 const seeded = (await fetch(`${url}/api/collections/ks_bench/records`, { method: "POST", headers: { authorization: su.token }, body: fd }).then((r) => r.json())) as { id: string; pic: string };
 for (let i = 0; i < 50; i++) await fetch(`${url}/api/collections/ks_bench/records`, { method: "POST", headers: H, body: JSON.stringify({ title: `row ${i}`, n: i }) });

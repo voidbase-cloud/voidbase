@@ -1,3 +1,4 @@
+/// <reference types="@cloudflare/workers-types" />
 // D1Database on bun:sqlite: the subset the server uses (prepare/bind/all/first/run/raw, batch as a transaction, exec).
 import { Database } from "bun:sqlite";
 type Params = unknown[];

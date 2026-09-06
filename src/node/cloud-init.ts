@@ -6,7 +6,7 @@ const ROOT = resolve(import.meta.dir, "../..");
 
 // mode "package": a visible project importing the voidbase package (voidbase cloud init).
 // mode "internal": a project inside this package at .cloud/<slug>, importing ../../src etc. (voidbase deploy).
-export function writeCloudProject(out: string, mode: "package" | "internal" = "package", extra: { hooksDir?: string; migrationsDir?: string } = {}): { files: number; out: string } {
+export function writeCloudProject(out: string, mode: "package" | "internal" = "package", extra: { hooksDir?: string; migrationsDir?: string; entry?: string } = {}): { files: number; out: string } {
   const parentPkg = existsSync("package.json") ? (JSON.parse(readFileSync("package.json", "utf8")) as { dependencies?: Record<string, string> }) : {};
   const spec = parentPkg.dependencies?.voidbase ?? "^0.1.0";
   const own = JSON.parse(readFileSync(`${ROOT}/package.json`, "utf8")) as { devDependencies: Record<string, string> };
@@ -18,14 +18,17 @@ export function writeCloudProject(out: string, mode: "package" | "internal" = "p
     plugin: pkg(0, "hooks-plugin", "voidbase/plugin"), env: pkg(0, "env", "voidbase/env"),
     app: pkg(2, "src/server/app", "voidbase/app"), cronsApp: pkg(1, "src/server/app", "voidbase/app"), crons: pkg(1, "src/server/crons", "voidbase/crons"),
     middleware: pkg(1, "middleware/01.request-context", "voidbase/middleware"), schema: pkg(1, "db/schema", "voidbase/schema"),
+    api: pkg(2, "src/server/api", "voidbase/api"),
   };
+  // the project's main.ts (its register(app) function) is composed into the Worker exactly as in `bun main.ts`
+  const entry = extra.entry ? `\nimport { appApi } from "${P.api}";\nimport { register } from ${JSON.stringify(extra.entry)};\nregister(appApi());\n` : "";
   const hooksDir = JSON.stringify(extra.hooksDir ?? "../pb_hooks"); const migrationsDir = JSON.stringify(extra.migrationsDir ?? "../pb_migrations");
   const files: Record<string, string> = {
     "package.json": JSON.stringify({ name: "cloud", private: true, type: "module", scripts: { dev: "vp dev --port 8090 --host 0.0.0.0", build: "vp build", preview: "vp preview --port 8090", "panel:sync": "voidbase panel sync --dest public/_", deploy: "void deploy" }, dependencies: { voidbase: spec }, devDependencies: { "@cloudflare/workers-types": own.devDependencies["@cloudflare/workers-types"], typescript: "^5.9.3", vite: own.devDependencies.vite, "vite-plus": own.devDependencies["vite-plus"], void: own.devDependencies.void } }, null, 2) + "\n",
     "vite.config.ts": `import { defineConfig, loadEnv } from "vite";\nimport { voidPlugin } from "void";\nimport { pbHooksPlugin } from "${P.plugin}";\n\n// the project's pb_hooks/ and pb_migrations/ (one directory up) are bundled into the Worker\nexport default defineConfig(({ mode }) => {\n  const env = loadEnv(mode, process.cwd(), "");\n  return { plugins: [voidPlugin({ persistTo: env.VOIDBASE_PERSIST_TO || undefined }), pbHooksPlugin({ dir: env.VOIDBASE_HOOKS_DIR || ${hooksDir}, migrationsDir: env.VOIDBASE_MIGRATIONS_DIR || ${migrationsDir} })] };\n});\n`,
     "void.json": JSON.stringify({ $schema: "./node_modules/void/schema.json", worker: { compatibility_date: "2026-09-05", compatibility_flags: ["nodejs_compat"] }, routing: { notFound: "none" }, inference: { bindings: { db: true, storage: true } } }, null, 2) + "\n",
     "env.ts": `export { default } from "${P.env}";\n`,
-    "routes/api/[...path].ts": `// Every /api/* request is handled by voidbase's Hono app (PocketBase wire protocol).\nimport { defineHandler } from "void";\nimport { app } from "${P.app}";\n\nconst handle = defineHandler((c) => app.fetch(c.req.raw, c.env, (c as unknown as { executionCtx?: ExecutionContext }).executionCtx));\nexport const GET = handle; export const POST = handle; export const PATCH = handle; export const PUT = handle; export const DELETE = handle; export const OPTIONS = handle;\n`,
+    "routes/api/[...path].ts": `// Every /api/* request is handled by voidbase's Hono app (PocketBase wire protocol).\nimport { defineHandler } from "void";\nimport { app } from "${P.app}";\n${entry}\nconst handle = defineHandler((c) => app.fetch(c.req.raw, c.env, (c as unknown as { executionCtx?: ExecutionContext }).executionCtx));\nexport const GET = handle; export const POST = handle; export const PATCH = handle; export const PUT = handle; export const DELETE = handle; export const OPTIONS = handle;\n`,
     "middleware/01.request-context.ts": `// Static files and SPA fallback outside /api, the admin panel under /_/ (PocketBase --publicDir semantics).\nexport { default } from "${P.middleware}";\n`,
     "crons/every-minute.ts": `// Cloudflare cron trigger: PocketBase's maintenance jobs and cronAdd jobs from pb_hooks, once a minute.\nimport { defineScheduled } from "void";\nimport "${P.cronsApp}";\nimport { runDue } from "${P.crons}";\n\nexport const cron = "* * * * *";\nexport default defineScheduled(async (controller, env) => { await runDue(env as never, new Date(controller.scheduledTime)); });\n`,
     "db/schema.ts": `// voidbase's system tables; user collections are data, as in PocketBase.\nexport * from "${P.schema}";\n`,

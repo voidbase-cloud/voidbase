@@ -16,8 +16,9 @@ const serveOpts = () => ({ http: flags.http, dir: flags.dir, hooksDir: flags.hoo
 const admin = () => { const [email, password] = (flags.admin ?? `${process.env.VOIDBASE_SUPERUSER_EMAIL ?? "admin@example.com"}:${process.env.VOIDBASE_SUPERUSER_PASSWORD ?? ""}`).split(":") as [string, string]; return { email, password }; };
 const HELP = `voidbase - PocketBase-compatible backend: a single Bun process locally, Cloudflare Workers via Void in production
 
-  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--publicDir ../sk/build] [--dev]
-                                     run the server like "pocketbase serve" (--dev restarts when hooks or migrations change)
+  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--publicDir ../sk/build] [--dev] [--entry main.ts]
+                                     run the server like "pocketbase serve" (--dev restarts when hooks or migrations change;
+                                     --entry runs your own main.ts, the counterpart of a custom PocketBase build)
   superuser upsert <email> <password>  create or update a superuser: on the local data directory (--dir) or on a running
                                      instance (--url, --admin email:pass)
 
@@ -58,12 +59,15 @@ switch (cmd) {
   case undefined: case "help": case "--help": console.log(HELP); break;
   case "token": { const { tokenHelp } = await import("../src/node/deploy-cf"); console.log(tokenHelp()); break; }
   case "serve": {
-    if (!flags.dev) { const { serve } = await import("../src/node/serve"); await serve(serveOpts()); break; }
+    // --entry main.ts: the project's own composition (pb's "custom" build), otherwise the stock server
+    if (!flags.dev) { if (flags.entry) { await run("bun", [resolve(flags.entry), ...process.argv.slice(3).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry")]); break; } const { serve } = await import("../src/node/serve"); await serve(serveOpts()); break; }
     // --dev: run the server as a child and restart it when pb_hooks / pb_migrations change (like modd for PocketBase)
     const { watch } = await import("node:fs");
     const childArgs = process.argv.slice(2).filter((a) => a !== "--dev");
     let child: ReturnType<typeof Bun.spawn> | null = null; let timer: ReturnType<typeof setTimeout> | null = null;
-    const start = () => { child = Bun.spawn(["bun", import.meta.path, ...childArgs], { stdio: ["inherit", "inherit", "inherit"], env: process.env }); };
+    const entry = flags.entry ? resolve(flags.entry) : null;
+    const entryArgs = childArgs.slice(1).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry");
+    const start = () => { child = Bun.spawn(entry ? ["bun", entry, ...entryArgs] : ["bun", import.meta.path, ...childArgs], { stdio: ["inherit", "inherit", "inherit"], env: process.env }); };
     const restart = () => { if (timer) clearTimeout(timer); timer = setTimeout(() => { console.log("voidbase: hooks changed, restarting"); child?.kill(); start(); }, 300); };
     for (const d of [flags.hooksDir ?? "pb_hooks", flags.migrationsDir ?? "pb_migrations"]) { try { watch(resolve(d), { recursive: true }, restart); } catch { /* directory may not exist yet */ } }
     start();

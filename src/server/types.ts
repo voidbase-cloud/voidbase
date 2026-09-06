@@ -1,3 +1,4 @@
+/// <reference types="@cloudflare/workers-types" />
 import type { Collection } from "./collections/model";
 
 export type Row = Record<string, unknown>;

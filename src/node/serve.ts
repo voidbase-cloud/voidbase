@@ -41,33 +41,52 @@ export async function openLocal(opts: ServeOptions) {
   return { dir, sqlite, env };
 }
 
-export async function serve(opts: ServeOptions = {}) {
-  const [hostname, portStr] = (opts.http ?? "127.0.0.1:8090").split(":");
-  const port = Number(portStr ?? 8090);
+export interface VoidbaseServer { server: ReturnType<typeof Bun.serve>; env: Awaited<ReturnType<typeof openLocal>>["env"]; stop: () => void }
+
+// The library entry: `const app = await voidbase(opts); register things; await app.start()` (main.go's shape).
+export async function voidbase(opts: ServeOptions = {}) {
   const { dir, env } = await openLocal(opts);
   // the app module reads the hooks and migrations directories while loading
   const { app } = await import("../server/app");
-  const { runDue } = await import("../server/crons");
-  const { staticFallback } = await import("../server/static");
-  const ctx = { waitUntil: (p: Promise<unknown>) => { Promise.resolve(p).catch((e) => console.error("voidbase: background task failed", e)); }, passThroughOnException() {} };
-  const server = Bun.serve({
-    hostname, port, idleTimeout: 255,
-    async fetch(req) {
-      const res = await app.fetch(req, env, ctx as never);
-      if (res.status !== 404) return res;
-      return (await staticFallback(req, env.ASSETS)) ?? res;
-    },
-  });
-  // cron: every minute on the minute, like the Cloudflare trigger
-  const tick = () => runDue(env as never, new Date()).catch((e) => console.error("voidbase: cron failed", e));
-  const first = 60_000 - (Date.now() % 60_000);
-  const timer = setTimeout(() => { void tick(); setInterval(() => void tick(), 60_000); }, first);
-  if (!opts.quiet) {
-    const shown = hostname === "0.0.0.0" ? "127.0.0.1" : hostname;
-    console.log(`voidbase (data: ${dir}, hooks: ${process.env.VOIDBASE_HOOKS_DIR})`);
-    console.log(`Server started at http://${shown}:${port}\n├─ REST API:  http://${shown}:${port}/api/\n└─ Dashboard: http://${shown}:${port}/_/`);
-  }
-  // bootstrap now (system collections, settings, superuser from env, pb_migrations) instead of on the first request
-  await fetch(`http://127.0.0.1:${port}/api/health`).catch(() => undefined);
-  return { server, env, stop: () => { clearTimeout(timer); server.stop(true); } };
+  const { appApi } = await import("../server/api");
+  const api = appApi();
+  const start = async (): Promise<VoidbaseServer> => {
+    const [hostname, portStr] = (opts.http ?? "127.0.0.1:8090").split(":");
+    const port = Number(portStr ?? 8090);
+    const { runDue } = await import("../server/crons");
+    const { staticFallback } = await import("../server/static");
+    const ctx = { waitUntil: (p: Promise<unknown>) => { Promise.resolve(p).catch((e) => console.error("voidbase: background task failed", e)); }, passThroughOnException() {} };
+    const server = Bun.serve({
+      hostname, port, idleTimeout: 255,
+      async fetch(req) {
+        const res = await app.fetch(req, env, ctx as never);
+        if (res.status !== 404) return res;
+        return (await staticFallback(req, env.ASSETS)) ?? res;
+      },
+    });
+    // cron: every minute on the minute, like the Cloudflare trigger
+    const tick = () => runDue(env as never, new Date()).catch((e) => console.error("voidbase: cron failed", e));
+    const first = 60_000 - (Date.now() % 60_000);
+    const timer = setTimeout(() => { void tick(); setInterval(() => void tick(), 60_000); }, first);
+    if (!opts.quiet) {
+      const shown = hostname === "0.0.0.0" ? "127.0.0.1" : hostname;
+      console.log(`voidbase (data: ${dir}, hooks: ${process.env.VOIDBASE_HOOKS_DIR})`);
+      console.log(`Server started at http://${shown}:${port}\n├─ REST API:  http://${shown}:${port}/api/\n└─ Dashboard: http://${shown}:${port}/_/`);
+    }
+    // bootstrap now (system collections, settings, superuser from env, pb_migrations) instead of on the first request
+    await fetch(`http://127.0.0.1:${port}/api/health`).catch(() => undefined);
+    return { server, env, stop: () => { clearTimeout(timer); server.stop(true); } };
+  };
+  return { ...api, env, dir, start };
+}
+
+export async function serve(opts: ServeOptions = {}): Promise<VoidbaseServer> {
+  return (await voidbase(opts)).start();
+}
+
+// `pocketbase serve`-style flags: --http host:port --dir --hooksDir --migrationsDir --publicDir
+export function parseServeArgs(argv: string[] = process.argv.slice(2)): ServeOptions {
+  const flags: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i++) { const a = argv[i]!; if (a.startsWith("--")) { const [k, v] = a.slice(2).split("="); flags[k!] = v ?? (argv[i + 1] && !argv[i + 1]!.startsWith("--") ? argv[++i]! : "1"); } }
+  return { http: flags.http, dir: flags.dir, hooksDir: flags.hooksDir, migrationsDir: flags.migrationsDir, publicDir: flags.publicDir };
 }

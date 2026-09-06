@@ -6,6 +6,8 @@ export interface Embedded { version: string; migrations: Record<string, string>;
 let cached: Embedded | null | undefined;
 export async function embedded(): Promise<Embedded | null> {
   if (cached !== undefined) return cached;
+  // the file exists only while scripts/build-exe.ts compiles; consumers typecheck this module without it
+  // @ts-ignore
   try { cached = ((await import("./embedded.generated.json", { with: { type: "json" } })) as { default: Embedded }).default; } catch { cached = null; }
   return cached;
 }

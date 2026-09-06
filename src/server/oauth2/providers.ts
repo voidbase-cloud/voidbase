@@ -7,11 +7,14 @@ export interface ProviderContext { name: string; clientId: string; clientSecret:
 type Raw = Record<string, unknown>;
 
 const oidc: ProviderDefaults = { displayName: "OIDC", pkce: true, scopes: ["openid", "email", "profile"] };
-// Cloudflare OAuth (developers.cloudflare.com/fundamentals/oauth): plain OIDC on dash.cloudflare.com whose userinfo
-// carries only `sub`, so identity comes from the API's GET /user. Resource scopes (API token permission names such
-// as workers-platform.write) are added per provider with extra.scopes; extra.apiBase overrides the API for tests.
+// Cloudflare OAuth (developers.cloudflare.com/fundamentals/oauth): OAuth 2.0 on dash.cloudflare.com, not OIDC: `openid`
+// is not a Cloudflare scope and a request carrying it is refused (invalid_scope). Identity comes from the API's GET
+// /user (scope user-details.read); the userinfo endpoint, when it answers, only adds `sub`. Resource scopes (API token
+// permission ids such as workers-scripts.write, plus offline_access for a refresh token) must be registered on the
+// client and are added per provider with extra.scopes; extra.apiBase overrides the API for tests. The client
+// authenticates with HTTP Basic at the token endpoint (the token exchange tries that first).
 export const CF_API_BASE = "https://api.cloudflare.com/client/v4";
-const cloudflare: ProviderDefaults = { displayName: "Cloudflare", pkce: true, scopes: ["openid", "offline_access"], authURL: "https://dash.cloudflare.com/oauth2/auth", tokenURL: "https://dash.cloudflare.com/oauth2/token", userInfoURL: "https://dash.cloudflare.com/oauth2/userinfo" };
+const cloudflare: ProviderDefaults = { displayName: "Cloudflare", pkce: true, scopes: ["user-details.read"], authURL: "https://dash.cloudflare.com/oauth2/auth", tokenURL: "https://dash.cloudflare.com/oauth2/token", userInfoURL: "https://dash.cloudflare.com/oauth2/userinfo" };
 export const PROVIDER_DEFAULTS: Record<string, ProviderDefaults> = {
   oidc, oidc2: oidc, oidc3: oidc, cloudflare,
   apple: { displayName: "Apple", pkce: true, scopes: ["name", "email"], authURL: "https://appleid.apple.com/auth/authorize", tokenURL: "https://appleid.apple.com/auth/token" },
@@ -72,7 +75,9 @@ export async function fetchRawUser(p: ProviderContext, token: Token): Promise<Ra
       if (!token.id_token) throw new Error("empty id_token");
       return jwtClaims(String(token.id_token));
     case "cloudflare": {
-      const info = p.userInfoURL ? await getJSON(p.userInfoURL, token) : (token.id_token ? jwtClaims(String(token.id_token)) : {});
+      let info: Raw = {};
+      if (p.userInfoURL) { try { info = await getJSON(p.userInfoURL, token); } catch { /* no openid: identity comes from GET /user */ } }
+      else if (token.id_token) info = jwtClaims(String(token.id_token));
       const base = String(p.extra.apiBase || CF_API_BASE).replace(/\/$/, "");
       const me = await getJSON(`${base}/user`, token);
       return { ...info, cf_user: (me.result ?? me) as Raw };

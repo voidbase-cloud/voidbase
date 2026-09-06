@@ -98,7 +98,7 @@ jobs:
         working-directory: voidbase
         run: |
           (cd ../pocketbase-sveltekit-starter/sk && bun install --frozen-lockfile && bunx svelte-kit sync)
-          ./scripts/starter.sh start 5174 http://127.0.0.1:5180
+          STARTER_SK_DIR=../pocketbase-sveltekit-starter/sk ./scripts/starter.sh start 5174 http://127.0.0.1:5180
           bun test/starter-smoke.ts http://127.0.0.1:5174 .void/ci-logs/starter.png
       - name: Logs on failure
         if: failure()

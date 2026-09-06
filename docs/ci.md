@@ -38,8 +38,8 @@ server and the default one for the Bun runtime), so `src/node/deploy-cf.ts` reac
 executable smoke, typecheck and the unit tests and nothing else, while a file of the server reaches every suite on
 both runtimes. File hashes come from git blob ids, so they are exact and cost nothing; the combined hash of a check's
 files is compared with the one the last green run recorded, and the check runs only when they differ. The record is
-the deployed status page of master (`CI_STATUS_URL`, the CI Worker's `status.json`, whose `verified` map holds the
-hash each check last passed on); on a dev machine it is `ci/public/status.json` from the previous run. What passed
+the deployed status page of master (`CI_STATUS_URL`, https://release.voidbase.cloud/status.json, whose `verified`
+map holds the hash each check last passed on); on a dev machine it is `ci/public/status.json` from the previous run. What passed
 gets this run's hashes, what was skipped keeps the previous record's, so a chain of partial runs stays sound. The
 oracle sync, the servers, the reference and Chrome happen only when a selected check needs them.
 
@@ -188,6 +188,7 @@ shapes of Cloudflare's API reference; the live API is exercised the first time t
 
 `ci/public/index.html` lists the steps with their durations and logs, every suite with its result and last line, the
 screenshots of the panel and starter suites, and links `status.json` (the same, as data) and `badge.svg`
-(`ci: passing`). Once `voidbase-ci` is deployed, `https://voidbase-ci.<subdomain>.workers.dev/badge.svg` is the badge
-for the README and `status.json` the feed for anything else; a pull request's build uploads a version, so its preview
-URL shows the same page for that commit.
+(`ci: passing`). The page's canonical address is https://release.voidbase.cloud (the custom domain
+`ci/wrangler.jsonc` declares; the workers.dev address stays on for the preview URLs): `badge.svg` there is the badge
+in the README and `status.json` the record of the last green run and the feed for anything else; a pull request's
+build uploads a version, so its preview URL shows the same page for that commit.

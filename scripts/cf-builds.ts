@@ -1,7 +1,7 @@
 // Cloudflare Workers Builds for this repository through the Builds REST API (docs/ci.md): connects the GitHub
 // repository, creates the CI project (a Worker that serves its status page) with its two triggers, build variables
 // and secrets, triggers builds and follows their logs. The release flow runs inside the CI build (scripts/ci.sh).
-//   bun scripts/cf-builds.ts setup [--repo voidbase-cloud/voidbase] [--ci voidbase-ci] [--branch master] [--github]
+//   bun scripts/cf-builds.ts setup [--repo voidbase-cloud/voidbase] [--ci voidbase-ci] [--branch master] [--domain release.voidbase.cloud] [--github]
 //   bun scripts/cf-builds.ts status [--ci voidbase-ci]
 //   bun scripts/cf-builds.ts build [--worker voidbase-ci] [--branch master | --commit <sha>] [--trigger <name>] [--follow]
 //   bun scripts/cf-builds.ts builds [--worker voidbase-ci]
@@ -138,9 +138,11 @@ try {
     const common = { root_directory: "/", path_includes: ["*"], path_excludes: ["*"], build_caching_enabled: true };
     const prod = await ensureTrigger(ci.tag, connection, buildToken, { trigger_name: triggerNames.ciMaster, build_command: CI_BUILD, deploy_command: DEPLOY, branch_includes: [BRANCH], branch_excludes: [], ...common });
     const preview = await ensureTrigger(ci.tag, connection, buildToken, { trigger_name: triggerNames.ciBranches, build_command: CI_BUILD, deploy_command: PREVIEW, branch_includes: ["*"], branch_excludes: [BRANCH], ...common });
-    // the record of the last green run of master, which scripts/ci-plan.ts compares the inputs against
-    const sub = await workersSubdomain(cf, account.id).catch(() => null);
-    const statusUrl = sub ? `https://${CI}.${sub}.workers.dev/status.json` : "";
+    // the record of the last green run of master, which scripts/ci-plan.ts compares the inputs against: the status
+    // page's canonical address (--domain, the custom domain ci/wrangler.jsonc declares), else the workers.dev one
+    const domain = args.domain ?? process.env.CI_DOMAIN ?? "release.voidbase.cloud";
+    const sub = domain ? null : await workersSubdomain(cf, account.id).catch(() => null);
+    const statusUrl = domain ? `https://${domain}/status.json` : sub ? `https://${CI}.${sub}.workers.dev/status.json` : "";
     // the bucket scripts/ci-cache.sh keeps the downloads in between builds (Workers Builds keeps nothing else)
     const cacheToken = process.env.CI_CACHE_TOKEN ?? process.env.VOIDBASE_DEPLOY_CF_API_KEY; const bucket = args["cache-bucket"] ?? "voidbase-ci-cache";
     let cacheVars: EnvVars = {};

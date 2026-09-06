@@ -7,6 +7,8 @@
   "name": "voidbase-ci",
   "compatibility_date": "2026-01-01",
   "assets": { "directory": "./public", "html_handling": "auto-trailing-slash", "not_found_handling": "none" },
+  // the canonical address of the status page; the workers.dev address stays on for the preview URLs of branches
+  "routes": [{ "pattern": "release.voidbase.cloud", "custom_domain": true }],
   // what the dashboard suggests for consistent settings across deployments: invocation logs and traces, all of them,
   // kept in the Workers dashboard
   "observability": {

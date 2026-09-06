@@ -1,5 +1,7 @@
 # voidbase
 
+[![ci](https://release.voidbase.cloud/badge.svg)](https://release.voidbase.cloud/) The status page of the last green build: every step, every suite, the screenshots.
+
 A PocketBase-wire-compatible backend on Cloudflare Workers, built with [Void](https://void.cloud).
 The unmodified PocketBase admin panel (0.40.2) and the unmodified `pocketbase` JS SDK (0.28) are the two oracles that define done.
 
@@ -109,8 +111,9 @@ Your directory stays `pb_hooks` + `pb_migrations` + `pb_data`, like a PocketBase
 `scripts/ci.sh` is the whole CI (`bun run ci` on a dev machine): it fetches the starter, syncs the panel, starts
 voidbase and a seeded reference PocketBase (`scripts/seed-reference.sh`), runs every suite through
 `scripts/ci-suites.sh` on the Workers and Bun runtimes, then the production-build boots, the prebuilt executable and
-the starter smoke, and renders a status page. Cloudflare Workers Builds runs it (`scripts/cf-builds.ts setup`);
-`.github/workflows/cloudflare.yml` only starts the builds; see [docs/ci.md](docs/ci.md).
+the starter smoke, and renders the status page at [release.voidbase.cloud](https://release.voidbase.cloud/).
+Cloudflare Workers Builds runs it (`scripts/cf-builds.ts setup`); `.github/workflows/cloudflare.yml` only starts the
+builds; see [docs/ci.md](docs/ci.md).
 
 ## Docs
 

@@ -41,9 +41,11 @@ ci(release): compile release notes with release-please
 
 ## The release
 
-`scripts/release.sh` is the whole flow. Cloudflare Workers Builds runs it as the `voidbase-release` project on every
-push to master and every published release; GitHub Actions only starts those builds (docs/ci.md). It is idempotent:
-a re-run after a partial failure does only what is still missing.
+`scripts/release.sh` is the whole flow. It runs as the last step of the CI build on master (docs/ci.md) when the
+pushed commits are releasable (`feat`, `fix`, `perf`, `revert`, a breaking change), when the release PR was merged,
+when a commit carries a `Release: dry-run` trailer, or when a release still needs npm or its executables (one cut
+by hand, or one published in hot mode). It is idempotent: a re-run after a partial failure does only what is still
+missing. In hot mode it publishes to npm and leaves the executables to the first normal run.
 
 1. Push or merge conventional commits to `master`. `release-pr` (release-please) opens or updates the pull request
    "chore(master): release X.Y.Z": the next version from the commit types, the `CHANGELOG.md` section compiled from
@@ -72,22 +74,22 @@ everything after it is compiled). `release-please-config.json` maps commit types
 
 ## Rehearsals and manual paths
 
-- A dry run: Actions > cloudflare > Run workflow with project `release-dry-run`, or from a machine
-  `bun scripts/cf-builds.ts build --worker voidbase-release --dry-run --commit <sha> --follow`, or locally
-  `bun run release -- --dry-run` (needs `GH_TOKEN` with read access and `NPM_TOKEN`): every step with release-please
-  in dry-run mode and `npm publish --dry-run`, nothing published, no release touched.
+- A dry run: a commit on master whose message carries a `Release: dry-run` trailer makes the build rehearse the
+  flow (release-please in dry-run mode, `npm publish --dry-run`, the executables, nothing published, no release
+  touched), or locally `bun run release -- --dry-run` (needs `GH_TOKEN` with read access and `NPM_TOKEN`).
 - A release cut by hand also publishes: `gh release create vX.Y.Z --notes-file notes.md` after bumping `package.json`
-  to X.Y.Z on `master`; the `release` event starts a release build of the tagged commit, which publishes it.
+  to X.Y.Z on `master`; the `release` event starts a build of the tagged commit, whose release step publishes it.
 - Publishing from a machine: `bun run check && bun test`, then
   `NPM_CONFIG_//registry.npmjs.org/:_authToken=$VOIDBASE_NPM_TOKEN npm publish --access public`.
 
-Secrets and permissions. The release triggers on Cloudflare hold `GH_TOKEN` (a fine-grained PAT with contents and
-pull requests write on this repository: release-please opens the release PR and creates the release with it, the
-assets are uploaded with it), `NPM_TOKEN` (an npm granular token with publish rights on the `@voidbase-cloud` scope)
-and optionally `GH_PACKAGES_TOKEN` (a classic PAT with `write:packages`; without it the GitHub Packages copy is
-skipped). `bun scripts/cf-builds.ts setup` stores them from the environment. GitHub itself holds only what the
-workflow needs to start builds: the secret `CLOUDFLARE_BUILDS_TOKEN` and the trigger variables. release-please's PR
-needs no organization setting for Actions, since a PAT opens it.
+Secrets and permissions. The master trigger on Cloudflare holds `GH_TOKEN` (a fine-grained PAT with contents, pull
+requests and issues write on this repository: release-please opens and labels the release PR and creates the release
+with it, the assets are uploaded with it), `NPM_TOKEN` (an npm granular token with publish rights on the
+`@voidbase-cloud` scope) and optionally `GH_PACKAGES_TOKEN` (a classic PAT with `write:packages`; without it the
+GitHub Packages copy is skipped). `bun scripts/cf-builds.ts setup` stores them from the environment; builds of other
+branches never carry them. GitHub itself holds only what the workflow needs to start builds: the secret
+`CLOUDFLARE_BUILDS_TOKEN` and the trigger variables. release-please's PR needs no organization setting for Actions,
+since a PAT opens it.
 
 Consumers: `bun add @voidbase-cloud/voidbase`; from GitHub Packages instead, `.npmrc` with
 `@voidbase-cloud:registry=https://npm.pkg.github.com` and a token with `read:packages`.

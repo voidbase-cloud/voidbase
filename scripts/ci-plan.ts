@@ -60,7 +60,7 @@ export const SCOPE_KEYS: Record<string, string[]> = {
 // ---- the decision: what runs, given current hashes and the last green run's verified hashes
 export interface Decision { run: boolean; reason: string }
 export type Decisions = Record<string, Decision>;
-export interface CommitSignals { scopes: string[]; tests: string[]; full: boolean; changed: string[] }
+export interface CommitSignals { scopes: string[]; tests: string[]; full: boolean; changed: string[]; releasable: boolean; dryRun: boolean; releaseMerge: boolean }
 export interface DecideOptions { full?: boolean; browser?: boolean; hot?: boolean; budget?: number; seconds?: Record<string, number>; signals?: CommitSignals }
 const suiteName = (key: string) => key.replace(/^(suite|bun|step):/, "");
 export function decide(hashes: Record<string, string>, previous: Record<string, string> | null, opts: DecideOptions = {}): Decisions {
@@ -195,21 +195,30 @@ async function previousRecord(source: string | undefined): Promise<Record_ | nul
     return { source, commit: j.commit ?? "", verified: j.verified, seconds };
   } catch (e) { console.log(`plan: previous record unavailable (${source}: ${e instanceof Error ? e.message : e})`); return null; }
 }
-/** what the commits since the record say: scopes, `Tests:` trailers, changed files */
-export function parseCommits(messages: string[]): Pick<CommitSignals, "scopes" | "tests" | "full"> {
-  const scopes = new Set<string>(), tests = new Set<string>(); let full = false;
+/** what the commits since the record say: scopes, `Tests:` trailers, whether a release can change (a feat, fix,
+ * perf or revert commit, a breaking change), a `Release: dry-run` trailer, the merge of the release PR */
+export function parseCommits(messages: string[]): Omit<CommitSignals, "changed"> {
+  const scopes = new Set<string>(), tests = new Set<string>(); let full = false, releasable = false, dryRun = false, releaseMerge = false;
   for (const m of messages) {
     const head = m.split("\n")[0] ?? ""; const sc = head.match(/^\w+\(([^)]+)\)!?:/); if (sc) for (const s of sc[1]!.split(",")) scopes.add(s.trim());
-    for (const line of m.split("\n")) { const t = line.match(/^tests?:\s*(.+)$/i); if (t) for (const name of t[1]!.split(/[\s,]+/).filter(Boolean)) { if (name === "all" || name === "full") full = true; else tests.add(name); } }
+    if (/^(feat|fix|perf|revert)(\(|!|:)|^[a-z]+(\([^)]*\))?!:/.test(head)) releasable = true;
+    if (/^chore\(master\): release|^Merge pull request .*release-please/.test(head)) releaseMerge = true;
+    for (const line of m.split("\n")) {
+      const t = line.match(/^tests?:\s*(.+)$/i); if (t) for (const name of t[1]!.split(/[\s,]+/).filter(Boolean)) { if (name === "all" || name === "full") full = true; else tests.add(name); }
+      if (/^release:\s*dry[- ]?run\s*$/i.test(line)) dryRun = true;
+    }
   }
-  return { scopes: [...scopes], tests: [...tests], full };
+  return { scopes: [...scopes], tests: [...tests], full, releasable, dryRun, releaseMerge };
 }
 function commitSignals(prevCommit: string): CommitSignals {
   const ancestor = prevCommit && Bun.spawnSync(["git", "merge-base", "--is-ancestor", prevCommit, "HEAD"], { cwd: ROOT, stdout: "ignore", stderr: "ignore" }).exitCode === 0;
   const range = ancestor ? `${prevCommit}..HEAD` : "-1";
   const messages = git(["log", "--format=%B%x00", range]).split("\0").map((m) => m.trim()).filter(Boolean);
   const changed = ancestor ? git(["diff", "--name-only", prevCommit, "HEAD"]).split("\n").filter(Boolean) : [];
-  return { ...parseCommits(messages), changed };
+  const parsed = parseCommits(messages);
+  // the release merge is a property of the head commit alone, not of anything older in the range
+  const head = git(["log", "-1", "--format=%s"]).trim();
+  return { ...parsed, releaseMerge: /^chore\(master\): release|^Merge pull request .*release-please/.test(head), changed };
 }
 
 if (import.meta.main) {
@@ -234,12 +243,14 @@ if (import.meta.main) {
   writeFileSync(resolve(out, "ci-plan.json"), JSON.stringify({ commit, full, hot: hotMode ? { budget, deferred } : null, signals, previous: previous ? { source: previous.source, commit: previous.commit } : null, previousVerified: previous?.verified ?? {}, hashes, decisions }, null, 2) + "\n");
   const lines = Object.entries(decisions).map(([k, v]) => `${k} ${v.run ? "run" : "skip"} ${v.reason}`);
   lines.push(`suites ${selected(decisions, "suite:").join(" ")}`, `bun ${selected(decisions, "bun:").join(" ")}`);
+  lines.push(`release-pr ${signals.releasable ? "yes" : "no"}`, `release-merge ${signals.releaseMerge ? "yes" : "no"}`, `release-dry-run ${signals.dryRun ? "yes" : "no"}`);
   writeFileSync(resolve(out, "ci-plan.txt"), lines.join("\n") + "\n");
   const ran = KEYS.filter((k) => decisions[k]!.run);
   const why = full ? "full run requested" : previous ? `against ${previous.source}${previous.commit ? ` (${previous.commit.slice(0, 10)})` : ""}` : "no previous record, everything runs";
   console.log(`plan: ${ran.length} of ${KEYS.length} checks run, ${KEYS.length - ran.length} skipped${hotMode ? `, hot mode (budget ${budget}s, ${deferred.length} deferred)` : ""}; ${why}`);
   if (signals.changed.length) console.log(`  changed: ${signals.changed.length} files (${signals.changed.slice(0, 6).join(", ")}${signals.changed.length > 6 ? ", ..." : ""})`);
   if (signals.scopes.length || signals.tests.length) console.log(`  commits: scopes ${signals.scopes.join(", ") || "none"}; Tests: ${signals.tests.join(", ") || "none"}`);
+  console.log(`  release: ${signals.releaseMerge ? "release merge" : signals.releasable ? "releasable commits, the release PR is refreshed" : "nothing releasable"}${signals.dryRun ? "; dry run requested" : ""}`);
   console.log(`  steps: ${["oracles", "typecheck", "unit", "browser", "boot", "reference", "suites", "suites-bun", "deploy-cf", "fresh-db", "mail-http", "exe-smoke", "starter"].map((s) => `${s}${decisions[`step:${s}`]!.run ? "" : "(skip)"}`).join(" ")}`);
   console.log(`  suites: ${selected(decisions, "suite:").join(" ") || "none"}`);
   console.log(`  bun: ${selected(decisions, "bun:").join(" ") || "none"}`);

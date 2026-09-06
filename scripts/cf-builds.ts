@@ -1,18 +1,19 @@
 // Cloudflare Workers Builds for this repository through the Builds REST API (docs/ci.md): connects the GitHub
-// repository, creates the CI project and the release project (each a Worker that serves its status page) with their
-// triggers and build variables, triggers builds and follows their logs.
-//   bun scripts/cf-builds.ts setup [--repo voidbase-cloud/voidbase] [--ci voidbase-ci] [--release voidbase-release] [--branch master] [--no-release] [--github]
-//   bun scripts/cf-builds.ts status [--ci voidbase-ci] [--release voidbase-release]
-//   bun scripts/cf-builds.ts build [--worker voidbase-ci] [--branch master | --commit <sha>] [--trigger <name> | --dry-run] [--follow]
+// repository, creates the CI project (a Worker that serves its status page) with its two triggers, build variables
+// and secrets, triggers builds and follows their logs. The release flow runs inside the CI build (scripts/ci.sh).
+//   bun scripts/cf-builds.ts setup [--repo voidbase-cloud/voidbase] [--ci voidbase-ci] [--branch master] [--github]
+//   bun scripts/cf-builds.ts status [--ci voidbase-ci]
+//   bun scripts/cf-builds.ts build [--worker voidbase-ci] [--branch master | --commit <sha>] [--trigger <name>] [--follow]
 //   bun scripts/cf-builds.ts builds [--worker voidbase-ci]
 //   bun scripts/cf-builds.ts logs <build-uuid> [--follow]
 //   bun scripts/cf-builds.ts cancel <build-uuid>
 //   bun scripts/cf-builds.ts env [--worker voidbase-ci] [--trigger <name>] KEY=value ... [--secret KEY=value] ...
 //   bun scripts/cf-builds.ts hot on|off [--budget 60]          hot mode on the CI triggers (docs/ci.md): CI_HOT and CI_HOT_BUDGET
+//   bun scripts/cf-builds.ts remove <worker>                     deletes a project's triggers and its Worker
 // Auth: CLOUDFLARE_BUILDS_TOKEN, a *user* API token (My Profile > API Tokens) with "Workers Builds Configuration: Edit"
 // and "Workers Scripts: Edit"; the Builds API rejects account-owned tokens. CLOUDFLARE_ACCOUNT_ID picks the account when
-// the token reaches several. `setup` stores the release project's secrets from the environment when they are set:
-// GH_TOKEN (release-please, release assets), NPM_TOKEN or VOIDBASE_NPM_TOKEN, GH_PACKAGES_TOKEN. With CI_CACHE_TOKEN (an
+// the token reaches several. `setup` stores the release secrets from the environment on the master trigger when they
+// are set: GH_TOKEN (release-please, release assets), NPM_TOKEN or VOIDBASE_NPM_TOKEN, GH_PACKAGES_TOKEN. With CI_CACHE_TOKEN (an
 // API token with Workers R2 Storage edit; VOIDBASE_DEPLOY_CF_API_KEY is accepted) it creates the R2 bucket the builds
 // keep their downloads in (--cache-bucket, default voidbase-ci-cache) and stores the token on every trigger. Push events never
 // build (the triggers' watch paths exclude everything): .github/workflows/cloudflare.yml starts builds through this
@@ -35,12 +36,12 @@ if (!token) {
 }
 const cf = new CfApi(token, process.env.CLOUDFLARE_API_BASE);
 const GITHUB_API = (process.env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
-const CI = args.ci ?? "voidbase-ci", RELEASE = args.release ?? "voidbase-release", BRANCH = args.branch ?? "master";
+const CI = args.ci ?? "voidbase-ci", BRANCH = args.branch ?? "master";
 const BUN_VERSION = "1.3.14";  // the version CI pins (setup-bun in the workflows); the image's default is older
 const DEPLOY = "./node_modules/.bin/wrangler deploy -c ci/wrangler.jsonc";
 const PREVIEW = "./node_modules/.bin/wrangler versions upload -c ci/wrangler.jsonc";
-const CI_BUILD = "bash scripts/ci.sh", RELEASE_BUILD = "bash scripts/release.sh", DRY_RUN_BUILD = "bash scripts/release.sh --dry-run";
-const triggerNames = { ciMaster: `${CI} (${BRANCH})`, ciBranches: `${CI} (branches)`, releaseMaster: `${RELEASE} (${BRANCH})`, releaseDryRun: `${RELEASE} (dry run)` };
+const CI_BUILD = "bash scripts/ci.sh";
+const triggerNames = { ciMaster: `${CI} (${BRANCH})`, ciBranches: `${CI} (branches)` };
 
 interface Trigger { trigger_uuid: string; trigger_name: string; external_script_id?: string; build_command?: string; deploy_command?: string; root_directory?: string; branch_includes?: string[]; branch_excludes?: string[]; path_includes?: string[]; path_excludes?: string[]; build_caching_enabled?: boolean; [k: string]: unknown }
 interface Build { build_uuid: string; status?: string; build_outcome?: string; created_on?: string; created_at?: string; stopped_on?: string; build_trigger_metadata?: { branch?: string; commit_hash?: string; [k: string]: unknown }; [k: string]: unknown }
@@ -148,38 +149,30 @@ try {
       if (r) { console.log(`cache bucket ${bucket}: ${r.created ? "created" : "exists"}`); cacheVars = { CI_CACHE_BUCKET: { value: bucket, is_secret: false }, CI_CACHE_ACCOUNT: { value: account.id, is_secret: false }, CI_CACHE_TOKEN: { value: cacheToken, is_secret: true } }; }
     } else console.log("cache bucket: skipped (set CI_CACHE_TOKEN, an API token with Workers R2 Storage edit, to keep downloads between builds)");
     const vars: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false }, CI_BROWSER: { value: "1", is_secret: false }, ...(statusUrl ? { CI_STATUS_URL: { value: statusUrl, is_secret: false } } : {}), ...cacheVars };
-    await setEnv(prod.uuid, vars); await setEnv(preview.uuid, vars);
+    // the release secrets on the master trigger only: builds of other branches never carry them
+    const secrets: EnvVars = {};
+    const ghTok = process.env.GH_TOKEN, npmTok = process.env.NPM_TOKEN ?? process.env.VOIDBASE_NPM_TOKEN, ghpTok = process.env.GH_PACKAGES_TOKEN;
+    if (ghTok) secrets.GH_TOKEN = { value: ghTok, is_secret: true };
+    if (npmTok) secrets.NPM_TOKEN = { value: npmTok, is_secret: true };
+    if (ghpTok) secrets.GH_PACKAGES_TOKEN = { value: ghpTok, is_secret: true };
+    await setEnv(prod.uuid, { ...vars, ...secrets }); await setEnv(preview.uuid, vars);
     if (statusUrl) console.log(`  CI_STATUS_URL ${statusUrl} (the last green run's record, for incremental runs)`);
+    console.log(`  release secrets on the ${BRANCH} trigger: ${Object.keys(secrets).join(", ") || "none (set GH_TOKEN and NPM_TOKEN in the environment and rerun, or `env --trigger \"" + triggerNames.ciMaster + "\" --secret GH_TOKEN=...`)"}`);
     console.log(`  trigger ${prod.uuid} ${BRANCH}: ${prod.created ? "created" : "updated"}; build \`${CI_BUILD}\`, deploy \`${DEPLOY}\``);
     console.log(`  trigger ${preview.uuid} other branches: ${preview.created ? "created" : "updated"}; deploy \`${PREVIEW}\` (preview URL on the pull request)`);
     const github: Record<string, string> = { CF_ACCOUNT_ID: account.id, CF_CI_TRIGGER_MASTER: prod.uuid, CF_CI_TRIGGER_BRANCHES: preview.uuid };
-    if (!args["no-release"]) {
-      const rel = await ensureWorker(RELEASE);
-      console.log(`Worker ${RELEASE}: ${rel.created ? "created" : "exists"} (tag ${rel.tag})`);
-      const t = await ensureTrigger(rel.tag, connection, buildToken, { trigger_name: triggerNames.releaseMaster, build_command: RELEASE_BUILD, deploy_command: DEPLOY, branch_includes: [BRANCH], branch_excludes: [], ...common });
-      const dry = await ensureTrigger(rel.tag, connection, buildToken, { trigger_name: triggerNames.releaseDryRun, build_command: DRY_RUN_BUILD, deploy_command: PREVIEW, branch_includes: ["*"], branch_excludes: [BRANCH], ...common });
-      const secrets: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false }, ...cacheVars };
-      const gh = process.env.GH_TOKEN, npm = process.env.NPM_TOKEN ?? process.env.VOIDBASE_NPM_TOKEN, ghp = process.env.GH_PACKAGES_TOKEN;
-      if (gh) secrets.GH_TOKEN = { value: gh, is_secret: true };
-      if (npm) secrets.NPM_TOKEN = { value: npm, is_secret: true };
-      if (ghp) secrets.GH_PACKAGES_TOKEN = { value: ghp, is_secret: true };
-      await setEnv(t.uuid, secrets); await setEnv(dry.uuid, secrets);
-      const stored = Object.keys(secrets).filter((k) => secrets[k]!.is_secret && k !== "CI_CACHE_TOKEN").join(", ") || "none (set GH_TOKEN and NPM_TOKEN in the environment and rerun, or `env --worker " + RELEASE + " --secret GH_TOKEN=...`)";
-      console.log(`  trigger ${t.uuid} ${BRANCH}: ${t.created ? "created" : "updated"}; build \`${RELEASE_BUILD}\`; secrets stored: ${stored}`);
-      console.log(`  trigger ${dry.uuid} dry run: ${dry.created ? "created" : "updated"}; build \`${DRY_RUN_BUILD}\`, deploy \`${PREVIEW}\``);
-      github.CF_RELEASE_TRIGGER_MASTER = t.uuid; github.CF_RELEASE_TRIGGER_DRY_RUN = dry.uuid;
-    }
     if (args.github) {
       // what .github/workflows/cloudflare.yml reads: the trigger uuids as variables, the user token as the secret (over stdin, never an argument)
       const gh = process.env.GH_BIN ?? "gh";
-      const ghRun = (a: string[], stdin?: string) => { const p = Bun.spawnSync([gh, ...a], { stdin: stdin === undefined ? "ignore" : new TextEncoder().encode(stdin), stdout: "pipe", stderr: "pipe" }); if (p.exitCode !== 0) die(`${gh} ${a.slice(0, 3).join(" ")} failed: ${p.stderr.toString().trim() || p.stdout.toString().trim()}`); };
+      const ghRun = (a: string[], stdin?: string, tolerate = false) => { const p = Bun.spawnSync([gh, ...a], { stdin: stdin === undefined ? "ignore" : new TextEncoder().encode(stdin), stdout: "pipe", stderr: "pipe" }); if (p.exitCode !== 0 && !tolerate) die(`${gh} ${a.slice(0, 3).join(" ")} failed: ${p.stderr.toString().trim() || p.stdout.toString().trim()}`); };
       for (const [k, v] of Object.entries(github)) ghRun(["variable", "set", k, "--repo", repo, "--body", v]);
+      for (const stale of ["CF_RELEASE_TRIGGER_MASTER", "CF_RELEASE_TRIGGER_DRY_RUN"]) ghRun(["variable", "delete", stale, "--repo", repo], undefined, true);  // from the time the release flow had its own project
       ghRun(["secret", "set", "CLOUDFLARE_BUILDS_TOKEN", "--repo", repo], token);
       console.log(`GitHub ${repo}: variables ${Object.keys(github).join(", ")} and the secret CLOUDFLARE_BUILDS_TOKEN stored`);
     } else console.log(`\nrepository variables for .github/workflows/cloudflare.yml (or rerun with --github to store them):\n${Object.entries(github).map(([k, v]) => `  ${k}=${v}`).join("\n")}\n  secret CLOUDFLARE_BUILDS_TOKEN=<this token>`);
     console.log(`\ndone. Push events do not build by themselves; the workflow starts builds on ${dash(CI)}. First build: bun scripts/cf-builds.ts build --branch ${BRANCH} --follow`);
   } else if (cmd === "status") {
-    for (const name of [CI, RELEASE]) {
+    for (const name of [CI]) {
       const w = (await workers()).find((s) => s.id === name);
       if (!w?.tag) { console.log(`${name}: no such Worker`); continue; }
       const ts = await triggers(w.tag); const last = await latestBuild(w.tag);
@@ -190,7 +183,7 @@ try {
   } else if (cmd === "build") {
     const name = args.worker ?? CI; const tag = await workerTag(name);
     const ts = await triggers(tag); const branch = args.commit ? undefined : args.branch ?? BRANCH;
-    const wanted = args.trigger ?? (args["dry-run"] ? triggerNames.releaseDryRun : undefined);
+    const wanted = args.trigger;
     const t = wanted ? ts.find((x) => x.trigger_name === wanted) : ts.find((x) => (branch ? (x.branch_includes ?? []).includes(branch) : true)) ?? ts[0];
     if (!t) die(`no trigger on ${name}`);
     const body = args.commit ? { commit_hash: args.commit, ...(args.branch ? { branch: args.branch } : {}) } : { branch };
@@ -219,10 +212,15 @@ try {
       const now = (await cf.json<EnvVars>("GET", `${A}/builds/triggers/${t.trigger_uuid}/environment_variables`)).result ?? {};
       console.log(`${name} "${t.trigger_name}": ${Object.entries(now).map(([k, v]) => `${k}=${v.is_secret ? "(secret)" : v.value}`).join(" ") || "(no variables)"}`);
     }
+  } else if (cmd === "remove") {
+    const name = positional[0] ?? die("remove: worker name missing");
+    const w = (await workers()).find((s) => s.id === name); if (!w) die(`no Worker ${name}`);
+    if (w.tag) for (const t of await triggers(w.tag)) { await cf.json("DELETE", `${A}/builds/triggers/${t.trigger_uuid}`, undefined, [10000, 12000]).catch(() => null); console.log(`trigger ${t.trigger_uuid} "${t.trigger_name}" removed`); }
+    await cf.json("DELETE", `${A}/workers/scripts/${name}`); console.log(`Worker ${name} removed`);
   } else if (cmd === "hot") {
     const on = positional[0] === "on"; if (!on && positional[0] !== "off") die("usage: bun scripts/cf-builds.ts hot on|off [--budget 60]");
     const tag = await workerTag(CI); const vars: EnvVars = { CI_HOT: { value: on ? "1" : "0", is_secret: false }, ...(args.budget ? { CI_HOT_BUDGET: { value: args.budget, is_secret: false } } : {}) };
     for (const t of await triggers(tag)) await setEnv(t.trigger_uuid, vars);
     console.log(`hot mode ${on ? "on" : "off"} for ${CI}${args.budget ? ` (budget ${args.budget}s)` : ""}: the next builds ${on ? "keep the checks within the budget and defer the rest" : "run every check the changes reach"}`);
-  } else die("usage: bun scripts/cf-builds.ts setup|status|build|builds|logs|cancel|env|hot ... (see the header of the script)");
+  } else die("usage: bun scripts/cf-builds.ts setup|status|build|builds|logs|cancel|env|hot|remove ... (see the header of the script)");
 } catch (e) { guide(e); }

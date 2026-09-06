@@ -112,6 +112,7 @@ suites_bun() {  # the selected suites against `voidbase serve` (Bun runtime, SQL
   return "$rc"
 }
 deploy_cf() { bun test/deploy-cf.ts; }
+adapter() { bun test/adapter.ts; }   # a Void app converted into a voidbase app, then run
 fresh_db() { bun test/fresh-db.ts 5181; }
 mail_http() { bun test/mail-http.ts 5184; }
 exe_smoke() { STARTER_VB_DIR="$STARTER_DIR/pb" bun test/exe-smoke.ts; }
@@ -120,6 +121,24 @@ starter() {  # the unmodified starter frontend against voidbase
   bun test/starter-smoke.ts http://127.0.0.1:5174 "$LOGS/starter.png"
 }
 
+release_work() {  # release-please, npm and the executables in this build (docs/releasing.md): on master, when the
+  # commits ask for it or a release still needs publishing; hot mode publishes to npm and leaves the executables
+  local branch; branch="${WORKERS_CI_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null)}"
+  if [ "$branch" != master ]; then skip_step release "not master"; return 0; fi
+  if [ -z "${GH_TOKEN:-}" ]; then skip_step release "no GH_TOKEN"; return 0; fi
+  local why=""; plan_flag release-merge && why="the release PR was merged"; plan_flag release-pr && why="${why:-releasable commits, refreshing the release PR}"; plan_flag release-dry-run && why="${why:-dry run requested by a commit}"
+  if [ -z "$why" ]; then  # a release that still needs publishing or its executables: cut by hand, or left by hot mode
+    local v rel; v=$(node -p "require('./package.json').version"); rel=$(bun scripts/gh-release.ts view "v$v" 2>/dev/null) || rel=""
+    if [ -n "$rel" ]; then
+      if ! npm view "@voidbase-cloud/voidbase@$v" version >/dev/null 2>&1; then why="release v$v is not on npm yet"
+      elif ! printf '%s' "$rel" | grep -q checksums.txt && [ "${CI_HOT:-0}" != 1 ]; then why="release v$v has no executables yet"; fi
+    fi
+  fi
+  if [ -z "$why" ]; then skip_step release "nothing to release"; return 0; fi
+  echo; echo "=== release: $why"
+  local args=(); plan_flag release-pr || args+=(--no-pr); [ "${CI_HOT:-0}" = 1 ] && args+=(--hot); plan_flag release-dry-run && args+=(--dry-run)
+  export CI_STEPS_DIR CI_STEPS_TSV; CI_NESTED=1 bash scripts/release.sh "${args[@]}"
+}
 run() { step "$@" || exit 1; }
 # maybe <step> <command...>: the step when the plan selects it, else a recorded skip
 maybe() { local name="$1"; shift; if plan_run "step:$name"; then run "$name" "$@"; else skip_step "$name" "$(plan_reason "step:$name")"; fi; }
@@ -136,9 +155,11 @@ maybe reference reference
 maybe suites suites
 maybe suites-bun suites_bun
 maybe deploy-cf deploy_cf
+maybe adapter adapter
 maybe fresh-db fresh_db
 maybe mail-http mail_http
 maybe exe-smoke exe_smoke
 maybe starter starter
+release_work || exit 1
 run cache-save cache_save
 echo; echo "every selected step passed"

@@ -9,30 +9,34 @@
 #                    the release, the notes opened with the `./voidbase update` hint
 # Idempotent: a re-run after a partial failure does only what is still missing. Steps are recorded for the status page
 # (ci/public, kind release).
-#   scripts/release.sh [--dry-run] [--tag vX.Y.Z] [--no-pr]
+#   scripts/release.sh [--dry-run] [--tag vX.Y.Z] [--no-pr] [--hot]
 #     --dry-run   everything up to the actions: release-please in dry-run mode, npm publish --dry-run, no uploads
 #     --tag       publish a release cut by hand (skips release-please; the checkout must be that tag)
+#     --no-pr     skip the release PR refresh (nothing releasable in the push)
+#     --hot       hot mode: publish to npm, leave the executables to a later normal run
+# scripts/ci.sh runs it as the last step of a CI build (CI_NESTED=1: no reset, no cache, no page of its own).
 # Environment: GH_TOKEN (contents + pull requests write on the repository), NPM_TOKEN, GH_PACKAGES_TOKEN (optional: the
 # Actions token or a classic PAT with write:packages; fine-grained tokens cannot publish packages), GITHUB_REPOSITORY.
 set -uo pipefail
 cd "$(dirname "$0")/.."; ROOT="$PWD"
 . scripts/ci-lib.sh
-DRY=""; TAG=""; PR=1
-while [ $# -gt 0 ]; do case "$1" in --dry-run) DRY=1 ;; --tag) TAG="$2"; shift ;; --no-pr) PR=0 ;; *) echo "unknown option $1"; exit 2 ;; esac; shift; done
+DRY=""; TAG=""; PR=1; HOT=""
+while [ $# -gt 0 ]; do case "$1" in --dry-run) DRY=1 ;; --tag) TAG="$2"; shift ;; --no-pr) PR=0 ;; --hot) HOT=1 ;; *) echo "unknown option $1"; exit 2 ;; esac; shift; done
 BACKEND=$(ci_backend); export CI_BACKEND_NAME="$BACKEND"
 REPO="${GITHUB_REPOSITORY:-voidbase-cloud/voidbase}"; export GITHUB_REPOSITORY="$REPO"
 BRANCH="${WORKERS_CI_BRANCH:-${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null)}}"
 VERSION=$(node -p "require('./package.json').version"); PKG="@voidbase-cloud/voidbase"
 RP=(bunx release-please@17.11.2); RP_ARGS=(--repo-url "$REPO" --token "${GH_TOKEN:-}" --target-branch master --config-file release-please-config.json --manifest-file .release-please-manifest.json)
-rm -rf .void/ci-logs "$CI_STEPS_TSV"; mkdir -p .void/ci-logs
 CI_CACHE_DIR="$(ci_cache_dir)"; export CI_CACHE_DIR; mkdir -p "$CI_CACHE_DIR"
 outputs() { if [ -n "${GITHUB_OUTPUT:-}" ]; then printf '%s\n' "$@" >> "$GITHUB_OUTPUT"; fi; }
-finish() { local rc=$?; render_status --kind release || true; if [ "$rc" = 0 ]; then echo "RELEASE FLOW DONE"; else echo "RELEASE FLOW FAILED (exit $rc)"; fi; }
-trap finish EXIT
-echo "release flow on $BACKEND: $REPO, branch $BRANCH, package $VERSION${TAG:+, tag $TAG}${DRY:+, dry run}"
+if [ -z "${CI_NESTED:-}" ]; then
+  rm -rf .void/ci-logs "$CI_STEPS_TSV"; mkdir -p .void/ci-logs
+  finish() { local rc=$?; render_status --kind release || true; if [ "$rc" = 0 ]; then echo "RELEASE FLOW DONE"; else echo "RELEASE FLOW FAILED (exit $rc)"; fi; }
+  trap finish EXIT
+fi
+echo "release flow on $BACKEND: $REPO, branch $BRANCH, package $VERSION${TAG:+, tag $TAG}${DRY:+, dry run}${HOT:+, hot mode (npm only)}"
 
-step install bun install --frozen-lockfile || exit 1
-step cache-restore ./scripts/ci-cache.sh restore || true
+if [ -z "${CI_NESTED:-}" ]; then step install bun install --frozen-lockfile || exit 1; step cache-restore ./scripts/ci-cache.sh restore || true; fi
 
 # release-please, on master only, unless a release cut by hand is being published; without GH_TOKEN the release PR
 # cannot be maintained, which only matters once something needs publishing (checked below without a token)
@@ -92,8 +96,9 @@ build_executables() {
   fi
 }
 if has_asset checksums.txt && [ -z "$DRY" ]; then skip_step executables; echo "release $TAG already has its executables"
+elif [ -n "$HOT" ]; then skip_step executables "hot mode: npm only, a normal run adds them"; echo "release $TAG: executables left to a normal run (hot mode)"
 elif [ -z "${GH_TOKEN:-}" ]; then echo "release $TAG needs its executables but GH_TOKEN is not set"; exit 1
 else step executables build_executables || exit 1; [ -z "$DRY" ] && outputs "executables=true"; fi
 outputs "tag=$TAG"
-step cache-save ./scripts/ci-cache.sh save || true
-echo; echo "release $TAG: done${DRY:+ (dry run)}"
+if [ -z "${CI_NESTED:-}" ]; then step cache-save ./scripts/ci-cache.sh save || true; fi
+echo; echo "release $TAG: done${DRY:+ (dry run)}${HOT:+ (hot mode)}"

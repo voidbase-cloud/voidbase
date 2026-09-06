@@ -24,6 +24,7 @@ skip_step() { printf '%s\tskip\t0\t\n' "$1" >> "$CI_STEPS_TSV"; printf '\n=== %s
 plan_run() { grep -qE "^$1 run " .void/ci-plan.txt 2>/dev/null; }
 plan_reason() { sed -n "s/^$1 [a-z]* //p" .void/ci-plan.txt 2>/dev/null | head -n 1; }
 plan_list() { sed -n "s/^$1 //p" .void/ci-plan.txt 2>/dev/null | head -n 1; }
+plan_flag() { grep -qE "^$1 yes" .void/ci-plan.txt 2>/dev/null; }
 # ci_cache_dir: the directory kept between runs; on Workers Builds only the package manager cache survives a build,
 # so it lives inside bun's (the dependencies cache the build system restores and uploads)
 ci_cache_dir() { if [ -n "${CI_CACHE_DIR:-}" ]; then echo "$CI_CACHE_DIR"; elif [ "$(ci_backend)" = cloudflare ]; then echo "$HOME/.bun/install/cache/voidbase-ci"; else echo "${XDG_CACHE_HOME:-$HOME/.cache}/voidbase-ci"; fi; }

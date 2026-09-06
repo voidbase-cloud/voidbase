@@ -73,6 +73,15 @@ describe("ci plan: commits", () => {
     expect(s.scopes).toEqual(["records", "auth", "mail"]);
     expect(s.tests).toEqual(["thumbs", "s3"]);
     expect(s.full).toBe(true);
+    expect(s.releasable).toBe(true);
+  });
+  test("release signals: releasable types, a breaking change, the release merge, a dry-run trailer", () => {
+    expect(parseCommits(["docs(ci): words", "ci: tooling", "test(x): y"]).releasable).toBe(false);
+    expect(parseCommits(["refactor(server)!: drop a thing"]).releasable).toBe(true);
+    expect(parseCommits(["perf(records): faster"]).releasable).toBe(true);
+    expect(parseCommits(["chore(master): release 0.3.0"]).releaseMerge).toBe(true);
+    expect(parseCommits(["docs: x\n\nRelease: dry-run"]).dryRun).toBe(true);
+    expect(parseCommits(["docs: x"]).dryRun).toBe(false);
   });
 });
 

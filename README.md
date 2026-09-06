@@ -28,8 +28,9 @@ bun add @voidbase-cloud/voidbase        # the package: library, CLI (`voidbase`)
 bunx @voidbase-cloud/voidbase serve     # or run the CLI without installing
 ```
 
-Releases are tagged `vX.Y.Z` and published from GitHub Actions to npm (with provenance once the repository is
-public) and to GitHub Packages; see [docs/releasing.md](docs/releasing.md).
+Commits follow Conventional Commits (enforced by husky and CI); release-please turns them into a release PR,
+and merging it publishes to npm (with provenance once the repository is public) and GitHub Packages with the
+compiled notes; see [docs/releasing.md](docs/releasing.md).
 
 ## Run it like PocketBase
 

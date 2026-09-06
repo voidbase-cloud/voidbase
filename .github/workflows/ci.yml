@@ -4,6 +4,23 @@ on:
     branches: [master, main]
   pull_request:
 jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.3.14" }
+      - run: bun install --frozen-lockfile
+      - name: Commit messages follow Conventional Commits (commitlint.config.js)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            node_modules/.bin/commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            node_modules/.bin/commitlint --last --verbose
+          else
+            node_modules/.bin/commitlint --from "${{ github.event.before }}" --to "${{ github.sha }}" --verbose
+          fi
   conformance:
     runs-on: ubuntu-latest
     timeout-minutes: 60

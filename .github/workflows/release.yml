@@ -1,27 +1,53 @@
-# Publishes @voidbase-cloud/voidbase when a vX.Y.Z tag is pushed (see docs/releasing.md).
-# "Run workflow" with dry_run runs everything with `npm publish --dry-run` and creates no release.
+# Releases compiled from Conventional Commits (docs/releasing.md).
+#   push to master   -> release-please keeps a "chore(master): release X.Y.Z" PR up to date (CHANGELOG.md, package.json);
+#                       merging it tags vX.Y.Z, creates the GitHub release with the notes, and the publish job runs
+#   release published -> a release cut by hand (gh release create vX.Y.Z --notes ...) publishes the same way
+#   workflow_dispatch -> the publish job with `npm publish --dry-run`, nothing published, no release touched
 name: release
 on:
   push:
-    tags: ["v*"]
+    branches: [master]
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "run every step but publish nothing"
+        description: "run every publish step but publish nothing"
         type: boolean
         default: true
 permissions:
-  contents: write   # the GitHub release
-  packages: write   # GitHub Packages
-  id-token: write   # npm provenance
+  contents: write        # the release PR's commits, tags and release assets
+  pull-requests: write   # the release PR
+  packages: write        # GitHub Packages
+  id-token: write        # npm provenance
 jobs:
-  release:
+  release-please:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          # a RELEASE_PLEASE_TOKEN (fine-grained PAT: contents + pull requests write) makes CI run on the release PR;
+          # the workflow's own token cannot trigger other workflows
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+  publish:
+    needs: [release-please]
+    if: always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'release' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '--dry-run' || '' }}
+      TAG: ${{ needs.release-please.outputs.tag_name || github.event.release.tag_name || '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name || github.event.release.tag_name || github.ref }}
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "1.3.14" }
       - uses: actions/setup-node@v4
@@ -38,15 +64,13 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "push" ] && [ "${GITHUB_REF_NAME}" != "v$VERSION" ]; then
-            echo "tag ${GITHUB_REF_NAME} does not match package.json version $VERSION"; exit 1; fi
+          if [ -n "$TAG" ] && [ "$TAG" != "v$VERSION" ]; then echo "release tag $TAG does not match package.json version $VERSION"; exit 1; fi
           if npm view "@voidbase-cloud/voidbase@$VERSION" version >/dev/null 2>&1; then
             echo "@voidbase-cloud/voidbase@$VERSION is already on npm"; [ -n "$DRY_RUN" ] || exit 1; fi
       - name: Pack
         run: |
           npm pack
           ls -la voidbase-cloud-voidbase-*.tgz
-          npm pack --dry-run 2>&1 | tail -n 40
       - name: Smoke-install the tarball
         run: |
           TARBALL="$PWD/$(ls voidbase-cloud-voidbase-*.tgz)"
@@ -70,13 +94,8 @@ jobs:
           echo "//npm.pkg.github.com/:_authToken=\${NODE_AUTH_TOKEN}" >> .npmrc
           npm publish "$(ls voidbase-cloud-voidbase-*.tgz)" --registry=https://npm.pkg.github.com $DRY_RUN
           rm -f .npmrc
-      - name: Release notes
-        run: |
-          awk -v v="${{ steps.version.outputs.version }}" '/^## /{p=($2==v)} p' CHANGELOG.md > notes.md
-          [ -s notes.md ] || echo "voidbase ${{ steps.version.outputs.version }}" > notes.md
-          cat notes.md
-      - name: GitHub release
-        if: ${{ env.DRY_RUN == '' }}
+      - name: Attach the tarball to the release
+        if: ${{ env.DRY_RUN == '' && env.TAG != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "v${{ steps.version.outputs.version }}" voidbase-cloud-voidbase-*.tgz --title "v${{ steps.version.outputs.version }}" --notes-file notes.md
+        run: gh release upload "$TAG" voidbase-cloud-voidbase-*.tgz --clobber

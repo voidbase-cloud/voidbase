@@ -1,8 +1,7 @@
 # Changelog
 
-Releases are tagged `vX.Y.Z`; the section for the tagged version becomes the GitHub release notes.
-
-## Unreleased
+Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
+(docs/releasing.md); 0.1.0 was written by hand.
 
 ## 0.1.0
 

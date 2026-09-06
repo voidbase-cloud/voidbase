@@ -112,7 +112,8 @@
     "app:sync": "bun scripts/sync-app.ts",
     "check": "void prepare && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "pack:check": "npm pack --dry-run",
-    "prepublishOnly": "bun run check && bun test"
+    "prepublishOnly": "bun run check && bun test",
+    "prepare": "husky || true"
   },
   "dependencies": {
     "@cf-wasm/photon": "^0.4.0",
@@ -127,7 +128,10 @@
     "@cloudflare/workers-types": "^4.20250903.0"
   },
   "devDependencies": {
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
     "@types/bun": "^1.4.1",
+    "husky": "^9.1.7",
     "playwright": "^1.63.0",
     "pocketbase": "0.28.0"
   }

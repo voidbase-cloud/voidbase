@@ -62,9 +62,12 @@ everything after it is compiled). `release-please-config.json` maps commit types
   `NPM_CONFIG_//registry.npmjs.org/:_authToken=$VOIDBASE_NPM_TOKEN npm publish --access public`.
 
 Secrets and permissions: `NPM_TOKEN` (repository secret, an npm granular token with publish rights on the
-`@voidbase-cloud` scope). Optional `RELEASE_PLEASE_TOKEN` (a fine-grained PAT with contents and pull requests
-write): with it, CI runs on the release PR, which the workflow's own token cannot trigger. GitHub Packages and
-the release assets use the workflow's `GITHUB_TOKEN`.
+`@voidbase-cloud` scope). release-please opens the release PR with the workflow's own token only if the
+organization allows it (voidbase-cloud > Settings > Actions > General > "Allow GitHub Actions to create and
+approve pull requests", then the same switch on the repository); otherwise add `RELEASE_PLEASE_TOKEN`, a
+fine-grained PAT with contents and pull requests write on this repository, which the workflow prefers when
+present and which also makes CI run on the release PR (the workflow's own token cannot trigger other workflows).
+GitHub Packages and the release assets use the workflow's `GITHUB_TOKEN`.
 
 Consumers: `bun add @voidbase-cloud/voidbase`; from GitHub Packages instead, `.npmrc` with
 `@voidbase-cloud:registry=https://npm.pkg.github.com` and a token with `read:packages`.

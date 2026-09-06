@@ -12,7 +12,8 @@ build deploys.
 | --- | --- |
 | install | `bun install --frozen-lockfile` |
 | commitlint | the commits the push or pull request introduces (`--last` when there is nothing to compare with) |
-| oracles | the starter (`scripts/ci-oracles.sh`: `STARTER_DIR`, else the sibling checkout, else a shallow clone under `.void/oracles`), the panel (`panel:sync`), the starter's frontend build next to it (`app:sync`), `void prepare` |
+| oracles | the starter (`scripts/ci-oracles.sh`: `STARTER_DIR`, else the sibling checkout, else a shallow clone in the cache), the panel (`panel:sync`), the starter's frontend build next to it (`app:sync`), `void prepare` |
+| plan | `scripts/ci-plan.ts`: which of the following steps and suites this run needs (below) |
 | typecheck, unit | `tsc --noEmit`, `bun test` |
 | browser | a Chrome for the panel and starter suites (`scripts/ci-browser.sh`, below); `CI_BROWSER=0` skips them |
 | boot | the run's `.env`, `void db migrate`, the dev server on 5180 (`CI_PORT`), the app user |
@@ -23,8 +24,40 @@ build deploys.
 | starter | the unmodified starter frontend against voidbase |
 
 The script stops at the first failed step, prints the relevant logs, renders the status page and stops the servers
-it started; a dev machine's `.env` is put back. Ports, oracles and Chrome come from the environment, so a dev machine
+it started; a dev machine's `.env` is put back. Steps the plan does not select are recorded as skipped with the reason. Ports, oracles and Chrome come from the environment, so a dev machine
 runs the same flow with `bun run ci`.
+
+## Incremental runs (`scripts/ci-plan.ts`)
+
+A full run takes about ten minutes on the build image, three quarters of it the two suite passes, so a run only
+repeats what its changes can affect. Every step and every suite lists the areas of the repository it depends on
+(`deps`, `harness`, `config`, `server`, `node`, `cloud`, `mocks`, one area per test entry point, and so on; `bun
+scripts/ci-plan.ts explain` prints them with their hashes). An area's hash comes from the git blob ids of its files,
+so it is exact and costs nothing; the combined hash of a key's inputs is compared with the one recorded by the last
+green run, and the key runs only when they differ. The record is the deployed status page of master
+(`CI_STATUS_URL`, the CI Worker's `status.json`, whose `verified` map holds the hash each step and suite last
+passed on); on a dev machine it is `ci/public/status.json` from the previous run. What passed gets this run's
+hashes, what was skipped keeps the previous record's, so a chain of partial runs stays sound. The servers, the
+reference and Chrome start only when a selected suite needs them.
+
+| change | what runs |
+| --- | --- |
+| docs, README, surface, `ci/`, `.github/` | commit messages, the oracle sync and the plan: about a minute |
+| one suite's file | that suite on both runtimes, with the servers it needs |
+| `src/node` (CLI, deploy, executables) | typecheck, unit, the deploy dry run, the executable smoke, the Bun pass |
+| `src/server`, `routes`, the app config, the harness | everything |
+
+Uncommitted changes never match a record, so a dirty working tree reruns what it touches. `CI_PLAN=full` (or the
+`--full` flag) runs everything regardless; the same happens when the record cannot be fetched. Only the repository's
+own files are hashed: a new commit of the starter oracle is picked up by the next full run.
+
+## What is kept between runs
+
+`CI_CACHE_DIR` holds the downloads: Playwright's headless shell and the unpacked libraries, the apt lists and packages,
+the starter clone with its `node_modules` and its frontend build (reused while the starter's commit is the same), the
+panel tarball (through `XDG_CACHE_HOME`) and the PocketBase archive of the reference. On a dev machine it defaults to
+`~/.cache/voidbase-ci`. On Workers Builds only the package manager cache survives a build, so the directory lives
+inside bun's: `~/.bun/install/cache/voidbase-ci`, restored before the build and uploaded after it.
 
 ## Chrome (`scripts/ci-browser.sh`)
 

@@ -7,5 +7,10 @@
   "name": "voidbase-ci",
   "compatibility_date": "2026-01-01",
   "assets": { "directory": "./public", "html_handling": "auto-trailing-slash", "not_found_handling": "none" },
-  "observability": { "enabled": false }
+  // what the dashboard suggests for consistent settings across deployments: invocation logs and traces, all of them,
+  // kept in the Workers dashboard
+  "observability": {
+    "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": true, "persist": true },
+    "traces": { "enabled": true, "head_sampling_rate": 1, "persist": true }
+  }
 }

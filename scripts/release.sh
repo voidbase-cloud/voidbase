@@ -25,16 +25,18 @@ BRANCH="${WORKERS_CI_BRANCH:-${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEA
 VERSION=$(node -p "require('./package.json').version"); PKG="@voidbase-cloud/voidbase"
 RP=(bunx release-please@17.11.2); RP_ARGS=(--repo-url "$REPO" --token "${GH_TOKEN:-}" --target-branch master --config-file release-please-config.json --manifest-file .release-please-manifest.json)
 rm -rf .void/ci-logs "$CI_STEPS_TSV"; mkdir -p .void/ci-logs
+CI_CACHE_DIR="$(ci_cache_dir)"; export CI_CACHE_DIR; mkdir -p "$CI_CACHE_DIR"; export XDG_CACHE_HOME="$CI_CACHE_DIR/xdg"
 outputs() { if [ -n "${GITHUB_OUTPUT:-}" ]; then printf '%s\n' "$@" >> "$GITHUB_OUTPUT"; fi; }
 finish() { local rc=$?; render_status --kind release || true; if [ "$rc" = 0 ]; then echo "RELEASE FLOW DONE"; else echo "RELEASE FLOW FAILED (exit $rc)"; fi; }
 trap finish EXIT
-[ -n "${GH_TOKEN:-}" ] || { echo "GH_TOKEN is not set"; exit 1; }
 echo "release flow on $BACKEND: $REPO, branch $BRANCH, package $VERSION${TAG:+, tag $TAG}${DRY:+, dry run}"
 
 step install bun install --frozen-lockfile || exit 1
 
-# release-please, on master only, unless a release cut by hand is being published
-if [ -z "$TAG" ] && [ "$BRANCH" = master ]; then
+# release-please, on master only, unless a release cut by hand is being published; without GH_TOKEN the release PR
+# cannot be maintained, which only matters once something needs publishing (checked below without a token)
+if [ -z "${GH_TOKEN:-}" ]; then echo "GH_TOKEN is not set: release-please skipped, publishing would fail"; skip_step release-pr "no GH_TOKEN"; skip_step github-release "no GH_TOKEN"
+elif [ -z "$TAG" ] && [ "$BRANCH" = master ]; then
   if [ "$PR" = 1 ]; then step release-pr "${RP[@]}" release-pr "${RP_ARGS[@]}" ${DRY:+--dry-run} || exit 1; else skip_step release-pr; fi
   step github-release "${RP[@]}" github-release "${RP_ARGS[@]}" ${DRY:+--dry-run} || exit 1
 else skip_step release-pr; skip_step github-release; fi
@@ -66,7 +68,9 @@ publish_npm() {
   else echo "GitHub Packages: skipped (no GH_PACKAGES_TOKEN)"; fi
   if [ -z "$DRY" ]; then bun scripts/gh-release.ts upload "$TAG" "$tarball" || return 1; fi
 }
-if [ "$on_npm" = 1 ] && [ -z "$DRY" ]; then skip_step publish; echo "$PKG@$VERSION is already on npm"; else step publish publish_npm || exit 1; [ -z "$DRY" ] && outputs "published=true"; fi
+if [ "$on_npm" = 1 ] && [ -z "$DRY" ]; then skip_step publish; echo "$PKG@$VERSION is already on npm"
+elif [ -z "${GH_TOKEN:-}" ]; then echo "release $TAG needs publishing but GH_TOKEN is not set"; exit 1
+else step publish publish_npm || exit 1; [ -z "$DRY" ] && outputs "published=true"; fi
 
 build_executables() {
   . scripts/ci-oracles.sh
@@ -83,6 +87,8 @@ build_executables() {
     bun scripts/gh-release.ts notes "$TAG" .void/release-notes.md || return 1
   fi
 }
-if has_asset checksums.txt && [ -z "$DRY" ]; then skip_step executables; echo "release $TAG already has its executables"; else step executables build_executables || exit 1; [ -z "$DRY" ] && outputs "executables=true"; fi
+if has_asset checksums.txt && [ -z "$DRY" ]; then skip_step executables; echo "release $TAG already has its executables"
+elif [ -z "${GH_TOKEN:-}" ]; then echo "release $TAG needs its executables but GH_TOKEN is not set"; exit 1
+else step executables build_executables || exit 1; [ -z "$DRY" ] && outputs "executables=true"; fi
 outputs "tag=$TAG"
 echo; echo "release $TAG: done${DRY:+ (dry run)}"

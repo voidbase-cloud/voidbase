@@ -15,7 +15,7 @@
 // build (the triggers' watch paths exclude everything): .github/workflows/cloudflare.yml starts builds through this
 // API, and `setup --github` stores what it needs in the repository (`gh variable set` / `gh secret set`; GH_BIN
 // overrides the gh binary). CLOUDFLARE_API_BASE and GITHUB_API_URL point everything at test/cf-mock.ts.
-import { CfApi, CfError, resolveAccount } from "../src/cloud/rest";
+import { CfApi, CfError, resolveAccount, workersSubdomain } from "../src/cloud/rest";
 
 const [cmd = "status", ...rest] = process.argv.slice(2);
 const args: Record<string, string> = {}; const positional: string[] = []; const secretArgs: string[] = [];
@@ -43,8 +43,8 @@ interface Trigger { trigger_uuid: string; trigger_name: string; external_script_
 interface Build { build_uuid: string; status?: string; build_outcome?: string; created_on?: string; created_at?: string; stopped_on?: string; build_trigger_metadata?: { branch?: string; commit_hash?: string; [k: string]: unknown }; [k: string]: unknown }
 type EnvVars = Record<string, { value: string; is_secret: boolean }>;
 
-const die = (m: string): never => { console.error(m); process.exit(1); };
-const guide = (e: unknown): never => {
+const die: (m: string) => never = (m) => { console.error(m); process.exit(1); };
+const guide: (e: unknown) => never = (e) => {
   if (e instanceof CfError && e.path.includes("/builds/") && (e.has(10000) || e.status === 401 || e.status === 403))
     die(`${e.message}\n  The Builds API accepts user tokens only: create one at dash.cloudflare.com/profile/api-tokens with Workers Builds\n  Configuration: Edit and Workers Scripts: Edit, and put it in CLOUDFLARE_BUILDS_TOKEN (account-owned tokens are rejected).`);
   die(e instanceof Error ? e.message : String(e));
@@ -72,7 +72,7 @@ async function ensureWorker(name: string): Promise<{ tag: string; created: boole
 async function triggers(tag: string): Promise<Trigger[]> { return (await cf.json<Trigger[]>("GET", `${A}/builds/workers/${tag}/triggers`)).result ?? []; }
 async function ensureTrigger(tag: string, connection: string, buildToken: string, want: Omit<Trigger, "trigger_uuid">): Promise<{ uuid: string; created: boolean }> {
   // adopt a trigger by name, else by shape (the dashboard wizard names its production and preview triggers itself)
-  const same = (a?: string[], b?: string[]) => JSON.stringify([...(a ?? [])].sort()) === JSON.stringify([...(b ?? [])].sort());
+  const same = (a: unknown, b: unknown) => JSON.stringify([...((a as string[] | undefined) ?? [])].sort()) === JSON.stringify([...((b as string[] | undefined) ?? [])].sort());
   const all = await triggers(tag);
   const existing = all.find((t) => t.trigger_name === want.trigger_name) ?? all.find((t) => same(t.branch_includes, want.branch_includes) && same(t.branch_excludes, want.branch_excludes));
   if (existing) { await cf.json("PATCH", `${A}/builds/triggers/${existing.trigger_uuid}`, { ...want, build_token_uuid: buildToken }); return { uuid: existing.trigger_uuid, created: false }; }
@@ -130,8 +130,12 @@ try {
     const common = { root_directory: "/", path_includes: ["*"], path_excludes: ["*"], build_caching_enabled: true };
     const prod = await ensureTrigger(ci.tag, connection, buildToken, { trigger_name: triggerNames.ciMaster, build_command: CI_BUILD, deploy_command: DEPLOY, branch_includes: [BRANCH], branch_excludes: [], ...common });
     const preview = await ensureTrigger(ci.tag, connection, buildToken, { trigger_name: triggerNames.ciBranches, build_command: CI_BUILD, deploy_command: PREVIEW, branch_includes: ["*"], branch_excludes: [BRANCH], ...common });
-    const vars: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false }, CI_BROWSER: { value: "1", is_secret: false } };
+    // the record of the last green run of master, which scripts/ci-plan.ts compares the inputs against
+    const sub = await workersSubdomain(cf, account.id).catch(() => null);
+    const statusUrl = sub ? `https://${CI}.${sub}.workers.dev/status.json` : "";
+    const vars: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false }, CI_BROWSER: { value: "1", is_secret: false }, ...(statusUrl ? { CI_STATUS_URL: { value: statusUrl, is_secret: false } } : {}) };
     await setEnv(prod.uuid, vars); await setEnv(preview.uuid, vars);
+    if (statusUrl) console.log(`  CI_STATUS_URL ${statusUrl} (the last green run's record, for incremental runs)`);
     console.log(`  trigger ${prod.uuid} ${BRANCH}: ${prod.created ? "created" : "updated"}; build \`${CI_BUILD}\`, deploy \`${DEPLOY}\``);
     console.log(`  trigger ${preview.uuid} other branches: ${preview.created ? "created" : "updated"}; deploy \`${PREVIEW}\` (preview URL on the pull request)`);
     const github: Record<string, string> = { CF_ACCOUNT_ID: account.id, CF_CI_TRIGGER_MASTER: prod.uuid, CF_CI_TRIGGER_BRANCHES: preview.uuid };

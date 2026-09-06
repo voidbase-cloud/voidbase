@@ -11,8 +11,13 @@ USER_EMAIL="${REFERENCE_USER_EMAIL:-user@example.com}"; USER_PASSWORD="${REFEREN
 mkdir -p "$DIR"; STARTER="$(cd "$STARTER" && pwd)"
 if [ ! -x "$DIR/pocketbase" ] || [ "$("$DIR/pocketbase" --version 2>/dev/null)" != "pocketbase version $VERSION" ]; then
   arch="linux_amd64"; case "$(uname -m)" in aarch64|arm64) arch="linux_arm64";; esac
-  echo "downloading pocketbase $VERSION ($arch)"
-  curl -sSL "https://github.com/pocketbase/pocketbase/releases/download/v${VERSION}/pocketbase_${VERSION}_${arch}.zip" -o "$DIR/pb.zip"
+  cached="${CI_CACHE_DIR:+$CI_CACHE_DIR/pocketbase_${VERSION}_${arch}.zip}"
+  if [ -n "$cached" ] && [ -f "$cached" ]; then echo "pocketbase $VERSION ($arch) from the cache"; cp "$cached" "$DIR/pb.zip"
+  else
+    echo "downloading pocketbase $VERSION ($arch)"
+    curl -sSL "https://github.com/pocketbase/pocketbase/releases/download/v${VERSION}/pocketbase_${VERSION}_${arch}.zip" -o "$DIR/pb.zip"
+    if [ -n "$cached" ]; then mkdir -p "$CI_CACHE_DIR" && cp "$DIR/pb.zip" "$cached"; fi
+  fi
   (cd "$DIR" && unzip -oq pb.zip pocketbase && rm pb.zip)
 fi
 PB=("$DIR/pocketbase" "--dir" "$DIR/pb_data" "--migrationsDir" "$STARTER/pb/pb_migrations" "--hooksDir" "$STARTER/pb/pb_hooks")

@@ -1,0 +1,5 @@
+{
+  // the CI and release tooling (scripts/), typechecked by `bun run check` next to the app and the node code
+  "extends": "./tsconfig.node.json",
+  "include": ["scripts/cf-builds.ts", "scripts/gh-release.ts", "scripts/ci-status.ts", "scripts/ci-plan.ts"]
+}

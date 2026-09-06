@@ -18,7 +18,15 @@ step() {
   printf '%s\t%s\t%s\t%s\n' "$name" "$([ "$rc" -eq 0 ] && echo ok || echo fail)" "$secs" "$log" >> "$CI_STEPS_TSV"
   return "$rc"
 }
-skip_step() { printf '%s\tskip\t0\t\n' "$1" >> "$CI_STEPS_TSV"; printf '\n=== %s: skipped\n' "$1"; }
+skip_step() { printf '%s\tskip\t0\t\n' "$1" >> "$CI_STEPS_TSV"; printf '\n=== %s: skipped%s\n' "$1" "${2:+ ($2)}"; }
+# the plan scripts/ci-plan.ts wrote (.void/ci-plan.txt): plan_run <key> succeeds when the key runs, plan_reason <key>
+# prints why, plan_list suites|bun prints the selected suites
+plan_run() { grep -qE "^$1 run " .void/ci-plan.txt 2>/dev/null; }
+plan_reason() { sed -n "s/^$1 [a-z]* //p" .void/ci-plan.txt 2>/dev/null | head -n 1; }
+plan_list() { sed -n "s/^$1 //p" .void/ci-plan.txt 2>/dev/null | head -n 1; }
+# ci_cache_dir: the directory kept between runs; on Workers Builds only the package manager cache survives a build,
+# so it lives inside bun's (the dependencies cache the build system restores and uploads)
+ci_cache_dir() { if [ -n "${CI_CACHE_DIR:-}" ]; then echo "$CI_CACHE_DIR"; elif [ "$(ci_backend)" = cloudflare ]; then echo "$HOME/.bun/install/cache/voidbase-ci"; else echo "${XDG_CACHE_HOME:-$HOME/.cache}/voidbase-ci"; fi; }
 # port_busy <port>: something listens on 127.0.0.1:<port>
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 # wait_http <url> [tries=60]: until the URL answers

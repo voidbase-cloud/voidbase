@@ -110,7 +110,7 @@
     "surface": "bun surface/render.ts",
     "test": "bun test",
     "app:sync": "bun scripts/sync-app.ts",
-    "check": "void prepare && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "check": "void prepare && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.scripts.json --noEmit",
     "pack:check": "npm pack --dry-run",
     "prepublishOnly": "bun run check && bun test",
     "prepare": "husky || true",

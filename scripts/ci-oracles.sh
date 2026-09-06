@@ -9,8 +9,9 @@ STARTER_REPO="${STARTER_REPO:-https://github.com/spinspire/pocketbase-sveltekit-
 if [ -z "${STARTER_DIR:-}" ]; then
   if [ -d "$_root/../pocketbase-sveltekit-starter/pb/pb_hooks" ]; then STARTER_DIR="$_root/../pocketbase-sveltekit-starter"
   else
-    STARTER_DIR="$_root/.void/oracles/pocketbase-sveltekit-starter"
-    if [ ! -d "$STARTER_DIR/.git" ]; then echo "cloning $STARTER_REPO into .void/oracles"; mkdir -p "$_root/.void/oracles"; git clone --quiet --depth 1 "$STARTER_REPO" "$STARTER_DIR" || { echo "clone failed"; return 1 2>/dev/null || exit 1; }; fi
+    _oracles="${CI_CACHE_DIR:-$_root/.void}/oracles"; STARTER_DIR="$_oracles/pocketbase-sveltekit-starter"
+    if [ -d "$STARTER_DIR/.git" ]; then git -C "$STARTER_DIR" pull --quiet --ff-only 2>/dev/null || echo "starter: pull failed, keeping the cached clone"
+    else echo "cloning $STARTER_REPO into $_oracles"; mkdir -p "$_oracles"; git clone --quiet --depth 1 "$STARTER_REPO" "$STARTER_DIR" || { echo "clone failed"; return 1 2>/dev/null || exit 1; }; fi
   fi
 fi
 [ -d "$STARTER_DIR/pb/pb_hooks" ] || { echo "STARTER_DIR $STARTER_DIR has no pb/pb_hooks"; return 1 2>/dev/null || exit 1; }

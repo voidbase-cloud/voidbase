@@ -1,7 +1,8 @@
 // The CI status page: what a Workers Builds deploy of the CI Worker publishes after a build (docs/ci.md) and what
 // GitHub Actions keeps as the `ci-status` artifact. scripts/ci-lib.sh records every step in .void/ci-steps.tsv;
 // `render` turns the steps, the per-suite lines of scripts/ci-suites.sh, the screenshots and the logs into ci/public:
-// index.html, status.json, badge.svg and logs/.
+// index.html, status.json (with the `verified` input hashes scripts/ci-plan.ts compares the next run against: what
+// passed now gets this run's hashes, what was skipped keeps the previous record's), badge.svg and logs/.
 //   bun scripts/ci-status.ts render [--kind ci|release] [--out ci/public]
 //   bun scripts/ci-status.ts placeholder [--out ci/public]     the page before any build ran (the first deploy)
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -63,27 +64,47 @@ function readSuites(steps: Step[]): Suite[] {
   }
   return suites;
 }
+interface Plan { commit?: string; full?: boolean; previous?: { source: string; commit: string } | null; previousVerified?: Record<string, string>; hashes?: Record<string, string>; decisions?: Record<string, { run: boolean; reason: string }> }
+function readPlan(): Plan | null { const f = resolve(ROOT, ".void/ci-plan.json"); return existsSync(f) ? (JSON.parse(readFileSync(f, "utf8")) as Plan) : null; }
+/** the input hashes the next run may trust: this run's for what passed, the previous record's for what was skipped */
+function verifiedHashes(plan: Plan | null, steps: Step[], suites: Suite[]): Record<string, string> {
+  if (!plan?.hashes) return {};
+  const out: Record<string, string> = {}; const prev = plan.previousVerified ?? {};
+  const stepResult = (name: string) => steps.find((x) => x.name === name)?.result;
+  const passed = new Set(suites.filter((x) => x.result === "PASS").map((x) => `${x.step === "suites-bun" ? "bun" : "suite"}:${x.name}`));
+  const failed = new Set(suites.filter((x) => x.result === "FAIL").map((x) => `${x.step === "suites-bun" ? "bun" : "suite"}:${x.name}`));
+  for (const [key, hash] of Object.entries(plan.hashes)) {
+    const ran = plan.decisions?.[key]?.run ?? true;
+    if (key.startsWith("step:")) { const r = stepResult(key.slice(5)); if (r === "ok") out[key] = hash; else if (r === "skip" && prev[key]) out[key] = prev[key]!; }
+    else if (passed.has(key)) out[key] = hash;
+    else if (!failed.has(key) && !ran && prev[key]) out[key] = prev[key]!;
+  }
+  return out;
+}
 function page(body: string, state: "ok" | "fail" | "none", title: string) {
   return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>${css}</style></head><body><main>${body}</main></body></html>\n`;
 }
 function render() {
-  const steps = readSteps(), suites = readSuites(steps);
+  const steps = readSteps(), suites = readSuites(steps), plan = readPlan();
   const ok = steps.length > 0 && steps.every((s) => s.result !== "fail");
+  const verified = verifiedHashes(plan, steps, suites);
+  const decided = Object.values(plan?.decisions ?? {}); const ranCount = decided.filter((d) => d.run).length;
+  const planLine = plan ? (plan.full ? "full run" : plan.previous ? `${ranCount} of ${decided.length} checks ran; the rest unchanged since ${plan.previous.commit ? plan.previous.commit.slice(0, 10) : "the last green run"}` : `${ranCount} checks ran (no previous record)`) : "";
   const total = steps.reduce((a, s) => a + s.seconds, 0);
   rmSync(out, { recursive: true, force: true }); mkdirSync(out, { recursive: true });
   const logsDir = resolve(ROOT, ".void/ci-logs");
   if (existsSync(logsDir)) cpSync(logsDir, resolve(out, "logs"), { recursive: true });
   const shots = existsSync(resolve(out, "logs")) ? readdirSync(resolve(out, "logs"), { recursive: true }).map(String).filter((f) => f.endsWith(".png")) : [];
-  const status = { ...meta, ok, seconds: total, steps, suites: suites.map(({ step, name, result, detail }) => ({ step, name, result, detail })), screenshots: shots.map((f) => `logs/${f}`) };
+  const status = { ...meta, ok, seconds: total, plan: planLine, steps, suites: suites.map(({ step, name, result, detail }) => ({ step, name, result, detail })), screenshots: shots.map((f) => `logs/${f}`), verified };
   writeFileSync(resolve(out, "status.json"), JSON.stringify(status, null, 2) + "\n");
   writeFileSync(resolve(out, "badge.svg"), badge(kind === "release" ? "release" : "ci", ok ? "passing" : "failing", ok ? "#1a7f4b" : "#b3261e"));
   const commitUrl = `https://github.com/${meta.repository}/commit/${meta.commit}`;
   const logLink = (s: Step) => (s.log ? `<a href="logs/steps/${esc(s.name)}.log">log</a>` : "");
   const body = `<h1>${esc(meta.title)} <span class="state ${ok ? "ok" : "fail"}">${ok ? "passing" : "failing"}</span></h1>
 <p>${esc(meta.subject)}</p>
-<dl><dt>commit</dt><dd><a href="${commitUrl}">${esc(meta.commit.slice(0, 12))}</a> on ${esc(meta.branch)}</dd><dt>ran on</dt><dd>${esc(meta.backend)}${meta.build ? ` (build ${esc(meta.build)})` : ""}</dd><dt>finished</dt><dd>${esc(meta.finished)} after ${fmt(total)}</dd></dl>
+<dl><dt>commit</dt><dd><a href="${commitUrl}">${esc(meta.commit.slice(0, 12))}</a> on ${esc(meta.branch)}</dd><dt>ran on</dt><dd>${esc(meta.backend)}${meta.build ? ` (build ${esc(meta.build)})` : ""}</dd><dt>finished</dt><dd>${esc(meta.finished)} after ${fmt(total)}</dd>${planLine ? `<dt>plan</dt><dd>${esc(planLine)}</dd>` : ""}</dl>
 <h2>Steps</h2>
-<table><tr><th>step</th><th>result</th><th class="r">time</th><th></th></tr>${steps.map((s) => `<tr><td>${esc(s.name)}</td><td class="${s.result}">${s.result === "ok" ? "passed" : s.result === "fail" ? "failed" : "skipped"}</td><td class="r">${s.result === "skip" ? "" : fmt(s.seconds)}</td><td>${logLink(s)}</td></tr>`).join("")}</table>
+<table><tr><th>step</th><th>result</th><th class="r">time</th><th></th></tr>${steps.map((s) => `<tr><td>${esc(s.name)}</td><td class="${s.result}">${s.result === "ok" ? "passed" : s.result === "fail" ? "failed" : `skipped${plan?.decisions?.[`step:${s.name}`]?.reason ? ` (${esc(plan.decisions[`step:${s.name}`]!.reason)})` : ""}`}</td><td class="r">${s.result === "skip" ? "" : fmt(s.seconds)}</td><td>${logLink(s)}</td></tr>`).join("")}</table>
 ${suites.length ? `<h2>Suites</h2>
 <table><tr><th>suite</th><th>runtime</th><th>result</th><th>last line</th></tr>${suites.map((s) => `<tr><td>${esc(s.name)}</td><td>${s.step === "suites" ? "Workers (dev)" : s.step === "suites-bun" ? "Bun" : esc(s.step)}</td><td class="${s.result === "PASS" ? "ok" : "fail"}">${s.result}</td><td>${esc(s.detail)}</td></tr>`).join("")}</table>` : ""}
 ${shots.length ? `<h2>Screenshots</h2>

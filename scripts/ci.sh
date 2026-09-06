@@ -6,7 +6,9 @@
 # the script stops at the first failed step and exits non-zero. It stops the servers it started when it ends.
 #   scripts/ci.sh
 # Environment: STARTER_DIR (scripts/ci-oracles.sh resolves it), CHROME_PATH (scripts/ci-browser.sh finds or provisions
-# a Chrome), CI_BROWSER=0 skips the browser suites, CI_PORT (5180) and CI_PB_PORT (8090) for voidbase and the reference.
+# a Chrome), CI_BROWSER=0 skips the browser suites, CI_PORT (5180) and CI_PB_PORT (8090) for voidbase and the reference,
+# CI_CACHE_DIR for the downloads kept between runs, CI_STATUS_URL for the record of the last green run
+# (scripts/ci-plan.ts skips what that run already verified on the same inputs; CI_PLAN=full runs everything).
 set -uo pipefail
 cd "$(dirname "$0")/.."; ROOT="$PWD"
 . scripts/ci-lib.sh
@@ -15,9 +17,12 @@ export VOIDBASE_SUPERUSER_PASSWORD="${VOIDBASE_SUPERUSER_PASSWORD:-changeme123}"
 export AUDITLOG="${AUDITLOG:-posts,users}" VOIDBASE_LOG_MIN_LEVEL=0
 BACKEND=$(ci_backend); export CI_BACKEND_NAME="$BACKEND"
 PORT="${CI_PORT:-5180}"; PB_PORT="${CI_PB_PORT:-8090}"; VB="http://127.0.0.1:$PORT"; PB="http://127.0.0.1:$PB_PORT"
-LOGS="$ROOT/.void/ci-logs"; rm -rf "$LOGS" "$CI_STEPS_TSV"; mkdir -p "$LOGS"
-started_pb=0
+LOGS="$ROOT/.void/ci-logs"; rm -rf "$LOGS" "$CI_STEPS_TSV" .void/ci-plan.txt .void/ci-plan.json; mkdir -p "$LOGS"
+CI_CACHE_DIR="$(ci_cache_dir)"; export CI_CACHE_DIR; mkdir -p "$CI_CACHE_DIR"
+export XDG_CACHE_HOME="$CI_CACHE_DIR/xdg"   # scripts/sync-panel.ts keeps the panel tarball under it
+started_pb=0; booted=0
 echo "voidbase ci on $BACKEND: $(git rev-parse --short HEAD 2>/dev/null || echo '?') $(git log -1 --format=%s 2>/dev/null | cut -c1-80), bun $(bun --version)"
+echo "cache: $CI_CACHE_DIR ($(du -sh "$CI_CACHE_DIR" 2>/dev/null | cut -f1 || echo empty))"
 
 cleanup() {
   local rc=$?
@@ -50,11 +55,15 @@ commitlint_check() {  # the commits this run introduces; the last one when there
 oracles() {  # the starter and the panel next to a production-shaped public/ (the SPA shell the boot test checks)
   . scripts/ci-oracles.sh
   bun run panel:sync
-  (cd "$STARTER_DIR/sk" && bun install --frozen-lockfile && bunx svelte-kit sync && bun run build)
+  # the starter's frontend build is kept with the clone and reused while the starter's commit is the same
+  local head stamp; head=$(git -C "$STARTER_DIR" rev-parse HEAD 2>/dev/null || echo none); stamp="$STARTER_DIR/sk/build/.voidbase-ci-stamp"
+  if [ -d "$STARTER_DIR/sk/build" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$head" ]; then echo "starter frontend build reused ($head)"
+  else (cd "$STARTER_DIR/sk" && bun install --frozen-lockfile && bunx svelte-kit sync && bun run build) && echo "$head" > "$stamp"; fi
   VOIDBASE_APP_DIR="$STARTER_DIR/sk/build" bun run app:sync
   ./node_modules/.bin/void prepare
 }
-typecheck() { bunx tsc --noEmit -p tsconfig.json; }
+plan() { bun scripts/ci-plan.ts; }
+typecheck() { bunx tsc --noEmit -p tsconfig.json && bunx tsc --noEmit -p tsconfig.node.json && bunx tsc --noEmit -p tsconfig.scripts.json; }
 unit() { bun test; }
 browser() { local exports; exports=$(./scripts/ci-browser.sh) || return 1; eval "$exports"; echo "$exports"; }
 boot() {
@@ -63,7 +72,7 @@ boot() {
   if [ -f .env ] && [ ! -f .void/ci-env.backup ]; then cp .env .void/ci-env.backup; fi
   printf 'VOIDBASE_SUPERUSER_EMAIL=%s\nVOIDBASE_SUPERUSER_PASSWORD=%s\nVOIDBASE_HOOKS_DIR=%s\nVOIDBASE_MIGRATIONS_DIR=%s\nAUDITLOG=%s\nVOIDBASE_LOG_MIN_LEVEL=0\n' "$VOIDBASE_SUPERUSER_EMAIL" "$VOIDBASE_SUPERUSER_PASSWORD" "$STARTER_DIR/pb/pb_hooks" "$STARTER_DIR/pb/pb_migrations" "$AUDITLOG" > .env
   ./node_modules/.bin/void db migrate
-  ./scripts/dev.sh start "$PORT"
+  ./scripts/dev.sh start "$PORT" && booted=1
   ./scripts/seed-app-user.sh "$VB"
 }
 helper() { local name="$1" port="$2"; shift 2; if port_busy "$port"; then echo "reusing $name on $port"; else daemon "$name" ".void/$name.log" "$@"; echo "started $name on $port"; fi; }
@@ -75,16 +84,18 @@ reference() {
   helper cf-mock 5197 bun test/cf-mock.ts
   sleep 2
 }
-suites() { ./scripts/ci-suites.sh "$PB" "$VB"; }
-suites_bun() {  # the same suites against `voidbase serve` (Bun runtime, SQLite + local files)
-  ./scripts/dev.sh stop
+# shellcheck disable=SC2086
+suites() { ./scripts/ci-suites.sh "$PB" "$VB" $(plan_list suites); }
+suites_bun() {  # the selected suites against `voidbase serve` (Bun runtime, SQLite + local files)
+  [ "$booted" = 1 ] && ./scripts/dev.sh stop
   rm -rf .void/ci-serve; mkdir -p .void/ci-serve
   daemon serve .void/serve.log bun bin/voidbase.ts serve --http 127.0.0.1:8093 --dir .void/ci-serve/pb_data --hooksDir "$STARTER_DIR/pb/pb_hooks" --migrationsDir "$STARTER_DIR/pb/pb_migrations"
   wait_http http://127.0.0.1:8093/api/health 60
   ./scripts/seed-app-user.sh http://127.0.0.1:8093
-  CI_BROWSER=0 CI_LOGS="$LOGS/bun" ./scripts/ci-suites.sh "$PB" http://127.0.0.1:8093; local rc=$?
+  # shellcheck disable=SC2086
+  CI_BROWSER=0 CI_LOGS="$LOGS/bun" ./scripts/ci-suites.sh "$PB" http://127.0.0.1:8093 $(plan_list bun); local rc=$?
   stop_daemon serve
-  ./scripts/dev.sh start "$PORT"
+  [ "$booted" = 1 ] && ./scripts/dev.sh start "$PORT"
   return "$rc"
 }
 deploy_cf() { bun test/deploy-cf.ts; }
@@ -97,19 +108,22 @@ starter() {  # the unmodified starter frontend against voidbase
 }
 
 run() { step "$@" || exit 1; }
+# maybe <step> <command...>: the step when the plan selects it, else a recorded skip
+maybe() { local name="$1"; shift; if plan_run "step:$name"; then run "$name" "$@"; else skip_step "$name" "$(plan_reason "step:$name")"; fi; }
 run install install
 run commitlint commitlint_check
 run oracles oracles
-run typecheck typecheck
-run unit unit
-if [ "${CI_BROWSER:-1}" = 1 ]; then run browser browser; else skip_step browser; fi
-run boot boot
-run reference reference
-run suites suites
-run suites-bun suites_bun
-run deploy-cf deploy_cf
-run fresh-db fresh_db
-run mail-http mail_http
-run exe-smoke exe_smoke
-if [ "${CI_BROWSER:-1}" = 1 ]; then run starter starter; else skip_step starter; fi
-echo; echo "every step passed"
+run plan plan
+maybe typecheck typecheck
+maybe unit unit
+maybe browser browser
+maybe boot boot
+maybe reference reference
+maybe suites suites
+maybe suites-bun suites_bun
+maybe deploy-cf deploy_cf
+maybe fresh-db fresh_db
+maybe mail-http mail_http
+maybe exe-smoke exe_smoke
+maybe starter starter
+echo; echo "every selected step passed"

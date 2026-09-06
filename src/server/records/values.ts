@@ -61,8 +61,9 @@ export function normalizeInput(f: Field, raw: unknown): unknown {
     case "bool": return raw === true || raw === "true" || raw === 1 || raw === "1";
     case "number": {
       if (raw === "" || raw === null || raw === undefined) return 0;
+      // cast.ToFloat64 semantics: anything that does not parse becomes 0 (no validation error)
       const n = typeof raw === "number" ? raw : Number(raw);
-      return Number.isFinite(n) ? n : NaN;
+      return Number.isFinite(n) ? n : 0;
     }
     case "json": {
       if (raw === undefined) return null;

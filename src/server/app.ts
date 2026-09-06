@@ -30,14 +30,16 @@ import { backupActive } from "./backups";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import { saveHookRecord } from "./records/service";
-import { compileFilter, renderJoin } from "./filter/compile";
+import { compileFilter, FilterError, renderJoin } from "./filter/compile";
+import { FilterSyntaxError } from "./filter/lexer";
+import { recordToJSON } from "./records/json";
 import { connect as realtimeConnect, setSubscriptions as realtimeSetSubscriptions } from "./realtime";
 import oauth2Providers from "./collections/oauth2-providers.json";
 import scaffolds from "./collections/scaffolds.json";
 import { all, ident, one } from "./db";
 import { ApiError, badRequest, forbidden, notFound } from "./errors";
-import { randomIdSuffix } from "./ids";
-import { createCollection, deleteCollection, importCollections, truncateCollection, updateCollection } from "./collections/service";
+import { randomIdSuffix, randomString } from "./ids";
+import { createCollection, deleteCollection, importCollections, inferViewFields, truncateCollection, updateCollection } from "./collections/service";
 import { loadSettings, publicSettings } from "./settings";
 import type { AppEnv, Row } from "./types";
 
@@ -116,10 +118,49 @@ app.get("/api/collections/meta/scaffolds", (c) => {
   return c.json(out);
 });
 
+const COLLECTIONS_META: Collection = {
+  id: "_collections", name: "_collections", type: "base", system: true, listRule: null, viewRule: null, createRule: null, updateRule: null, deleteRule: null, indexes: [], options: {}, created: "", updated: "",
+  fields: [
+    { id: "text_id", name: "id", type: "text", system: true, required: true, hidden: false, presentable: false },
+    { id: "text_name", name: "name", type: "text", system: true, required: false, hidden: false, presentable: false },
+    { id: "text_type", name: "type", type: "text", system: true, required: false, hidden: false, presentable: false },
+    { id: "bool_system", name: "system", type: "bool", system: true, required: false, hidden: false, presentable: false },
+    { id: "date_created", name: "created", type: "date", system: true, required: false, hidden: false, presentable: false },
+    { id: "date_updated", name: "updated", type: "date", system: true, required: false, hidden: false, presentable: false },
+  ] as unknown as Collection["fields"],
+};
+
+// POST /api/collections/meta/dry-run-view (apis/collection.go collectionDryRunView): inferred fields + up to 10 sample rows
+app.post("/api/collections/meta/dry-run-view", async (c) => {
+  requireSuperuser(c);
+  const body = await readJSON(c, "An error occurred while loading the submitted data.");
+  const query = String(body.query ?? "");
+  if (!query) throw new ApiError(400, "An error occurred while validating the submitted data.", { query: { code: "validation_required", message: "Cannot be blank." } } as never);
+  if (query.length > 5000) throw new ApiError(400, "An error occurred while validating the submitted data.", { query: { code: "validation_length_too_long", message: "The length must be no more than 5000.", params: { max: 5000, min: 0 } } } as never);
+  const collections = await listCollections(c.env.DB);
+  let fields: Field[]; let rows: Row[];
+  try {
+    fields = await inferViewFields(c.env.DB, query, new Map(collections.flatMap((x) => [[x.id, x], [x.name, x]] as [string, Collection][])));
+    rows = (await c.env.DB.prepare(`SELECT * FROM (${query.trim().replace(/;\s*$/, "")}) LIMIT 10`).all<Row>()).results;
+  } catch (err) { throw badRequest("Invalid view query. Raw error: \n" + (err instanceof Error ? err.message : String(err))); }
+  const tmpName = `temp_view_${randomString(5)}`;
+  const tmp = { ...COLLECTIONS_META, id: tmpName, name: tmpName, type: "view", fields } as Collection;
+  return c.json({ fields, sample: rows.map((r) => recordToJSON(tmp, r)) });
+});
+
 app.get("/api/collections", async (c) => {
   requireSuperuser(c);
   const { page, perPage, skipTotal } = paging(c);
   let items = await listCollections(c.env.DB);
+  const filter = (c.req.query("filter") ?? "").trim();
+  if (filter) {
+    // search.NewSimpleFieldResolver("id", "created", "updated", "name", "system", "type") over the _collections table
+    let compiled: { where: string; params: unknown[] };
+    try { compiled = compileFilter(filter, { base: COLLECTIONS_META, baseTable: "_collections", collections: new Map(), request: { auth: null, method: "GET", query: {}, headers: {}, body: {}, context: "default" }, allowHiddenFields: true }); }
+    catch (err) { if (err instanceof FilterError || err instanceof FilterSyntaxError) throw badRequest(); throw err; }
+    const ids = new Set((await c.env.DB.prepare(`SELECT id FROM \`_collections\` WHERE ${compiled.where}`).bind(...compiled.params).all<{ id: string }>()).results.map((r) => r.id));
+    items = items.filter((i) => ids.has(i.id));
+  }
   const sort = c.req.query("sort") ?? "";
   if (sort) items = sortBy(items, sort, ["name", "type", "system", "created", "updated", "id"]);
   return requestHookResult("onCollectionsListRequest", c, null, { collections: items.map((i) => new CollectionRef(i)) }, async (ev) => {

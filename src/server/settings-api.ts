@@ -67,7 +67,7 @@ export function mountSettingsApi(app: Hono<AppEnv>) {
     if (!["storage", "backups"].includes(fs)) throw new ApiError(400, "Failed to test the S3 filesystem.", { filesystem: { code: "validation_in_invalid", message: "Must be a valid value." } } as never);
     const settings = await loadSettings(c.env.DB);
     const cfg = fs === "storage" ? settings.s3 : settings.backups.s3;
-    if (!cfg.enabled) throw badRequest(`Failed to test the S3 filesystem. Raw error: \n${fs} S3 storage filesystem is not enabled`);
+    if (!cfg.enabled) throw badRequest(`Failed to test the S3 filesystem. Raw error: \nS3 storage filesystem is not enabled`);
     throw badRequest("Failed to test the S3 filesystem. Raw error: \nS3 connection tests are not supported yet on this server (files live in R2)");
   });
 

@@ -1,3 +1,4 @@
+import { parseFields, pick } from "./records/picker";
 import type { Context } from "hono";
 import { findCollection, isAuth, option, SUPERUSERS, type Collection } from "./collections/model";
 import { one } from "./db";
@@ -170,15 +171,17 @@ export async function authMethods(c: Context<AppEnv>, collection: Collection) {
       providers.push(info);
     }
   }
-  const legacy = oauth2Enabled ? providers.map((p) => ({ ...p, logo: "" })) : null;
-  return c.json({
-    password: { identityFields, enabled: option<boolean>(collection, "passwordAuth.enabled", false) },
+  const passwordEnabled = option<boolean>(collection, "passwordAuth.enabled", false);
+  const body: Record<string, unknown> = {
+    password: { identityFields, enabled: passwordEnabled },
     oauth2: { providers, enabled: oauth2Enabled },
     mfa: { enabled: mfaEnabled, duration: mfaEnabled ? option<number>(collection, "mfa.duration", 0) : 0 },
     otp: { enabled: otpEnabled, duration: otpEnabled ? option<number>(collection, "otp.duration", 0) : 0 },
-    // deprecated fields PocketBase still returns
-    authProviders: legacy,
-    usernamePassword: identityFields.includes("username"),
-    emailPassword: identityFields.includes("email"),
-  });
+    // legacy fields PocketBase still fills (fillLegacyFields); the SDK strips them with ?fields=mfa,otp,password,oauth2
+    authProviders: oauth2Enabled ? providers.map((p) => ({ ...p, logo: "" })) : null,
+    usernamePassword: passwordEnabled && identityFields.includes("username"),
+    emailPassword: passwordEnabled && identityFields.includes("email"),
+  };
+  const fields = (c.req.query("fields") ?? "").trim();
+  return c.json((fields ? pick(body, parseFields(fields)) : body) as Record<string, unknown>);
 }

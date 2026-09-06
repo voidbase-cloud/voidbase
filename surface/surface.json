@@ -2339,7 +2339,7 @@
           "hours": 8,
           "status": "partial",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), providers.ts (32), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), backups.ts (17), sql.ts (7), manage-rule.ts (5), filters-extra.ts (27), views.ts (11), hardening.ts (12), realtime.ts, fresh-db.ts (17), unit tests, panel-smoke, panel-collections, panel-records, panel-admin, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-06."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), providers.ts (32), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), backups.ts (17), sql.ts (7), manage-rule.ts (5), filters-extra.ts (27), views.ts (11), hardening.ts (12), realtime.ts, fresh-db.ts (17), unit tests, panel-smoke, panel-collections, panel-records, panel-admin, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-06. Added: rules.ts (11), security.ts (69), test/sdk-suite.ts (44 SDK steps), test/panel-login.ts."
         },
         {
           "id": "prod.sdk-suite",
@@ -2350,8 +2350,9 @@
             "sdk"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "test/sdk-suite.ts runs the unmodified pocketbase SDK 0.28 (dev dependency) against both servers: every service method of the typings (health, client, authStore cookies, collections incl. import/scaffolds/providers/dry-run view/truncate, records CRUD + list helpers + files + thumbs, all auth flows incl. OTP/impersonate/external auths, realtime subscribe/unsubscribe through a fetch EventSource shim, batch, settings, logs, crons, sql, backups), 44 steps compared after normalization. Fixes it surfaced: collections list `filter`, POST /api/collections/meta/dry-run-view, number coercion like cast.ToFloat64, auth-methods `fields` picking, SQL console column types for expressions, S3 test wording."
         },
         {
           "id": "prod.security",

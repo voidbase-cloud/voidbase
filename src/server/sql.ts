@@ -32,7 +32,26 @@ export function mountSqlApi(app: Hono<AppEnv>) {
       for (const table of [...trimmed.matchAll(/\b(?:FROM|JOIN)\s+[`"[]?([A-Za-z_][\w]*)[`"\]]?/gi)].map((m) => m[1]!)) {
         try { for (const col of await c.env.DB.prepare(`PRAGMA table_info("${table.replace(/"/g, "")}")`).all<{ name: string; type: string }>().then((r) => r.results)) if (!declared.has(col.name)) declared.set(col.name, col.type); } catch { /* not a table */ }
       }
-      const columns = names.map((name) => ({ name, type: declared.get(name) ?? "", nullable: true }));
+      // database/sql reports a declared type only for plain column references; expressions and aliases of them are ""
+      const sel = /^SELECT\s+(?:DISTINCT\s+)?([\s\S]*?)\s+FROM\s/i.exec(trimmed);
+      const plain = new Map<string, string>(); let star = false;
+      if (sel) {
+        const items: string[] = []; let depth = 0, cur = "", quote = "";
+        for (const ch of sel[1]!) {
+          if (quote) { cur += ch; if (ch === quote) quote = ""; continue; }
+          if (ch === "'" || ch === '"' || ch === "`") { quote = ch; cur += ch; continue; }
+          if (ch === "(") depth++; if (ch === ")") depth--;
+          if (ch === "," && depth === 0) { items.push(cur); cur = ""; } else cur += ch;
+        }
+        items.push(cur);
+        for (const item of items) {
+          const t = item.trim();
+          if (t === "*" || /^\w+\.\*$/.test(t)) { star = true; continue; }
+          const m = /^(?:[\w`"]+\.)?[`"]?(\w+)[`"]?(?:\s+(?:AS\s+)?[`"]?(\w+)[`"]?)?$/i.exec(t);
+          if (m) plain.set(m[2] ?? m[1]!, m[1]!);
+        }
+      }
+      const columns = names.map((name) => ({ name, type: plain.has(name) ? declared.get(plain.get(name)!) ?? "" : star ? declared.get(name) ?? "" : "", nullable: true }));
       return c.json({ execTime: Date.now() - started, affectedRows: 0, columns, rows });
     } catch (err) {
       const msg = err instanceof Error ? err.message.replace(/^D1_ERROR: /, "") : String(err);

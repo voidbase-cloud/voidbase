@@ -33,7 +33,8 @@ export function pick(data: unknown, node: Node | null): unknown {
   const src = data as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   const star = node.children.get("*");
-  for (const [k, v] of Object.entries(src)) {
+  // tools/picker decodes into map[string]any, so Go serializes the picked object with sorted keys
+  for (const [k, v] of Object.entries(src).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const child = node.children.get(k) ?? star;
     if (!child) continue;
     const value = child.children.size ? pick(v, child) : v;

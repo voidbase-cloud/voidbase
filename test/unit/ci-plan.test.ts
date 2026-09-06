@@ -15,6 +15,7 @@ describe("ci plan", () => {
     const d = decide(baseline, baseline);
     expect(Object.values(d).some((x) => x.run)).toBe(false);
     expect(d["step:boot"]!.reason).toBe("nothing needs the dev server");
+    expect(d["step:oracles"]!.run).toBe(false);
   });
   test("one conformance suite edited: that suite on both runtimes plus the servers it needs", () => {
     const d = decide(hashesFor(areasWith(["test:conformance/auth-flows"])), baseline);
@@ -22,6 +23,7 @@ describe("ci plan", () => {
     expect(selected(d, "bun:")).toEqual(["auth-flows"]);
     expect(d["step:boot"]!.run && d["step:reference"]!.run && d["step:suites"]!.run && d["step:suites-bun"]!.run).toBe(true);
     expect(d["step:browser"]!.run || d["step:typecheck"]!.run || d["step:fresh-db"]!.run || d["step:starter"]!.run).toBe(false);
+    expect(d["step:oracles"]!.run).toBe(true);
   });
   test("a server change reruns every suite and every boot", () => {
     const d = decide(hashesFor(areasWith(["server"])), baseline);

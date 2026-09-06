@@ -32,6 +32,7 @@ trap finish EXIT
 echo "release flow on $BACKEND: $REPO, branch $BRANCH, package $VERSION${TAG:+, tag $TAG}${DRY:+, dry run}"
 
 step install bun install --frozen-lockfile || exit 1
+step cache-restore ./scripts/ci-cache.sh restore || true
 
 # release-please, on master only, unless a release cut by hand is being published; without GH_TOKEN the release PR
 # cannot be maintained, which only matters once something needs publishing (checked below without a token)
@@ -91,4 +92,5 @@ if has_asset checksums.txt && [ -z "$DRY" ]; then skip_step executables; echo "r
 elif [ -z "${GH_TOKEN:-}" ]; then echo "release $TAG needs its executables but GH_TOKEN is not set"; exit 1
 else step executables build_executables || exit 1; [ -z "$DRY" ] && outputs "executables=true"; fi
 outputs "tag=$TAG"
+step cache-save ./scripts/ci-cache.sh save || true
 echo; echo "release $TAG: done${DRY:+ (dry run)}"

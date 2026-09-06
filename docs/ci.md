@@ -37,12 +37,12 @@ so it is exact and costs nothing; the combined hash of a key's inputs is compare
 green run, and the key runs only when they differ. The record is the deployed status page of master
 (`CI_STATUS_URL`, the CI Worker's `status.json`, whose `verified` map holds the hash each step and suite last
 passed on); on a dev machine it is `ci/public/status.json` from the previous run. What passed gets this run's
-hashes, what was skipped keeps the previous record's, so a chain of partial runs stays sound. The servers, the
-reference and Chrome start only when a selected suite needs them.
+hashes, what was skipped keeps the previous record's, so a chain of partial runs stays sound. The oracle sync, the
+servers, the reference and Chrome happen only when a selected step needs them.
 
 | change | what runs |
 | --- | --- |
-| docs, README, surface, `ci/`, `.github/` | commit messages, the oracle sync and the plan: about a minute |
+| docs, README, surface, `ci/`, `.github/` | commit messages and the plan: about half a minute |
 | one suite's file | that suite on both runtimes, with the servers it needs |
 | `src/node` (CLI, deploy, executables) | typecheck, unit, the deploy dry run, the executable smoke, the Bun pass |
 | `src/server`, `routes`, the app config, the harness | everything |
@@ -55,9 +55,14 @@ own files are hashed: a new commit of the starter oracle is picked up by the nex
 
 `CI_CACHE_DIR` holds the downloads: Playwright's headless shell and the unpacked libraries, the apt lists and packages,
 the starter clone with its `node_modules` and its frontend build (reused while the starter's commit is the same), the
-panel tarball (through `XDG_CACHE_HOME`) and the PocketBase archive of the reference. On a dev machine it defaults to
-`~/.cache/voidbase-ci`. On Workers Builds only the package manager cache survives a build, so the directory lives
-inside bun's: `~/.bun/install/cache/voidbase-ci`, restored before the build and uploaded after it.
+panel tarball (through `XDG_CACHE_HOME`) and the PocketBase archive of the reference. On a dev machine it is
+`~/.cache/voidbase-ci` and simply stays there. Workers Builds keeps nothing between builds but the package manager's
+cache, and that one only until the lockfile changes, so on Cloudflare `scripts/ci-cache.sh` restores the directory from
+an R2 bucket at the start of a build and saves it at the end, one archive per component, uploaded only when its content
+changed. `setup` creates the bucket (`voidbase-ci-cache`) when `CI_CACHE_TOKEN` is in the environment (an API token with
+Workers R2 Storage edit; the deploy token of the site is accepted) and stores it on every trigger as a build secret,
+with `CI_CACHE_ACCOUNT` and `CI_CACHE_BUCKET`. Without those the builds fetch everything each time, about forty
+seconds of a full run.
 
 ## Chrome (`scripts/ci-browser.sh`)
 

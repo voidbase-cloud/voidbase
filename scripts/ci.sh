@@ -63,6 +63,8 @@ oracles() {  # the starter and the panel next to a production-shaped public/ (th
   ./node_modules/.bin/void prepare
 }
 plan() { bun scripts/ci-plan.ts; }
+cache_restore() { ./scripts/ci-cache.sh restore; }
+cache_save() { ./scripts/ci-cache.sh save; }
 typecheck() { bunx tsc --noEmit -p tsconfig.json && bunx tsc --noEmit -p tsconfig.node.json && bunx tsc --noEmit -p tsconfig.scripts.json; }
 unit() { bun test; }
 browser() { local exports; exports=$(./scripts/ci-browser.sh) || return 1; eval "$exports"; echo "$exports"; }
@@ -111,9 +113,10 @@ run() { step "$@" || exit 1; }
 # maybe <step> <command...>: the step when the plan selects it, else a recorded skip
 maybe() { local name="$1"; shift; if plan_run "step:$name"; then run "$name" "$@"; else skip_step "$name" "$(plan_reason "step:$name")"; fi; }
 run install install
+run cache-restore cache_restore
 run commitlint commitlint_check
-run oracles oracles
 run plan plan
+maybe oracles oracles
 maybe typecheck typecheck
 maybe unit unit
 maybe browser browser
@@ -126,4 +129,5 @@ maybe fresh-db fresh_db
 maybe mail-http mail_http
 maybe exe-smoke exe_smoke
 maybe starter starter
+run cache-save cache_save
 echo; echo "every selected step passed"

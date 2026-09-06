@@ -31,8 +31,8 @@ export const AREAS: Record<string, string[]> = {
 };
 const testArea = (file: string) => { const name = `test:${file.replace(/^test\//, "").replace(/\.ts$/, "")}`; AREAS[name] = [file]; return name; };
 
-// keys: the steps and suites that can be skipped, each with the areas it depends on. step:install, step:commitlint,
-// step:oracles and step:plan always run; step:browser, step:boot, step:reference, step:suites and step:suites-bun
+// keys: the steps and suites that can be skipped, each with the areas it depends on. step:install, step:commitlint
+// and step:plan always run; step:oracles, step:browser, step:boot, step:reference, step:suites and step:suites-bun
 // follow from what is selected.
 export const KEYS: Record<string, { inputs: string[] }> = {};
 const base = ["deps", "harness", "config", "server"];
@@ -69,6 +69,8 @@ export function decide(hashes: Record<string, string>, previous: Record<string, 
   d["step:browser"] = { run: browser, reason: browser ? "a browser suite runs" : "no browser suite runs" };
   d["step:boot"] = { run: boot, reason: boot ? "a suite needs the dev server" : "nothing needs the dev server" };
   d["step:reference"] = { run: reference, reason: reference ? "a suite needs the reference and the mocks" : "nothing needs the reference" };
+  const oracles = d["step:typecheck"]!.run || boot || bun || d["step:exe-smoke"]!.run || d["step:deploy-cf"]!.run || d["step:starter"]!.run;
+  d["step:oracles"] = { run: oracles, reason: oracles ? "a selected step needs the starter, the panel or the generated types" : "nothing needs the oracles" };
   return d;
 }
 export const selected = (d: Decisions, prefix: string) => Object.keys(d).filter((k) => k.startsWith(prefix) && d[k]!.run).map((k) => k.slice(prefix.length));
@@ -118,7 +120,7 @@ if (import.meta.main) {
   const keys = Object.keys(KEYS), ran = keys.filter((k) => decisions[k]!.run);
   const why = full ? "full run requested" : previous ? `against ${previous.source}${previous.commit ? ` (${previous.commit.slice(0, 10)})` : ""}` : "no previous record, everything runs";
   console.log(`plan: ${ran.length} of ${keys.length} checks run, ${keys.length - ran.length} skipped; ${why}`);
-  console.log(`  steps: ${["typecheck", "unit", "browser", "boot", "reference", "suites", "suites-bun", "deploy-cf", "fresh-db", "mail-http", "exe-smoke", "starter"].map((s) => `${s}${decisions[`step:${s}`]!.run ? "" : "(skip)"}`).join(" ")}`);
+  console.log(`  steps: ${["oracles", "typecheck", "unit", "browser", "boot", "reference", "suites", "suites-bun", "deploy-cf", "fresh-db", "mail-http", "exe-smoke", "starter"].map((s) => `${s}${decisions[`step:${s}`]!.run ? "" : "(skip)"}`).join(" ")}`);
   console.log(`  suites: ${selected(decisions, "suite:").join(" ") || "none"}`);
   console.log(`  bun: ${selected(decisions, "bun:").join(" ") || "none"}`);
 }

@@ -11,11 +11,13 @@
 // Auth: CLOUDFLARE_BUILDS_TOKEN, a *user* API token (My Profile > API Tokens) with "Workers Builds Configuration: Edit"
 // and "Workers Scripts: Edit"; the Builds API rejects account-owned tokens. CLOUDFLARE_ACCOUNT_ID picks the account when
 // the token reaches several. `setup` stores the release project's secrets from the environment when they are set:
-// GH_TOKEN (release-please, release assets), NPM_TOKEN or VOIDBASE_NPM_TOKEN, GH_PACKAGES_TOKEN. Push events never
+// GH_TOKEN (release-please, release assets), NPM_TOKEN or VOIDBASE_NPM_TOKEN, GH_PACKAGES_TOKEN. With CI_CACHE_TOKEN (an
+// API token with Workers R2 Storage edit; VOIDBASE_DEPLOY_CF_API_KEY is accepted) it creates the R2 bucket the builds
+// keep their downloads in (--cache-bucket, default voidbase-ci-cache) and stores the token on every trigger. Push events never
 // build (the triggers' watch paths exclude everything): .github/workflows/cloudflare.yml starts builds through this
 // API, and `setup --github` stores what it needs in the repository (`gh variable set` / `gh secret set`; GH_BIN
 // overrides the gh binary). CLOUDFLARE_API_BASE and GITHUB_API_URL point everything at test/cf-mock.ts.
-import { CfApi, CfError, resolveAccount, workersSubdomain } from "../src/cloud/rest";
+import { CfApi, CfError, ensureR2, resolveAccount, workersSubdomain } from "../src/cloud/rest";
 
 const [cmd = "status", ...rest] = process.argv.slice(2);
 const args: Record<string, string> = {}; const positional: string[] = []; const secretArgs: string[] = [];
@@ -133,7 +135,14 @@ try {
     // the record of the last green run of master, which scripts/ci-plan.ts compares the inputs against
     const sub = await workersSubdomain(cf, account.id).catch(() => null);
     const statusUrl = sub ? `https://${CI}.${sub}.workers.dev/status.json` : "";
-    const vars: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false }, CI_BROWSER: { value: "1", is_secret: false }, ...(statusUrl ? { CI_STATUS_URL: { value: statusUrl, is_secret: false } } : {}) };
+    // the bucket scripts/ci-cache.sh keeps the downloads in between builds (Workers Builds keeps nothing else)
+    const cacheToken = process.env.CI_CACHE_TOKEN ?? process.env.VOIDBASE_DEPLOY_CF_API_KEY; const bucket = args["cache-bucket"] ?? "voidbase-ci-cache";
+    let cacheVars: EnvVars = {};
+    if (cacheToken) {
+      const r = await ensureR2(new CfApi(cacheToken, process.env.CLOUDFLARE_API_BASE), account.id, bucket).catch((e: unknown) => { console.log(`cache bucket ${bucket}: ${e instanceof Error ? e.message : e}`); return null; });
+      if (r) { console.log(`cache bucket ${bucket}: ${r.created ? "created" : "exists"}`); cacheVars = { CI_CACHE_BUCKET: { value: bucket, is_secret: false }, CI_CACHE_ACCOUNT: { value: account.id, is_secret: false }, CI_CACHE_TOKEN: { value: cacheToken, is_secret: true } }; }
+    } else console.log("cache bucket: skipped (set CI_CACHE_TOKEN, an API token with Workers R2 Storage edit, to keep downloads between builds)");
+    const vars: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false }, CI_BROWSER: { value: "1", is_secret: false }, ...(statusUrl ? { CI_STATUS_URL: { value: statusUrl, is_secret: false } } : {}), ...cacheVars };
     await setEnv(prod.uuid, vars); await setEnv(preview.uuid, vars);
     if (statusUrl) console.log(`  CI_STATUS_URL ${statusUrl} (the last green run's record, for incremental runs)`);
     console.log(`  trigger ${prod.uuid} ${BRANCH}: ${prod.created ? "created" : "updated"}; build \`${CI_BUILD}\`, deploy \`${DEPLOY}\``);
@@ -144,13 +153,13 @@ try {
       console.log(`Worker ${RELEASE}: ${rel.created ? "created" : "exists"} (tag ${rel.tag})`);
       const t = await ensureTrigger(rel.tag, connection, buildToken, { trigger_name: triggerNames.releaseMaster, build_command: RELEASE_BUILD, deploy_command: DEPLOY, branch_includes: [BRANCH], branch_excludes: [], ...common });
       const dry = await ensureTrigger(rel.tag, connection, buildToken, { trigger_name: triggerNames.releaseDryRun, build_command: DRY_RUN_BUILD, deploy_command: PREVIEW, branch_includes: ["*"], branch_excludes: [BRANCH], ...common });
-      const secrets: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false } };
+      const secrets: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false }, ...cacheVars };
       const gh = process.env.GH_TOKEN, npm = process.env.NPM_TOKEN ?? process.env.VOIDBASE_NPM_TOKEN, ghp = process.env.GH_PACKAGES_TOKEN;
       if (gh) secrets.GH_TOKEN = { value: gh, is_secret: true };
       if (npm) secrets.NPM_TOKEN = { value: npm, is_secret: true };
       if (ghp) secrets.GH_PACKAGES_TOKEN = { value: ghp, is_secret: true };
       await setEnv(t.uuid, secrets); await setEnv(dry.uuid, secrets);
-      const stored = Object.keys(secrets).filter((k) => secrets[k]!.is_secret).join(", ") || "none (set GH_TOKEN and NPM_TOKEN in the environment and rerun, or `env --worker " + RELEASE + " --secret GH_TOKEN=...`)";
+      const stored = Object.keys(secrets).filter((k) => secrets[k]!.is_secret && k !== "CI_CACHE_TOKEN").join(", ") || "none (set GH_TOKEN and NPM_TOKEN in the environment and rerun, or `env --worker " + RELEASE + " --secret GH_TOKEN=...`)";
       console.log(`  trigger ${t.uuid} ${BRANCH}: ${t.created ? "created" : "updated"}; build \`${RELEASE_BUILD}\`; secrets stored: ${stored}`);
       console.log(`  trigger ${dry.uuid} dry run: ${dry.created ? "created" : "updated"}; build \`${DRY_RUN_BUILD}\`, deploy \`${PREVIEW}\``);
       github.CF_RELEASE_TRIGGER_MASTER = t.uuid; github.CF_RELEASE_TRIGGER_DRY_RUN = dry.uuid;

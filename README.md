@@ -98,6 +98,7 @@ then `test/fresh-db.ts` and the starter smoke. The same scripts run locally agai
 - [docs/differences.md](docs/differences.md): what the platform changes (D1 batches, per-isolate limits, polling realtime, backups format).
 - [docs/hooks.md](docs/hooks.md): `pb_hooks` and `pb_migrations` on Workers, supported events and globals.
 - [docs/migrating.md](docs/migrating.md): moving an existing PocketBase app.
+- [docs/platform.md](docs/platform.md): the multi-tenant design (a Durable Object per app, edge-held SSE, alarms, queues) for thousands of apps that cost nothing while idle.
 - [COMPAT.md](COMPAT.md): verified upstream versions and endpoint matrix.
 
 ## Layout

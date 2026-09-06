@@ -82,11 +82,13 @@ const cases: { name: string; run: (c: Ctx) => Promise<Res> }[] = [
     return { status: r.status, message: r.message, extra: { verified: r.json.verified } };
   } },
   { name: "user updates another user's record", run: async (c) => {
-    const others = await call(c.base, "GET", `/api/collections/users/records?perPage=50`, { token: c.su });
-    const other = ((others.json.items as { id: string }[]) ?? []).find((u) => u.id !== c.userId);
-    if (!other) return { status: -1, message: "no second user" };
-    const r = await call(c.base, "PATCH", `/api/collections/users/records/${other.id}`, { token: c.user, body: { name: "pwned" } });
-    return { status: r.status, message: r.message };
+    // a temporary second user on both servers, so the case does not depend on leftover data
+    const other = await call(c.base, "POST", "/api/collections/users/records", { token: c.su, body: { email: `sec-other-${Date.now()}@example.com`, password: "changeme123", passwordConfirm: "changeme123" } });
+    const otherId = String(other.json.id ?? "");
+    const r = await call(c.base, "PATCH", `/api/collections/users/records/${otherId}`, { token: c.user, body: { name: "pwned" } });
+    const d = await call(c.base, "DELETE", `/api/collections/users/records/${otherId}`, { token: c.user });
+    if (otherId) await call(c.base, "DELETE", `/api/collections/users/records/${otherId}`, { token: c.su });
+    return { status: r.status, message: r.message, extra: { created: other.status, deleteAsUser: d.status } };
   } },
   { name: "superuser token on users request-email-change", run: async (c) => { const r = await call(c.base, "POST", "/api/collections/users/request-email-change", { token: c.su, body: { newEmail: "x@example.com" } }); return { status: r.status, message: r.message }; } },
   { name: "malformed JSON on record update", run: async (c) => { const r = await call(c.base, "PATCH", `/api/collections/users/records/${c.userId}`, { token: c.su, raw: "{bad", headers: { "content-type": "application/json" } }); return { status: r.status, message: r.message }; } },

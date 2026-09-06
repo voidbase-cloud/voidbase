@@ -1,0 +1,13 @@
+// Self-hosted deploy target (void deploy --backend cloudflare). Void adds main/assets/triggers and merges
+// compatibility settings from void.json. Fill database_id after `wrangler d1 create voidbase-db`, or let
+// `void deploy --backend cloudflare --provision` create the resources and write the ids here.
+{
+  "name": "voidbase",
+  "account_id": "1f9d4df62c10e8411bbfb9a602bb2f6a",
+  "d1_databases": [
+    { "binding": "DB", "database_name": "voidbase-db", "database_id": "<run: wrangler d1 create voidbase-db>", "migrations_dir": "./db/migrations" }
+  ],
+  "r2_buckets": [
+    { "binding": "STORAGE", "bucket_name": "voidbase-storage" }
+  ]
+}

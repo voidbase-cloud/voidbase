@@ -55,7 +55,11 @@ void deploy --backend cloudflare                 # afterwards
 ```
 
 Keep secrets in `wrangler secret put VOIDBASE_SUPERUSER_PASSWORD` etc.: every `.env*` file this backend loads
-ships as plaintext worker vars. `--provision` runs on a developer machine (it fails closed in CI); commit the
+ships as plaintext worker vars (a value that is also exported in the shell with the same value is stripped, so
+`export VOIDBASE_SUPERUSER_PASSWORD=...` from `.env` before deploying and put the real one in a secret).
+`wrangler.jsonc` in the repo pins the worker name, account and the two bindings; `--provision` fills in the D1 id.
+Quotas to know: the Workers Free plan allows 10 D1 databases per account (paid plans 50,000) and 5 cron triggers
+per worker; voidbase needs one database, one bucket and one cron. `--provision` runs on a developer machine (it fails closed in CI); commit the
 `wrangler.jsonc` it writes, then CI can run `void deploy --backend cloudflare`.
 
 ## After deploying

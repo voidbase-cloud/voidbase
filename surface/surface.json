@@ -297,7 +297,7 @@
           "status": "partial",
           "milestone": "m6",
           "verify": "Panel reachable at the .void.app URL",
-          "notes": "docs/deploy.md documents `void deploy` with secrets and post-deploy steps; the build is production-shaped (vp preview runs it in workerd via test/fresh-db.ts). The actual deploy needs a Void account login and has not been run yet."
+          "notes": "docs/deploy.md documents `void deploy` with secrets and post-deploy steps; the build is production-shaped (vp preview runs it in workerd in test/fresh-db.ts and test/mail-http.ts). `void auth login` is an interactive browser OAuth flow that this session cannot complete, so the platform deploy is waiting on that login."
         },
         {
           "id": "platform.deploy-cf",
@@ -310,7 +310,7 @@
           "status": "partial",
           "milestone": "m6",
           "verify": "Same build live on a custom Cloudflare account, DO included",
-          "notes": "docs/deploy.md documents `void deploy --backend cloudflare --provision` (wrangler auth, pinned account, wrangler secrets, CI without provision). Not executed: needs Cloudflare credentials."
+          "notes": "Attempted 2026-09-06 with the machine's wrangler OAuth login (account 1f9d4df6...): `wrangler r2 bucket create voidbase-storage` succeeded, `wrangler d1 create voidbase-db` failed with 'You have reached the maximum number of D1 databases for your account' (34 databases already exist), so the bucket was removed again to leave the account unchanged. wrangler.jsonc is committed with the worker name, account id and both bindings; once a D1 slot is freed (delete an unused database or upgrade), `void deploy --backend cloudflare --provision` completes the deploy. docs/deploy.md covers secrets and quotas."
         }
       ]
     },

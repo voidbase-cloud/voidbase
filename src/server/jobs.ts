@@ -8,7 +8,9 @@ import type { Bindings } from "./types";
 
 export type Job =
   | { type: "mail"; message: MailMessage; text: string }
-  | { type: "backup"; name: string };
+  | { type: "backup"; name: string }
+  // a message for one of the app's own queues (a Void app's queues/<name>.ts, mounted by src/adapter)
+  | { type: "queue"; queue: string; body: unknown };
 export type JobHandler<T extends Job = Job> = (env: Bindings, job: T) => Promise<void>;
 
 const handlers = new Map<Job["type"], JobHandler>();

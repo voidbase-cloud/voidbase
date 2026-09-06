@@ -4,8 +4,8 @@
 import type { Context, Hono } from "hono";
 import { app } from "./app";
 import { hookGlobals } from "./hooks";
-import type { RequestEvent } from "./hooks/runtime";
-import type { AppEnv } from "./types";
+import { hookStore, type RequestEvent } from "./hooks/runtime";
+import type { AppEnv, Bindings } from "./types";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type HookGlobals = Record<string, any>;
@@ -19,6 +19,11 @@ export interface VoidbaseApp {
   hono: Hono<AppEnv>;
   /** $app, $apis, $os, $security, routerAdd, routerUse, cronAdd, cronRemove, on* event registrations, Record, Collection, ... */
   hooks: HookGlobals;
+}
+/** The bindings of the request, cron tick or migration currently running (the hook store's env), or undefined
+ * outside one. Extensions that are handed no context (a cron callback, a queue consumer) read them here. */
+export function currentBindings(): Bindings | undefined {
+  return hookStore.getStore()?.env as Bindings | undefined;
 }
 export function appApi(): VoidbaseApp {
   const hooks = hookGlobals() as HookGlobals;

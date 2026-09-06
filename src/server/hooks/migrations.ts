@@ -5,7 +5,7 @@
 import { migrations } from "#platform/migrations";
 import { invalidateCollections, loadCollections } from "../collections/model";
 import { importCollections } from "../collections/service";
-import { all, stmt } from "../db";
+import { all, run, stmt } from "../db";
 import { loadSettings } from "../settings";
 import type { RecordContext } from "../records/service";
 import type { AppEnv } from "../types";
@@ -34,6 +34,9 @@ async function runPending(db: D1Database, globals: Record<string, unknown>): Pro
   const applied = new Set((await all<{ file: string }>(db, "SELECT file FROM `_pbMigrations`")).map((r) => r.file));
   const own: Record<string, unknown> = {
     importCollections: (list: Record<string, unknown>[], deleteMissing = false) => importCollections(db, list, deleteMissing),
+    // raw DDL/DML for migrations that are not about collections (a Void app's Drizzle migrations, see src/adapter):
+    // voidbase-specific, PocketBase spells this app.db().newQuery(sql).execute()
+    execSQL: (sql: string, params: unknown[] = []) => run(db, sql, params),
   };
   const $app = (globals.$app ?? {}) as Record<string, unknown>;
   const app = new Proxy(own, { get: (t, k) => (k in t ? t[k as string] : $app[k as string]), has: (t, k) => k in t || k in $app });

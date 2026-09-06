@@ -20,3 +20,5 @@ public/*
 src/node/embedded.generated.json
 # rendered by scripts/ci-status.ts, deployed by Workers Builds as the status Worker (ci/wrangler.jsonc)
 ci/public
+# scratch app the adapter test converts
+test/.tmp

@@ -1,0 +1,91 @@
+// The Vite plugin a Void app adds next to voidPlugin(): it makes `vite build` produce a voidbase app.
+//
+//   import { voidPlugin } from "void";
+//   import { voidbaseAdapter } from "@voidbase-cloud/voidbase/adapter/plugin";
+//   export default defineConfig({ plugins: [voidPlugin(), voidbaseAdapter()] });
+//
+// The client build (and everything in public/) lands in pb_public, which voidbase serves at `/`. Routes,
+// middleware, crons and queues become .voidbase/void-app.ts, which main.ts registers on the running app. Void's
+// own dist/ssr worker is left alone: voidbase composes main.ts into its own Worker on deploy, so the app's server
+// code is bundled there instead.
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { writeVoidbaseApp, type GenerateOptions } from "./codegen";
+import { scanVoidApp, type VoidManifest } from "./scan";
+
+export interface AdapterOptions extends GenerateOptions {
+  /** where the built site goes; voidbase serves it at `/` (PocketBase's convention) */
+  publicDir?: string;
+  /** the client build to copy from; defaults to <outDir>/client, then dist/client */
+  clientDir?: string;
+  /** turn db/migrations/*.sql into pb_migrations/*.void.js (default true) */
+  migrations?: boolean;
+  /** log what was produced (default true) */
+  quiet?: boolean;
+}
+
+export interface AdaptResult { manifest: VoidManifest; written: string[]; copied: number }
+
+/** Runs the whole conversion once. Exported so `voidbase adapt` and the tests do not need Vite. */
+export function adapt(root: string, opts: AdapterOptions & { clientDir?: string } = {}): AdaptResult {
+  const manifest = scanVoidApp({ root, dev: false });
+  const { written } = writeVoidbaseApp(manifest, { pkg: opts.pkg, migrations: opts.migrations });
+  const publicDir = resolve(root, opts.publicDir ?? "pb_public");
+  const client = opts.clientDir ? resolve(root, opts.clientDir) : firstExisting([join(root, "dist", "client"), join(root, "public")]);
+  const copied = client ? syncPublic(client, publicDir) : 0;
+  return { manifest, written, copied };
+}
+
+const firstExisting = (paths: string[]) => paths.find((p) => existsSync(p) && statSync(p).isDirectory());
+
+/** Replaces pb_public with the build, keeping `_` (the admin panel) and dotfiles, and giving the asset layer a 404. */
+function syncPublic(from: string, to: string): number {
+  mkdirSync(to, { recursive: true });
+  for (const entry of readdirSync(to)) {
+    if (entry === "_" || entry.startsWith(".")) continue;
+    rmSync(join(to, entry), { recursive: true, force: true });
+  }
+  let copied = 0;
+  for (const entry of readdirSync(from)) {
+    if (entry === "_") continue; // that path belongs to the admin panel
+    cpSync(join(from, entry), join(to, entry), { recursive: true });
+    copied++;
+  }
+  // Cloudflare answers an unmatched path with 404.html (void.json routing.notFound "404-page"); on Bun voidbase
+  // falls back to index.html. Copying one to the other keeps a deep link behaving the same on both.
+  const index = join(to, "index.html");
+  if (existsSync(index) && !existsSync(join(to, "404.html"))) cpSync(index, join(to, "404.html"));
+  return copied;
+}
+
+export function voidbaseAdapter(options: AdapterOptions = {}) {
+  let root = process.cwd();
+  let clientOut: string | undefined;
+  const log = (msg: string) => { if (!options.quiet) console.log(`voidbase: ${msg}`); };
+
+  return {
+    name: "voidbase-adapter",
+    // after voidPlugin, so the manifest sees whatever it generated into .void/
+    enforce: "post" as const,
+    configResolved(config: { root: string; build?: { outDir?: string }; environments?: Record<string, { build?: { outDir?: string } }> }) {
+      root = config.root ?? root;
+      const fromEnv = config.environments?.client?.build?.outDir;
+      clientOut = fromEnv ?? config.build?.outDir;
+    },
+    buildStart() {
+      // keep the glue in step with the files while developing, so `voidbase serve --entry main.ts` sees new routes
+      const manifest = scanVoidApp({ root, dev: process.env.NODE_ENV !== "production" });
+      writeVoidbaseApp(manifest, { pkg: options.pkg, migrations: options.migrations });
+    },
+    closeBundle() {
+      const clientDir = options.clientDir ?? (clientOut && existsSync(resolve(root, clientOut)) ? clientOut : undefined);
+      const { manifest, copied } = adapt(root, { ...options, clientDir });
+      const counts = `${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)`;
+      log(manifest.mode === "static" ? `static app: ${copied} entr(ies) in ${options.publicDir ?? "pb_public"}, no server code` : `${counts} -> .voidbase/void-app.ts; ${copied} entr(ies) in ${options.publicDir ?? "pb_public"}`);
+      for (const u of manifest.unsupported) console.warn(`voidbase: ${u.what} is not carried over — ${u.why}`);
+      for (const c of manifest.collisions) console.warn(`voidbase: ${c} is served by voidbase itself, so the app route never runs — move it off that path`);
+      mkdirSync(join(root, ".voidbase"), { recursive: true }); // a static app may have nothing else in there
+      writeFileSync(join(root, ".voidbase", "manifest.json"), JSON.stringify({ ...manifest, root: undefined }, null, 2) + "\n");
+    },
+  };
+}

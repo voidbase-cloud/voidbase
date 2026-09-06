@@ -73,7 +73,16 @@ export function generateMainEntry(m: VoidManifest, opts: GenerateOptions = {}): 
   // file into the Worker for register() only, and the runtime entry pulls in bun:sqlite and the filesystem shims
   const runtime = "${pkg}";
   const { voidbase, parseServeArgs } = (await import(/* @vite-ignore */ runtime)) as typeof import("${pkg}");
-  const app = await voidbase(parseServeArgs(process.argv.slice(2).filter((a) => a !== "serve")));
+  // this app's directories sit next to this file, so it runs the same from any working directory
+  const flags = parseServeArgs(process.argv.slice(2).filter((a) => a !== "serve"));
+  for (const key of Object.keys(flags) as (keyof typeof flags)[]) if (flags[key] === undefined) delete flags[key];
+  const app = await voidbase({
+    dir: \`\${import.meta.dir}/pb_data\`,
+    hooksDir: process.env.VOIDBASE_HOOKS_DIR ?? \`\${import.meta.dir}/pb_hooks\`,
+    migrationsDir: process.env.VOIDBASE_MIGRATIONS_DIR ?? \`\${import.meta.dir}/pb_migrations\`,
+    publicDir: \`\${import.meta.dir}/pb_public\`,
+    ...flags,
+  });
   register(app);
   await app.start();
 }

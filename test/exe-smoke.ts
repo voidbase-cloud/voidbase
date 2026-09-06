@@ -17,15 +17,15 @@ const tmp = mkdtempSync(join(tmpdir(), "vb-exe-")); const home = `${tmp}/home`; 
 const built = await buildExecutables({ targets: ["host"], out: `${tmp}/release`, log: () => undefined });
 const T = TARGETS[hostTarget()]!; const exe = `${tmp}/${T.exe}`; copyFileSync(`${PKG}/dist/exe/${hostTarget()}/${T.exe}`, exe); chmodSync(exe, 0o755);
 check("release archive and checksums built for the host", built.archives.length === 1 && /^voidbase_\d+\.\d+\.\d+_/.test(built.archives[0]!.file) && readFileSync(`${tmp}/release/checksums.txt`, "utf8").includes(built.archives[0]!.file), JSON.stringify(built.archives));
-const run = (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawnSync([exe, ...args], { cwd: tmp, env: { ...process.env, HOME: home, ...env }, stdout: "pipe", stderr: "pipe" }); return { code: p.exitCode, out: new TextDecoder().decode(p.stdout) + new TextDecoder().decode(p.stderr) }; };
+const run = (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawnSync([exe, ...args], { cwd: tmp, env: { ...process.env, HOME: home, XDG_CACHE_HOME: `${home}/.cache`, ...env }, stdout: "pipe", stderr: "pipe" }); return { code: p.exitCode, out: new TextDecoder().decode(p.stdout) + new TextDecoder().decode(p.stderr) }; };
 // the update talks to the mock server running in this process: spawn without blocking the event loop
-const runAsync = async (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawn([exe, ...args], { cwd: tmp, env: { ...process.env, HOME: home, ...env }, stdout: "pipe", stderr: "pipe" }); const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]); return { code, out: out + err }; };
+const runAsync = async (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawn([exe, ...args], { cwd: tmp, env: { ...process.env, HOME: home, XDG_CACHE_HOME: `${home}/.cache`, ...env }, stdout: "pipe", stderr: "pipe" }); const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]); return { code, out: out + err }; };
 check("version prints the embedded version", run(["version"]).out.trim() === built.version, run(["version"]).out);
 check("toolchain commands point at the npm package", run(["deploy"]).code === 1 && /npm package/.test(run(["deploy"]).out));
 
 // ---- serve
 const port = freePort(); const base = `http://127.0.0.1:${port}`;
-const server = Bun.spawn([exe, "serve", "--http", `127.0.0.1:${port}`, "--dir", `${tmp}/pb_data`, "--hooksDir", `${STARTER}/pb_hooks`, "--migrationsDir", `${STARTER}/pb_migrations`], { cwd: tmp, env: { ...process.env, HOME: home, VOIDBASE_SUPERUSER_EMAIL: "admin@example.com", VOIDBASE_SUPERUSER_PASSWORD: "changeme123", VOIDBASE_LOG_MIN_LEVEL: "8" }, stdout: "pipe", stderr: "pipe" });
+const server = Bun.spawn([exe, "serve", "--http", `127.0.0.1:${port}`, "--dir", `${tmp}/pb_data`, "--hooksDir", `${STARTER}/pb_hooks`, "--migrationsDir", `${STARTER}/pb_migrations`], { cwd: tmp, env: { ...process.env, HOME: home, XDG_CACHE_HOME: `${home}/.cache`, VOIDBASE_SUPERUSER_EMAIL: "admin@example.com", VOIDBASE_SUPERUSER_PASSWORD: "changeme123", VOIDBASE_LOG_MIN_LEVEL: "8" }, stdout: "pipe", stderr: "pipe" });
 const serverLog: string[] = []; (async () => { for await (const c of server.stdout) serverLog.push(new TextDecoder().decode(c)); })(); (async () => { for await (const c of server.stderr) serverLog.push(new TextDecoder().decode(c)); })();
 try {
   let health = 0; for (let i = 0; i < 60 && health !== 200; i++) { await Bun.sleep(500); health = await fetch(`${base}/api/health`).then((r) => r.status).catch(() => 0); }

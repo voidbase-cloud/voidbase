@@ -71,7 +71,10 @@ async function ensureWorker(name: string): Promise<{ tag: string; created: boole
 }
 async function triggers(tag: string): Promise<Trigger[]> { return (await cf.json<Trigger[]>("GET", `${A}/builds/workers/${tag}/triggers`)).result ?? []; }
 async function ensureTrigger(tag: string, connection: string, buildToken: string, want: Omit<Trigger, "trigger_uuid">): Promise<{ uuid: string; created: boolean }> {
-  const existing = (await triggers(tag)).find((t) => t.trigger_name === want.trigger_name);
+  // adopt a trigger by name, else by shape (the dashboard wizard names its production and preview triggers itself)
+  const same = (a?: string[], b?: string[]) => JSON.stringify([...(a ?? [])].sort()) === JSON.stringify([...(b ?? [])].sort());
+  const all = await triggers(tag);
+  const existing = all.find((t) => t.trigger_name === want.trigger_name) ?? all.find((t) => same(t.branch_includes, want.branch_includes) && same(t.branch_excludes, want.branch_excludes));
   if (existing) { await cf.json("PATCH", `${A}/builds/triggers/${existing.trigger_uuid}`, { ...want, build_token_uuid: buildToken }); return { uuid: existing.trigger_uuid, created: false }; }
   const r = await cf.json<Trigger>("POST", `${A}/builds/triggers`, { ...want, external_script_id: tag, repo_connection_uuid: connection, build_token_uuid: buildToken });
   return { uuid: r.result.trigger_uuid, created: true };
@@ -111,13 +114,13 @@ try {
     const conn = await cf.json<{ repo_connection_uuid?: string; uuid?: string; id?: string }>("PUT", `${A}/builds/repos/connections`, { provider_type: "github", provider_account_id: String(info.owner.id), provider_account_name: info.owner.login, repo_id: String(info.id), repo_name: info.name });
     const connection = conn.result?.repo_connection_uuid ?? conn.result?.uuid ?? conn.result?.id ?? die(`connection created but no uuid in ${JSON.stringify(conn.result)}`);
     console.log(`repository connection ${connection}`);
-    // 2. the build token Workers Builds deploys with (the dashboard creates one under Settings > Builds > API token)
+    // 2. the projects' Workers first, so the dashboard link below points at something that exists
+    const ci = await ensureWorker(CI);
+    console.log(`Worker ${CI}: ${ci.created ? "created" : "exists"} (tag ${ci.tag})`);
+    // 3. the build token Workers Builds deploys with (the dashboard creates one under Settings > Builds > API token)
     const tokens = (await cf.json<{ build_token_uuid: string; build_token_name?: string }[]>("GET", `${A}/builds/tokens`)).result ?? [];
     const buildToken = tokens[0]?.build_token_uuid ?? die(`no build token on the account yet: open ${dash(CI)} > Settings > Builds > API token > Create new token once, then rerun setup`);
     console.log(`build token ${buildToken}${tokens[0]?.build_token_name ? ` (${tokens[0].build_token_name})` : ""}`);
-    // 3. the projects: two Workers, three triggers
-    const ci = await ensureWorker(CI);
-    console.log(`Worker ${CI}: ${ci.created ? "created" : "exists"} (tag ${ci.tag})`);
     // watch paths that exclude everything: a push event never builds by itself; GitHub Actions (cloudflare.yml) and
     // `build` start builds through the API, which the watch paths do not filter
     const common = { root_directory: "/", path_includes: ["*"], path_excludes: ["*"], build_caching_enabled: true };

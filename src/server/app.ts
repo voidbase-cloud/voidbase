@@ -27,6 +27,7 @@ import { mountBackupsApi } from "./backups";
 import { mountSqlApi } from "./sql";
 import { bodyLimitMiddleware, rateLimitMiddleware, realIPWith } from "./hardening";
 import { backupActive } from "./backups";
+import { s3Bucket } from "./storage/s3";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import { saveHookRecord } from "./records/service";
@@ -59,6 +60,9 @@ app.use("*", async (c, next) => {
 
 app.use("*", async (c, next) => {
   await ensureBootstrapped(c.env.DB, (db) => applyPendingMigrations(db, hookGlobals(), c.env));
+  // settings.s3 swaps the file storage for an S3 bucket; everything downstream keeps using c.env.STORAGE
+  const s3 = (await loadSettings(c.env.DB)).s3;
+  if (s3.enabled) c.env = { ...c.env, STORAGE: s3Bucket(s3) };
   if (!served) { served = true; await trigger("onBootstrap", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined); await trigger("onServe", { app: undefined as unknown, router: app, next: async () => undefined as unknown }, null, async () => undefined); }
   c.set("auth", await loadAuth(c));
   await next();

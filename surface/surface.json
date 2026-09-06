@@ -1366,8 +1366,9 @@
             "admin"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "src/server/storage/s3.ts: S3-compatible client (AWS SigV4 over fetch, path-style or virtual-host, ListObjectsV2, Range GETs) implementing the R2Bucket subset the server uses; chosen per request and per cron run when settings.s3.enabled, settings.backups.s3 for archives (root of the bucket like PocketBase). test/conformance/s3.ts drives both servers against test/s3-mock.ts, which verifies every signature: connection test, upload, serve, range, thumb, delete cleanup, backup create/list/delete, disable. 15/15 identical."
         },
         {
           "id": "file.download",
@@ -1630,9 +1631,9 @@
             "sdk"
           ],
           "hours": 2,
-          "status": "partial",
+          "status": "done",
           "milestone": "m5",
-          "notes": "Settings validation and the test endpoint's validation match; the actual S3 connection test is not implemented (files live in R2)."
+          "notes": "Validation matches PocketBase; POST /api/settings/test/s3 performs a real ListObjects against the configured bucket (204, or 400 'Failed to test the S3 filesystem. Raw error: ...'). Blank secrets on PATCH keep the stored value, as PocketBase does (smtp.password, s3.secret, backups.s3.secret)."
         },
         {
           "id": "set.batch",
@@ -2180,9 +2181,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "partial",
+          "status": "done",
           "milestone": "m5",
-          "notes": "Storage settings page renders and saves; the S3 connection test is not implemented (files live in R2)."
+          "notes": "Storage settings page renders and saves (test/panel-admin.ts); the Test connection button's endpoint is verified end to end against the S3 mock in test/conformance/s3.ts."
         },
         {
           "id": "pnl.settings-backups",

@@ -13,6 +13,7 @@ import { ApiError, badRequest, forbidden } from "./errors";
 import { trigger } from "./hooks/runtime";
 import { nowString } from "./ids";
 import { loadSettings } from "./settings";
+import { s3Bucket } from "./storage/s3";
 import { normalizeFilename } from "./records/files";
 import type { AppEnv } from "./types";
 
@@ -47,6 +48,24 @@ export async function backupActive(db: D1Database): Promise<boolean> {
   try { const at = Number((JSON.parse(row.value) as { at?: number }).at ?? 0); return Date.now() - at < 30 * 60_000; } catch { return true; }
 }
 
+// where the archives live: settings.backups.s3 when enabled, otherwise next to the files
+// PocketBase keeps archives at the root of a dedicated S3 backups bucket, so the __backups__/ prefix used inside
+// the shared R2 bucket is stripped on the way to S3 and re-added on the way back.
+async function backupsStorage(env: AppEnv["Bindings"]): Promise<R2Bucket> {
+  const cfg = (await loadSettings(env.DB)).backups.s3;
+  if (!cfg.enabled) return env.STORAGE;
+  const s3 = s3Bucket(cfg);
+  const strip = (k: string) => (k.startsWith(PREFIX) ? k.slice(PREFIX.length) : k);
+  const view = {
+    put: (k: string, v: unknown, o?: unknown) => s3.put(strip(k), v as never, o as never),
+    get: async (k: string, o?: unknown) => { const r = await s3.get(strip(k), o as never); return r ? Object.assign(r, { key: PREFIX + r.key }) : null; },
+    head: async (k: string) => { const r = await s3.head(strip(k)); return r ? Object.assign(r, { key: PREFIX + r.key }) : null; },
+    delete: (k: string | string[]) => s3.delete(Array.isArray(k) ? k.map(strip) : strip(k)),
+    list: async (o: { prefix?: string; cursor?: string; limit?: number } = {}) => { const r = await s3.list({ ...o, prefix: strip(o.prefix ?? "") }); return { ...r, objects: r.objects.map((x) => Object.assign(x, { key: PREFIX + x.key })) }; },
+  };
+  return view as unknown as R2Bucket;
+}
+
 async function listAll(storage: R2Bucket, prefix: string): Promise<R2Object[]> {
   const out: R2Object[] = []; let cursor: string | undefined;
   do { const l = await storage.list({ prefix, cursor }); out.push(...l.objects); cursor = l.truncated ? l.cursor : undefined; } while (cursor);
@@ -78,7 +97,7 @@ export async function createBackup(env: AppEnv["Bindings"], name: string): Promi
       }
       entries["data.json"] = [new TextEncoder().encode(JSON.stringify(dump)), { level: 6 }];
       const zip = zipSync(entries);
-      await env.STORAGE.put(PREFIX + ev.name, zip, { httpMetadata: { contentType: "application/zip" } });
+      await (await backupsStorage(env)).put(PREFIX + ev.name, zip, { httpMetadata: { contentType: "application/zip" } });
     } finally { await unlock(db); }
   });
   return ev.name;
@@ -86,7 +105,7 @@ export async function createBackup(env: AppEnv["Bindings"], name: string): Promi
 
 export async function restoreBackup(env: AppEnv["Bindings"], key: string): Promise<void> {
   const db = env.DB;
-  const obj = await env.STORAGE.get(PREFIX + key);
+  const obj = await (await backupsStorage(env)).get(PREFIX + key);
   if (!obj) throw new Error("missing or invalid backup file");
   const files = unzipSync(new Uint8Array(await obj.arrayBuffer()));
   const raw = files["data.json"];
@@ -140,14 +159,15 @@ export async function autoBackup(env: AppEnv["Bindings"]): Promise<void> {
   try { await createBackup(env, name); } catch (err) { console.error("voidbase: [Backup cron] Failed to create backup", name, err); return; }
   const maxKeep = settings.backups.cronMaxKeep;
   if (!maxKeep) return;
-  const autos = (await listAll(env.STORAGE, PREFIX + "@auto_pb_backup_")).sort((a, b) => b.uploaded.getTime() - a.uploaded.getTime());
-  for (const o of autos.slice(maxKeep)) await env.STORAGE.delete(o.key);
+  const bk = await backupsStorage(env);
+  const autos = (await listAll(bk, PREFIX + "@auto_pb_backup_")).sort((a, b) => b.uploaded.getTime() - a.uploaded.getTime());
+  for (const o of autos.slice(maxKeep)) await bk.delete(o.key);
 }
 
 export function mountBackupsApi(app: Hono<AppEnv>) {
   app.get("/api/backups", async (c) => {
     requireSuperuser(c);
-    const objs = await listAll(c.env.STORAGE, PREFIX);
+    const objs = await listAll(await backupsStorage(c.env), PREFIX);
     return c.json(objs.sort((a, b) => (a.key < b.key ? -1 : 1)).map((o) => ({ key: o.key.slice(PREFIX.length), modified: nowString(o.uploaded), size: o.size })));
   });
   app.post("/api/backups", async (c) => {
@@ -159,7 +179,7 @@ export function mountBackupsApi(app: Hono<AppEnv>) {
     if (name) {
       if (name.length > 150) throw new ApiError(400, "An error occurred while validating the submitted data.", { name: { code: "validation_length_out_of_range", message: "The length must be between 1 and 150.", params: { max: 150, min: 1 } } } as never);
       if (!NAME_RE.test(name)) throw new ApiError(400, "An error occurred while validating the submitted data.", { name: { code: "validation_match_invalid", message: "Must be in a valid format." } } as never);
-      if (await c.env.STORAGE.head(PREFIX + name)) throw new ApiError(400, "An error occurred while validating the submitted data.", { name: { code: "validation_backup_name_exists", message: "The backup file name is invalid or already exists." } } as never);
+      if (await (await backupsStorage(c.env)).head(PREFIX + name)) throw new ApiError(400, "An error occurred while validating the submitted data.", { name: { code: "validation_backup_name_exists", message: "The backup file name is invalid or already exists." } } as never);
     }
     try { await createBackup(c.env, name); } catch (err) { throw badRequest("Failed to create backup."); void err; }
     return c.body(null, 204);
@@ -172,8 +192,9 @@ export function mountBackupsApi(app: Hono<AppEnv>) {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const isZip = bytes.length > 3 && bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 0x03 || bytes[2] === 0x05 || bytes[2] === 0x07);
     if (!isZip) throw new ApiError(400, "An error occurred while validating the submitted data.", { file: { code: "validation_invalid_mime_type", message: `"${normalizeFilename(file.name, file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase() : "")}" mime type must be one of: application/zip.` } } as never);
-    if (await c.env.STORAGE.head(PREFIX + file.name)) throw new ApiError(400, "An error occurred while validating the submitted data.", { file: { code: "validation_backup_name_exists", message: "Backup file with the specified name already exists." } } as never);
-    await c.env.STORAGE.put(PREFIX + file.name, bytes, { httpMetadata: { contentType: "application/zip" } });
+    const bk = await backupsStorage(c.env);
+    if (await bk.head(PREFIX + file.name)) throw new ApiError(400, "An error occurred while validating the submitted data.", { file: { code: "validation_backup_name_exists", message: "Backup file with the specified name already exists." } } as never);
+    await bk.put(PREFIX + file.name, bytes, { httpMetadata: { contentType: "application/zip" } });
     return c.body(null, 204);
   });
   app.get("/api/backups/:key", async (c) => {
@@ -182,7 +203,7 @@ export function mountBackupsApi(app: Hono<AppEnv>) {
     const allowed = (await loadSettings(c.env.DB)).superuserIPs;
     if (allowed.length && !ipInList(allowed, await realIP(c))) throw forbidden("Insufficient permissions to access the resource.");
     const key = c.req.param("key") ?? "";
-    const obj = await c.env.STORAGE.get(PREFIX + key);
+    const obj = await (await backupsStorage(c.env)).get(PREFIX + key);
     if (!obj) throw new ApiError(404, "The requested resource wasn't found.", {});
     return new Response(obj.body, { headers: { "Content-Type": "application/zip", "Content-Length": String(obj.size), "Content-Disposition": `attachment; filename=${JSON.stringify(key.split("/").pop() ?? key)}`, "Content-Security-Policy": "default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; sandbox" } });
   });
@@ -190,15 +211,16 @@ export function mountBackupsApi(app: Hono<AppEnv>) {
     requireSuperuser(c);
     const key = c.req.param("key") ?? "";
     if (key && (await activeBackup(c.env.DB)) === key) throw badRequest("The backup is currently being used and cannot be deleted.");
-    if (!(await c.env.STORAGE.head(PREFIX + key))) throw badRequest("Invalid or already deleted backup file. Raw error: \nbackup does not exist");
-    await c.env.STORAGE.delete(PREFIX + key);
+    const bk = await backupsStorage(c.env);
+    if (!(await bk.head(PREFIX + key))) throw badRequest("Invalid or already deleted backup file. Raw error: \nbackup does not exist");
+    await bk.delete(PREFIX + key);
     return c.body(null, 204);
   });
   app.post("/api/backups/:key/restore", async (c) => {
     requireSuperuser(c);
     if (await activeBackup(c.env.DB)) throw badRequest("Try again later - another backup/restore process has already been started.");
     const key = c.req.param("key") ?? "";
-    if (!(await c.env.STORAGE.head(PREFIX + key))) throw badRequest("Missing or invalid backup file.");
+    if (!(await (await backupsStorage(c.env)).head(PREFIX + key))) throw badRequest("Missing or invalid backup file.");
     c.executionCtx.waitUntil(restoreBackup(c.env, key).catch((err) => console.error("voidbase: Failed to restore backup", key, err)));
     return c.body(null, 204);
   });

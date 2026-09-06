@@ -47,6 +47,7 @@ jobs:
           ./scripts/seed-reference.sh .void/reference 8090 0.39.11 ../pocketbase-sveltekit-starter
           (setsid nohup bun test/smtp-sink.ts > .void/sink.log 2>&1 &)
           (setsid nohup bun test/mock-oidc.ts > .void/oidc.log 2>&1 &)
+          (setsid nohup bun test/s3-mock.ts > .void/s3.log 2>&1 &)
           sleep 2
       - name: Differential suites and panel tests
         working-directory: voidbase

@@ -31,7 +31,7 @@ bun test/panel-smoke.ts                  # headless login through the unmodified
 Conformance suites in `test/conformance/` run the same requests against a reference PocketBase (8090) and voidbase
 (5180) and compare; browser suites `test/panel-*.ts` and `test/starter-*.ts` drive the unmodified panel and the
 unmodified `pocketbase-sveltekit-starter`. Helpers that must be running for some suites: `bun test/smtp-sink.ts`
-(SMTP 2525 / HTTP 2526) and `bun test/mock-oidc.ts` (5190). `bun test/fresh-db.ts` builds the production Worker
+(SMTP 2525 / HTTP 2526), `bun test/mock-oidc.ts` (5190) and `bun test/s3-mock.ts` (5195, S3 with SigV4 verification). `bun test/fresh-db.ts` builds the production Worker
 with the fixture hooks and migrations and boots it on an empty D1.
 
 ## Continuous integration

@@ -14,7 +14,7 @@ this page lists where the platform forces a different shape, and the limits that
 | Columns per table | 2000 | 100 (D1) |
 | Row / query size | SQLite limits | 1 MB per row, 128 MB per query result (D1). List endpoints paginate anyway |
 | `_logs`, `_changes` | logs in a second SQLite file | tables in the same D1 database, pruned by the built-in crons |
-| Files | local `pb_data/storage` or S3 | R2 bucket bound as `STORAGE` (keys `{collectionId}/{recordId}/{filename}`). `settings.s3` is validated and saved but **not used as a backend** |
+| Files | local `pb_data/storage` or S3 | R2 bucket bound as `STORAGE` (keys `{collectionId}/{recordId}/{filename}`), or any S3-compatible bucket when `settings.s3.enabled` (SigV4 over fetch, path-style or virtual-host); `settings.backups.s3` likewise for archives |
 | Backups | zip of the SQLite files + storage | zip of `data.json` (every table) + `storage/`, kept in R2 under `__backups__/`. A PocketBase backup cannot be restored here and vice versa; use import/export for cross-migration |
 
 ## Runtime
@@ -43,7 +43,6 @@ PocketBase. WebP output is not produced: JPEG in, JPEG out; PNG in, PNG out.
 
 ## Not implemented
 
-- S3 as the file backend (`settings.s3`), and `POST /api/settings/test/s3` only validates its input.
 - Alternative mail transports (Cloudflare Email Service, HTTP providers). SMTP only.
 - `OnTerminate`, `OnBackupCreate` / `OnBackupRestore` hook events (registered, never fired).
 - `$os.cmd` / `$os.exec`, `$filesystem.fileFromPath`, `$template` rendering from disk: there is no filesystem or shell on Workers.

@@ -12,6 +12,7 @@ import { nowString } from "./ids";
 import { deleteOldLogs } from "./logs";
 import { autoBackup } from "./backups";
 import { loadSettings } from "./settings";
+import { s3Bucket } from "./storage/s3";
 import type { AppEnv } from "./types";
 
 export interface CronJob { id: string; expr: string; fn: (env: AppEnv["Bindings"]) => Promise<unknown> | unknown }
@@ -33,6 +34,8 @@ export function allJobs(backupsCron = ""): CronJob[] {
 }
 
 export async function runJob(env: AppEnv["Bindings"], job: CronJob): Promise<void> {
+  const s3 = (await loadSettings(env.DB)).s3;
+  if (s3.enabled) env = { ...env, STORAGE: s3Bucket(s3) };
   try { await withHookStore(env.DB, env, () => job.fn(env)); } catch (err) { logger.error("voidbase: cron job failed", { job: job.id, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }); }
 }
 

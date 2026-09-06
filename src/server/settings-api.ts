@@ -8,6 +8,7 @@ import { randomString } from "./ids";
 import type { AppEnv, Row } from "./types";
 import type { Field } from "./collections/fields";
 import { requireSuperuser } from "./auth";
+import { S3Bucket } from "./storage/s3";
 import { requestHook, trigger } from "./hooks/runtime";
 
 const readBody = async (c: Context<AppEnv>): Promise<Record<string, unknown>> => {
@@ -26,6 +27,10 @@ export function mountSettingsApi(app: Hono<AppEnv>) {
       const next = ev.newSettings as typeof merged;
       const errs = validateSettings(next);
       if (Object.keys(errs).length) throw new ApiError(400, "An error occurred while saving the new settings.", errs as never);
+      // PocketBase keeps the stored secrets when the submitted ones are blank (validation already saw the blank value)
+      if (!next.smtp.password) next.smtp.password = current.smtp.password;
+      if (!next.s3.secret) next.s3.secret = current.s3.secret;
+      if (!next.backups.s3.secret) next.backups.s3.secret = current.backups.s3.secret;
       await saveSettings(c.env.DB, next);
       await trigger("onSettingsReload", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined);
       return c.json(publicSettings(next));
@@ -68,7 +73,8 @@ export function mountSettingsApi(app: Hono<AppEnv>) {
     const settings = await loadSettings(c.env.DB);
     const cfg = fs === "storage" ? settings.s3 : settings.backups.s3;
     if (!cfg.enabled) throw badRequest(`Failed to test the S3 filesystem. Raw error: \nS3 storage filesystem is not enabled`);
-    throw badRequest("Failed to test the S3 filesystem. Raw error: \nS3 connection tests are not supported yet on this server (files live in R2)");
+    try { await new S3Bucket(cfg).test(); } catch (err) { throw badRequest(`Failed to test the S3 filesystem. Raw error: \n${err instanceof Error ? err.message : String(err)}`); }
+    return c.body(null, 204);
   });
 
   app.post("/api/settings/apple/generate-client-secret", async (c) => {

@@ -55,6 +55,9 @@ jobs:
       - name: Fresh-database boot (production build in workerd)
         working-directory: voidbase
         run: bun test/fresh-db.ts 5181
+      - name: HTTP mail provider transport (production build)
+        working-directory: voidbase
+        run: bun test/mail-http.ts 5184
       - name: Starter app smoke (unmodified pocketbase-sveltekit-starter against voidbase)
         working-directory: voidbase
         run: |

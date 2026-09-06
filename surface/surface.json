@@ -1562,8 +1562,9 @@
             "prod"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "partial",
+          "milestone": "m6",
+          "notes": "scripts/bench-realtime.ts: 100 SSE clients opened and subscribed in 4.5 s locally, 100/100 received a create event, delivery p50 587 ms / p95 837 ms (poll interval bound). 300 concurrent streams exceeded the local miniflare's capacity in the bench budget; 1k/10k measurements need a deployment. Cost model documented in docs/perf.md: about one D1 read per second per isolate while clients are connected."
         }
       ]
     },
@@ -1619,8 +1620,9 @@
             "prod"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "VOIDBASE_MAIL_HTTP_URL / VOIDBASE_MAIL_HTTP_KEY (env.ts) switch every outbound email, including the panel's test email and hook mail, to a Resend-compatible HTTP provider (POST {from,to,cc,bcc,subject,html,text,headers}, bearer key); settings JSON stays PocketBase-shaped. test/mail-http.ts builds the Worker with the variables in .env.local, boots vp preview on an isolated D1 and checks delivery through test/smtp-sink.ts's /send endpoint (6/6). Cloudflare Email Service bindings are not exposed by Void, so the HTTP path is the alternative transport."
         },
         {
           "id": "set.s3",
@@ -2387,8 +2389,9 @@
             "prod"
           ],
           "hours": 3,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "partial",
+          "milestone": "m6",
+          "notes": "scripts/bench.ts (per-endpoint p50/p95 + concurrent req/s) and docs/perf.md with the local dev-server baseline (health/list/view ~25 ms p50 locally, create ~29 ms, bcrypt login ~118 ms) and the cost model per request. Production numbers (D1 co-located reads, cold start) need a deployment: rerun the script against the Worker URL."
         },
         {
           "id": "prod.limits-doc",

@@ -27,7 +27,7 @@ this page lists where the platform forces a different shape, and the limits that
 | Crons | in-process scheduler | Cloudflare cron trigger every minute runs the due jobs (`runDue`). A job may run on any isolate; keep jobs idempotent. `POST /api/crons/:id` runs a job on demand |
 | CPU time | unlimited | Workers CPU limit per request (30 s on paid plans by default). Thumbnail generation of very large images and huge batch requests are the operations most likely to hit it |
 | Request body | 32 MB default (configurable) | 32 MB, and Cloudflare's own upload limit applies (100 MB on Free/Pro plans, higher on Business/Enterprise) |
-| Outbound SMTP | net/smtp | `cloudflare:sockets` TCP with STARTTLS or implicit TLS. Port 25 is blocked on Workers; use 465 or 587 |
+| Outbound mail | net/smtp | `cloudflare:sockets` TCP with STARTTLS or implicit TLS (port 25 is blocked on Workers; use 465 or 587), or an HTTP provider when `VOIDBASE_MAIL_HTTP_URL` is set (Resend-compatible JSON, bearer key in `VOIDBASE_MAIL_HTTP_KEY`); the settings JSON stays PocketBase-shaped either way |
 | OAuth2 | Go providers | the same 32 providers implemented on `fetch`; Apple client secret generation with ES256 in WebCrypto |
 | JS hooks | goja VM, synchronous | bundled at build time into the Worker (`pb_hooks/*.pb.js`), running on V8. `$app.*`, `$http.send`, `$filesystem.*` and mail calls are asynchronous under the hood; the bundler inserts the awaits so hook code stays PocketBase-shaped. See [hooks.md](./hooks.md) |
 | Migrations | `pb_migrations/*.js` at startup | the same files, bundled at build time and applied on the first request after a deploy (tracked in `_pbMigrations`) |
@@ -43,7 +43,6 @@ PocketBase. WebP output is not produced: JPEG in, JPEG out; PNG in, PNG out.
 
 ## Not implemented
 
-- Alternative mail transports (Cloudflare Email Service, HTTP providers). SMTP only.
 - `OnTerminate`, `OnBackupCreate` / `OnBackupRestore` hook events (registered, never fired).
 - `$os.cmd` / `$os.exec`, `$filesystem.fileFromPath`, `$template` rendering from disk: there is no filesystem or shell on Workers.
 - PocketBase's own CLI (`pocketbase serve|migrate|superuser`). Use the panel, `bun run` scripts and Void's CLI ([deploy.md](./deploy.md)).

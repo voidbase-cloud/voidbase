@@ -59,5 +59,15 @@ Bun.listen<{ buf: string; from: string; to: string[]; inData: boolean }>({
     },
   },
 });
-Bun.serve({ port: httpPort, hostname: "127.0.0.1", fetch(req) { if (req.method === "DELETE") { messages.length = 0; return new Response(null, { status: 204 }); } return Response.json(messages); } });
+Bun.serve({ port: httpPort, hostname: "127.0.0.1", async fetch(req) {
+  const url = new URL(req.url);
+  if (req.method === "POST" && url.pathname === "/send") {
+    // HTTP mail provider endpoint (Resend-shaped JSON) for VOIDBASE_MAIL_HTTP_URL tests
+    const body = (await req.json()) as { from: string; to: string[]; subject: string; html?: string; text?: string };
+    messages.push({ from: body.from, to: body.to, raw: JSON.stringify(body), subject: body.subject, html: body.html ?? "", text: body.text ?? "", headers: { via: "http", authorization: req.headers.get("authorization") ?? "" } });
+    return Response.json({ id: `sink-${messages.length}` });
+  }
+  if (req.method === "DELETE") { messages.length = 0; return new Response(null, { status: 204 }); }
+  return Response.json(messages);
+} });
 console.log(`smtp sink on 127.0.0.1:${smtpPort}, messages at http://127.0.0.1:${httpPort}/messages`);

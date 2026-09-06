@@ -20,6 +20,7 @@ Secrets and settings that must exist in production (declared in `env.ts`):
 | `VOIDBASE_SUPERUSER_EMAIL`, `VOIDBASE_SUPERUSER_PASSWORD` | first superuser, upserted on the first request. Remove or rotate after the first login |
 | `VOIDBASE_ENCRYPTION_KEY` | optional; encrypts the settings row (SMTP password, OAuth2 secrets) at rest |
 | `AUDITLOG` | only if your `pb_hooks` read it, like the starter's audit log |
+| `VOIDBASE_MAIL_HTTP_URL`, `VOIDBASE_MAIL_HTTP_KEY` | optional HTTP mail provider (Resend-compatible JSON endpoint + bearer key) used instead of SMTP for every email, including the panel's test email |
 
 Everything else (SMTP, OAuth2 providers, rate limits, backups cron, trusted proxy) is configured from the
 panel's Settings pages and stored in D1.

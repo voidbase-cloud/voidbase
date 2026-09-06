@@ -3,6 +3,7 @@
 // message is logged (PocketBase would hand it to sendmail, which a Worker does not have).
 import type { Collection } from "../collections/model";
 import { signJWT } from "../jwt";
+import { env as voidEnv } from "void/env";
 import { loadSettings } from "../settings";
 import type { Row } from "../types";
 import { trigger } from "../hooks/runtime";
@@ -13,12 +14,26 @@ import { collectionTemplate, PLACEHOLDER, resolveEmailTemplate, type EmailTempla
 
 export type { MailMessage } from "./message";
 
+// Alternative transport: an HTTP mail API (Resend-compatible request shape). Configured by environment, not by the
+// PocketBase settings, so the settings JSON stays wire-identical.
+const httpMail = { get url() { return String((voidEnv as Record<string, unknown>).VOIDBASE_MAIL_HTTP_URL ?? "").trim(); }, get key() { return String((voidEnv as Record<string, unknown>).VOIDBASE_MAIL_HTTP_KEY ?? ""); } };
+const addr = (a: { name?: string; address: string }) => (a.name ? `${a.name} <${a.address}>` : a.address);
+async function sendHTTP(m: MailMessage, text: string): Promise<void> {
+  const payload: Record<string, unknown> = { from: addr(m.from), to: m.to.map(addr), subject: m.subject, html: m.html, text };
+  if (m.cc?.length) payload.cc = m.cc.map(addr);
+  if (m.bcc?.length) payload.bcc = m.bcc.map(addr);
+  if (m.headers && Object.keys(m.headers).length) payload.headers = m.headers;
+  const res = await fetch(httpMail.url, { method: "POST", headers: { "content-type": "application/json", ...(httpMail.key ? { authorization: `Bearer ${httpMail.key}` } : {}) }, body: JSON.stringify(payload) });
+  if (!res.ok) throw new Error(`mail provider ${new URL(httpMail.url).host} answered ${res.status}: ${(await res.text()).slice(0, 200)}`);
+}
+
 export async function sendMail(db: D1Database, message: MailMessage): Promise<void> {
   const settings = await loadSettings(db);
   const ev = { app: undefined as unknown, message, mailer: null as unknown, next: async () => undefined as unknown };
   await trigger("onMailerSend", ev, null, async () => {
     const m = ev.message;
     const text = m.text || htmlToText(m.html);
+    if (httpMail.url) { await sendHTTP(m, text); return; }
     if (!settings.smtp.enabled) {
       console.log(`voidbase: mail not delivered (SMTP disabled): "${m.subject}" -> ${m.to.map((t) => t.address).join(", ")}`);
       return;

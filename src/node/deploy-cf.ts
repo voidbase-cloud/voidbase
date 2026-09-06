@@ -35,6 +35,7 @@ export interface DeployOptions { name?: string; account?: string; dir?: string; 
   queue?: boolean;      // jobs queue for mail and automatic backups (default on; skipped when the token cannot create queues)
   analytics?: boolean;  // Analytics Engine dataset with one data point per request (opt-in: --analytics or VOIDBASE_DEPLOY_ANALYTICS=1; the account must have Analytics Engine enabled)
   rateLimit?: string;   // exact per-location ceiling per IP as "<requests>/<10|60>", default "300/10" (PocketBase's /api/ rule); "0" disables
+  hub?: boolean;        // realtime hub Durable Object in this Worker (default on; VOIDBASE_DEPLOY_HUB=0 keeps the D1 poll)
 }
 
 interface CfResponse<T> { success: boolean; errors: { code: number; message: string }[]; result: T }
@@ -111,7 +112,7 @@ function projectName(): string {
 const randomPassword = () => { const a = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const b = crypto.getRandomValues(new Uint8Array(20)); return Array.from(b, (x) => a[x % a.length]).join(""); };
 
 // Bun only loads the .env of the working directory; the starter keeps its PB_* and deploy variables one level up.
-const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
+const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
 export function loadEnvFiles(files = [".env", "../.env"]): string[] {
   const loaded: string[] = [];
   for (const f of files) {
@@ -141,6 +142,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const on = (v: string | undefined) => v !== undefined && ["1", "true", "on", "yes"].includes(v.trim().toLowerCase());
   const analytics = opts.analytics ?? on(process.env.VOIDBASE_DEPLOY_ANALYTICS);
   const rateLimit = parseRateLimit(opts.rateLimit ?? process.env.VOIDBASE_DEPLOY_RATE_LIMIT);
+  const hub = opts.hub ?? !off(process.env.VOIDBASE_DEPLOY_HUB);
   let queue: string | false = false;
   if (wantQueue) {
     const q = await ensureQueue(token, account.id, `${name}-jobs`);
@@ -155,7 +157,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const consumer = resolve(".");
   const entry = ["main.ts", "main.js"].map((f) => resolve(consumer, f)).find((f) => existsSync(f) && /export\s+(async\s+)?function\s+register\b|export\s*\{[^}]*\bregister\b/.test(readFileSync(f, "utf8")));
   if (entry) log(`composing ${entry} (register) into the Worker`);
-  writeCloudProject(cloud, opts.dir ? "package" : "internal", { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), entry, queue });
+  writeCloudProject(cloud, opts.dir ? "package" : "internal", { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), entry, queue, hub });
   if (!queue) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/queues`, { recursive: true, force: true }); }
   // Smart Placement runs the Worker next to its D1 database: PocketBase-shaped requests are several dependent queries.
   // The rate-limit binding is an exact per-location ceiling per IP on top of the settings' rules (which count per
@@ -166,6 +168,8 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     r2_buckets: [{ binding: "STORAGE", bucket_name: `${name}-storage` }],
     ...(rateLimit ? { ratelimits: [{ name: "RATE_LIMITER", namespace_id: rateLimitNamespace(name), simple: { limit: rateLimit.limit, period: rateLimit.period } }] } : {}),
     ...(analytics ? { analytics_engine_datasets: [{ binding: "LOGS_ANALYTICS", dataset: `${name.replace(/-/g, "_")}_requests` }] } : {}),
+    // the realtime hub: a SQLite-backed Durable Object class exported from this Worker (free plan included), one per instance
+    ...(hub ? { durable_objects: { bindings: [{ name: "HUB", class_name: "VoidbaseHub" }] }, migrations: [{ tag: "voidbase-hub-v1", new_sqlite_classes: ["VoidbaseHub"] }] } : {}),
   }, null, 2) + "\n";
   writeFileSync(`${cloud}/wrangler.jsonc`, `// written by voidbase deploy; ids are real resources on account ${account.id}\n${wranglerConfig}`);
   // non-secret worker vars the hooks read (AUDITLOG for the starter); secrets never go here
@@ -186,7 +190,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   writeFileSync(credFile, JSON.stringify({ email, password }, null, 2) + "\n", { mode: 0o600 });
 
   const url = await workersSubdomain(token, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null));
-  log(`bindings: D1, R2${queue ? ", Queue" : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
+  log(`bindings: D1, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
   if (opts.dryRun) { log(`dry run: would sync the panel${opts.publicDir ? ` and ${opts.publicDir}` : ""} into ${cloud}/public, put 2 secrets and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig, project: cloud }; }
 
   // the toolchain comes with the voidbase package (void, and wrangler through void)

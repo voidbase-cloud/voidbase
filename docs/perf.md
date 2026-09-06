@@ -28,15 +28,21 @@ as in PocketBase. Thumbnails are generated once (Photon, wasm) and then served f
 
 ## Realtime fan-out (local)
 
-| clients | opened + subscribed | received the event | delivery p50 | p95 |
-| ---: | ---: | ---: | ---: | ---: |
-| 100 | 4.5 s | 100 / 100 | 587 ms | 837 ms |
+| transport | clients | opened + subscribed | received the event | delivery p50 | p95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| hub (Durable Object, push) | 100 | 3.4 s | 100 / 100 | 346 ms | 353 ms |
+| hub, one client | 1 | | 1 / 1 | about 50 ms | |
+| D1 poll (fallback) | 100 | 4.5 s | 100 / 100 | 587 ms | 837 ms |
 
-Each SSE connection is a long-running Worker request that polls the `_changes` table about once per second;
-connections in the same isolate share the read, so the D1 cost is roughly one query per second per isolate while at
-least one client is connected and zero when idle. Delivery latency is bounded by the poll interval (under one second
-here). The local dev server could not hold 300 concurrent streams within the bench's five-minute budget; that is a
-miniflare limit, not the design's. Production limits to measure on a deployment: concurrent connections per isolate
+With the hub, a write publishes once to the instance's Durable Object, which pushes to every connection's socket;
+the remaining latency at 100 clients is the per-subscriber record fetch and rule check the isolate does for each
+connection (one D1 read each, serialized in the single-threaded local runtime). With the poll, each SSE connection
+is a long-running Worker request that polls the `_changes` table about once per second; connections in the same
+isolate share the read, so the D1 cost is roughly one query per second per isolate while at least one client is
+connected and zero when idle, and delivery latency is bounded by the poll interval. The local dev server could not hold 300 concurrent streams within the bench's five-minute budget; that is a
+miniflare limit, not the design's. The dev server also never cancels an SSE request whose client vanished, so a
+killed benchmark leaves streams (and their hub sockets, which keep pinging) behind until the idle cleanup; on
+Cloudflare a client disconnect cancels the request and the hub sees the socket close. Production limits to measure on a deployment: concurrent connections per isolate
 (Cloudflare spreads long requests across isolates), D1 reads per second at 1k and 10k clients (expected: number of
 isolates x 1/s), and per-request CPU (the poll loop sleeps, it does not spin).
 

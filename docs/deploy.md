@@ -1,7 +1,7 @@
 # Deploying voidbase
 
-voidbase is a Void app: one Worker, one D1 database, one R2 bucket, a jobs queue and the cron triggers the hooks
-need. Void infers the bindings (`DB`, `STORAGE`, the queue from `queues/`) from the source and provisions them; the
+voidbase is a Void app: one Worker (with its realtime hub Durable Object inside), one D1 database, one R2 bucket, a
+jobs queue and the cron triggers the hooks need. Void infers the bindings (`DB`, `STORAGE`, the queue from `queues/`) from the source and provisions them; the
 system tables come from the checked-in Drizzle migrations in `db/migrations/`, and PocketBase-style `pb_migrations`
 run on the first request.
 
@@ -71,6 +71,7 @@ https://dash.cloudflare.com/?to=/:account/api-tokens).
 | `<name>-jobs` queue (`queues/<name>-jobs.ts`) | outbound mail and automatic backups run from the queue with retries (30 s, 60 s, ... up to 15 min, five times, then dropped and posted to `VOIDBASE_ALERT_WEBHOOK_URL`). Requests never wait on SMTP. Without the queue everything runs inline, as on the Bun runtime | `--no-queue` / `VOIDBASE_DEPLOY_QUEUE=0`; skipped automatically when the token lacks Queues edit |
 | `RATE_LIMITER` (Cloudflare rate-limit binding) | a ceiling per client IP on `/api`, counted per Cloudflare location across every isolate there, on top of the settings' rate-limit rules (which count per isolate). Applies only while rate limits are enabled in Settings, and skips superusers and excluded IPs like the rules do. Cloudflare documents it as eventually consistent, not an exact counter | `--rate-limit 300/10` (requests per 10 or 60 seconds, default PocketBase's `/api/` rule) / `VOIDBASE_DEPLOY_RATE_LIMIT`, `0` disables |
 | `LOGS_ANALYTICS` (Workers Analytics Engine) | one data point per request (method, path, status, auth collection, error, execution time) at any log level, queryable in the dashboard and the SQL API at $0.25 per million points, while the panel's log keeps writing D1 rows from `VOIDBASE_LOG_MIN_LEVEL` up. The account has to enable Analytics Engine once, at https://dash.cloudflare.com/?to=/:account/workers/analytics-engine, or the upload fails with code 10089 | opt-in: `--analytics` / `VOIDBASE_DEPLOY_ANALYTICS=1` |
+| `HUB` (Durable Object `VoidbaseHub`, SQLite-backed, in this Worker) | the realtime hub: every SSE connection holds one hibernatable socket to it, writes publish to it, so events arrive in tens of milliseconds instead of the D1 poll's second, and idle apps cost nothing (the object sleeps). Free plan included | `--no-hub` / `VOIDBASE_DEPLOY_HUB=0` keeps the D1 poll |
 | Smart Placement | the Worker runs next to its D1 database | always on |
 
 ### Every instance is isolated
@@ -78,8 +79,8 @@ https://dash.cloudflare.com/?to=/:account/api-tokens).
 Two voidbase instances on one account never share a resource. Everything the deploy creates is named or derived from
 the worker name: `<name>-db`, `<name>-storage`, `<name>-jobs`, the `<name>_requests` dataset, and the rate-limit
 binding's `namespace_id` is hashed from the name, because Cloudflare shares counters between bindings that reuse an
-id across Workers. The realtime hub, when it lands, is a Durable Object class exported from the instance's own Worker
-rather than a Worker shared by apps. `test/deploy-cf.ts` asserts the naming.
+id across Workers. The realtime hub is a Durable Object class exported from the instance's own Worker rather than a Worker shared
+by apps. `test/deploy-cf.ts` asserts the naming.
 
 ## Option B: the Void platform
 

@@ -101,6 +101,26 @@ try {
   check("unknown /api path on a browser navigation: 404 with the HTML page", api404.status === 404 && (api404.headers.get("content-type") ?? "").includes("text/html"), `${api404.status} ${api404.headers.get("content-type")}`);
   const apiJson404 = await fetch(`${base}/api/nope`);
   check("unknown /api path for API clients stays a JSON 404", apiJson404.status === 404 && (apiJson404.headers.get("content-type") ?? "").includes("json"), `${apiJson404.status} ${apiJson404.headers.get("content-type")}`);
+  // realtime through the hub (the built Worker exports VoidbaseHub and wrangler.jsonc binds it): the SDK protocol as-is
+  {
+    const email = process.env.VOIDBASE_SUPERUSER_EMAIL ?? "admin@example.com"; const password = process.env.VOIDBASE_SUPERUSER_PASSWORD ?? "changeme123";
+    const rtSu = (await fetch(`${base}/api/collections/_superusers/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: email, password }) }).then((r) => r.json())) as { token: string };
+    const H = { authorization: rtSu.token, "content-type": "application/json" };
+    const ac = new AbortController();
+    const sse = await fetch(`${base}/api/realtime`, { headers: { accept: "text/event-stream" }, signal: ac.signal });
+    const reader = sse.body!.getReader(); const dec = new TextDecoder(); let buf = ""; const events: { event: string; data: string; at: number }[] = [];
+    const pump = (async () => { for (;;) { const { value, done } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); let i; while ((i = buf.indexOf("\n\n")) >= 0) { const chunk = buf.slice(0, i); buf = buf.slice(i + 2); const ev = /event: (.*)/.exec(chunk)?.[1] ?? ""; const data = chunk.split("\n").filter((l) => l.startsWith("data: ")).map((l) => l.slice(6)).join("\n"); if (ev) events.push({ event: ev, data, at: Date.now() }); } } })();
+    const until = async (n: number, ms: number) => { const t = Date.now() + ms; while (events.length < n && Date.now() < t) await Bun.sleep(20); };
+    await until(1, 5000);
+    const clientId = events[0] ? (JSON.parse(events[0].data) as { clientId: string }).clientId : "";
+    const subscribed = await fetch(`${base}/api/realtime`, { method: "POST", headers: H, body: JSON.stringify({ clientId, subscriptions: ["ks_mig/*"] }) });
+    const t0 = Date.now();
+    const made = (await fetch(`${base}/api/collections/ks_mig/records`, { method: "POST", headers: H, body: JSON.stringify({ title: "hub" }) }).then((r) => r.json())) as { id?: string };
+    await until(2, 3000);
+    const ev = events[1]; const evRecord = ev ? (JSON.parse(ev.data) as { action: string; record: { id: string } }) : null;
+    check("realtime event delivered through the hub within 3 s of the write", subscribed.status === 204 && !!made.id && ev?.event === "ks_mig/*" && evRecord?.action === "create" && evRecord.record.id === made.id, `${subscribed.status} ${made.id} ${ev?.event} ${ev ? ev.at - t0 + " ms" : "no event"}`);
+    ac.abort(); await pump.catch(() => {});
+  }
 } catch (err) {
   console.error("fresh-db: aborted:", err instanceof Error ? err.message : err);
   console.error("--- preview log tail ---\n" + (await Bun.file(logPath).text()).split("\n").slice(-25).join("\n"));

@@ -76,3 +76,13 @@ times with backoff and, when it keeps failing, dropped and posted to `VOIDBASE_A
 at-least-once: a mail whose SMTP session broke after the server accepted it can arrive twice. The panel's test
 email and `$app.newMailClient().send()` stay synchronous and report transport errors, as in PocketBase. Without the
 queue (the Bun runtime, or a deploy whose token could not create one) everything runs inline as before.
+
+## Realtime transport
+
+The SSE protocol, topics, `PB_CONNECT`, subscription updates and the per-subscriber rule checks are PocketBase's.
+What differs is the transport behind them. On Cloudflare a per-instance Durable Object (the hub) fans out changes:
+every connection holds one hibernatable WebSocket to it, a record write publishes after its D1 batch has committed,
+and the isolate holding the connection fetches the record with the subscriber's auth and rules before sending. Like
+PocketBase there is no replay: an event that happens while a client is reconnecting is missed. If the hub becomes
+unreachable the stream ends and the SDK reconnects. Without the hub binding (the Bun runtime, or a deploy with
+`--no-hub`) the same protocol runs on a D1 change feed polled about once a second by each connection.

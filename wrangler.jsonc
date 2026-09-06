@@ -1,0 +1,6 @@
+// Dev-only bindings Void cannot infer: the realtime hub (src/server/hub.ts), a SQLite-backed Durable Object.
+// `voidbase deploy` writes the production equivalent into the generated project's wrangler.jsonc.
+{
+  "durable_objects": { "bindings": [{ "name": "HUB", "class_name": "VoidbaseHub" }] },
+  "migrations": [{ "tag": "voidbase-hub-v1", "new_sqlite_classes": ["VoidbaseHub"] }]
+}

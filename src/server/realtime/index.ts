@@ -1,10 +1,14 @@
-// Realtime (decision d5): PocketBase's SSE protocol on void/sse, fanned out through the _changes table in D1.
+// Realtime (decision d5): PocketBase's SSE protocol on void/sse. Two transports behind the same protocol:
 //
-// Workers bind timers and I/O objects to the request that created them, so a module-level poller dies with
-// the connection that started it and a stream may only be written from its own request. Every connection
-// therefore runs its own poll loop inside its request; the loops in one isolate share the last change-feed
-// query result (plain data) so the D1 read cost stays near one query per second per isolate. Zero cost when
-// nobody is connected.
+// - the hub (HUB binding, src/server/hub.ts): every connection holds one hibernatable WebSocket to the instance's
+//   Durable Object, record writes publish to it, subscription changes are relayed through it. Push, no polling,
+//   nothing shared between instances.
+// - the D1 change feed (no binding: the Bun runtime, a deploy without the hub): every connection runs a poll loop
+//   inside its request; the loops in one isolate share the last query result (plain data), about one D1 read per
+//   second per isolate, zero when nobody is connected.
+//
+// Workers bind timers and I/O objects to the request that created them, so both the poll loop and the hub socket
+// live inside the SSE request, and a stream is only ever written from its own request.
 import type { Context } from "hono";
 import { eventStream } from "#platform/sse";
 import type { Collection } from "../collections/model";
@@ -17,6 +21,7 @@ import { enrich, fetchRecord, recordMatchesRule, type RecordContext } from "../r
 import { rowToValues } from "../records/values";
 import { trigger } from "../hooks/runtime";
 import type { AppEnv, Row } from "../types";
+import { controlClient, hubActive, openHubSocket, sendFilter, type ChangeEvent, type HubMessage } from "./hub-client";
 
 interface Subscription { topic: string; collection: string; recordId: string | null; query: Record<string, string>; headers: Record<string, string> }
 interface Change { id: number; collection: string; recordId: string; action: string; data: string | null }
@@ -27,6 +32,7 @@ interface Client {
   token: string;
   send: (event: string, data: unknown) => Promise<void>;
   closed: boolean;
+  hub?: WebSocket | null;
 }
 
 const clients = new Map<string, Client>();
@@ -61,7 +67,8 @@ export async function connect(c: Context<AppEnv>): Promise<Response> {
   const token = c.req.header("Authorization")?.replace(/^bearer /i, "") ?? "";
   const now = nowString();
   await stmt(env.DB, "INSERT INTO `_realtime_clients` (id, subscriptions, token, created, updated) VALUES (?, '[]', ?, ?, ?)", [clientId, token, now, now]).run();
-  const max = await one<{ m: number | null }>(env.DB, "SELECT MAX(id) AS m FROM `_changes`");
+  const useHub = hubActive();
+  const max = useHub ? null : await one<{ m: number | null }>(env.DB, "SELECT MAX(id) AS m FROM `_changes`");
   const cursor = max?.m ?? 0;
   return eventStream(
     async (stream) => {
@@ -70,8 +77,22 @@ export async function connect(c: Context<AppEnv>): Promise<Response> {
         send: async (event, data) => { await stream.send({ event, data }); },
       };
       clients.set(clientId, client);
+      let hubSocket: WebSocket | null = null;
+      if (useHub) {
+        // the socket belongs to this request, like the stream it feeds; if the hub is unreachable the stream ends
+        // and the SDK reconnects, since writers publish there instead of writing feed rows
+        try { hubSocket = await openHubSocket(clientId); client.hub = hubSocket; } catch (err) { console.error("voidbase: realtime hub unreachable", err); stream.close(); return; }
+        hubSocket.addEventListener("message", (e) => { void onHubMessage(env, client, String(e.data)).catch((err) => { if (!client.closed) console.error("voidbase: realtime hub message failed", err); }); });
+        hubSocket.addEventListener("close", () => { if (!client.closed) stream.close(); });
+        hubSocket.addEventListener("error", () => { if (!client.closed) stream.close(); });
+        // a torn-down request may never reach the cleanup below: close the hub socket on abort as well
+        c.req.raw.signal.addEventListener("abort", () => { try { hubSocket?.close(1000, "client gone"); } catch { /* gone */ } });
+      }
       await stream.send({ id: clientId, event: "PB_CONNECT", data: { clientId } });
-      const loop = (async () => {
+      const loop = useHub ? (async () => {
+        // a keepalive the object answers without waking; the race lets the loop end as soon as the stream does
+        while (!client.closed) { await Promise.race([sleep(60_000), stream.closed]); if (client.closed) break; try { hubSocket?.send("ping"); } catch { stream.close(); } }
+      })() : (async () => {
         while (!client.closed) {
           await sleep(POLL_MS);
           if (client.closed) break;
@@ -81,11 +102,42 @@ export async function connect(c: Context<AppEnv>): Promise<Response> {
       await stream.closed;
       client.closed = true;
       clients.delete(clientId);
+      try { hubSocket?.close(); } catch { /* already closed */ }
       await loop.catch(() => {});
       try { await stmt(env.DB, "DELETE FROM `_realtime_clients` WHERE id = ?", [clientId]).run(); } catch { /* best effort */ }
     },
     { signal: c.req.raw.signal, keepAlive: { intervalMs: 15000, comment: "" } },
   );
+}
+
+// a frame from the hub: changes to deliver, this client's new subscriptions, or a one-off message
+async function onHubMessage(env: AppEnv["Bindings"], cl: Client, raw: string) {
+  if (raw === "pong") return;
+  const msg = JSON.parse(raw) as HubMessage;
+  if (msg.t === "subs") { applySubscriptions(cl, msg.subscriptions, msg.token); await announceFilter(env, cl); return; }
+  if (msg.t === "message") {
+    if (!cl.subs.some((s) => s.topic === msg.event)) return;
+    await cl.send(msg.event, msg.data ?? {});
+    cl.subs = cl.subs.filter((s) => s.topic !== msg.event);
+    await stmt(env.DB, "UPDATE `_realtime_clients` SET subscriptions = ?, updated = ? WHERE id = ?", [JSON.stringify(cl.subs.map((s) => s.topic)), nowString(), cl.id]).run();
+    return;
+  }
+  if (msg.t === "changes") {
+    const collections = await loadCollections(env.DB);
+    for (const ch of msg.changes) { if (cl.closed) return; await dispatch(env, cl, { id: 0, collection: ch.collection, recordId: ch.recordId, action: ch.action, data: ch.data ? JSON.stringify(ch.data) : null }, collections); }
+  }
+}
+function applySubscriptions(cl: Client, subs: string[], token: string) {
+  cl.subs = subs.map(parseSubscription).filter((s): s is Subscription => !!s);
+  cl.token = token;
+}
+// tell the hub which collections this connection wants (names; ids are resolved), so it skips the rest
+async function announceFilter(env: AppEnv["Bindings"], cl: Client) {
+  const ws = cl.hub; if (!ws) return;
+  const collections = await loadCollections(env.DB);
+  const names = new Set<string>();
+  for (const s of cl.subs) { if (s.collection.startsWith("@")) continue; const col = collections.get(s.collection); names.add(col ? col.name : s.collection); }
+  sendFilter(ws, [...names]);
 }
 
 // POST /api/realtime  {clientId, subscriptions: []}
@@ -105,7 +157,8 @@ export async function setSubscriptions(c: Context<AppEnv>, pre?: { clientId?: st
   const token = c.req.header("Authorization")?.replace(/^bearer /i, "") ?? "";
   await stmt(c.env.DB, "UPDATE `_realtime_clients` SET subscriptions = ?, token = ?, updated = ? WHERE id = ?", [JSON.stringify(subs), token, nowString(), clientId]).run();
   const local = clients.get(clientId);
-  if (local) { local.subs = subs.map(parseSubscription).filter((s): s is Subscription => !!s); local.token = token; }
+  if (local) { applySubscriptions(local, subs, token); if (local.hub) await announceFilter(c.env, local); }
+  else if (hubActive()) await controlClient(clientId, subs, token); // the stream lives in another isolate
   return c.body(null, 204);
 }
 
@@ -134,21 +187,27 @@ async function pollOne(env: AppEnv["Bindings"], cl: Client) {
   for (const ch of changes) {
     if (cl.closed) return;
     cl.cursor = Math.max(cl.cursor, ch.id);
-    if (ch.collection.startsWith("@")) { // one-off message for a single client (OAuth2 redirect handoff)
-      if (ch.recordId === cl.id && cl.subs.some((s) => s.topic === ch.collection)) {
-        await cl.send(ch.collection, ch.data ? JSON.parse(ch.data) : {});
-        cl.subs = cl.subs.filter((s) => s.topic !== ch.collection);
-        await stmt(db, "UPDATE `_realtime_clients` SET subscriptions = ?, updated = ? WHERE id = ?", [JSON.stringify(cl.subs.map((s) => s.topic)), nowString(), cl.id]).run();
-      }
-      continue;
+    await dispatch(env, cl, ch, collections);
+  }
+}
+
+// one change for one connection: the OAuth2 hand-off, or every matching subscription through the rules
+async function dispatch(env: AppEnv["Bindings"], cl: Client, ch: Change, collections: Map<string, Collection>) {
+  const db = env.DB;
+  if (ch.collection.startsWith("@")) { // one-off message for a single client (OAuth2 redirect handoff)
+    if (ch.recordId === cl.id && cl.subs.some((s) => s.topic === ch.collection)) {
+      await cl.send(ch.collection, ch.data ? JSON.parse(ch.data) : {});
+      cl.subs = cl.subs.filter((s) => s.topic !== ch.collection);
+      await stmt(db, "UPDATE `_realtime_clients` SET subscriptions = ?, updated = ? WHERE id = ?", [JSON.stringify(cl.subs.map((s) => s.topic)), nowString(), cl.id]).run();
     }
-    const matching = cl.subs.filter((s) => (s.collection === ch.collection || collections.get(s.collection)?.name === ch.collection) && (s.recordId === null || s.recordId === ch.recordId));
-    if (!matching.length) continue;
-    const collection = collections.get(ch.collection);
-    if (!collection) continue;
-    for (const sub of matching) {
-      try { await deliver(db, env, cl, sub, collection, ch, collections); } catch (err) { if (!cl.closed) console.error("voidbase: realtime deliver failed", err); }
-    }
+    return;
+  }
+  const matching = cl.subs.filter((s) => (s.collection === ch.collection || collections.get(s.collection)?.name === ch.collection) && (s.recordId === null || s.recordId === ch.recordId));
+  if (!matching.length) return;
+  const collection = collections.get(ch.collection);
+  if (!collection) return;
+  for (const sub of matching) {
+    try { await deliver(db, env, cl, sub, collection, ch, collections); } catch (err) { if (!cl.closed) console.error("voidbase: realtime deliver failed", err); }
   }
 }
 

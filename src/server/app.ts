@@ -29,6 +29,7 @@ import { bodyLimitMiddleware, rateLimitMiddleware, realIPWith } from "./hardenin
 import { backupActive } from "./backups";
 import { maintenanceIfDue } from "./crons";
 import { attachJobs } from "./jobs";
+import { attachHub } from "./realtime/hub-client";
 import { sendMail } from "./mail";
 import { s3Bucket } from "./storage/s3";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
@@ -67,6 +68,7 @@ app.use("*", async (c, next) => {
   const s3 = (await loadSettings(c.env.DB)).s3;
   if (s3.enabled) c.env = { ...c.env, STORAGE: s3Bucket(s3) };
   attachJobs(c.env);
+  attachHub(c.env);
   if (!served) { served = true; await trigger("onBootstrap", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined); await trigger("onServe", { app: undefined as unknown, router: app, next: async () => undefined as unknown }, null, async () => undefined); }
   c.set("auth", await loadAuth(c));
   try { maintenanceIfDue(c.env, (p) => c.executionCtx.waitUntil(p)); } catch { /* no execution context */ }
@@ -273,6 +275,7 @@ async function recordContext(c: Context<AppEnv>): Promise<RecordContext> {
     superuser: isSuperuser(auth),
     request: { auth: auth ? { collection: auth.collection, row: auth.row } : null, method: c.req.method, query, headers, body: {}, context: c.req.header(BATCH_CONTEXT_HEADER) === batchContextToken() ? "batch" : "default" },
     collections: await loadCollections(c.env.DB),
+    waitUntil: (p) => { try { c.executionCtx.waitUntil(p); } catch { void p; } },
     hookEvent: (record, collection) => Object.assign(new RequestEvent(c, authToHookRecord(auth)), { record, collection: new CollectionRef(collection) }),
   };
 }

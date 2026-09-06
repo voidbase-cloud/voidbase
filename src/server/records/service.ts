@@ -11,6 +11,7 @@ import { hashPassword, verifyPassword } from "../password";
 import type { AuthRecord, Row } from "../types";
 import { expandRecords } from "./expand";
 import { deleteAllRecordFiles, deleteFiles, normalizeFilename, putUpload, sniffMime } from "./files";
+import { hubActive, publishChanges, type ChangeEvent } from "../realtime/hub-client";
 import { recordToJSON } from "./json";
 import { parseFields, pick } from "./picker";
 import { autogenerate, normalizeInput, rowToValues, toColumn, uniqueStrings, validateValues, type FieldError, type RecordErrors, type Upload } from "./values";
@@ -27,6 +28,9 @@ export interface RecordContext {
   collections: Map<string, Collection>;
   // present when called from an HTTP route: builds the JSVM RequestEvent for *Request hooks
   hookEvent?: (record: HookRecord, collection: Collection) => RequestEvent;
+  // realtime: changes waiting to be published to the hub once their batch has committed, and the request's waitUntil
+  changes?: ChangeEvent[];
+  waitUntil?: (p: Promise<unknown>) => void;
 }
 
 export interface ListQuery { page: number; perPage: number; skipTotal: boolean; sort: string; filter: string; expand: string; fields: string }
@@ -296,9 +300,17 @@ function authFormErrors(c: Collection, p: Prepared, original: Record<string, unk
 }
 
 // ---- change feed -----------------------------------------------------------------------------------
-function changeStmt(db: D1Database, c: Collection, action: "create" | "update" | "delete", row: Row) {
-  // written only while a realtime client exists: idle apps and imports pay no change-feed rows
-  return stmt(db, "INSERT INTO `_changes` (collection, recordId, action, data, created) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM `_realtime_clients`)", [c.name, String(row.id), action, JSON.stringify(row), nowString()]);
+// With the hub the change is published after its batch commits (flushChanges); without it a `_changes` row goes into
+// the batch itself, written only while a realtime client exists so idle apps and imports pay no feed rows.
+function feed(ctx: RecordContext, c: Collection, action: "create" | "update" | "delete", row: Row): D1PreparedStatement[] {
+  if (hubActive()) { (ctx.changes ??= []).push({ collection: c.name, recordId: String(row.id), action, data: action === "delete" ? row : undefined }); return []; }
+  return [stmt(ctx.db, "INSERT INTO `_changes` (collection, recordId, action, data, created) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM `_realtime_clients`)", [c.name, String(row.id), action, JSON.stringify(row), nowString()])];
+}
+function flushChanges(ctx: RecordContext): void {
+  const pending = ctx.changes; if (!pending?.length) return;
+  ctx.changes = [];
+  const p = publishChanges(pending);
+  if (ctx.waitUntil) ctx.waitUntil(p); else void p;
 }
 function valuesToRow(c: Collection, values: Record<string, unknown>): Row {
   const row: Row = {};
@@ -357,7 +369,8 @@ export async function createRecord(ctx: RecordContext, c: Collection, body: RawB
     const cols = fields.map((f) => ident(f.name));
     const params = fields.map((f) => toColumn(f, stored[f.name]));
     try {
-      await ctx.db.batch([stmt(ctx.db, `INSERT INTO ${ident(c.name)} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`, params), changeStmt(ctx.db, c, "create", valuesToRow(c, stored))]);
+      await ctx.db.batch([stmt(ctx.db, `INSERT INTO ${ident(c.name)} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`, params), ...feed(ctx, c, "create", valuesToRow(c, stored))]);
+      flushChanges(ctx);
     } catch (err) {
       const col = uniqueViolation(err);
       if (col) throw badRequest("Failed to create record.", { [col]: { code: "validation_not_unique", message: "Value must be unique." } } as unknown as FieldErrors);
@@ -437,7 +450,8 @@ export async function updateRecord(ctx: RecordContext, c: Collection, id: string
     const setCols = fields.filter((f) => f.name !== "id").map((f) => `${ident(f.name)} = ?`);
     const params = fields.filter((f) => f.name !== "id").map((f) => toColumn(f, stored[f.name]));
     try {
-      await ctx.db.batch([stmt(ctx.db, `UPDATE ${ident(c.name)} SET ${setCols.join(", ")} WHERE id = ?`, [...params, id]), changeStmt(ctx.db, c, "update", { ...valuesToRow(c, stored), id })]);
+      await ctx.db.batch([stmt(ctx.db, `UPDATE ${ident(c.name)} SET ${setCols.join(", ")} WHERE id = ?`, [...params, id]), ...feed(ctx, c, "update", { ...valuesToRow(c, stored), id })]);
+      flushChanges(ctx);
     } catch (err) {
       const col = uniqueViolation(err);
       if (col) throw badRequest("Failed to update record.", { [col]: { code: "validation_not_unique", message: "Value must be unique." } } as unknown as FieldErrors);
@@ -477,6 +491,7 @@ export async function deleteRecord(ctx: RecordContext, c: Collection, id: string
     const plan: DeletePlan = { statements: [], deleted: [], overlay: new Map() };
     await planCascadeDelete(ctx, c, row, plan);
     await ctx.db.batch(plan.statements);
+    flushChanges(ctx);
     for (const d of plan.deleted) {
       try { await deleteAllRecordFiles(ctx.storage, d.c.id, String(d.row.id)); } catch (err) { console.error("voidbase: file cleanup failed", err); }
     }
@@ -554,14 +569,14 @@ async function planCascadeDelete(ctx: RecordContext, c: Collection, row: Row, pl
         const params: unknown[] = [value];
         for (const af of other.fields as Field[]) if (af.type === "autodate" && af.onUpdate) { sets.push(`${ident(af.name)} = ?`); params.push(now); updated[af.name] = now; }
         plan.overlay.set(refKey, updated);
-        plan.statements.push(stmt(ctx.db, `UPDATE ${ident(other.name)} SET ${sets.join(", ")} WHERE id = ?`, [...params, r.id]), changeStmt(ctx.db, other, "update", updated));
+        plan.statements.push(stmt(ctx.db, `UPDATE ${ident(other.name)} SET ${sets.join(", ")} WHERE id = ?`, [...params, r.id]), ...feed(ctx, other, "update", updated));
       }
     }
   }
   if (c.type === "auth") { // recordRefHooks: an auth record takes its OTPs, MFAs, external auths and auth origins with it
     for (const t of ["_otps", "_mfas", "_externalAuths", "_authOrigins"]) plan.statements.push(stmt(ctx.db, `DELETE FROM ${ident(t)} WHERE collectionRef = ? AND recordRef = ?`, [c.id, id]));
   }
-  plan.statements.push(stmt(ctx.db, `DELETE FROM ${ident(c.name)} WHERE id = ?`, [id]), changeStmt(ctx.db, c, "delete", row));
+  plan.statements.push(stmt(ctx.db, `DELETE FROM ${ident(c.name)} WHERE id = ?`, [id]), ...feed(ctx, c, "delete", row));
 }
 
 // ---- programmatic saves from hooks ($app.save / RecordUpsertForm.submit) -------------------------

@@ -12,6 +12,7 @@
     "./app": "./src/server/app.ts",
     "./crons": "./src/server/crons.ts",
     "./jobs": "./src/server/jobs.ts",
+    "./hub": "./src/server/hub.ts",
     "./plugin": "./hooks-plugin.ts",
     "./schema": "./db/schema.ts",
     "./env": "./env.ts",

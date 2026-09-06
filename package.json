@@ -1,9 +1,46 @@
 {
   "name": "voidbase",
-  "version": "0.0.1",
-  "private": true,
-  "type": "module",
+  "version": "0.1.0",
   "description": "PocketBase-wire-compatible backend on Cloudflare Workers via Void",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "voidbase": "bin/voidbase.ts"
+  },
+  "files": [
+    "bin",
+    "src",
+    "db",
+    "crons",
+    "middleware",
+    "routes",
+    "scripts",
+    "docs",
+    "hooks-plugin.ts",
+    "vite.config.ts",
+    "void.json",
+    "env.ts",
+    "tsconfig.json",
+    ".env.example",
+    "README.md",
+    "COMPAT.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "keywords": [
+    "pocketbase",
+    "cloudflare-workers",
+    "d1",
+    "r2",
+    "void",
+    "backend",
+    "baas"
+  ],
+  "engines": {
+    "bun": ">=1.2"
+  },
   "scripts": {
     "dev": "vp dev",
     "build": "vp build",

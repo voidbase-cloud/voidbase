@@ -1,0 +1,8 @@
+voidbase reimplements the HTTP API, validation rules, email templates and JS hooks surface of PocketBase
+(https://pocketbase.io, MIT License, Copyright (c) 2022 - present, Gani Georgiev) on Cloudflare Workers.
+The admin panel served at /_/ is PocketBase's own unmodified UI build (ui/dist), copied in by
+`bun scripts/sync-panel.ts`; it stays under PocketBase's MIT license. voidbase is not affiliated with or endorsed
+by the PocketBase project.
+
+Runtime dependencies: hono (MIT), fflate (MIT), @cf-wasm/photon (Apache-2.0, Photon by Silvia O'Dwyer),
+@simplewebauthn/server (MIT), bcryptjs (MIT). Built and deployed with Void (https://void.cloud).

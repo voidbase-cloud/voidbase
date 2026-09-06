@@ -26,6 +26,12 @@ bun test/conformance/compare.ts          # same requests at both servers, JSON d
 bun test/panel-smoke.ts                  # headless login through the unmodified panel, screenshot to /tmp/panel.png
 ```
 
+## CLI
+
+`bun bin/voidbase.ts --help` (or `voidbase` when installed): `init`, `dev`, `build`, `preview`, `deploy [--cloudflare]`,
+`superuser upsert|list`, `import <collections.json>`, `export <outDir>`, `panel sync [--brand dir]`, `app sync`,
+`seed-user`. Remote commands take `--url` and `--admin email:password`.
+
 ## Tests
 
 Conformance suites in `test/conformance/` run the same requests against a reference PocketBase (8090) and voidbase

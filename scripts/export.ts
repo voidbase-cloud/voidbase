@@ -7,11 +7,10 @@
 //   bun scripts/export.ts <url> <outDir> [superuserEmail] [superuserPassword]
 import { Database } from "bun:sqlite";
 import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
-const [url, out, email = process.env.VOIDBASE_SUPERUSER_EMAIL ?? "admin@example.com", password = process.env.VOIDBASE_SUPERUSER_PASSWORD ?? "changeme123"] = process.argv.slice(2);
-if (!url || !out) { console.error("usage: bun scripts/export.ts <url> <outDir> [email] [password]"); process.exit(1); }
+export async function exportAll(url: string, out: string, email: string, password: string): Promise<{ collections: number; rows: number; files: number }> {
 const base = url.replace(/\/$/, "");
 const auth = await fetch(`${base}/api/collections/_superusers/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: email, password }) });
-if (auth.status !== 200) { console.error(`superuser login failed: ${auth.status} ${await auth.text()}`); process.exit(1); }
+if (auth.status !== 200) throw new Error(`superuser login failed: ${auth.status} ${await auth.text()}`);
 const token = ((await auth.json()) as { token: string }).token;
 const H = { authorization: token, "content-type": "application/json" };
 async function sql(query: string): Promise<{ columns: { name: string; type: string }[]; rows: (string | null)[][] }> {
@@ -60,4 +59,12 @@ for (const table of tables) {
 for (const c of collections.filter((c) => c.type === "view")) { try { db.run(`CREATE VIEW "${c.name}" AS ${String(c.viewQuery ?? "")}`); } catch (e) { console.warn(`view ${c.name} not recreated: ${e instanceof Error ? e.message : e}`); } }
 db.close();
 writeFileSync(`${out}/README.txt`, `voidbase export from ${base} at ${new Date().toISOString()}\n\ndata.db          SQLite: one table per collection with PocketBase's column layout, plus _collections/_params/_externalAuths/_authOrigins/_mfas/_otps\ncollections.json PocketBase collections import format (Settings > Import collections in any PocketBase or voidbase)\nstorage/         uploaded files as {collectionId}/{recordId}/{filename}\n\nTo move to PocketBase: import collections.json, then load rows from data.db (same table and column names) and copy storage/ into pb_data/storage/.\n`);
-console.log(`exported ${collections.length} collections, ${rows} rows, ${files} files to ${out}`);
+return { collections: collections.length, rows, files };
+}
+
+if (import.meta.main) {
+  const [url, out, email = process.env.VOIDBASE_SUPERUSER_EMAIL ?? "admin@example.com", password = process.env.VOIDBASE_SUPERUSER_PASSWORD ?? "changeme123"] = process.argv.slice(2);
+  if (!url || !out) { console.error("usage: bun scripts/export.ts <url> <outDir> [email] [password]"); process.exit(1); }
+  const r = await exportAll(url, out, email, password);
+  console.log(`exported ${r.collections} collections, ${r.rows} rows, ${r.files} files to ${out}`);
+}

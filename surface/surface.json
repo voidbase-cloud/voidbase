@@ -2338,9 +2338,9 @@
             "prod"
           ],
           "hours": 8,
-          "status": "partial",
+          "status": "done",
           "milestone": "m6",
-          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), providers.ts (32), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), backups.ts (17), sql.ts (7), manage-rule.ts (5), filters-extra.ts (27), views.ts (11), hardening.ts (12), realtime.ts, fresh-db.ts (17), unit tests, panel-smoke, panel-collections, panel-records, panel-admin, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-06. Added: rules.ts (11), security.ts (69), test/sdk-suite.ts (44 SDK steps), test/panel-login.ts."
+          "notes": "compare.ts (25), collections.ts (28), records.ts (88), thumbs.ts (58), cascade.ts (11), oauth2.ts (11), providers.ts (32), settings.ts (20), auth-flows.ts (22), otp-mfa.ts (22), batch.ts (9), protected-files.ts (9), logs-crons.ts (14), backups.ts (17), sql.ts (7), manage-rule.ts (5), filters-extra.ts (27), views.ts (11), hardening.ts (12), realtime.ts, fresh-db.ts (17), unit tests, panel-smoke, panel-collections, panel-records, panel-admin, starter-smoke, starter-passkeys and starter-oauth2 all green on 2026-09-06. Added: rules.ts (11), security.ts (69), test/sdk-suite.ts (44 SDK steps), test/panel-login.ts. The harness runs end to end in CI through scripts/ci-suites.sh."
         },
         {
           "id": "prod.sdk-suite",
@@ -2422,8 +2422,9 @@
             "prod"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "bin/voidbase.ts (package.json bin): init (scaffold .env, pb_hooks, pb_migrations, panel sync), dev/build/preview/deploy wrappers over vp/void, superuser upsert|list, import, export, panel sync --brand, app sync, seed-user; remote commands via --url/--admin. Exercised against the dev server (upsert create+update, list, import, export)."
         },
         {
           "id": "prod.export",
@@ -2457,8 +2458,9 @@
             "prod"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "partial",
+          "milestone": "m6",
+          "notes": "package.json 0.1.0 with license, bin, files, keywords, engines; LICENSE (MIT), NOTICE (PocketBase MIT attribution for the panel and API design, dependency licenses), CHANGELOG.md; `bun pm pack --dry-run` packs 97 files / 0.66 MB. Publishing to npm needs credentials and is the owner's call."
         }
       ]
     },

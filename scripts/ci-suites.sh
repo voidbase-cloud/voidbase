@@ -17,7 +17,7 @@ fail=0; run() {  # a suite that failed while the dev server re-optimized a depen
     echo "RETRY $name  (the dev server optimized a dependency during the run)"
     if timeout 900 "$@" > "$LOGS/$name.log" 2>&1; then echo "PASS  $name  $(tail -1 "$LOGS/$name.log" | cut -c1-90) [$((SECONDS - t0))s] (second attempt)"; return; fi
   fi
-  fail=$((fail+1)); echo "FAIL  $name  (see $LOGS/$name.log) [$((SECONDS - t0))s]"; grep -A1 -E "^FAIL|Error|error:" "$LOGS/$name.log" | grep -vE "^--$" | head -12 | cut -c1-400 | sed 's/^/      /'
+  fail=$((fail+1)); echo "FAIL  $name  (see $LOGS/$name.log) [$((SECONDS - t0))s]"; grep -A1 -E "^FAIL|Error|error:" "$LOGS/$name.log" | grep -vE "^--$" | head -12 | cut -c1-1500 | sed 's/^/      /'
 }
 SEL="${*:-all}"
 want() { [ "$SEL" = "all" ] || [[ " $SEL " == *" $1 "* ]]; }

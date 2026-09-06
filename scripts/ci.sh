@@ -28,7 +28,7 @@ cleanup() {
   ./scripts/starter.sh stop >/dev/null 2>&1 || true
   ./scripts/dev.sh stop >/dev/null 2>&1 || true
   for d in serve smtp-sink mock-oidc s3-mock cf-mock; do stop_daemon "$d"; done
-  if [ "$started_pb" = 1 ] && [ -f .void/reference/pb.pid ]; then kill "$(cat .void/reference/pb.pid)" 2>/dev/null || true; fi
+  stop_reference
   if [ -f .void/ci-env.backup ]; then mv .void/ci-env.backup .env; fi
   if [ "$rc" != 0 ]; then
     echo; echo "--- dev.log"; tail -n 60 .void/dev.log 2>/dev/null; echo "--- reference"; tail -n 30 .void/reference/pb.log 2>/dev/null
@@ -89,8 +89,13 @@ warm_up() {  # first requests to the paths whose dependencies Vite+ optimizes on
   wait_http "$VB/api/health" 30; echo "warm: optimizer quiet after $after optimization(s)"
 }
 helper() { local name="$1" port="$2"; shift 2; if port_busy "$port"; then echo "reusing $name on $port"; else daemon "$name" ".void/$name.log" "$@"; echo "started $name on $port"; fi; }
+start_reference() {  # a freshly seeded reference: state left by one run or one pass never reaches the next
+  rm -rf .void/reference/pb_data
+  ./scripts/seed-reference.sh .void/reference "$PB_PORT" 0.39.11 "$STARTER_DIR" && started_pb=1
+}
+stop_reference() { if [ "$started_pb" = 1 ] && [ -f .void/reference/pb.pid ]; then kill "$(cat .void/reference/pb.pid)" 2>/dev/null; for _ in $(seq 1 30); do port_busy "$PB_PORT" || break; sleep 0.5; done; started_pb=0; fi; }
 reference() {
-  if port_busy "$PB_PORT"; then echo "reusing the PocketBase listening on $PB"; else ./scripts/seed-reference.sh .void/reference "$PB_PORT" 0.39.11 "$STARTER_DIR" && started_pb=1; fi
+  if port_busy "$PB_PORT"; then echo "reusing the PocketBase listening on $PB"; else start_reference; fi
   helper smtp-sink 2525 bun test/smtp-sink.ts
   helper mock-oidc 5190 bun test/mock-oidc.ts
   helper s3-mock 5195 bun test/s3-mock.ts
@@ -104,8 +109,9 @@ warm_mail() {  # the first mail through the SMTP transport goes out here, to the
   [ -n "$tok" ] || { echo "warm: superuser login failed, the mail transport stays cold"; return 0; }
   curl -s -o /dev/null -X DELETE http://127.0.0.1:2526/messages
   curl -s -o /dev/null -X PATCH "$VB/api/settings" -H "$j" -H "authorization: $tok" -d '{"smtp":{"enabled":true,"host":"127.0.0.1","port":2525,"username":"","password":"","authMethod":"","tls":false,"localName":""}}'
-  curl -s -o /dev/null -X POST "$VB/api/collections/users/request-password-reset" -H "$j" -d '{"email":"user@example.com"}'
-  for _ in $(seq 1 45); do n=$(curl -s http://127.0.0.1:2526/messages | grep -o '"subject"' | wc -l); [ "$n" -ge 1 ] && break; sleep 1; done
+  # the settings test email: a password reset for the same user would be rate-limited after the boot warm-up
+  curl -s -o /dev/null -X POST "$VB/api/settings/test/email" -H "$j" -H "authorization: $tok" -d '{"email":"warm@example.com","template":"verification"}'
+  for _ in $(seq 1 20); do n=$(curl -s http://127.0.0.1:2526/messages | grep -o '"subject"' | wc -l); [ "$n" -ge 1 ] && break; sleep 1; done
   # back to the defaults a fresh database starts with (PocketBase's), which the settings comparisons expect
   curl -s -o /dev/null -X PATCH "$VB/api/settings" -H "$j" -H "authorization: $tok" -d '{"smtp":{"enabled":false,"host":"smtp.example.com","port":587,"username":"","password":"","authMethod":"","tls":false,"localName":""}}'
   curl -s -o /dev/null -X DELETE http://127.0.0.1:2526/messages
@@ -115,6 +121,9 @@ warm_mail() {  # the first mail through the SMTP transport goes out here, to the
 suites() { ./scripts/ci-suites.sh "$PB" "$VB" $(plan_list suites); }
 suites_bun() {  # the selected suites against `voidbase serve` (Bun runtime, SQLite + local files)
   [ "$booted" = 1 ] && ./scripts/dev.sh stop
+  # the reference PocketBase keeps some state the suites cannot undo (a stored S3 secret, for one), so the Bun pass
+  # gets a fresh one: both sides of every comparison then start from the same state
+  if [ "$started_pb" = 1 ]; then stop_reference; start_reference; fi
   rm -rf .void/ci-serve; mkdir -p .void/ci-serve
   daemon serve .void/serve.log bun bin/voidbase.ts serve --http 127.0.0.1:8093 --dir .void/ci-serve/pb_data --hooksDir "$STARTER_DIR/pb/pb_hooks" --migrationsDir "$STARTER_DIR/pb/pb_migrations"
   wait_http http://127.0.0.1:8093/api/health 60

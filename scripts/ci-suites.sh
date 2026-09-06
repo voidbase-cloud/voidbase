@@ -8,7 +8,17 @@ PB="${1:-http://127.0.0.1:8090}"; VB="${2:-http://127.0.0.1:5180}"; shift 2 2>/d
 LOGS="${CI_LOGS:-.void/ci-logs}"; mkdir -p "$LOGS"
 POSITIONAL="auth-flows backups batch cascade filter-corpus filters-extra hardening logs-crons manage-rule oauth2 otp-mfa protected-files providers rules s3 security settings sql thumbs views"
 FLAGGED="compare records realtime collections"
-fail=0; run() { local name="$1" t0=$SECONDS; shift; if timeout 900 "$@" > "$LOGS/$name.log" 2>&1; then echo "PASS  $name  $(tail -1 "$LOGS/$name.log" | cut -c1-90) [$((SECONDS - t0))s]"; else fail=$((fail+1)); echo "FAIL  $name  (see $LOGS/$name.log) [$((SECONDS - t0))s]"; grep -E "^FAIL|Error|error:" "$LOGS/$name.log" | head -5 | sed 's/^/      /'; fi; }
+DEVLOG="${CI_DEV_LOG:-.void/dev.log}"
+optimizations() { grep -cE "optimized|program reload" "$DEVLOG" 2>/dev/null || echo 0; }
+fail=0; run() {  # a suite that failed while the dev server re-optimized a dependency (a reload) gets one more attempt
+  local name="$1" t0=$SECONDS o1; shift; o1=$(optimizations)
+  if timeout 900 "$@" > "$LOGS/$name.log" 2>&1; then echo "PASS  $name  $(tail -1 "$LOGS/$name.log" | cut -c1-90) [$((SECONDS - t0))s]"; return; fi
+  if [ "$(optimizations)" != "$o1" ]; then
+    echo "RETRY $name  (the dev server optimized a dependency during the run)"
+    if timeout 900 "$@" > "$LOGS/$name.log" 2>&1; then echo "PASS  $name  $(tail -1 "$LOGS/$name.log" | cut -c1-90) [$((SECONDS - t0))s] (second attempt)"; return; fi
+  fi
+  fail=$((fail+1)); echo "FAIL  $name  (see $LOGS/$name.log) [$((SECONDS - t0))s]"; grep -E "^FAIL|Error|error:" "$LOGS/$name.log" | head -5 | sed 's/^/      /'
+}
 SEL="${*:-all}"
 want() { [ "$SEL" = "all" ] || [[ " $SEL " == *" $1 "* ]]; }
 for s in $POSITIONAL; do want "$s" && run "$s" bun "test/conformance/$s.ts" "$PB" "$VB"; done

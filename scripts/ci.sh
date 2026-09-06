@@ -75,6 +75,18 @@ boot() {
   ./node_modules/.bin/void db migrate
   ./scripts/dev.sh start "$PORT" && booted=1
   ./scripts/seed-app-user.sh "$VB"
+  warm_up
+}
+warm_up() {  # first requests to the paths whose dependencies Vite+ optimizes on first use (a reload that would lose a
+  # suite's in-flight work, such as a queued mail), then wait until the optimizer has been quiet for a few seconds
+  local j='content-type: application/json'
+  curl -s -o /dev/null -X POST "$VB/api/collections/users/auth-with-password" -H "$j" -d '{"identity":"user@example.com","password":"changeme123"}'
+  curl -s -o /dev/null -X POST "$VB/api/collections/users/request-password-reset" -H "$j" -d '{"email":"user@example.com"}'
+  curl -s -o /dev/null "$VB/api/collections/users/auth-methods"
+  curl -s -o /dev/null -m 2 "$VB/api/realtime" || true
+  curl -s -o /dev/null "$VB/api/collections/posts/records?perPage=1"
+  local before after; for _ in $(seq 1 20); do before=$(grep -cE "optimized|program reload" .void/dev.log 2>/dev/null); sleep 3; after=$(grep -cE "optimized|program reload" .void/dev.log 2>/dev/null); [ "$before" = "$after" ] && break; done
+  wait_http "$VB/api/health" 30; echo "warm: optimizer quiet after $after optimization(s)"
 }
 helper() { local name="$1" port="$2"; shift 2; if port_busy "$port"; then echo "reusing $name on $port"; else daemon "$name" ".void/$name.log" "$@"; echo "started $name on $port"; fi; }
 reference() {

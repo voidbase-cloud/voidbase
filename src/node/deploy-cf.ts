@@ -51,7 +51,10 @@ export async function ensureD1(token: string, account: string, name: string): Pr
   const found = (list.result ?? []).find((d) => d.name === name);
   if (found) return { uuid: found.uuid, created: false };
   const made = await cf<{ uuid: string }>(token, "POST", `/accounts/${account}/d1/database`, { name });
-  if (!made.success) throw fail(`creating the D1 database ${name}`, made);
+  if (!made.success) {
+    if (made.errors?.some((e) => e.code === 7406)) throw new Error(`creating the D1 database ${name}: the account is at its D1 database limit (${made.errors.map((e) => e.message).join("; ")}). Delete an unused database (dashboard > Storage & Databases > D1, or \`wrangler d1 delete <name>\`) or upgrade the Workers plan, then run voidbase deploy again; nothing was created.`);
+    throw fail(`creating the D1 database ${name}`, made);
+  }
   return { uuid: made.result.uuid, created: true };
 }
 export async function ensureR2(token: string, account: string, name: string): Promise<{ created: boolean }> {
@@ -74,8 +77,25 @@ function projectName(): string {
 }
 const randomPassword = () => { const a = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const b = crypto.getRandomValues(new Uint8Array(20)); return Array.from(b, (x) => a[x % a.length]).join(""); };
 
+// Bun only loads the .env of the working directory; the starter keeps its PB_* and deploy variables one level up.
+const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD"];
+export function loadEnvFiles(files = [".env", "../.env"]): string[] {
+  const loaded: string[] = [];
+  for (const f of files) {
+    if (!existsSync(f)) continue;
+    for (const line of readFileSync(f, "utf8").split("\n")) {
+      const m = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line); if (!m) continue;
+      const [, k, raw] = m as unknown as [string, string, string];
+      if (!ENV_KEYS.includes(k) || process.env[k]) continue;
+      process.env[k] = raw.replace(/^(['"])(.*)\1$/, "$2"); loaded.push(`${k} (${f})`);
+    }
+  }
+  return loaded;
+}
+
 export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ name: string; account: string; url: string | null; wranglerConfig: string }> {
   const log = opts.log ?? ((l: string) => console.log(l));
+  const fromFiles = loadEnvFiles(); if (fromFiles.length) log(`from .env: ${fromFiles.join(", ")}`);
   const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || ""; // empty means unset
   if (!token) { log(`${TOKEN_ENV} is not set.\n\n${tokenHelp()}`); throw new Error(`${TOKEN_ENV} missing`); }
   const name = slug(opts.name || process.env.VOIDBASE_DEPLOY_NAME || projectName());

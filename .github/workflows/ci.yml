@@ -56,6 +56,8 @@ jobs:
       - name: Start voidbase (dev server on 5180)
         working-directory: voidbase
         run: |
+          # the Worker reads its vars from .env files (Void bakes them), not from the shell: write the job's values
+          printf 'VOIDBASE_SUPERUSER_EMAIL=%s\nVOIDBASE_SUPERUSER_PASSWORD=%s\nVOIDBASE_HOOKS_DIR=%s\nVOIDBASE_MIGRATIONS_DIR=%s\nAUDITLOG=%s\nVOIDBASE_LOG_MIN_LEVEL=0\n' "$VOIDBASE_SUPERUSER_EMAIL" "$VOIDBASE_SUPERUSER_PASSWORD" "$VOIDBASE_HOOKS_DIR" "$VOIDBASE_MIGRATIONS_DIR" "$AUDITLOG" > .env
           ./node_modules/.bin/void db migrate
           ./scripts/dev.sh start 5180
           ./scripts/seed-app-user.sh http://127.0.0.1:5180

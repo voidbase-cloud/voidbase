@@ -2498,9 +2498,9 @@
             "prod"
           ],
           "hours": 6,
-          "status": "partial",
+          "status": "done",
           "milestone": "m6",
-          "notes": "One script per flow (scripts/ci.sh, scripts/release.sh; scripts/ci-lib.sh records steps, scripts/ci-status.ts renders ci/public as the status page and badge). Verified end to end on GitHub runners before the switch (runs 34043332142, 34043803920). .github/workflows/cloudflare.yml is the only workflow: it starts the CI build (push, pull request) and the release build (push to master, release published) through the Builds API and is skipped until `bun scripts/cf-builds.ts setup --github` has stored the variables; the triggers watch-path-exclude everything so pushes never build twice. Workers Builds side: ci/wrangler.jsonc (the status Worker each project deploys), scripts/ci-browser.sh (Chrome without root on the build image), scripts/cf-builds.ts (connect, four triggers, variables, builds, logs; test/cf-builds.ts, 25 checks, against the mock). Partial: the GitHub App install and a user token are Mahmood-side steps, so no live Cloudflare build has run; npm provenance and attestations are gone (OIDC)."
+          "notes": "Live on Cloudflare Workers Builds since 2026-09-06: the GitHub App linked through the dashboard, projects voidbase-ci and voidbase-release (four triggers, push builds off), .github/workflows/cloudflare.yml starts builds through the Builds API with the variables `cf-builds.ts setup --github` stored. First full live build 10m33s, all 59 suite runs green, the status page deployed at https://voidbase-ci.voidbase.workers.dev/. Incremental runs since: scripts/ci-plan.ts hashes the areas each step and suite depends on and compares them with the `verified` map of the last green run (status.json), so a change reruns only the tree it touches; CI_CACHE_DIR keeps Chrome, the apt packages, the starter clone and build, the panel and the PocketBase archive between builds. Remaining: a GH_TOKEN PAT on the release triggers (release builds skip release-please until then); npm provenance and attestations are gone by decision (OIDC)."
         }
       ]
     },

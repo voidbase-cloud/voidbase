@@ -7,7 +7,9 @@ const VB = args.vb ?? "http://127.0.0.1:5180";
 const SUPER = { identity: "admin@example.com", password: "changeme123" };
 const USER = { identity: "user@example.com", password: "changeme123" };
 
-type Case = { name: string; method?: string; path: string; body?: unknown; auth?: "super" | "user" | "bad" | "none"; bearer?: boolean; skip?: string };
+type Case = { name: string; method?: string; path: string; body?: unknown; auth?: "super" | "user" | "bad" | "none"; bearer?: boolean; skip?: string; normalize?: (json: unknown) => unknown };
+// OAuth2 providers voidbase adds on top of PocketBase's catalog (the site signs in with Cloudflare)
+const VOIDBASE_PROVIDERS = new Set(["cloudflare"]);
 
 const cases: Case[] = [
   { name: "health anon", path: "/api/health" },
@@ -26,7 +28,7 @@ const cases: Case[] = [
   { name: "collection view _superusers", path: "/api/collections/_superusers", auth: "super" },
   { name: "collection view _mfas", path: "/api/collections/_mfas", auth: "super" },
   { name: "collection 404", path: "/api/collections/nope", auth: "super" },
-  { name: "oauth2 providers", path: "/api/collections/meta/oauth2-providers", auth: "super" },
+  { name: "oauth2 providers", path: "/api/collections/meta/oauth2-providers", auth: "super", normalize: (json) => (Array.isArray(json) ? json.filter((p) => !VOIDBASE_PROVIDERS.has(String((p as { name?: string }).name))) : json) },
   { name: "scaffolds", path: "/api/collections/meta/scaffolds", auth: "super" },
   { name: "superusers records", path: "/api/collections/_superusers/records?perPage=1&sort=-@rowid", auth: "super" },
   { name: "superusers records skipTotal", path: "/api/collections/_superusers/records?perPage=1&skipTotal=1", auth: "super" },
@@ -79,7 +81,8 @@ for (const c of cases) {
   if (args.only && !c.name.includes(args.only)) continue;
   const [a, b] = await Promise.all([run(PB, c, tokens.pb!), run(VB, c, tokens.vb!)]);
   const sameStatus = a.status === b.status;
-  const ma = JSON.stringify(mask(a.json)), mb = JSON.stringify(mask(b.json));
+  const norm = c.normalize ?? ((j: unknown) => j);
+  const ma = JSON.stringify(mask(norm(a.json))), mb = JSON.stringify(mask(norm(b.json)));
   const sameBody = ma === mb;
   const sameOrder = JSON.stringify(a.keys) === JSON.stringify(b.keys);
   if (c.skip && !(sameStatus && sameBody)) { skipped++; console.log(`SKIP  ${c.name}  (${c.skip})`); continue; }

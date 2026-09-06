@@ -2377,9 +2377,9 @@
             "prod"
           ],
           "hours": 2,
-          "status": "partial",
+          "status": "done",
           "milestone": "m6",
-          "notes": "Unhandled request errors, hook file failures and cron failures go through void/log logger.error with structured fields (method, path, job, hook, error) so `void project logs --level error` filters them; every API request is also a _logs row (panel Logs). Request metrics come from `void project requests`. Error alerting (email/webhook on error spikes) not built."
+          "notes": "Unhandled request errors, hook file failures and cron failures go through void/log logger.error with structured fields (`void project logs --level error`); every API request is a _logs row (panel Logs, /api/logs/stats); request metrics via `void project requests`; optional VOIDBASE_ALERT_WEBHOOK_URL receives a JSON alert for every 500 (verified in test/mail-http.ts through a throwing fixture hook route)."
         },
         {
           "id": "prod.perf",

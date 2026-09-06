@@ -1,18 +1,20 @@
 // HTTP mail provider transport (VOIDBASE_MAIL_HTTP_URL / _KEY): builds the production Worker with the variables in
 // .env.local, boots vp preview on an isolated D1 and checks that a password reset email is POSTed to the provider
-// endpoint (test/smtp-sink.ts serves it at /send) with the bearer key, instead of going to SMTP.
+// endpoint (test/smtp-sink.ts serves it at /send) with the bearer key, instead of going to SMTP; also that an
+// unhandled error reaches VOIDBASE_ALERT_WEBHOOK_URL as a JSON alert.
 //   bun test/smtp-sink.ts &   then   bun test/mail-http.ts [port=5184]
 import { $ } from "bun";
 import { unlinkSync, writeFileSync, existsSync } from "node:fs";
 const port = Number(process.argv[2] ?? 5184); const base = `http://127.0.0.1:${port}`; const SINK = "http://127.0.0.1:2526";
 const STATE = ".void-mail";
 if (existsSync(".env.local")) { console.error(".env.local exists; refusing to overwrite it"); process.exit(1); }
-writeFileSync(".env.local", `VOIDBASE_MAIL_HTTP_URL=${SINK}/send\nVOIDBASE_MAIL_HTTP_KEY=test-provider-key\n`);
+writeFileSync(".env.local", `VOIDBASE_MAIL_HTTP_URL=${SINK}/send\nVOIDBASE_MAIL_HTTP_KEY=test-provider-key\nVOIDBASE_ALERT_WEBHOOK_URL=${SINK}/send\n`);
 let pass = 0, fail = 0; const check = (label: string, ok: boolean, detail = "") => { ok ? pass++ : fail++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${ok ? "" : "  " + detail}`); };
 let preview: ReturnType<typeof Bun.spawn> | null = null;
 try {
   await $`rm -rf ${STATE}`.quiet();
-  const buildEnv = { ...process.env, VOIDBASE_PERSIST_TO: STATE }; delete buildEnv.VOIDBASE_SUPERUSER_EMAIL; delete buildEnv.VOIDBASE_SUPERUSER_PASSWORD;
+  // fixture hooks provide /api/hooktest/boom for the alert-webhook check
+  const buildEnv = { ...process.env, VOIDBASE_PERSIST_TO: STATE, VOIDBASE_HOOKS_DIR: "test/fixtures/hooks", VOIDBASE_MIGRATIONS_DIR: "test/fixtures/migrations" }; delete buildEnv.VOIDBASE_SUPERUSER_EMAIL; delete buildEnv.VOIDBASE_SUPERUSER_PASSWORD;
   await $`bun run build`.env(buildEnv).quiet();
   await $`bun scripts/seed-d1.ts ${STATE}`.quiet();
   preview = Bun.spawn(["setsid", "./node_modules/.bin/vp", "preview", "--port", String(port), "--host", "127.0.0.1", "--strictPort"], { env: { ...process.env, VOIDBASE_PERSIST_TO: STATE }, stdout: Bun.file(".void/preview-mail.log"), stderr: Bun.file(".void/preview-mail.log") });
@@ -34,6 +36,12 @@ try {
   const t = await fetch(`${base}/api/settings/test/email`, { method: "POST", headers: { "content-type": "application/json", authorization: su.token }, body: JSON.stringify({ email: "someone@example.com", template: "verification", collection: "_superusers" }) });
   let test: typeof mails = []; for (let i = 0; i < 40 && !test.length; i++) { await Bun.sleep(250); test = (await fetch(`${SINK}/messages`).then((x) => x.json())) as typeof mails; }
   check("settings test email uses the HTTP provider", t.status === 204 && test[0]?.headers.via === "http" && test[0]?.to.includes("someone@example.com"), `${t.status} ${JSON.stringify(test).slice(0, 160)}`);
+  // error alert webhook: an unhandled exception in a hook route is a generic 500 and a JSON alert to the webhook
+  await fetch(`${SINK}/messages`, { method: "DELETE" });
+  const boom = await fetch(`${base}/api/hooktest/boom`);
+  let alerts: { raw: string }[] = []; for (let i = 0; i < 40 && !alerts.length; i++) { await Bun.sleep(250); alerts = (await fetch(`${SINK}/messages`).then((x) => x.json())) as typeof alerts; }
+  const alert = alerts[0] ? JSON.parse(alerts[0].raw) as { source: string; path: string; error: string; status: number } : null;
+  check("unhandled error -> 500 + alert webhook", boom.status === 500 && alert?.source === "voidbase" && alert.path === "/api/hooktest/boom" && /boom/.test(alert.error) && alert.status === 500, `${boom.status} ${JSON.stringify(alert).slice(0, 200)}`);
 } catch (err) {
   console.error("mail-http: aborted:", err instanceof Error ? err.message : err); fail++;
 } finally {

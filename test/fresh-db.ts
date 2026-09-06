@@ -93,6 +93,8 @@ try {
   await Bun.sleep(1500);
   const cronMarkers = (await fetch(`${base}/api/collections/ks_mig/records?filter=${encodeURIComponent("title = 'cron-ran'")}`).then((r) => r.json())) as { totalItems: number };
   check("POST /api/crons/:id runs the hook job", ran.status === 204 && cronMarkers.totalItems === 1, `${ran.status} ${JSON.stringify(cronMarkers).slice(0, 100)}`);
+  const boom = await fetch(`${base}/api/hooktest/boom`);
+  check("hook route exception -> generic 500", boom.status === 500 && ((await boom.json()) as { message: string }).message === "Something went wrong while processing your request.", String(boom.status));
   const api404 = await fetch(`${base}/api/nope`, { headers: { accept: "text/html,*/*;q=0.8" } });
   check("unknown /api path stays a JSON 404", api404.status === 404 && (api404.headers.get("content-type") ?? "").includes("json"), String(api404.status));
 } catch (err) {

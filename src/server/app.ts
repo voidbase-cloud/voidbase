@@ -10,6 +10,7 @@ import { expandRecords } from "./records/expand";
 import { hookGlobals, hookMiddleware, loadHooks, mountHookRoutes } from "./hooks";
 import { requestHook, requestHookResult, trigger } from "./hooks/runtime";
 import { logger } from "void/log";
+import { env as voidEnv } from "void/env";
 import type { Settings } from "./settings";
 import { applyPendingMigrations } from "./hooks/migrations";
 import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
@@ -74,7 +75,13 @@ app.use("*", hookMiddleware() as never);
 
 app.onError((err, c) => {
   if (err instanceof ApiError) return err.response();
-  logger.error("voidbase: unhandled error", { method: c.req.method, path: c.req.path, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err), stack: err instanceof Error ? err.stack : undefined });
+  const details = { method: c.req.method, path: c.req.path, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err), stack: err instanceof Error ? err.stack : undefined };
+  logger.error("voidbase: unhandled error", details);
+  const webhook = String((voidEnv as Record<string, unknown>).VOIDBASE_ALERT_WEBHOOK_URL ?? "").trim();
+  if (webhook) {
+    const alert = fetch(webhook, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source: "voidbase", level: "error", message: "unhandled request error", status: 500, time: new Date().toISOString(), ...details }) }).catch((e) => console.error("voidbase: alert webhook failed", e));
+    try { c.executionCtx.waitUntil(alert); } catch { /* no execution context (tests) */ }
+  }
   return c.json({ data: {}, message: "Something went wrong while processing your request.", status: 500 }, 500);
 });
 

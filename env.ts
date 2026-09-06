@@ -10,6 +10,8 @@ export default defineEnv({
   // Bearer key). When set it takes precedence over settings.smtp; the panel's "Send test email" goes through it too.
   VOIDBASE_MAIL_HTTP_URL: string().optional(),
   VOIDBASE_MAIL_HTTP_KEY: string().optional(),
+  // Optional error alerts: unhandled request errors (HTTP 500) are POSTed as JSON to this webhook
+  VOIDBASE_ALERT_WEBHOOK_URL: string().optional(),
   // PocketBase's --encryptionEnv equivalent: when set (16, 24 or 32 chars) the settings row is stored AES-GCM encrypted
   VOIDBASE_ENCRYPTION_KEY: string().optional(),
 });

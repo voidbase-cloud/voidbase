@@ -77,3 +77,8 @@ cronAdd("hookjob", "*/5 * * * *", () => {
   const marker = new Record(coll, { title: "cron-ran" });
   $app.save(marker);
 });
+
+// unhandled (non-ApiError) exception from a hook route: answered as a generic 500 and reported through the alert webhook
+routerAdd("GET", "/api/hooktest/boom", () => {
+  throw new Error("boom");
+});

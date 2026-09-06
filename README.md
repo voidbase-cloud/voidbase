@@ -26,9 +26,28 @@ bun test/conformance/compare.ts          # same requests at both servers, JSON d
 bun test/panel-smoke.ts                  # headless login through the unmodified panel, screenshot to /tmp/panel.png
 ```
 
+## Tests
+
+Conformance suites in `test/conformance/` run the same requests against a reference PocketBase (8090) and voidbase
+(5180) and compare; browser suites `test/panel-*.ts` and `test/starter-*.ts` drive the unmodified panel and the
+unmodified `pocketbase-sveltekit-starter`. Helpers that must be running for some suites: `bun test/smtp-sink.ts`
+(SMTP 2525 / HTTP 2526) and `bun test/mock-oidc.ts` (5190). `bun test/fresh-db.ts` builds the production Worker
+with the fixture hooks and migrations and boots it on an empty D1.
+
+## Docs
+
+- [docs/deploy.md](docs/deploy.md): Void platform or your own Cloudflare account.
+- [docs/differences.md](docs/differences.md): what the platform changes (D1 batches, per-isolate limits, polling realtime, backups format).
+- [docs/hooks.md](docs/hooks.md): `pb_hooks` and `pb_migrations` on Workers, supported events and globals.
+- [docs/migrating.md](docs/migrating.md): moving an existing PocketBase app.
+- [COMPAT.md](COMPAT.md): verified upstream versions and endpoint matrix.
+
 ## Layout
 
 - `routes/api/[...path].ts` hands every `/api/*` request to the Hono app in `src/server/app.ts`.
 - `src/server/` is the server: collections model, auth, settings, records, bootstrap.
 - `db/schema.ts` defines only the system tables. User collections are rows in `_collections` and tables created at runtime, as in PocketBase.
-- `public/_` is the panel build, synced, never edited.
+- `public/_` is the panel build, synced, never edited (`bun run panel:sync --brand <dir>` for an optional logo/title/docs-link swap).
+- `middleware/01.request-context.ts` serves assets and the SPA fallback for everything outside `/api`.
+- `crons/every-minute.ts` runs PocketBase's maintenance jobs and `cronAdd` jobs.
+- `hooks-plugin.ts` bundles `pb_hooks` and `pb_migrations` into the Worker at build time.

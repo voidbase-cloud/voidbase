@@ -96,6 +96,10 @@ try {
   check("void/db reaches voidbase's D1 through the shim, with @schema tables", drizzle.status === 200 && typeof drizzle.json.rows === "number", JSON.stringify(drizzle.json));
   const bindings = await get("/api/bindings");
   check("void/storage and c.env.DB resolve against voidbase's own bindings", bindings.status === 200 && bindings.json.storage === true && Number(bindings.json.collections) > 0, JSON.stringify(bindings.json));
+  const pbApi = await get("/api/collections-count");
+  check("a Void route reaches PocketBase's own API through the adapter's pb", pbApi.status === 200 && pbApi.json.collection === "_superusers" && Number(pbApi.json.superusers) >= 1 && pbApi.json.error === "BadRequestError", JSON.stringify(pbApi.json));
+  const guarded = await get("/api/collections-count", { method: "POST" });
+  check("requireAuth() refuses an unauthenticated request the way $apis.requireAuth does", guarded.status === 401, `${guarded.status} ${JSON.stringify(guarded.json).slice(0, 80)}`);
   const order = await get("/api/order");
   check("global middleware runs in file order before the handler", JSON.stringify(order.json.middleware) === JSON.stringify(["01", "02"]), JSON.stringify(order.json));
   const missing = await get("/api/nope");

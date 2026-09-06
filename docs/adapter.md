@@ -75,6 +75,36 @@ bundle and hands it `routerAdd`, `cronAdd`, `$env` (the bindings of the request 
 
 `main.ts` is left with the project's own `register()`, if it has one.
 
+### Writing API logic
+
+`defineHandler` and `defineMiddleware` are how a voidbase app writes its API. A route that only needs Void's own
+runtime (`void/db`, `void/storage`) needs nothing else; one that reads or writes PocketBase collections imports
+PocketBase's API from the adapter, because a bundled route cannot import voidbase directly:
+
+```ts
+// routes/api/posts/[id].ts  ->  GET /api/posts/:id
+import { defineHandler } from "void";
+import { authOf, pb, requireAuth } from "@voidbase-cloud/voidbase/adapter";
+
+export const GET = defineHandler(requireAuth("users"), async (c) => {
+  const post = await pb.$app.findRecordById("posts", c.req.param("id"));
+  if (!post) throw new pb.NotFoundError("No such post.");
+  if (post.getString("owner") !== authOf(c)?.id) throw new pb.ForbiddenError();
+  return { post: post.publicExport() };
+});
+```
+
+| import | what it is |
+| --- | --- |
+| `pb.$app` | the data API: `findRecordById`, `findRecordsByFilter`, `save`, `delete`, `settings`, ... |
+| `pb.Record`, `pb.$apis`, `pb.$os` | the rest of the hook surface a route is likely to want |
+| `pb.BadRequestError` and friends | PocketBase's error classes, so a thrown error becomes the right HTTP response |
+| `authOf(c)` | the authenticated record, exactly as a hook's `e.auth` |
+| `requireAuth(...)`, `requireSuperuser()` | the Void-shaped counterparts of `$apis.requireAuth` and `requireSuperuserAuth` |
+
+PocketBase's *event* hooks (`onBootstrap`, `onRecordCreate`, the mailer hooks) have no `routes/` equivalent. They
+go in `src/voidbase/register.ts`, which `main.ts` imports normally and which can import anything.
+
 
 ## What maps to what
 

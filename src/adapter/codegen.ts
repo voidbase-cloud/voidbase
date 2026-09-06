@@ -57,7 +57,12 @@ export function generateHookWrapper(): string {
 // because a hook cannot import from npm; this is where the hook globals it needs are in scope.
 const voidApp = require(\`\${__hooks}/void-app.js\`);
 
-voidApp.register({ routerAdd, cronAdd, env: $env, jobs: $jobs });
+voidApp.register({
+  routerAdd, cronAdd, env: $env, jobs: $jobs,
+  // PocketBase's own API, for routes that read and write collections
+  $app, $apis, $os, Record,
+  ApiError, BadRequestError, UnauthorizedError, ForbiddenError, NotFoundError, InternalServerError, ValidationError,
+});
 `;
 }
 

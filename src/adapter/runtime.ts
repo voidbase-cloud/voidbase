@@ -13,14 +13,77 @@
 import { withRuntimeEnv } from "void/_env";
 import { convertReturnValue } from "void/response";
 import type { Context } from "hono";
+// types only: erased by the bundler, so this file keeps its promise of importing nothing from voidbase at runtime
+import type { AppApi, RequestEvent } from "../server/hooks/runtime";
+import type { CollectionRef, HookRecord } from "../server/hooks/record";
 
 type Handler = (c: Context) => unknown;
 type Middleware = (c: Context, next: () => Promise<void>) => unknown;
 type Bindings = Record<string, unknown>;
 
+type ErrorClass = new (message?: string, data?: unknown) => Error;
+
+/**
+ * PocketBase's own API, as a route sees it. A route compiled into pb_hooks cannot import voidbase, so the hook
+ * wrapper hands these in and `pb` below reads them:
+ *
+ *     import { defineHandler } from "void";
+ *     import { pb, requireAuth } from "@voidbase-cloud/voidbase/adapter";
+ *
+ *     export const GET = defineHandler(requireAuth("users"), async () => {
+ *       return { posts: await pb.$app.findRecordsByFilter("posts", "published = true", "-created", 20, 0) };
+ *     });
+ */
+export interface PocketBaseApi {
+  /** the data API: findRecordById, findRecordsByFilter, save, delete, settings, ... */
+  $app: AppApi;
+  $apis: { requireAuth(...collections: string[]): unknown; requireSuperuserAuth(): unknown; requireGuestOnly(): unknown };
+  $os: { getenv(name: string): string };
+  Record: new (collection: CollectionRef, data?: Record<string, unknown>) => HookRecord;
+  ApiError: ErrorClass;
+  BadRequestError: ErrorClass;
+  UnauthorizedError: ErrorClass;
+  ForbiddenError: ErrorClass;
+  NotFoundError: ErrorClass;
+  InternalServerError: ErrorClass;
+  ValidationError: ErrorClass;
+}
+
+let globals: PocketBaseApi | null = null;
+/** PocketBase's API inside a route. Reading it before the hook has registered the app is a programming error. */
+export const pb: PocketBaseApi = new Proxy({} as PocketBaseApi, {
+  get(_t, prop) {
+    if (!globals) throw new Error("voidbase: PocketBase's API is not available yet (a route module used `pb` at import time)");
+    return (globals as unknown as Record<string | symbol, unknown>)[prop];
+  },
+});
+
+const AUTH = Symbol.for("voidbase.auth");
+/** The authenticated record of this request, exactly as a PocketBase hook sees it (`e.auth`). */
+export function authOf(c: Context): HookRecord | null {
+  return ((c as unknown as Record<symbol, HookRecord | null>)[AUTH]) ?? null;
+}
+
+/** Void-shaped counterparts of $apis.requireAuth / requireSuperuserAuth, for `defineHandler(mw, handler)`. */
+export function requireAuth(...collections: string[]): Middleware {
+  return async (c, next) => {
+    const auth = authOf(c);
+    if (!auth || (collections.length && !collections.includes(auth.collection().name))) throw new pb.UnauthorizedError("The request requires valid record authorization token.");
+    await next();
+  };
+}
+export function requireSuperuser(): Middleware {
+  return async (c, next) => {
+    const auth = authOf(c);
+    if (!auth) throw new pb.UnauthorizedError("The request requires valid record authorization token.");
+    if (!auth.isSuperuser()) throw new pb.ForbiddenError("The authorized record is not allowed to perform this action.");
+    await next();
+  };
+}
+
 /** What the generated hook wrapper passes in, taken from the hook globals. */
-export interface HookApi {
-  routerAdd(method: string, path: string, handler: (e: { c: Context }) => unknown): void;
+export interface HookApi extends PocketBaseApi {
+  routerAdd(method: string, path: string, handler: (e: RequestEvent) => unknown): void;
   cronAdd(id: string, expr: string, fn: () => unknown): void;
   /** $env: the bindings of the request, cron tick or job running now */
   env(): Bindings;
@@ -90,7 +153,7 @@ function paramsOf(route: MountedRoute, path: string): Record<string, string> {
 }
 
 /** The Hono context a Void handler sees: real context, with the route's params and the queue bindings overlaid. */
-function voidContext(c: Context, params: Record<string, string>, env: Bindings): Context {
+function voidContext(c: Context, params: Record<string, string>, env: Bindings, auth: HookRecord | null): Context {
   const bind = <T extends object>(target: T, prop: string | symbol) => {
     const value = Reflect.get(target, prop, target);
     return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
@@ -105,6 +168,7 @@ function voidContext(c: Context, params: Record<string, string>, env: Bindings):
     get(target, prop) {
       if (prop === "req") return req;
       if (prop === "env") return env;
+      if (prop === AUTH) return auth;
       return bind(target, prop);
     },
     set(target, prop, value) { return Reflect.set(target, prop, value, target); },
@@ -128,6 +192,7 @@ async function runChain(c: Context, middleware: Middleware[], handler: Handler):
 }
 
 export function mountVoidApp(api: HookApi, spec: MountSpec): void {
+  globals = api; // `pb`, requireAuth() and authOf() read PocketBase's API from here
   const { routes = [], middleware = [], crons = [], queues = [] } = spec;
   const envFor = (base: Bindings): Bindings => (queues.length ? { ...base, ...queueBindings(api, queues) } : base);
 
@@ -137,8 +202,8 @@ export function mountVoidApp(api: HookApi, spec: MountSpec): void {
       if (typeof handler !== "function") continue;
       api.routerAdd(method === "ALL" ? "ANY" : method, route.hookPath, async (e) => {
         const c = e.c;
-        const env = envFor(c.env as Bindings);
-        const ctx = voidContext(c, paramsOf(route, new URL(c.req.url).pathname), env);
+        const env = envFor(c.env as unknown as Bindings);
+        const ctx = voidContext(c, paramsOf(route, new URL(c.req.url).pathname), env, e.auth ?? null);
         return withRuntimeEnv(env, () => runChain(ctx, middleware, handler));
       });
     }

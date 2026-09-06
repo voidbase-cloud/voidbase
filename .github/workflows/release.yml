@@ -152,7 +152,7 @@ jobs:
           # the hint PocketBase opens every release with (`voidbase update` strips it again when printing the notes),
           # then the notes release-please compiled from the commits (or the hand-written ones of a manual release)
           gh release view "$TAG" --json body --jq .body > body.md
-          if ! grep -q "voidbase update" body.md; then
+          if ! grep -q "To update the prebuilt executable" body.md; then
             { printf '> _To update the prebuilt executable you can run `./voidbase update`._\n\n'; cat body.md; } > notes.md
             gh release edit "$TAG" --notes-file notes.md
           fi

@@ -58,8 +58,7 @@ function projectName(): string {
 const randomPassword = () => { const a = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const b = crypto.getRandomValues(new Uint8Array(20)); return Array.from(b, (x) => a[x % a.length]).join(""); };
 
 // Bun only loads the .env of the working directory; the starter keeps its PB_* and deploy variables one level up.
-const ZONE_TOKEN_ENV = "VOIDBASE_DEPLOY_ZONE_TOKEN"; // a user-owned token with Zone > Single Redirect (edit): account-owned tokens cannot carry it
-const ENV_KEYS = [TOKEN_ENV, ZONE_TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
+const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
 export function loadEnvFiles(files = [".env", ".env.local", "../.env", "../.env.local"]): string[] {
   const loaded: string[] = [];
   for (const f of files) {
@@ -186,7 +185,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     const d = await attachCustomDomain(api, account.id, { hostname: host, service: name });
     log(`custom domain ${d.hostname} ${d.created ? "attached" : "already attached"} (zone ${d.zone_id}); the certificate can take a minute`);
   }
-  if (hostRedirects.length) await applyZoneRedirects(process.env[ZONE_TOKEN_ENV] ? new CfApi(process.env[ZONE_TOKEN_ENV]!) : api, account.id, name, hostRedirects, log);
+  if (hostRedirects.length) await applyZoneRedirects(api, account.id, name, hostRedirects, log);
   if (url) {
     const ok = await fetch(`${url}/api/health`).then((r) => r.status).catch(() => 0);
     log(`\nlive: ${url}  (health ${ok || "not reachable yet"})\n├─ REST API:  ${url}/api/\n└─ Dashboard: ${url}/_/   sign in as ${email} (password in ${credFile})`);
@@ -196,9 +195,9 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
 
 // ---- host-scoped redirects as zone Redirect Rules (Rulesets API, phase http_request_dynamic_redirect) --------------
 // One rule per `_redirects` line, tagged `voidbase:<worker>:` in its description so a redeploy replaces exactly its own
-// rules and leaves the zone's other redirect rules alone. Needs Zone > Single Redirect (edit) for the zone, a permission
-// only user-owned tokens offer: VOIDBASE_DEPLOY_ZONE_TOKEN carries such a token next to the account-owned deploy token.
-// Without it the deploy logs the rules to create by hand and carries on.
+// rules and leaves the zone's other redirect rules alone. Needs the zone permission Single Redirect (edit) on the deploy
+// token ("Dynamic URL Redirects Write" in the API's permission listing, next to the DNS permission the token may already
+// carry for the zone). Without it the deploy logs the rules to create by hand and carries on.
 const quote = (v: string) => JSON.stringify(v);
 export function redirectRule(worker: string, r: RedirectEntry): Record<string, unknown> {
   const wildcard = r.path.endsWith("/*"); const prefix = wildcard ? r.path.slice(0, -1) : r.path; // "/docs/*" -> "/docs/"
@@ -227,8 +226,8 @@ export async function applyZoneRedirects(api: CfApi, account: string, worker: st
       await api.json("PUT", path, { rules: [...kept, ...rules] });
       log(`zone ${zone.name}: ${rules.length} redirect rule(s) set (${rules.map((x) => String(x.description).split(":").slice(2).join(":")).join(", ")})`);
     } catch (e) {
-      const why = e instanceof Error && e.message === "permission" ? `the token lacks Zone > Single Redirect (edit) for the zone; account-owned tokens cannot carry it, so put a user-owned token with that permission in ${ZONE_TOKEN_ENV}` : e instanceof Error ? e.message : String(e);
-      log(`zone ${zone.name}: redirect rules not set (${why}). Create them under Rules > Redirect Rules, or deploy again with the token:\n${rules.map((x) => `  ${x.expression} -> ${JSON.stringify((x.action_parameters as { from_value: { target_url: unknown } }).from_value.target_url)}`).join("\n")}`);
+      const why = e instanceof Error && e.message === "permission" ? "the token lacks the zone permission Single Redirect > Edit (API name: Dynamic URL Redirects Write) for the zone" : e instanceof Error ? e.message : String(e);
+      log(`zone ${zone.name}: redirect rules not set (${why}). Add that permission to the token and deploy again, or create them under Rules > Redirect Rules:\n${rules.map((x) => `  ${x.expression} -> ${JSON.stringify((x.action_parameters as { from_value: { target_url: unknown } }).from_value.target_url)}`).join("\n")}`);
     }
   }
 }

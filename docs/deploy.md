@@ -55,9 +55,9 @@ uploaded with the assets as Cloudflare's own `_redirects` (evaluated before the 
 host (`https://api.example.com/  /_/  302`) become zone Redirect Rules after the upload, tagged with the Worker's name so
 a redeploy replaces exactly its own rules. That is how one Worker behind several custom domains answers differently per
 hostname: the site on the apex, the API hostname's root sent to the admin panel, `www` sent to the apex. Writing them needs
-Zone > Single Redirect (edit) for the zone, a permission that only user-owned tokens offer (account-owned tokens, the
-kind the deploy token is, do not list it): put such a token in `VOIDBASE_DEPLOY_ZONE_TOKEN` next to the deploy token.
-Without it the deploy prints the rules to create by hand and carries on.
+the zone permission Single Redirect > Edit on the deploy token (the API's permission listing calls it Dynamic URL
+Redirects Write; it sits with the zone permissions, like DNS Edit, scoped to the zone). Without it the deploy prints the
+rules to create by hand and carries on.
 (Void's own `routing.redirects` are not used: they are applied by the Void platform's dispatch worker, which a
 self-hosted deploy does not have.)
 

@@ -95,19 +95,19 @@ reference() {
   helper mock-oidc 5190 bun test/mock-oidc.ts
   helper s3-mock 5195 bun test/s3-mock.ts
   helper cf-mock 5197 bun test/cf-mock.ts
-  sleep 2
+  wait_http http://127.0.0.1:2526/messages 30; wait_http http://127.0.0.1:5190/ 30; wait_http http://127.0.0.1:5195/ 30; wait_http http://127.0.0.1:5197/__state 30
   warm_mail
 }
 warm_mail() {  # the first mail through the SMTP transport goes out here, to the sink, before any suite waits for one
-  local j='content-type: application/json' tok n=0 saved
+  local j='content-type: application/json' tok n=0
   tok=$(curl -s -X POST "$VB/api/collections/_superusers/auth-with-password" -H "$j" -d "{\"identity\":\"$VOIDBASE_SUPERUSER_EMAIL\",\"password\":\"$VOIDBASE_SUPERUSER_PASSWORD\"}" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
   [ -n "$tok" ] || { echo "warm: superuser login failed, the mail transport stays cold"; return 0; }
-  saved=$(curl -s "$VB/api/settings" -H "authorization: $tok" | bun -e 'const s = JSON.parse(await Bun.stdin.text()); process.stdout.write(JSON.stringify({ smtp: { ...s.smtp, password: "" } }))' 2>/dev/null)
   curl -s -o /dev/null -X DELETE http://127.0.0.1:2526/messages
   curl -s -o /dev/null -X PATCH "$VB/api/settings" -H "$j" -H "authorization: $tok" -d '{"smtp":{"enabled":true,"host":"127.0.0.1","port":2525,"username":"","password":"","authMethod":"","tls":false,"localName":""}}'
   curl -s -o /dev/null -X POST "$VB/api/collections/users/request-password-reset" -H "$j" -d '{"email":"user@example.com"}'
-  for _ in $(seq 1 30); do n=$(curl -s http://127.0.0.1:2526/messages | grep -o '"subject"' | wc -l); [ "$n" -ge 1 ] && break; sleep 1; done
-  curl -s -o /dev/null -X PATCH "$VB/api/settings" -H "$j" -H "authorization: $tok" -d "${saved:-{\"smtp\":{\"enabled\":false}}}"
+  for _ in $(seq 1 45); do n=$(curl -s http://127.0.0.1:2526/messages | grep -o '"subject"' | wc -l); [ "$n" -ge 1 ] && break; sleep 1; done
+  # back to the defaults a fresh database starts with (PocketBase's), which the settings comparisons expect
+  curl -s -o /dev/null -X PATCH "$VB/api/settings" -H "$j" -H "authorization: $tok" -d '{"smtp":{"enabled":false,"host":"smtp.example.com","port":587,"username":"","password":"","authMethod":"","tls":false,"localName":""}}'
   curl -s -o /dev/null -X DELETE http://127.0.0.1:2526/messages
   echo "warm: mail transport ${n:-0} message(s) delivered to the sink"
 }

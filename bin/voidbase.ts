@@ -25,7 +25,7 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   init [dir]                         scaffold .env, pb_hooks/, pb_migrations/ in a fresh checkout and sync the panel
   dev [--port 5180]                  start the Void dev server (vp dev)
   build | preview [--port 5181]      production build / run the built Worker locally (vp build / vp preview)
-  deploy [--name worker] [--account id] [--public-dir ../sk/build] [--dry-run]
+  deploy [--name worker] [--account id] [--public-dir ../sk/build] [--dry-run] [--no-queue] [--analytics] [--rate-limit 300/10]
                                      go live on your Cloudflare account with VOIDBASE_DEPLOY_CF_API_KEY: creates the D1
                                      database and R2 bucket, writes cloud/ (voidbase cloud init) with wrangler.jsonc,
                                      stores the superuser as worker secrets and runs void deploy --backend cloudflare
@@ -91,7 +91,7 @@ switch (cmd) {
   case "deploy": {
     if (flags.void) { await run("./node_modules/.bin/void", ["deploy"]); break; } // the Void platform (void auth login first)
     const { deployToCloudflare } = await import("../src/node/deploy-cf");
-    await deployToCloudflare({ name: flags.name, account: flags.account, dir: flags.dir, publicDir: flags["public-dir"] ?? flags.publicDir, dryRun: !!flags["dry-run"], regenerate: !!flags.regenerate });
+    await deployToCloudflare({ name: flags.name, account: flags.account, dir: flags.dir, publicDir: flags["public-dir"] ?? flags.publicDir, dryRun: !!flags["dry-run"], regenerate: !!flags.regenerate, queue: flags["no-queue"] ? false : undefined, analytics: flags.analytics ? true : undefined, rateLimit: flags["rate-limit"] });
     break;
   }
   case "superuser": {

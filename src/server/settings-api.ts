@@ -55,11 +55,12 @@ export function mountSettingsApi(app: Hono<AppEnv>) {
     for (const f of collection.fields as Field[]) if (!f.hidden) row[f.name] = `__pb_test_${f.name}__`;
     row.tokenKey = randomString(50); row.email = email;
     try {
-      if (template === "verification") await sendRecordVerification(c.env.DB, collection, row);
-      else if (template === "password-reset") await sendRecordPasswordReset(c.env.DB, collection, row);
-      else if (template === "email-change") await sendRecordChangeEmail(c.env.DB, collection, row, email);
-      else if (template === "otp") await sendRecordOTP(c.env.DB, collection, row, "_PB_TEST_OTP_ID_", "123456");
-      else await sendRecordAuthAlert(c.env.DB, collection, row, `${new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, ".000Z")} - TEST_IP TEST_USER_AGENT`);
+      const inline = { inline: true }; // PocketBase reports the SMTP error to the panel, so deliver now, not from the queue
+      if (template === "verification") await sendRecordVerification(c.env.DB, collection, row, inline);
+      else if (template === "password-reset") await sendRecordPasswordReset(c.env.DB, collection, row, inline);
+      else if (template === "email-change") await sendRecordChangeEmail(c.env.DB, collection, row, email, inline);
+      else if (template === "otp") await sendRecordOTP(c.env.DB, collection, row, "_PB_TEST_OTP_ID_", "123456", inline);
+      else await sendRecordAuthAlert(c.env.DB, collection, row, `${new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, ".000Z")} - TEST_IP TEST_USER_AGENT`, inline);
     } catch (err) { throw badRequest("Failed to send the test email. Raw error: \n" + (err instanceof Error ? err.message : String(err))); }
     return c.body(null, 204);
   });

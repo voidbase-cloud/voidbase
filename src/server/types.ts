@@ -11,6 +11,10 @@ export interface AuthRecord {
 export interface Bindings {
   DB: D1Database;
   STORAGE: R2Bucket;
+  // optional Cloudflare bindings, declared by the deploy (queues/jobs.ts, wrangler ratelimits / analytics_engine_datasets)
+  QUEUE_JOBS?: { send(body: unknown, options?: { delaySeconds?: number }): Promise<void> };
+  RATE_LIMITER?: { limit(options: { key: string }): Promise<{ success: boolean }> };
+  LOGS_ANALYTICS?: { writeDataPoint(point: { blobs?: string[]; doubles?: number[]; indexes?: string[] }): void };
 }
 
 export interface Variables {

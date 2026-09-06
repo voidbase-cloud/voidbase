@@ -66,6 +66,8 @@ async function logRequest(c: Context<AppEnv>, started: number, err: unknown): Pr
     data.remoteIP = c.req.header("CF-Connecting-IP") ?? "127.0.0.1";
   }
   const level = failed ? LEVEL.error : LEVEL.info;
+  // Analytics Engine (binding LOGS_ANALYTICS, declared by the deploy): one data point per request, whatever the level
+  c.env.LOGS_ANALYTICS?.writeDataPoint({ blobs: [method, cut(url.pathname, 256), String(status), String(data.auth ?? ""), cut(String(data.error ?? ""), 256), failed ? "error" : "info"], doubles: [Number(data.execTime), status], indexes: [cut(url.pathname, 96)] });
   if (level < Math.max(settings.logs.minLevel, envLogMinLevel())) return;
   let message = method + " ";
   try { message += decodeURIComponent(requestUri); } catch { message += requestUri; }

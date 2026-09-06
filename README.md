@@ -98,7 +98,7 @@ then `test/fresh-db.ts` and the starter smoke. The same scripts run locally agai
 - [docs/differences.md](docs/differences.md): what the platform changes (D1 batches, per-isolate limits, polling realtime, backups format).
 - [docs/hooks.md](docs/hooks.md): `pb_hooks` and `pb_migrations` on Workers, supported events and globals.
 - [docs/migrating.md](docs/migrating.md): moving an existing PocketBase app.
-- [docs/platform.md](docs/platform.md): how to run cheap and fast on Cloudflare (assets off the Worker, log writes, change feed, crons, placement) and the per-app Durable Object design for going beyond the account limits.
+- [docs/platform.md](docs/platform.md): how to run cheap and fast on Cloudflare (assets off the Worker, log writes, change feed, crons, placement, queues, rate limits) and the per-app Durable Object design for going beyond the account limits.
 - [COMPAT.md](COMPAT.md): verified upstream versions and endpoint matrix.
 
 ## Layout
@@ -109,4 +109,5 @@ then `test/fresh-db.ts` and the starter smoke. The same scripts run locally agai
 - `public/_` is the panel build, synced, never edited (`bun run panel:sync --brand <dir>` for an optional logo/title/docs-link swap).
 - Everything outside `/api` is served by Cloudflare's asset layer without invoking the Worker; deep links get the SPA shell through `404.html` copies of `index.html` (written at build time by `hooks-plugin.ts` and by the sync scripts).
 - `crons/every-minute.ts` runs PocketBase's maintenance jobs and `cronAdd` jobs.
+- `queues/jobs.ts` consumes the jobs queue (system mail, automatic backups) with retries; without it every job runs inline.
 - `hooks-plugin.ts` bundles `pb_hooks` and `pb_migrations` into the Worker at build time.

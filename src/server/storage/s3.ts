@@ -109,3 +109,10 @@ export class S3Bucket {
 }
 
 export const s3Bucket = (cfg: S3Config) => new S3Bucket(cfg) as unknown as R2Bucket;
+
+// Outside a request (queue jobs, crons) the settings.s3 swap that the bootstrap middleware does per request
+export async function withS3Storage<E extends { DB: D1Database; STORAGE: R2Bucket }>(env: E): Promise<E> {
+  const { loadSettings } = await import("../settings");
+  const s3 = (await loadSettings(env.DB)).s3;
+  return s3.enabled ? { ...env, STORAGE: s3Bucket(s3) } : env;
+}

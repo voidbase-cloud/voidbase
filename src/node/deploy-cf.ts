@@ -1,7 +1,8 @@
 // `voidbase deploy`: go live on your own Cloudflare account with one API token (VOIDBASE_DEPLOY_CF_API_KEY).
-// Resolves the account, creates the D1 database and R2 bucket over the REST API (idempotent), writes the Void
-// project (cloud/) with a wrangler.jsonc carrying the real ids, stores the superuser credentials as worker secrets
-// and runs `void deploy --backend cloudflare`, which builds, applies the D1 migrations and uploads the Worker.
+// Resolves the account, creates the D1 database, the R2 bucket and the jobs queue over the REST API (idempotent),
+// writes the Void project (cloud/) with a wrangler.jsonc carrying the real ids plus the rate-limit and Analytics
+// Engine bindings, stores the superuser credentials as worker secrets and runs `void deploy --backend cloudflare`,
+// which builds, applies the D1 migrations and uploads the Worker.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { writeCloudProject } from "./cloud-init";
@@ -15,6 +16,7 @@ export const TOKEN_PERMISSIONS = [
   { key: "workers_scripts", type: "edit" }, // upload the Worker, its cron trigger and secrets
   { key: "d1", type: "edit" },              // create the database, apply migrations
   { key: "workers_r2", type: "edit" },      // create the files bucket
+  { key: "queues", type: "edit" },          // create the jobs queue (mail and backups with retries); optional
   { key: "account_settings", type: "read" }, // resolve the account id and workers.dev subdomain
 ];
 export const tokenDeepLink = () => `https://dash.cloudflare.com/?to=/:account/api-tokens&permissionGroupKeys=${encodeURIComponent(JSON.stringify(TOKEN_PERMISSIONS))}&name=${encodeURIComponent(TOKEN_ENV)}`;
@@ -23,12 +25,17 @@ export const tokenHelp = () => `Create the deploy token in the Cloudflare dashbo
   ${tokenDeepLink()}
 
 Then make it available as ${TOKEN_ENV} (shell export, .env next to pb_hooks, or a CI secret) and run: voidbase deploy
-Permissions the link pre-selects: Workers Scripts (edit), D1 (edit), Workers R2 Storage (edit), Account Settings (read).
-If the link format ever changes, pick those four by hand at https://dash.cloudflare.com/?to=/:account/api-tokens
+Permissions the link pre-selects: Workers Scripts (edit), D1 (edit), Workers R2 Storage (edit), Queues (edit),
+Account Settings (read). Queues is optional: without it the deploy skips the jobs queue and sends mail inline.
+If the link format ever changes, pick those by hand at https://dash.cloudflare.com/?to=/:account/api-tokens
 (reference: https://developers.cloudflare.com/fundamentals/api/reference/permissions/).`;
 
 export interface DeployOptions { name?: string; account?: string; dir?: string; // dir: a visible project instead of <package>/.cloud/<slug>
-  publicDir?: string; dryRun?: boolean; regenerate?: boolean; superuserEmail?: string; superuserPassword?: string; log?: (line: string) => void }
+  publicDir?: string; dryRun?: boolean; regenerate?: boolean; superuserEmail?: string; superuserPassword?: string; log?: (line: string) => void;
+  queue?: boolean;      // jobs queue for mail and automatic backups (default on; skipped when the token cannot create queues)
+  analytics?: boolean;  // Analytics Engine dataset with one data point per request (opt-in: --analytics or VOIDBASE_DEPLOY_ANALYTICS=1; the account must have Analytics Engine enabled)
+  rateLimit?: string;   // exact per-location ceiling per IP as "<requests>/<10|60>", default "300/10" (PocketBase's /api/ rule); "0" disables
+}
 
 interface CfResponse<T> { success: boolean; errors: { code: number; message: string }[]; result: T }
 async function cf<T>(token: string, method: string, path: string, body?: unknown): Promise<CfResponse<T>> {
@@ -66,6 +73,23 @@ export async function ensureR2(token: string, account: string, name: string): Pr
   if (!made.success) throw fail(`creating the R2 bucket ${name}`, made);
   return { created: true };
 }
+// The jobs queue: created when the token may (Queues edit); otherwise the deploy proceeds without it.
+export async function ensureQueue(token: string, account: string, name: string): Promise<{ id: string | null; created: boolean; reason?: string }> {
+  const list = await cf<{ queue_id: string; queue_name: string }[]>(token, "GET", `/accounts/${account}/queues?per_page=100`);
+  if (!list.success) return { id: null, created: false, reason: list.errors?.map((e) => `${e.code} ${e.message}`).join("; ") || "cannot list queues" };
+  const found = (list.result ?? []).find((q) => q.queue_name === name);
+  if (found) return { id: found.queue_id, created: false };
+  const made = await cf<{ queue_id: string }>(token, "POST", `/accounts/${account}/queues`, { queue_name: name });
+  if (!made.success) return { id: null, created: false, reason: made.errors?.map((e) => `${e.code} ${e.message}`).join("; ") || "cannot create the queue" };
+  return { id: made.result.queue_id, created: true };
+}
+export function parseRateLimit(spec: string | undefined): { limit: number; period: 10 | 60 } | null {
+  const v = (spec ?? "").trim();
+  if (!v || v === "0" || v === "off") return v ? null : { limit: 300, period: 10 };
+  const m = /^(\d+)\/(10|60)$/.exec(v);
+  if (!m) throw new Error(`invalid rate limit "${spec}": use <requests>/10 or <requests>/60 (seconds), or 0 to disable`);
+  return { limit: Number(m[1]), period: Number(m[2]) as 10 | 60 };
+}
 export async function workersSubdomain(token: string, account: string): Promise<string | null> {
   const r = await cf<{ subdomain?: string }>(token, "GET", `/accounts/${account}/workers/subdomain`);
   return r.success && r.result?.subdomain ? r.result.subdomain : null;
@@ -80,7 +104,7 @@ function projectName(): string {
 const randomPassword = () => { const a = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const b = crypto.getRandomValues(new Uint8Array(20)); return Array.from(b, (x) => a[x % a.length]).join(""); };
 
 // Bun only loads the .env of the working directory; the starter keeps its PB_* and deploy variables one level up.
-const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
+const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
 export function loadEnvFiles(files = [".env", "../.env"]): string[] {
   const loaded: string[] = [];
   for (const f of files) {
@@ -105,6 +129,18 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   log(`account ${account.name} (${account.id}), worker "${name}"`);
   const db = await ensureD1(token, account.id, `${name}-db`); log(`D1 ${name}-db ${db.created ? "created" : "exists"} (${db.uuid})`);
   const bucket = await ensureR2(token, account.id, `${name}-storage`); log(`R2 ${name}-storage ${bucket.created ? "created" : "exists"}`);
+  const off = (v: string | undefined) => v !== undefined && ["0", "false", "off", "no"].includes(v.trim().toLowerCase());
+  const wantQueue = opts.queue ?? !off(process.env.VOIDBASE_DEPLOY_QUEUE);
+  const on = (v: string | undefined) => v !== undefined && ["1", "true", "on", "yes"].includes(v.trim().toLowerCase());
+  const analytics = opts.analytics ?? on(process.env.VOIDBASE_DEPLOY_ANALYTICS);
+  const rateLimit = parseRateLimit(opts.rateLimit ?? process.env.VOIDBASE_DEPLOY_RATE_LIMIT);
+  let queue: string | false = false;
+  if (wantQueue) {
+    const q = await ensureQueue(token, account.id, `${name}-jobs`);
+    queue = q.id ? `${name}-jobs` : false;
+    if (queue) log(`Queue ${name}-jobs ${q.created ? "created" : "exists"} (mail and automatic backups run from it with retries)`);
+    else log(`Queue ${name}-jobs not created (${q.reason}): mail is sent inline and backups run in the cron tick. Give the token the Queues edit permission (${tokenDeepLink()}) to enable it, or VOIDBASE_DEPLOY_QUEUE=0 to silence this.`);
+  }
 
   // the Void project lives inside the voidbase package (<package>/.cloud/<slug>), not in the consumer's tree:
   // its entry files import this package by relative path and resolve `void`/`vite` by walking up to node_modules
@@ -112,9 +148,18 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const consumer = resolve(".");
   const entry = ["main.ts", "main.js"].map((f) => resolve(consumer, f)).find((f) => existsSync(f) && /export\s+(async\s+)?function\s+register\b|export\s*\{[^}]*\bregister\b/.test(readFileSync(f, "utf8")));
   if (entry) log(`composing ${entry} (register) into the Worker`);
-  writeCloudProject(cloud, opts.dir ? "package" : "internal", { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), entry });
-  // Smart Placement runs the Worker next to its D1 database: PocketBase-shaped requests are several dependent queries
-  const wranglerConfig = JSON.stringify({ name, account_id: account.id, placement: { mode: "smart" }, d1_databases: [{ binding: "DB", database_name: `${name}-db`, database_id: db.uuid, migrations_dir: "./db/migrations" }], r2_buckets: [{ binding: "STORAGE", bucket_name: `${name}-storage` }] }, null, 2) + "\n";
+  writeCloudProject(cloud, opts.dir ? "package" : "internal", { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), entry, queue });
+  if (!queue) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/queues`, { recursive: true, force: true }); }
+  // Smart Placement runs the Worker next to its D1 database: PocketBase-shaped requests are several dependent queries.
+  // The rate-limit binding is an exact per-location ceiling per IP on top of the settings' rules (which count per
+  // isolate); the Analytics Engine dataset takes one data point per request at any log level.
+  const wranglerConfig = JSON.stringify({
+    name, account_id: account.id, placement: { mode: "smart" },
+    d1_databases: [{ binding: "DB", database_name: `${name}-db`, database_id: db.uuid, migrations_dir: "./db/migrations" }],
+    r2_buckets: [{ binding: "STORAGE", bucket_name: `${name}-storage` }],
+    ...(rateLimit ? { ratelimits: [{ name: "RATE_LIMITER", namespace_id: "1001", simple: { limit: rateLimit.limit, period: rateLimit.period } }] } : {}),
+    ...(analytics ? { analytics_engine_datasets: [{ binding: "LOGS_ANALYTICS", dataset: `${name.replace(/-/g, "_")}_requests` }] } : {}),
+  }, null, 2) + "\n";
   writeFileSync(`${cloud}/wrangler.jsonc`, `// written by voidbase deploy; ids are real resources on account ${account.id}\n${wranglerConfig}`);
   // non-secret worker vars the hooks read (AUDITLOG for the starter); secrets never go here
   const vars = ["AUDITLOG"].filter((k) => process.env[k]).map((k) => `${k}=${process.env[k]}\n`).join("");
@@ -134,6 +179,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   writeFileSync(credFile, JSON.stringify({ email, password }, null, 2) + "\n", { mode: 0o600 });
 
   const url = await workersSubdomain(token, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null));
+  log(`bindings: D1, R2${queue ? ", Queue" : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
   if (opts.dryRun) { log(`dry run: would sync the panel${opts.publicDir ? ` and ${opts.publicDir}` : ""} into ${cloud}/public, put 2 secrets and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig, project: cloud }; }
 
   // the toolchain comes with the voidbase package (void, and wrangler through void)

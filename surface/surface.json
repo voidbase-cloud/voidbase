@@ -316,7 +316,7 @@
           "status": "partial",
           "milestone": "m6",
           "verify": "Same build live on a custom Cloudflare account, DO included",
-          "notes": "`voidbase deploy` is the primary go-live path: VOIDBASE_DEPLOY_CF_API_KEY (created through a Cloudflare dashboard deep link with the four permissions pre-selected: Workers Scripts edit, D1 edit, Workers R2 Storage edit, Account Settings read; `voidbase token` prints it), account resolution, idempotent D1/R2 provisioning over the REST API, cloud/ generation with a real-id wrangler.jsonc, superuser as worker secrets (never the dev default), panel + frontend sync, then `void deploy --backend cloudflare`, health check and URL. src/node/deploy-cf.ts, verified by test/deploy-cf.ts against test/cf-mock.ts (10 cases: no token -> link, wrong token, provisioning, idempotence, naming, credentials). The live upload itself still waits for a free D1 slot on this account (34/limit) or another account. The generated wrangler config enables Smart Placement (docs/platform.md item 5)."
+          "notes": "`voidbase deploy` is the primary go-live path: VOIDBASE_DEPLOY_CF_API_KEY (created through a Cloudflare dashboard deep link with the four permissions pre-selected: Workers Scripts edit, D1 edit, Workers R2 Storage edit, Account Settings read; `voidbase token` prints it), account resolution, idempotent D1/R2 provisioning over the REST API, cloud/ generation with a real-id wrangler.jsonc, superuser as worker secrets (never the dev default), panel + frontend sync, then `void deploy --backend cloudflare`, health check and URL. src/node/deploy-cf.ts, verified by test/deploy-cf.ts against test/cf-mock.ts (10 cases: no token -> link, wrong token, provisioning, idempotence, naming, credentials). The live upload itself still waits for a free D1 slot on this account (34/limit) or another account. The generated wrangler config enables Smart Placement (docs/platform.md item 5). Since 2026-09-06 the deploy also creates the <name>-jobs queue (skipped with a hint when the token lacks Queues edit; the token deep link now pre-selects Queues edit), declares a rate-limit binding (--rate-limit 300/10, per-location ceiling per IP) and, opt-in, an Analytics Engine dataset (--analytics; the account must enable Analytics Engine once, code 10089 otherwise); test/deploy-cf.ts covers the queue, the no-queues token and the knobs (16 checks); the binding shapes were verified on a deployed probe Worker."
         }
       ]
     },
@@ -1617,7 +1617,7 @@
           "status": "done",
           "milestone": "m5",
           "verify": "Panel test email arrives",
-          "notes": "src/server/mail/smtp.ts on cloudflare:sockets: implicit TLS or opportunistic STARTTLS, AUTH PLAIN/LOGIN, EHLO localName; multipart/alternative messages with a text alternative; when SMTP is disabled the message is logged (no sendmail on Workers). Test email endpoint included. Verified end to end against a local SMTP sink (test/smtp-sink.ts) by test/conformance/auth-flows.ts."
+          "notes": "src/server/mail/smtp.ts on cloudflare:sockets: implicit TLS or opportunistic STARTTLS, AUTH PLAIN/LOGIN, EHLO localName; multipart/alternative messages with a text alternative; when SMTP is disabled the message is logged (no sendmail on Workers). Test email endpoint included. Verified end to end against a local SMTP sink (test/smtp-sink.ts) by test/conformance/auth-flows.ts. Since 2026-09-06 the transport runs from the jobs queue on Cloudflare (retries, alert on drop; hooks still run in the request; test email and $app.newMailClient() stay synchronous); inline on the Bun runtime. Verified by auth-flows/otp-mfa on dev and preview (mail-http)."
         },
         {
           "id": "set.mail-provider",
@@ -1667,7 +1667,7 @@
           "hours": 4,
           "status": "done",
           "milestone": "m6",
-          "notes": "src/server/hardening.ts: PocketBase's rule matching (collection:tag and *:tag labels per route, method+path and path labels, prefix rules against the first label only), audiences, superuser and excludedIPs exemptions, fixed windows per client IP. Counters are per isolate (approximate across isolates; PocketBase's are per process). test/conformance/hardening.ts 12/12."
+          "notes": "src/server/hardening.ts: PocketBase's rule matching (collection:tag and *:tag labels per route, method+path and path labels, prefix rules against the first label only), audiences, superuser and excludedIPs exemptions, fixed windows per client IP. Counters are per isolate (approximate across isolates; PocketBase's are per process). test/conformance/hardening.ts 12/12. On Cloudflare the deploy's RATE_LIMITER binding adds a per-location ceiling per IP while rate limits are enabled (eventually consistent by Cloudflare's design)."
         },
         {
           "id": "set.trusted-proxy",
@@ -1762,7 +1762,7 @@
           "hours": 3,
           "status": "done",
           "milestone": "m5",
-          "notes": "requestLogger middleware writes a _logs row after every API response through waitUntil (PocketBase's data keys: type, execTime, url, method, status, referer, userAgent, auth, authId, userIP, remoteIP, error and details on failures), honouring logs.maxDays, minLevel, logIP and logAuthId; appLog for application messages; the logs and realtime stream routes are skipped like SkipSuccessActivityLog. Rows are written only at or above max(settings.logs.minLevel, VOIDBASE_LOG_MIN_LEVEL); the Workers default is 4 (warnings and errors), Bun and the suites use 0 (docs/platform.md item 2)."
+          "notes": "requestLogger middleware writes a _logs row after every API response through waitUntil (PocketBase's data keys: type, execTime, url, method, status, referer, userAgent, auth, authId, userIP, remoteIP, error and details on failures), honouring logs.maxDays, minLevel, logIP and logAuthId; appLog for application messages; the logs and realtime stream routes are skipped like SkipSuccessActivityLog. Rows are written only at or above max(settings.logs.minLevel, VOIDBASE_LOG_MIN_LEVEL); the Workers default is 4 (warnings and errors), Bun and the suites use 0 (docs/platform.md item 2). With the LOGS_ANALYTICS binding (opt-in at deploy) every request also writes one Analytics Engine data point (method, path, status, auth, error, execTime) regardless of the level."
         },
         {
           "id": "log.api",
@@ -1860,7 +1860,7 @@
           "hours": 1,
           "status": "done",
           "milestone": "m6",
-          "notes": "__pbAutoBackup__ registered from settings.backups.cron, @auto_pb_backup_ names, oldest beyond cronMaxKeep removed."
+          "notes": "__pbAutoBackup__ registered from settings.backups.cron, @auto_pb_backup_ names, oldest beyond cronMaxKeep removed. On Cloudflare the automatic backup is a queued job (src/server/jobs.ts) with retries and the queue consumer's 15 minutes of wall time; inline without a queue."
         },
         {
           "id": "bak.gate",

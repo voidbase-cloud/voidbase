@@ -50,14 +50,22 @@ assets, live, WebSockets, queues, KV and SSE frame what Void exposes today.
    request runs several dependent queries); replication suits read-heavy global apps.
 6. **Lazy wasm.** Import Photon on the first thumbnail request rather than at module load: smaller cold start on
    every other request.
-7. **Queues for the slow and the retryable.** Outbound mail, thumbnail pre-generation, the `hooks` collection's
-   HTTP and email actions, backups: a `queues/` consumer in the generated Void project, idempotency keys
-   (record id + action) since delivery is at-least-once. Reliability more than cost ($0.40 per million operations).
+7. **Queues for the slow and the retryable.** Outbound mail and the automatic backups go through a `queues/`
+   consumer in the generated Void project (`src/server/jobs.ts`): the request returns as soon as the message is
+   queued, Cloudflare retries failures with backoff, and a message dropped after its last retry is posted to the
+   alert webhook. Delivery is at-least-once, so a mail whose SMTP session failed after the server accepted it can
+   arrive twice; hooks (`onMailerSend` and friends) run in the request on the final message, the panel's test email
+   and `$app.newMailClient()` stay synchronous. Thumbnail pre-generation was tried and dropped: PocketBase renders
+   thumbs on demand and a storage listing would show thumbs nobody asked for (the S3 suite compares listings).
+   Reliability more than cost ($0.40 per million operations).
 8. **KV for what the edge reads on every request and tolerates 60 s of staleness**: the public `auth-methods`
    answer, the settings snapshot, hostname-to-app when several apps share a Worker. Reads $0.50 per million;
    D1 stays the source of truth.
-9. **Rate limits that are exact across isolates.** Cloudflare's rate-limiting binding is free and per-edge;
-   voidbase's counters are per isolate (documented as approximate). Use the binding when Void exposes it.
+9. **Rate limits shared across isolates.** Cloudflare's rate-limiting binding is free and counts per location;
+   voidbase's counters are per isolate (documented as approximate). The deploy declares one (`RATE_LIMITER`, a
+   ceiling per IP on `/api`, PocketBase's default 300 per 10 s) and the middleware consults it while rate limits are
+   enabled. Cloudflare's own docs call the binding permissive and eventually consistent, so it is a shared ceiling,
+   not an exact counter; the settings' rules keep their per-isolate windows.
 10. **Realtime as push instead of poll (later).** A per-app Durable Object hub with hibernating WebSockets from
     the edge Workers that hold the SSE streams (Workers bill per request, not wall-clock; the object sleeps between
     pushes: Cloudflare's own example is 100 objects × 100 connections for about $10 per month). It removes the
@@ -79,6 +87,11 @@ rows actually written", and 5 and 6 are the two latency wins visible to users.
 | 4 crons only when needed | done: the hooks plugin reads every `cronAdd` expression at build time and registers them as the Worker's triggers (macros expanded; more than 4 falls back to every minute), plus one hourly tick; PocketBase's maintenance jobs (log and file cleanup, token purge, backups) also run lazily on the next request when overdue, and a tick catches every job due since the last one | `hooks-plugin.ts` `cronTriggers`, `crons/every-minute.ts`, `src/server/crons.ts` |
 | 5 Smart Placement | done for `voidbase deploy` (`placement: { mode: "smart" }` in the generated wrangler config). Caveat from Cloudflare: with `run_worker_first` the whole Worker is placed as one unit, so asset requests from far users travel to the placed region as well; browsers cache those, API latency wins | `src/node/deploy-cf.ts` |
 | 6 lazy wasm | done: Photon is imported on the first thumbnail request | `src/server/records/thumbs.ts` |
+| 7 queues | done (2026-09-06): mail and automatic backups through the `<name>-jobs` queue with retries and an alert on drop; inline without the queue. Verified in dev, in `vp preview` (mail-http) and on a deployed probe | `src/server/jobs.ts`, `queues/jobs.ts`, `src/server/mail/index.ts`, `src/server/backups.ts` |
+| 2b log sink | done, opt-in: Analytics Engine data point per request (`--analytics`); the account must enable Analytics Engine once, which is why it is not the default | `src/server/logs.ts`, `src/node/deploy-cf.ts` |
+| 8 KV | skipped: settings are cached per isolate and Smart Placement makes the remaining D1 read cheap | |
+| 9 rate limits | done: the rate-limit binding as a per-location ceiling per IP while rate limits are enabled (`--rate-limit`); eventually consistent by Cloudflare's design | `src/server/hardening.ts`, `src/node/deploy-cf.ts` |
+| 10 Durable Object hub | waiting on Void: its Cloudflare backend refuses custom Durable Object classes | |
 
 
 ## Beyond 500 apps per account: one Worker, one Durable Object per app

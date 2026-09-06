@@ -28,6 +28,8 @@ import { mountSqlApi } from "./sql";
 import { bodyLimitMiddleware, rateLimitMiddleware, realIPWith } from "./hardening";
 import { backupActive } from "./backups";
 import { maintenanceIfDue } from "./crons";
+import { attachJobs } from "./jobs";
+import { sendMail } from "./mail";
 import { s3Bucket } from "./storage/s3";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
@@ -64,6 +66,7 @@ app.use("*", async (c, next) => {
   // settings.s3 swaps the file storage for an S3 bucket; everything downstream keeps using c.env.STORAGE
   const s3 = (await loadSettings(c.env.DB)).s3;
   if (s3.enabled) c.env = { ...c.env, STORAGE: s3Bucket(s3) };
+  attachJobs(c.env);
   if (!served) { served = true; await trigger("onBootstrap", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined); await trigger("onServe", { app: undefined as unknown, router: app, next: async () => undefined as unknown }, null, async () => undefined); }
   c.set("auth", await loadAuth(c));
   try { maintenanceIfDue(c.env, (p) => c.executionCtx.waitUntil(p)); } catch { /* no execution context */ }
@@ -568,7 +571,8 @@ installServices({
     try { await deletePrefix(ctx.storage, `${existing.id}/`); } catch (err) { console.error("voidbase: file cleanup failed", err); }
     await refreshStoreCollections(store, ctx.db);
   },
-  sendMail: async (msg) => { console.log("voidbase: mail (not delivered, mailer lands in milestone five):", msg.subject, "->", msg.to.map((t) => t.address).join(",")); },
+  // $app.newMailClient().send(): synchronous like PocketBase's mailer, errors surface to the hook
+  sendMail: async (msg) => { const ctx = await hookStore.getStore()!.ctx(); await sendMail(ctx.db, { from: msg.from, to: msg.to, cc: msg.cc, bcc: msg.bcc, subject: msg.subject, html: msg.html, text: msg.text, headers: msg.headers }, { inline: true }); },
 });
 loadHooks();
 mountHookRoutes(app);

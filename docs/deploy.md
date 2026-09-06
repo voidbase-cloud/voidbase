@@ -1,8 +1,9 @@
 # Deploying voidbase
 
-voidbase is a Void app: one Worker, one D1 database, one R2 bucket, one cron trigger. Void infers the
-bindings (`DB`, `STORAGE`) from the source and provisions them; the system tables come from the checked-in
-Drizzle migrations in `db/migrations/`, and PocketBase-style `pb_migrations` run on the first request.
+voidbase is a Void app: one Worker, one D1 database, one R2 bucket, a jobs queue and the cron triggers the hooks
+need. Void infers the bindings (`DB`, `STORAGE`, the queue from `queues/`) from the source and provisions them; the
+system tables come from the checked-in Drizzle migrations in `db/migrations/`, and PocketBase-style `pb_migrations`
+run on the first request.
 
 ## Before the first deploy
 
@@ -29,10 +30,13 @@ panel's Settings pages and stored in D1.
 ## Go live on your Cloudflare account (primary path)
 
 One API token, one command. Create the token with this link; it opens the Cloudflare dashboard's token wizard for
-your account with the four permissions voidbase needs already selected (Workers Scripts edit, D1 edit, Workers R2
-Storage edit, Account Settings read):
+your account with the permissions voidbase needs already selected (Workers Scripts edit, D1 edit, Workers R2
+Storage edit, Queues edit, Account Settings read):
 
-[Create VOIDBASE_DEPLOY_CF_API_KEY](https://dash.cloudflare.com/?to=/:account/api-tokens&permissionGroupKeys=%5B%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_r2%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_settings%22%2C%22type%22%3A%22read%22%7D%5D&name=VOIDBASE_DEPLOY_CF_API_KEY)
+[Create VOIDBASE_DEPLOY_CF_API_KEY](https://dash.cloudflare.com/?to=/:account/api-tokens&permissionGroupKeys=%5B%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_r2%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22queues%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_settings%22%2C%22type%22%3A%22read%22%7D%5D&name=VOIDBASE_DEPLOY_CF_API_KEY)
+
+Queues edit is optional: a token without it (one created before this permission was added) still deploys, the
+deploy just skips the jobs queue and says so.
 
 `voidbase token` prints the same link. Then, in the directory that holds `pb_hooks/` and `pb_migrations/`
 (`voidbase-sveltekit-starter/vb` for the starter):
@@ -42,8 +46,8 @@ export VOIDBASE_DEPLOY_CF_API_KEY=...        # or put it in .env next to pb_hook
 voidbase deploy --public-dir ../sk/build     # --name <worker>, --account <id> when the token reaches several accounts
 ```
 
-What it does, in order: resolves the account through the token, creates `<name>-db` (D1) and `<name>-storage`
-(R2) if they do not exist, writes the Void project inside the voidbase package
+What it does, in order: resolves the account through the token, creates `<name>-db` (D1), `<name>-storage`
+(R2) and `<name>-jobs` (Queue) if they do not exist, writes the Void project inside the voidbase package
 (`node_modules/voidbase/.cloud/<name>`, nothing appears in your tree) with a `wrangler.jsonc` carrying the real
 ids and, when the directory has a `main.ts` exporting `register(app)`, composes it into the Worker; stores the
 superuser as worker secrets (from `VOIDBASE_SUPERUSER_*` / `PB_SUPERUSER_*`, or a generated
@@ -54,10 +58,20 @@ which builds, applies the D1 migrations and uploads the Worker with its cron tri
 and credentials are reused. `--dry-run` does everything except install, secrets and the upload.
 
 Quotas to know: the Workers Free plan allows 10 D1 databases per account (paid plans 50,000) and 5 cron
-triggers per worker; voidbase needs one database, one bucket and one cron. Cloudflare's own permission reference is
-at https://developers.cloudflare.com/fundamentals/api/reference/permissions/ should the link's pre-selection ever
-stop matching (the token then needs exactly those four permissions, picked by hand at
+triggers per worker; voidbase needs one database, one bucket, one queue and the triggers its hooks declare (an
+hourly tick without any). Cloudflare's own permission reference is at
+https://developers.cloudflare.com/fundamentals/api/reference/permissions/ should the link's pre-selection ever
+stop matching (the token then needs those permissions, picked by hand at
 https://dash.cloudflare.com/?to=/:account/api-tokens).
+
+### What the deploy wires up, and the knobs
+
+| Binding | What it does | Knob |
+| --- | --- | --- |
+| `<name>-jobs` queue (`queues/<name>-jobs.ts`) | outbound mail and automatic backups run from the queue with retries (30 s, 60 s, ... up to 15 min, five times, then dropped and posted to `VOIDBASE_ALERT_WEBHOOK_URL`). Requests never wait on SMTP. Without the queue everything runs inline, as on the Bun runtime | `--no-queue` / `VOIDBASE_DEPLOY_QUEUE=0`; skipped automatically when the token lacks Queues edit |
+| `RATE_LIMITER` (Cloudflare rate-limit binding) | a ceiling per client IP on `/api`, counted per Cloudflare location across every isolate there, on top of the settings' rate-limit rules (which count per isolate). Applies only while rate limits are enabled in Settings, and skips superusers and excluded IPs like the rules do. Cloudflare documents it as eventually consistent, not an exact counter | `--rate-limit 300/10` (requests per 10 or 60 seconds, default PocketBase's `/api/` rule) / `VOIDBASE_DEPLOY_RATE_LIMIT`, `0` disables |
+| `LOGS_ANALYTICS` (Workers Analytics Engine) | one data point per request (method, path, status, auth collection, error, execution time) at any log level, queryable in the dashboard and the SQL API at $0.25 per million points, while the panel's log keeps writing D1 rows from `VOIDBASE_LOG_MIN_LEVEL` up. The account has to enable Analytics Engine once, at https://dash.cloudflare.com/?to=/:account/workers/analytics-engine, or the upload fails with code 10089 | opt-in: `--analytics` / `VOIDBASE_DEPLOY_ANALYTICS=1` |
+| Smart Placement | the Worker runs next to its D1 database | always on |
 
 ## Option B: the Void platform
 

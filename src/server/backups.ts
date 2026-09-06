@@ -11,9 +11,11 @@ import { createViewSQL } from "./collections/ddl";
 import { all, ident, one, run, stmt } from "./db";
 import { ApiError, badRequest, forbidden } from "./errors";
 import { trigger } from "./hooks/runtime";
+import { withHookStore } from "./hooks/migrations";
 import { nowString } from "./ids";
+import { dispatch, registerJobHandler } from "./jobs";
 import { loadSettings } from "./settings";
-import { s3Bucket } from "./storage/s3";
+import { s3Bucket, withS3Storage } from "./storage/s3";
 import { normalizeFilename } from "./records/files";
 import type { AppEnv } from "./types";
 
@@ -154,15 +156,20 @@ export async function restoreBackup(env: AppEnv["Bindings"], key: string): Promi
 
 // autobackup (core/backup.go registerAutobackupHooks): settings.backups.cron, keeping the newest cronMaxKeep
 export async function autoBackup(env: AppEnv["Bindings"]): Promise<void> {
-  const settings = await loadSettings(env.DB);
   const name = await generateBackupName(env.DB, "@auto_pb_backup_");
-  try { await createBackup(env, name); } catch (err) { console.error("voidbase: [Backup cron] Failed to create backup", name, err); return; }
+  await dispatch({ type: "backup", name }, { env });
+}
+// runs from the jobs queue on Cloudflare (inline elsewhere): create, then keep the newest cronMaxKeep
+registerJobHandler("backup", async (env, job) => {
+  env = await withS3Storage(env);
+  const settings = await loadSettings(env.DB);
+  try { await withHookStore(env.DB, env, () => createBackup(env, job.name)); } catch (err) { console.error("voidbase: [Backup cron] Failed to create backup", job.name, err); return; }
   const maxKeep = settings.backups.cronMaxKeep;
   if (!maxKeep) return;
   const bk = await backupsStorage(env);
   const autos = (await listAll(bk, PREFIX + "@auto_pb_backup_")).sort((a, b) => b.uploaded.getTime() - a.uploaded.getTime());
   for (const o of autos.slice(maxKeep)) await bk.delete(o.key);
-}
+});
 
 export function mountBackupsApi(app: Hono<AppEnv>) {
   app.get("/api/backups", async (c) => {

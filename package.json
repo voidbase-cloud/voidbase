@@ -11,6 +11,7 @@
   "exports": {
     "./app": "./src/server/app.ts",
     "./crons": "./src/server/crons.ts",
+    "./jobs": "./src/server/jobs.ts",
     "./plugin": "./hooks-plugin.ts",
     "./schema": "./db/schema.ts",
     "./env": "./env.ts",
@@ -57,7 +58,7 @@
     "src",
     "db",
     "crons",
-    "middleware",
+    "queues",
     "routes",
     "scripts",
     "docs",

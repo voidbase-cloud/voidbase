@@ -11,6 +11,7 @@ import { withHookStore } from "./hooks/migrations";
 import { nowString } from "./ids";
 import { deleteOldLogs } from "./logs";
 import { autoBackup } from "./backups";
+import { attachJobs } from "./jobs";
 import { loadSettings } from "./settings";
 import { s3Bucket } from "./storage/s3";
 import type { AppEnv } from "./types";
@@ -56,6 +57,7 @@ export function matches(expr: string, date: Date): boolean {
 }
 
 export async function runDue(env: AppEnv["Bindings"], date: Date): Promise<string[]> {
+  attachJobs(env);
   const ran: string[] = [];
   const settings = await loadSettings(env.DB);
   // triggers fire at the hook expressions and hourly: catch every job due since the previous tick (at most an hour)

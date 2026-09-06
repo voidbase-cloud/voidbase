@@ -66,3 +66,13 @@ the nearest `404.html`, so the build ships `404.html` copies of `index.html` and
 - a browser navigating to an unknown `/api/...` URL gets that HTML page with status 404, while API clients (anything
   without `text/html` in `Accept`) get PocketBase's JSON 404;
 - `voidbase serve` (Bun) keeps PocketBase's exact semantics, including the 200 index fallback.
+
+## Background jobs on Cloudflare
+
+With the jobs queue that `voidbase deploy` creates, the system emails (verification, password reset, email change,
+OTP, login alert) and the automatic backups run from a Cloudflare Queue instead of inside the request. Hooks still
+run in the request on the final message; only the transport (SMTP or the HTTP provider) is deferred, retried five
+times with backoff and, when it keeps failing, dropped and posted to `VOIDBASE_ALERT_WEBHOOK_URL`. Delivery is
+at-least-once: a mail whose SMTP session broke after the server accepted it can arrive twice. The panel's test
+email and `$app.newMailClient().send()` stay synchronous and report transport errors, as in PocketBase. Without the
+queue (the Bun runtime, or a deploy whose token could not create one) everything runs inline as before.

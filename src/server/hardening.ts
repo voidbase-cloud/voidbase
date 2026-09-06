@@ -1,6 +1,7 @@
 // Core middleware parity (apis/middlewares*.go): real client IP through settings.trustedProxy, PocketBase's rate
 // limit rules (labels, audiences, prefix rules, fixed windows per client) and the default 32 MB body limit.
-// Counters live in isolate memory, so limits are approximate across isolates; PocketBase's are per process.
+// Counters live in isolate memory, so limits are approximate across isolates; PocketBase's are per process. On
+// Cloudflare a rate-limit binding (RATE_LIMITER, declared by the deploy) adds an exact per-location ceiling per IP.
 import type { Context, MiddlewareHandler } from "hono";
 import { findCollection } from "./collections/model";
 import { ApiError } from "./errors";
@@ -96,6 +97,8 @@ export function rateLimitMiddleware(): MiddlewareHandler<AppEnv> {
     const auth = c.get("auth");
     const ip = realIPWith(settings, c);
     if (!settings.rateLimits.enabled || (auth && auth.collection.name === "_superusers") || ipInList(settings.rateLimits.excludedIPs, ip)) return next();
+    // the binding's counters are shared by every isolate in a location (its limit and period are fixed at deploy time)
+    if (c.env.RATE_LIMITER && !(await c.env.RATE_LIMITER.limit({ key: ip })).success) throw new ApiError(429, "Too Many Requests.", {});
     const path = new URL(c.req.url).pathname;
     const method = c.req.method.toUpperCase();
     const audiences = auth ? ["", "@auth"] : ["", "@guest"];

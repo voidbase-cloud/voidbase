@@ -5,9 +5,9 @@
 // which builds, applies the D1 migrations and uploads the Worker.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { parseRedirects, writeCloudProject } from "./cloud-init";
+import { parseRedirects, writeCloudProject, type RedirectEntry } from "./cloud-init";
 import { loadEnv } from "./serve";
-import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, rateLimitNamespace, resolveAccount, workersSubdomain } from "../cloud/rest";
+import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findZone, rateLimitNamespace, resolveAccount, workersSubdomain } from "../cloud/rest";
 
 const API = (process.env.CLOUDFLARE_API_BASE ?? "https://api.cloudflare.com/client/v4").replace(/\/$/, "");
 export const TOKEN_ENV = "VOIDBASE_DEPLOY_CF_API_KEY";
@@ -100,12 +100,12 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   // the static site next to the API: --public-dir, VOIDBASE_DEPLOY_PUBLIC_DIR, or ./pb_public when it exists (PocketBase's default)
   const publicDir = opts.publicDir || process.env.VOIDBASE_DEPLOY_PUBLIC_DIR || (existsSync(resolve("pb_public")) ? "pb_public" : undefined);
   if (publicDir && !existsSync(resolve(publicDir, "index.html"))) throw new Error(`public dir ${resolve(publicDir)} has no index.html (build the site first)`);
-  // <public dir>/_redirects: Netlify/Pages syntax, host-scoped sources allowed (`https://api.example.com/ /_/ 302`), which
-  // is how one Worker answers differently per hostname. The rules go into the generated void.json (Void applies them at
-  // the edge, before assets and the Worker); the file itself stays out of the uploaded assets, where Cloudflare's own
-  // _redirects handling rejects anything but relative sources (error 100324).
-  const redirects = publicDir && existsSync(resolve(publicDir, "_redirects")) ? parseRedirects(readFileSync(resolve(publicDir, "_redirects"), "utf8")) : undefined;
-  if (redirects && Object.keys(redirects).length) log(`redirects (${resolve(publicDir!, "_redirects")}): ${Object.entries(redirects).map(([from, r]) => `${from} -> ${r.to} (${r.status})`).join(", ")}`);
+  // <public dir>/_redirects, Netlify/Pages syntax. Path-only lines go to the assets as Cloudflare's own _redirects (it
+  // only accepts relative sources); host-scoped lines (`https://api.example.com/ /_/ 302`) become zone Redirect Rules
+  // after the upload, which is how one Worker behind several custom domains answers differently per hostname.
+  const redirects = publicDir && existsSync(resolve(publicDir, "_redirects")) ? parseRedirects(readFileSync(resolve(publicDir, "_redirects"), "utf8")) : [];
+  const hostRedirects = redirects.filter((r) => r.host), pathRedirects = redirects.filter((r) => !r.host);
+  if (redirects.length) log(`redirects (${resolve(publicDir!, "_redirects")}): ${redirects.map((r) => `${r.source} -> ${r.to} (${r.status})`).join(", ")}${hostRedirects.length ? `; the ${hostRedirects.length} host-scoped rule(s) become zone Redirect Rules after the upload` : ""}`);
   let queue: string | false = false;
   if (wantQueue) {
     const q = await ensureQueue(api, account.id, `${name}-jobs`);
@@ -120,7 +120,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const consumer = resolve(".");
   const entry = ["main.ts", "main.js"].map((f) => resolve(consumer, f)).find((f) => existsSync(f) && /export\s+(async\s+)?function\s+register\b|export\s*\{[^}]*\bregister\b/.test(readFileSync(f, "utf8")));
   if (entry) log(`composing ${entry} (register) into the Worker`);
-  writeCloudProject(cloud, opts.dir ? "package" : "internal", { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), entry, queue, hub, redirects });
+  writeCloudProject(cloud, opts.dir ? "package" : "internal", { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), entry, queue, hub });
   if (!queue) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/queues`, { recursive: true, force: true }); }
   if (!cron) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/crons`, { recursive: true, force: true }); log("cron trigger disabled (VOIDBASE_DEPLOY_CRON=0 / --no-cron): maintenance runs lazily in requests"); }
   // Smart Placement runs the Worker next to its D1 database: PocketBase-shaped requests are several dependent queries.
@@ -174,7 +174,10 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const sh = async (cmd: string[], input?: string) => { const p = Bun.spawn(cmd, { cwd: cloud, env: env as Record<string, string>, stdin: input === undefined ? "inherit" : new TextEncoder().encode(input), stdout: "inherit", stderr: "inherit" }); const code = await p.exited; if (code !== 0) throw new Error(`${cmd.join(" ")} exited with ${code}`); };
   mkdirSync(`${cloud}/public`, { recursive: true });
   await sh(["bun", resolve(PKG, "scripts/sync-panel.ts"), "--dest", `${cloud}/public/_`]);
-  if (publicDir) { env.VOIDBASE_APP_DIR = resolve(publicDir); await sh(["bun", resolve(PKG, "scripts/sync-app.ts"), "--dest", `${cloud}/public`], undefined); log(`static site ${resolve(publicDir)} served at / (the panel stays at /_/)`); }
+  if (publicDir) {
+    env.VOIDBASE_APP_DIR = resolve(publicDir); await sh(["bun", resolve(PKG, "scripts/sync-app.ts"), "--dest", `${cloud}/public`], undefined); log(`static site ${resolve(publicDir)} served at / (the panel stays at /_/)`);
+    if (pathRedirects.length) writeFileSync(`${cloud}/public/_redirects`, pathRedirects.map((r) => `${r.path} ${r.to} ${r.status}`).join("\n") + "\n");
+  }
   const secrets: [string, string][] = [["VOIDBASE_SUPERUSER_EMAIL", email], ["VOIDBASE_SUPERUSER_PASSWORD", password], ...extraSecrets.filter((k) => process.env[k]).map((k): [string, string] => [k, process.env[k]!])];
   for (const [k, v] of secrets) await sh(["bun", wrangler, "secret", "put", k, "--name", name], v + "\n");
   await sh([voidBin, "deploy", "--backend", "cloudflare"]);
@@ -182,9 +185,48 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     const d = await attachCustomDomain(api, account.id, { hostname: host, service: name });
     log(`custom domain ${d.hostname} ${d.created ? "attached" : "already attached"} (zone ${d.zone_id}); the certificate can take a minute`);
   }
+  if (hostRedirects.length) await applyZoneRedirects(api, account.id, name, hostRedirects, log);
   if (url) {
     const ok = await fetch(`${url}/api/health`).then((r) => r.status).catch(() => 0);
     log(`\nlive: ${url}  (health ${ok || "not reachable yet"})\n├─ REST API:  ${url}/api/\n└─ Dashboard: ${url}/_/   sign in as ${email} (password in ${credFile})`);
   } else log("deployed; workers.dev subdomain not enabled on this account, add a route or enable it in the dashboard (or VOIDBASE_DEPLOY_DOMAIN=<host> / --domain)");
   return { name, account: account.id, url, wranglerConfig, project: cloud };
+}
+
+// ---- host-scoped redirects as zone Redirect Rules (Rulesets API, phase http_request_dynamic_redirect) --------------
+// One rule per `_redirects` line, tagged `voidbase:<worker>:` in its description so a redeploy replaces exactly its own
+// rules and leaves the zone's other redirect rules alone. Needs the token to carry Zone > Single Redirect (edit) for the
+// zone; without it the deploy logs the rules to create by hand and carries on.
+const quote = (v: string) => JSON.stringify(v);
+export function redirectRule(worker: string, r: RedirectEntry): Record<string, unknown> {
+  const wildcard = r.path.endsWith("/*"); const prefix = wildcard ? r.path.slice(0, -1) : r.path; // "/docs/*" -> "/docs/"
+  const expression = wildcard ? (prefix === "/" ? `(http.host eq ${quote(r.host!)})` : `(http.host eq ${quote(r.host!)} and starts_with(http.request.uri.path, ${quote(prefix)}))`) : `(http.host eq ${quote(r.host!)} and http.request.uri.path eq ${quote(r.path)})`;
+  const absolute = (to: string) => (/^https?:\/\//.test(to) ? to : `https://${r.host}${to.startsWith("/") ? "" : "/"}${to}`);
+  const splat = r.to.includes(":splat");
+  const target_url = splat
+    ? { expression: `concat(${quote(absolute(r.to).replace(":splat", "").replace(/\/$/, ""))}, ${prefix === "/" ? "http.request.uri.path" : `substring(http.request.uri.path, ${prefix.length - 1})`})` }
+    : { value: absolute(r.to) };
+  return { description: `voidbase:${worker}:${r.source}`, expression, action: "redirect", action_parameters: { from_value: { status_code: r.status, target_url, preserve_query_string: true } }, enabled: true };
+}
+export async function applyZoneRedirects(api: CfApi, account: string, worker: string, entries: RedirectEntry[], log: (l: string) => void): Promise<void> {
+  const byZone = new Map<string, { zone: { id: string; name: string }; rules: Record<string, unknown>[] }>();
+  for (const r of entries) {
+    const zone = await findZone(api, r.host!, account);
+    if (!zone) { log(`redirect ${r.source}: no zone on the account covers ${r.host}, rule skipped`); continue; }
+    const slot = byZone.get(zone.id) ?? { zone, rules: [] }; slot.rules.push(redirectRule(worker, r)); byZone.set(zone.id, slot);
+  }
+  for (const { zone, rules } of byZone.values()) {
+    const path = `/zones/${zone.id}/rulesets/phases/http_request_dynamic_redirect/entrypoint`;
+    try {
+      const cur = await api.raw("GET", path); const body = await cur.text();
+      if (cur.status === 403 || cur.status === 401) throw new Error("permission");
+      const existing = cur.ok ? ((JSON.parse(body) as { result?: { rules?: Record<string, unknown>[] } }).result?.rules ?? []) : [];
+      const kept = existing.filter((x) => !String(x.description ?? "").startsWith(`voidbase:${worker}:`));
+      await api.json("PUT", path, { rules: [...kept, ...rules] });
+      log(`zone ${zone.name}: ${rules.length} redirect rule(s) set (${rules.map((x) => String(x.description).split(":").slice(2).join(":")).join(", ")})`);
+    } catch (e) {
+      const why = e instanceof Error && e.message === "permission" ? "the token lacks Zone > Single Redirect (edit) for the zone" : e instanceof Error ? e.message : String(e);
+      log(`zone ${zone.name}: redirect rules not set (${why}). Create them under Rules > Redirect Rules, or extend the token and deploy again:\n${rules.map((x) => `  ${x.expression} -> ${JSON.stringify((x.action_parameters as { from_value: { target_url: unknown } }).from_value.target_url)}`).join("\n")}`);
+    }
+  }
 }

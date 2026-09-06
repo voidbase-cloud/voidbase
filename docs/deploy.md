@@ -50,11 +50,14 @@ A static site is served at `/` by the same Worker when there is one: `./pb_publi
 automatically when the directory exists, exactly like `voidbase serve`), `--public-dir <dir>` or
 `VOIDBASE_DEPLOY_PUBLIC_DIR`. Build it first: the directory needs an `index.html`. Unknown paths get its `404.html`
 (a copy of `index.html` unless the build made one) with status 404, `/api` and `/_/` are untouched. A `_redirects`
-file in that directory (Netlify/Pages syntax, `source destination [status]`) becomes Void edge redirect rules (`routing.redirects` in the
-generated void.json; the file itself is not uploaded, Cloudflare's asset layer only accepts relative sources) evaluated
-before the assets and the Worker; a source may name a host, which is how one Worker behind several custom domains
-answers differently per hostname, e.g. `https://api.example.com/  /_/  302` sends the API hostname's root to the
-admin panel while the site keeps serving on the apex.
+file in that directory (Netlify/Pages syntax, `source destination [status]`) is split in two: path-only lines are
+uploaded with the assets as Cloudflare's own `_redirects` (evaluated before the Worker), and lines whose source names a
+host (`https://api.example.com/  /_/  302`) become zone Redirect Rules after the upload, tagged with the Worker's name so
+a redeploy replaces exactly its own rules. That is how one Worker behind several custom domains answers differently per
+hostname: the site on the apex, the API hostname's root sent to the admin panel, `www` sent to the apex. The token needs
+Zone > Single Redirect (edit) for the zone; without it the deploy prints the rules to create by hand and carries on.
+(Void's own `routing.redirects` are not used: they are applied by the Void platform's dispatch worker, which a
+self-hosted deploy does not have.)
 
 ```bash
 voidbase deploy --public-dir ../sk/build     # a build that lives elsewhere

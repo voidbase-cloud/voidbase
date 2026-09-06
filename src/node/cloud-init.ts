@@ -7,20 +7,21 @@ const ROOT = resolve(import.meta.dir, "../..");
 
 // mode "package": a visible project importing the voidbase package (voidbase cloud init).
 // mode "internal": a project inside this package at .cloud/<slug>, importing ../../src etc. (voidbase deploy).
-export type RedirectRules = Record<string, { to: string; status: number }>;
-// Netlify/Pages-style `_redirects`: `source destination [status]`, `#` comments; a source may carry a host
-// (`https://api.example.com/`), which scopes the rule to that Host header. 3xx rules become void.json routing.redirects.
-export function parseRedirects(text: string): RedirectRules {
-  const rules: RedirectRules = {};
-  for (const raw of text.split("\n")) {
-    const line = raw.replace(/#.*$/, "").trim(); if (!line) continue;
-    const [source, to, statusRaw] = line.split(/\s+/); if (!source || !to) continue;
-    const status = Number((statusRaw ?? "302").replace(/!$/, "")); if (![301, 302, 303, 307, 308].includes(status)) continue;
-    rules[source] = { to, status };
-  }
-  return rules;
+export interface RedirectEntry { source: string; host?: string; path: string; to: string; status: number; line: number }
+// Netlify/Pages-style `_redirects`: `source destination [status]`, `#` comments. A source may carry a host
+// (`https://api.example.com/`), which scopes the rule to that hostname. 3xx rules only (default 302).
+export function parseRedirects(text: string): RedirectEntry[] {
+  const out: RedirectEntry[] = [];
+  text.split("\n").forEach((raw, i) => {
+    const line = raw.replace(/#.*$/, "").trim(); if (!line) return;
+    const [source, to, statusRaw] = line.split(/\s+/); if (!source || !to) return;
+    const status = Number((statusRaw ?? "302").replace(/!$/, "")); if (![301, 302, 303, 307, 308].includes(status)) return;
+    const m = source.match(/^https?:\/\/([^/]+)(\/.*)?$/);
+    out.push({ source, host: m ? m[1]!.toLowerCase() : undefined, path: m ? m[2] || "/" : source, to, status, line: i + 1 });
+  });
+  return out;
 }
-export function writeCloudProject(out: string, mode: "package" | "internal" = "package", extra: { hooksDir?: string; migrationsDir?: string; entry?: string; queue?: string | false; hub?: boolean; redirects?: RedirectRules } = {}): { files: number; out: string } {
+export function writeCloudProject(out: string, mode: "package" | "internal" = "package", extra: { hooksDir?: string; migrationsDir?: string; entry?: string; queue?: string | false; hub?: boolean } = {}): { files: number; out: string } {
   const parentPkg = existsSync("package.json") ? (JSON.parse(readFileSync("package.json", "utf8")) as { dependencies?: Record<string, string> }) : {};
   const spec = parentPkg.dependencies?.["@voidbase-cloud/voidbase"] ?? parentPkg.dependencies?.voidbase ?? "^0.1.0";
   const own = JSON.parse(readFileSync(`${ROOT}/package.json`, "utf8")) as { devDependencies: Record<string, string> };
@@ -44,7 +45,7 @@ export function writeCloudProject(out: string, mode: "package" | "internal" = "p
   const files: Record<string, string> = {
     "package.json": JSON.stringify({ name: "cloud", private: true, type: "module", scripts: { dev: "vp dev --port 8090 --host 0.0.0.0", build: "vp build", preview: "vp preview --port 8090", "panel:sync": "voidbase panel sync --dest public/_", deploy: "void deploy" }, dependencies: { "@voidbase-cloud/voidbase": spec }, devDependencies: { "@cloudflare/workers-types": own.devDependencies["@cloudflare/workers-types"], typescript: "^5.9.3", vite: own.devDependencies.vite, "vite-plus": own.devDependencies["vite-plus"], void: own.devDependencies.void } }, null, 2) + "\n",
     "vite.config.ts": `import { defineConfig, loadEnv } from "vite";\nimport { voidPlugin } from "void";\nimport { pbHooksPlugin } from "${P.plugin}";\n\n// the project's pb_hooks/ and pb_migrations/ (one directory up) are bundled into the Worker\nexport default defineConfig(({ mode }) => {\n  const env = loadEnv(mode, process.cwd(), "");\n  return { plugins: [voidPlugin({ persistTo: env.VOIDBASE_PERSIST_TO || undefined }), pbHooksPlugin({ dir: env.VOIDBASE_HOOKS_DIR || ${hooksDir}, migrationsDir: env.VOIDBASE_MIGRATIONS_DIR || ${migrationsDir}${extra.hub !== false ? `, hubEntry: ${JSON.stringify(P.hub)}` : ""} })] };\n});\n`,
-    "void.json": JSON.stringify({ $schema: "./node_modules/void/schema.json", worker: { compatibility_date: "2026-09-05", compatibility_flags: ["nodejs_compat"] }, routing: { notFound: "404-page", ...(extra.redirects && Object.keys(extra.redirects).length ? { redirects: extra.redirects } : {}) }, inference: { bindings: { db: true, storage: true } } }, null, 2) + "\n",
+    "void.json": JSON.stringify({ $schema: "./node_modules/void/schema.json", worker: { compatibility_date: "2026-09-05", compatibility_flags: ["nodejs_compat"] }, routing: { notFound: "404-page" }, inference: { bindings: { db: true, storage: true } } }, null, 2) + "\n",
     "env.ts": `export { default } from "${P.env}";\n`,
     "routes/api/[...path].ts": `// Every /api/* request is handled by voidbase's Hono app (PocketBase wire protocol).\nimport { defineHandler } from "void";\nimport { app } from "${P.app}";\n${entry}\nconst handle = defineHandler((c) => app.fetch(c.req.raw, c.env, (c as unknown as { executionCtx?: ExecutionContext }).executionCtx));\nexport const GET = handle; export const POST = handle; export const PATCH = handle; export const PUT = handle; export const DELETE = handle; export const OPTIONS = handle;\n`,
     "crons/every-minute.ts": `// Cloudflare cron triggers: the hooks' cronAdd expressions and an hourly tick for PocketBase's maintenance.\nimport { defineScheduled } from "void";\nimport "${P.cronsApp}";\nimport { runDue } from "${P.crons}";\n\nexport const cron = ${JSON.stringify(triggers)};\nexport default defineScheduled(async (controller, env) => { await runDue(env as never, new Date(controller.scheduledTime)); });\n`,

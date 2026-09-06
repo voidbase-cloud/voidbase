@@ -40,6 +40,12 @@ async function activeBackup(db: D1Database): Promise<string | null> {
 }
 const lock = (db: D1Database, name: string) => run(db, "INSERT OR REPLACE INTO `_params` (id, value, created, updated) VALUES (?, ?, ?, ?)", [LOCK_KEY, JSON.stringify({ name, at: Date.now() }), nowString(), nowString()]);
 const unlock = (db: D1Database) => run(db, "DELETE FROM `_params` WHERE id = ?", [LOCK_KEY]);
+// apis/health.go canBackup: no backup or restore currently holds the lock
+export async function backupActive(db: D1Database): Promise<boolean> {
+  const row = await db.prepare("SELECT value FROM `_params` WHERE id = ?").bind(LOCK_KEY).first<{ value: string }>();
+  if (!row) return false;
+  try { const at = Number((JSON.parse(row.value) as { at?: number }).at ?? 0); return Date.now() - at < 30 * 60_000; } catch { return true; }
+}
 
 async function listAll(storage: R2Bucket, prefix: string): Promise<R2Object[]> {
   const out: R2Object[] = []; let cursor: string | undefined;

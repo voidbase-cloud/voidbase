@@ -1858,8 +1858,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "health.data.canBackup is false while a backup or restore holds the lock in _params (apis/health.go semantics); possibleProxyHeader ignores CF-Connecting-IP because Workers set it themselves and it is already the real IP."
         }
       ]
     },
@@ -2083,9 +2084,9 @@
             "admin"
           ],
           "hours": 1,
-          "status": "partial",
+          "status": "done",
           "milestone": "m1",
-          "notes": "Login, token refresh, and logout verified headlessly; superuser password reset flow pending."
+          "notes": "Login, token refresh, logout verified headlessly; superuser password reset driven through the unmodified panel (Forgotten password page, reset email, confirm page, new password) in test/panel-login.ts, differential against the reference PocketBase panel."
         },
         {
           "id": "pnl.collections",
@@ -2129,9 +2130,9 @@
             "admin"
           ],
           "hours": 0.5,
-          "status": "partial",
+          "status": "done",
           "milestone": "m3",
-          "notes": "Renders with the right base URL in headless runs; not asserted screen by screen."
+          "notes": "test/panel-login.ts opens the API preview modal: the seven sections (List/Search, View, Create, Update, Delete, Realtime, Batch) and the JS SDK / Dart SDK / curl tabs all render with this server's URL, identical to the reference panel."
         },
         {
           "id": "pnl.logs",
@@ -2237,8 +2238,9 @@
             "prod"
           ],
           "hours": 1,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "bun scripts/sync-panel.ts --brand <dir> (or VOIDBASE_BRAND_DIR): logo.svg / logo_white.svg / favicon.png replace the panel images, brand.json {title, docsUrl} rewrites <title> and the pocketbase.io/docs links in the bundles; verified with test/fixtures/brand. The panel code itself stays unmodified."
         }
       ]
     },

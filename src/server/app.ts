@@ -24,7 +24,8 @@ import { mountLogsApi, requestLogger } from "./logs";
 import { mountCronsApi } from "./crons";
 import { mountBackupsApi } from "./backups";
 import { mountSqlApi } from "./sql";
-import { bodyLimitMiddleware, rateLimitMiddleware } from "./hardening";
+import { bodyLimitMiddleware, rateLimitMiddleware, realIPWith } from "./hardening";
+import { backupActive } from "./backups";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import { saveHookRecord } from "./records/service";
@@ -78,11 +79,13 @@ app.get("/api/health", async (c) => {
   let data: Record<string, unknown> = {};
   if (isSuperuser(auth)) {
     const settings = await loadSettings(c.env.DB);
-    const headers = [...settings.trustedProxy.headers, "CF-Connecting-IP", "Fly-Client-IP", "X-Forwarded-For"];
+    // apis/health.go: remind superusers behind an unconfigured reverse proxy. On Workers CF-Connecting-IP is set
+    // by the platform itself and already used as the real IP, so it is not a "possible" proxy header here.
+    const headers = [...settings.trustedProxy.headers, "Fly-Client-IP", "X-Forwarded-For"];
     data = {
-      canBackup: false,
+      canBackup: !(await backupActive(c.env.DB)),
       possibleProxyHeader: headers.find((h) => !!c.req.header(h)) ?? "",
-      realIP: c.req.header("CF-Connecting-IP") ?? c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() ?? "",
+      realIP: realIPWith(settings, c),
     };
   }
   return c.json({ message: "API is healthy.", code: 200, data });

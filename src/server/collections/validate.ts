@@ -1,5 +1,7 @@
 // Collection validation mirroring PocketBase core/collection_validate.go (codes and messages).
 import type { FieldErrors } from "../errors";
+import { compileFilter, FilterError } from "../filter/compile";
+import { FilterSyntaxError } from "../filter/lexer";
 import { parseIndex } from "./ddl";
 import { FIELD_TYPES, isFieldType, type Field } from "./fields";
 import type { Collection } from "./model";
@@ -42,12 +44,46 @@ export function validateCollection(c: Collection, old: Collection | null, ctx: V
   const idxErr = validateIndexes(c, old, ctx);
   if (idxErr) errs.indexes = idxErr;
 
-  if (!isNew && old.system) {
-    for (const k of ["listRule", "viewRule", "createRule", "updateRule", "deleteRule"] as const) {
-      if ((c[k] ?? null) !== (old[k] ?? null)) errs[k] = err("validation_collection_system_rule_change", "System collection API rule cannot be changed.");
-    }
+  // API rules: view collections cannot have write rules (ozzo Nil), every rule must compile against the
+  // collection's own fields (checkRule), system collection rules are frozen (ensureNoSystemRuleChange).
+  const frozen = !isNew && old.system;
+  const ruleChange = (nv: unknown, ov: unknown) => (frozen && (nv ?? null) !== (ov ?? null) ? err("validation_collection_system_rule_change", "System collection API rule cannot be changed.") : null);
+  for (const k of ["listRule", "viewRule", "createRule", "updateRule", "deleteRule"] as const) {
+    const v = (c[k] ?? null) as string | null;
+    if (c.type === "view" && k !== "listRule" && k !== "viewRule" && v !== null) errs[k] = err("validation_nil", "Must be blank.");
+    else errs[k] = ruleError(v, c, ctx) ?? ruleChange(v, old?.[k]);
+    if (!errs[k]) delete errs[k];
   }
-  return errs;
+  if (c.type === "auth") {
+    const opts = c.options as { authRule?: string | null; manageRule?: string | null; mfa?: { enabled?: boolean; rule?: string } };
+    const oldOpts = (old?.options ?? {}) as typeof opts;
+    const authRuleErr = ruleError(opts.authRule ?? null, c, ctx) ?? ruleChange(opts.authRule, oldOpts.authRule);
+    if (authRuleErr) errs.authRule = authRuleErr;
+    const manageRuleErr = opts.manageRule === "" ? err("validation_nil_or_not_empty_required", "Cannot be blank.") : ruleError(opts.manageRule ?? null, c, ctx) ?? ruleChange(opts.manageRule, oldOpts.manageRule);
+    if (manageRuleErr) errs.manageRule = manageRuleErr;
+    // collection_model_auth_options.go returns the struct errors first; the mfa rule is only checked after they pass
+    const mfaRule = opts.mfa?.rule ?? "";
+    if (opts.mfa?.enabled && mfaRule && !authRuleErr && !manageRuleErr) { const e = ruleError(mfaRule, c, ctx) ?? ruleChange(mfaRule, oldOpts.mfa?.rule ?? ""); if (e) errs.mfa = { rule: e }; }
+  }
+  // Go serializes validation.Errors (a map) with sorted keys
+  return Object.fromEntries(Object.entries(errs).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+// core/collection_validate.go checkRule: a dry compile with an empty request (no auth) - the same resolver the
+// records API uses, so unknown fields, bad relation paths and syntax errors surface at save time.
+function ruleError(rule: string | null, c: Collection, ctx: ValidateContext) {
+  if (rule === null || rule === "") return null;
+  const collections = new Map<string, Collection>();
+  for (const x of ctx.all) { collections.set(x.id, x); collections.set(x.name, x); }
+  try {
+    compileFilter(rule, { base: c, collections, request: { auth: null, method: "GET", query: {}, headers: {}, body: {}, context: "default" }, allowHiddenFields: true });
+    return null;
+  } catch (e) {
+    // search.FilterData.BuildExpr: parse failures collapse to one message; resolver failures keep their text
+    const raw = e instanceof FilterSyntaxError ? "invalid or incomplete filter expression" : e instanceof FilterError ? e.message : null;
+    if (raw === null) throw e;
+    return err("validation_invalid_rule", `Invalid rule. Raw error: ${/[.!?]$/.test(raw) ? raw : raw + "."}`);
+  }
 }
 
 function validateName(c: Collection, old: Collection | null, ctx: ValidateContext) {

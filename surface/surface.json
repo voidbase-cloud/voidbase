@@ -338,10 +338,10 @@
             "admin"
           ],
           "hours": 3,
-          "status": "partial",
+          "status": "done",
           "milestone": "m2",
           "verify": "Panel shows the same field errors as PocketBase",
-          "notes": "Names, ids, types, duplicates, reserved names, system-field protection, field settings, indexes: all matching PocketBase's codes. API rule syntax validation waits for the filter parser."
+          "notes": "Names, ids, types, duplicates, reserved names, system-field protection, field settings, indexes, and API rules: listRule/viewRule/createRule/updateRule/deleteRule plus authRule/manageRule/mfa.rule dry-compile through the records filter resolver with PocketBase's validation_invalid_rule 'Invalid rule. Raw error: ...' wording (operand wrapping, back-relation errors), validation_nil for view write rules, sorted error keys. test/conformance/rules.ts is differential against the reference PocketBase (11 cases)."
         },
         {
           "id": "coll.ddl",

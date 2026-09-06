@@ -143,8 +143,12 @@ class Compiler {
   }
 
   cmp(op: Sign, leftTok: Token, rightTok: Token): { sql: string; params: unknown[] } {
-    const left = this.resolve(leftTok);
-    const right = this.resolve(rightTok);
+    // tools/search/filter.go wraps resolver failures with the operand they came from
+    const operand = (side: "left" | "right", tok: Token): Resolved => {
+      try { return this.resolve(tok); } catch (e) { throw e instanceof FilterError ? new FilterError(`invalid ${side} operand "${tok.literal}" - ${e.message}`) : e; }
+    };
+    const left = operand("left", leftTok);
+    const right = operand("right", rightTok);
     for (const j of [...left.joins, ...right.joins]) this.addJoin(j);
     const base = buildCmp(op, left.sql, left, right.sql, right);
     const params = [...base.params];
@@ -270,7 +274,7 @@ class Compiler {
     const parts = name.split(".");
     const [collName, aliasName] = (parts[1] ?? "").split(":") as [string, string | undefined];
     const collection = this.o.collections.get(collName);
-    if (!collection) throw new FilterError(`unknown collection "${collName}"`);
+    if (!collection) throw new FilterError(`failed to load collection "${collName}" from field path "${name}"`);
     const alias = `__collection_${aliasName ?? collName}`;
     const join: Join = { table: collection.name, alias, on: "1=1", params: [], multi: true };
     const res = this.path(collection, alias, parts.slice(2), true);
@@ -296,9 +300,15 @@ class Compiler {
       // back-relation: otherCollection_via_relField
       const via = /^(\w+)_via_(\w+)$/.exec(prop);
       if (!field && via && !isLast) {
+        // record_field_resolver_runner.go back-relation checks, in PocketBase's order and wording
         const other = this.o.collections.get(via[1]!);
-        const relField = other && (other.fields as Field[]).find((f) => f.name === via[2] && f.type === "relation" && f.collectionId === cur.id);
-        if (!other || !relField) throw new FilterError(`unknown field "${prop}"`);
+        if (!other) throw new FilterError(`failed to load back relation field "${prop}" collection`);
+        const backField = (other.fields as Field[]).find((f) => f.name === via[2]);
+        if (!backField) throw new FilterError(`missing back relation field "${via[2]}"`);
+        if (backField.type !== "relation") throw new FilterError(`invalid back relation field "${via[2]}"`);
+        if (backField.hidden && !this.o.allowHiddenFields) throw new FilterError(`non-filterable back relation field "${backField.name}"`);
+        if (backField.collectionId !== cur.id) throw new FilterError(`invalid collection reference of a back relation field "${backField.name}"`);
+        const relField = backField;
         const newAlias = `${curAlias}_${prop}`;
         const on = isMultiple(relField)
           ? `${col(curAlias, "id")} IN (SELECT value FROM ${jsonEach(col(newAlias, relField.name))})`

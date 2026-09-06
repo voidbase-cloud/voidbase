@@ -164,6 +164,7 @@ export async function createCollection(db: D1Database, raw: Record<string, unkno
   await withCollectionHooks("Create", c, true, async () => {
     const ctx = await validateContext(db, []);
     ctx.all.push(c);
+    if (c.type === "view") await preloadViewFields(db, c);
     throwIfErrors(validateCollection(c, null, ctx), "Failed to create collection.");
     if (c.type === "view") await viewDryRun(db, c, "Failed to create collection.", true);
   }, async () => {
@@ -179,6 +180,7 @@ export async function updateCollection(db: D1Database, old: Collection, raw: Rec
   const c = prepareCollection(raw, old);
   await withCollectionHooks("Update", c, false, async () => {
     const ctx = await validateContext(db, [c]);
+    if (c.type === "view") await preloadViewFields(db, c);
     throwIfErrors(validateCollection(c, old, ctx), "Failed to update collection.");
     if (c.type === "view") await viewDryRun(db, c, "Failed to update collection.", false);
   }, async () => {
@@ -306,6 +308,12 @@ export async function inferViewFields(db: D1Database, query: string, collections
   return fields as Field[];
 }
 // validation_invalid_view_query, the way collection_validate.go reports a broken view query
+// Best-effort inference before validation: API rules are checked against the fields the query produces.
+// A broken query is reported by viewDryRun right after, with PocketBase's viewQuery/fields errors.
+async function preloadViewFields(db: D1Database, c: Collection): Promise<void> {
+  try { c.fields = await inferViewFields(db, String(c.options.viewQuery ?? ""), await loadCollections(db)); } catch { /* reported by viewDryRun */ }
+}
+
 async function viewDryRun(db: D1Database, c: Collection, failMsg: string, isNew: boolean): Promise<void> {
   try { await inferViewFields(db, String(c.options.viewQuery ?? ""), await loadCollections(db)); }
   catch (err) {

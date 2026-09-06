@@ -22,7 +22,7 @@ const serveOpts = () => ({ http: flags.http, dir: flags.dir, hooksDir: flags.hoo
 const admin = () => { const [email, password] = (flags.admin ?? `${process.env.VOIDBASE_SUPERUSER_EMAIL ?? "admin@example.com"}:${process.env.VOIDBASE_SUPERUSER_PASSWORD ?? ""}`).split(":") as [string, string]; return { email, password }; };
 const HELP = `voidbase - PocketBase-compatible backend: a single Bun process locally, Cloudflare Workers via Void in production
 
-  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--publicDir ../sk/build] [--dev] [--entry main.ts]
+  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--publicDir pb_public] [--dev] [--entry main.ts]
                                      run the server like "pocketbase serve" (--dev restarts when hooks or migrations change;
                                      --entry runs your own main.ts, the counterpart of a custom PocketBase build)
   superuser upsert <email> <password>  create or update a superuser: on the local data directory (--dir) or on a running
@@ -31,7 +31,7 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   init [dir]                         scaffold .env, pb_hooks/, pb_migrations/ in a fresh checkout and sync the panel
   dev [--port 5180]                  start the Void dev server (vp dev)
   build | preview [--port 5181]      production build / run the built Worker locally (vp build / vp preview)
-  deploy [--name worker] [--account id] [--domain api.example.com] [--public-dir ../sk/build] [--dry-run] [--no-queue] [--no-hub] [--no-cron]
+  deploy [--name worker] [--account id] [--domain example.com,api.example.com] [--public-dir pb_public] [--dry-run] [--no-queue] [--no-hub] [--no-cron]
          [--analytics] [--rate-limit 300/10]
                                      go live on your Cloudflare account with VOIDBASE_DEPLOY_CF_API_KEY: creates the D1
                                      database and R2 bucket, writes cloud/ (voidbase cloud init) with wrangler.jsonc,

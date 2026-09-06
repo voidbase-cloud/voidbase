@@ -93,8 +93,13 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   // Workers Free allows 5 cron triggers per account; without the trigger PocketBase's maintenance runs lazily in requests
   const cron = opts.cron ?? !off(process.env.VOIDBASE_DEPLOY_CRON);
   // a custom domain on a zone of the account (wrangler attaches it: DNS record + certificate); workers.dev is then off
-  const domain = String(opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN || "").trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase();
-  if (domain && !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) throw new Error(`invalid custom domain "${domain}"`);
+  // several hostnames may be listed (comma separated); the first is the Worker's URL, all are attached
+  const domains = String(opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN || "").split(",").map((d) => d.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase()).filter(Boolean);
+  for (const d of domains) if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)) throw new Error(`invalid custom domain "${d}"`);
+  const domain = domains[0] ?? "";
+  // the static site next to the API: --public-dir, VOIDBASE_DEPLOY_PUBLIC_DIR, or ./pb_public when it exists (PocketBase's default)
+  const publicDir = opts.publicDir || process.env.VOIDBASE_DEPLOY_PUBLIC_DIR || (existsSync(resolve("pb_public")) ? "pb_public" : undefined);
+  if (publicDir && !existsSync(resolve(publicDir, "index.html"))) throw new Error(`public dir ${resolve(publicDir)} has no index.html (build the site first)`);
   let queue: string | false = false;
   if (wantQueue) {
     const q = await ensureQueue(api, account.id, `${name}-jobs`);
@@ -148,9 +153,9 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   writeFileSync(credFile, JSON.stringify({ email, password }, null, 2) + "\n", { mode: 0o600 });
 
   const url = domain ? `https://${domain}` : await workersSubdomain(api, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null));
-  if (domain) log(`custom domain ${domain} (workers.dev off): attached through the Workers Custom Domains API after the upload (Cloudflare adds the DNS record and certificate)`);
+  if (domain) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")} (workers.dev off): attached through the Workers Custom Domains API after the upload (Cloudflare adds the DNS record and certificate)`);
   log(`bindings: D1, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
-  if (opts.dryRun) { log(`dry run: would sync the panel${opts.publicDir ? ` and ${opts.publicDir}` : ""} into ${cloud}/public, put 2 secrets and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig, project: cloud }; }
+  if (opts.dryRun) { log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put 2 secrets and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig, project: cloud }; }
 
   // the toolchain comes with the voidbase package (void, and wrangler through void)
   const voidDir = resolve(Bun.resolveSync("void/package.json", PKG), "..");
@@ -163,12 +168,12 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const sh = async (cmd: string[], input?: string) => { const p = Bun.spawn(cmd, { cwd: cloud, env: env as Record<string, string>, stdin: input === undefined ? "inherit" : new TextEncoder().encode(input), stdout: "inherit", stderr: "inherit" }); const code = await p.exited; if (code !== 0) throw new Error(`${cmd.join(" ")} exited with ${code}`); };
   mkdirSync(`${cloud}/public`, { recursive: true });
   await sh(["bun", resolve(PKG, "scripts/sync-panel.ts"), "--dest", `${cloud}/public/_`]);
-  if (opts.publicDir) await sh(["bun", resolve(PKG, "scripts/sync-app.ts"), "--dest", `${cloud}/public`], undefined).catch((e) => log(`frontend build not synced: ${e instanceof Error ? e.message : e}`));
+  if (publicDir) { env.VOIDBASE_APP_DIR = resolve(publicDir); await sh(["bun", resolve(PKG, "scripts/sync-app.ts"), "--dest", `${cloud}/public`], undefined); log(`static site ${resolve(publicDir)} served at / (the panel stays at /_/)`); }
   const secrets: [string, string][] = [["VOIDBASE_SUPERUSER_EMAIL", email], ["VOIDBASE_SUPERUSER_PASSWORD", password], ...extraSecrets.filter((k) => process.env[k]).map((k): [string, string] => [k, process.env[k]!])];
   for (const [k, v] of secrets) await sh(["bun", wrangler, "secret", "put", k, "--name", name], v + "\n");
   await sh([voidBin, "deploy", "--backend", "cloudflare"]);
-  if (domain) {
-    const d = await attachCustomDomain(api, account.id, { hostname: domain, service: name });
+  for (const host of domains) {
+    const d = await attachCustomDomain(api, account.id, { hostname: host, service: name });
     log(`custom domain ${d.hostname} ${d.created ? "attached" : "already attached"} (zone ${d.zone_id}); the certificate can take a minute`);
   }
   if (url) {

@@ -61,7 +61,9 @@ export async function openLocal(opts: ServeOptions) {
   try { if (!existsSync(`${dir}/types.d.ts`)) writeFileSync(`${dir}/types.d.ts`, emb?.typesDts ?? readFileSync(`${PKG}/types/pb_data.d.ts`, "utf8")); } catch { /* optional */ }
   const sqlite = openDatabase(`${dir}/data.db`);
   applySystemMigrations(sqlite, emb?.migrations ?? readSystemMigrations());
-  const env = { DB: d1(sqlite), STORAGE: fsBucket(`${dir}/storage`), ASSETS: assetsFetcher({ panelDir: await ensurePanelDir(), publicDir: opts.publicDir ? resolve(opts.publicDir) : undefined }) };
+  // PocketBase serves ./pb_public at / when the directory exists (--publicDir); a build there is a full static host
+  const publicDir = opts.publicDir ? resolve(opts.publicDir) : existsSync(resolve("pb_public")) ? resolve("pb_public") : undefined;
+  const env = { DB: d1(sqlite), STORAGE: fsBucket(`${dir}/storage`), ASSETS: assetsFetcher({ panelDir: await ensurePanelDir(), publicDir }) };
   return { dir, sqlite, env };
 }
 

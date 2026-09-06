@@ -43,7 +43,16 @@ deploy just skips the jobs queue and says so.
 
 ```bash
 export VOIDBASE_DEPLOY_CF_API_KEY=...        # or put it in .env next to pb_hooks, or a CI secret
-voidbase deploy --public-dir ../sk/build     # --name <worker>, --account <id> when the token reaches several accounts
+voidbase deploy                              # --name <worker>, --account <id> when the token reaches several accounts
+```
+
+A static site is served at `/` by the same Worker when there is one: `./pb_public` (PocketBase's convention, picked up
+automatically when the directory exists, exactly like `voidbase serve`), `--public-dir <dir>` or
+`VOIDBASE_DEPLOY_PUBLIC_DIR`. Build it first: the directory needs an `index.html`. Unknown paths get its `404.html`
+(a copy of `index.html` unless the build made one) with status 404, `/api` and `/_/` are untouched.
+
+```bash
+voidbase deploy --public-dir ../sk/build     # a build that lives elsewhere
 ```
 
 What it does, in order: resolves the account through the token, creates `<name>-db` (D1), `<name>-storage`
@@ -66,8 +75,9 @@ https://dash.cloudflare.com/?to=/:account/api-tokens).
 
 ### A custom domain
 
-`voidbase deploy --domain api.example.com` (or `VOIDBASE_DEPLOY_DOMAIN`) turns workers.dev off for the Worker and attaches
-the hostname through the Workers Custom Domains API after the upload: Cloudflare creates the DNS record and the
+`voidbase deploy --domain api.example.com` (or `VOIDBASE_DEPLOY_DOMAIN`; several hostnames comma separated, the first is
+the URL the deploy reports) turns workers.dev off for the Worker and attaches each hostname through the Workers Custom
+Domains API after the upload: Cloudflare creates the DNS record and the
 certificate (a minute or two), and the token needs nothing beyond Workers Scripts edit, provided the zone is on the same
 account. Cloudflare still requires the account to have a workers.dev subdomain before it accepts any upload (error
 10063): open Workers & Pages once, or `PUT /accounts/<id>/workers/subdomain {"subdomain": "<name>"}`.

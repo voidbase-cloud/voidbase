@@ -61,6 +61,7 @@ function syncPublic(from: string, to: string): number {
 export function voidbaseAdapter(options: AdapterOptions = {}) {
   let root = process.cwd();
   let clientOut: string | undefined;
+  let hasClient = false;
   const log = (msg: string) => { if (!options.quiet) console.log(`voidbase: ${msg}`); };
 
   return {
@@ -70,6 +71,7 @@ export function voidbaseAdapter(options: AdapterOptions = {}) {
     configResolved(config: { root: string; build?: { outDir?: string }; environments?: Record<string, { build?: { outDir?: string } }> }) {
       root = config.root ?? root;
       const fromEnv = config.environments?.client?.build?.outDir;
+      hasClient = !!config.environments?.client;
       clientOut = fromEnv ?? config.build?.outDir;
     },
     buildStart() {
@@ -77,13 +79,16 @@ export function voidbaseAdapter(options: AdapterOptions = {}) {
       const manifest = scanVoidApp({ root, dev: process.env.NODE_ENV !== "production" });
       writeVoidbaseApp(manifest, { pkg: options.pkg, migrations: options.migrations });
     },
-    closeBundle() {
+    // fires once per built environment; the work is idempotent and the client builds last, so report only then
+    closeBundle(this: { environment?: { name?: string } }) {
       const clientDir = options.clientDir ?? (clientOut && existsSync(resolve(root, clientOut)) ? clientOut : undefined);
       const { manifest, copied } = adapt(root, { ...options, clientDir });
       const counts = `${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)`;
-      log(manifest.mode === "static" ? `static app: ${copied} entr(ies) in ${options.publicDir ?? "pb_public"}, no server code` : `${counts} -> .voidbase/void-app.ts; ${copied} entr(ies) in ${options.publicDir ?? "pb_public"}`);
-      for (const u of manifest.unsupported) console.warn(`voidbase: ${u.what} is not carried over — ${u.why}`);
-      for (const c of manifest.collisions) console.warn(`voidbase: ${c} is served by voidbase itself, so the app route never runs — move it off that path`);
+      if (!hasClient || this.environment?.name === "client") {
+        log(manifest.mode === "static" ? `static app: ${copied} entr(ies) in ${options.publicDir ?? "pb_public"}, no server code` : `${counts} -> .voidbase/void-app.ts; ${copied} entr(ies) in ${options.publicDir ?? "pb_public"}`);
+        for (const u of manifest.unsupported) console.warn(`voidbase: ${u.what} is not carried over — ${u.why}`);
+        for (const c of manifest.collisions) console.warn(`voidbase: ${c} is served by voidbase itself, so the app route never runs — move it off that path`);
+      }
       mkdirSync(join(root, ".voidbase"), { recursive: true }); // a static app may have nothing else in there
       writeFileSync(join(root, ".voidbase", "manifest.json"), JSON.stringify({ ...manifest, root: undefined }, null, 2) + "\n");
     },

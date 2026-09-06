@@ -10,7 +10,7 @@ import { buildExecutables, TARGETS, hostTarget } from "../scripts/build-exe";
 import { sha256 } from "../src/node/update";
 
 const PKG = resolve(import.meta.dir, "..");
-const STARTER = process.env.STARTER_VB_DIR ?? resolve(PKG, "../voidbase-sveltekit-starter/vb");
+const STARTER = resolve(process.env.STARTER_VB_DIR ?? resolve(PKG, "../voidbase-sveltekit-starter/vb")); // the executable runs from a temp dir: absolute paths
 let pass = 0, fail = 0; const check = (l: string, ok: boolean, d = "") => { ok ? pass++ : fail++; console.log(`${ok ? "PASS" : "FAIL"}  ${l}${ok ? "" : "  " + d}`); };
 const freePort = () => { const s = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() }); const p = s.port; s.stop(true); return p; };
 const tmp = mkdtempSync(join(tmpdir(), "vb-exe-")); const home = `${tmp}/home`; mkdirSync(home);

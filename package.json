@@ -1,10 +1,21 @@
 {
-  "name": "voidbase",
+  "name": "@voidbase-cloud/voidbase",
   "version": "0.1.0",
-  "description": "PocketBase-wire-compatible backend on Cloudflare Workers via Void",
+  "description": "PocketBase-compatible backend on Cloudflare Workers (D1, R2, Queues, Durable Objects) via Void, or a single Bun process",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/voidbase-cloud/voidbase.git"
+  },
+  "homepage": "https://github.com/voidbase-cloud/voidbase#readme",
+  "bugs": {
+    "url": "https://github.com/voidbase-cloud/voidbase/issues"
+  },
   "private": false,
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "voidbase": "bin/voidbase.ts"
   },
@@ -98,7 +109,10 @@
     "panel:sync": "bun scripts/sync-panel.ts",
     "surface": "bun surface/render.ts",
     "test": "bun test",
-    "app:sync": "bun scripts/sync-app.ts"
+    "app:sync": "bun scripts/sync-app.ts",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "pack:check": "npm pack --dry-run",
+    "prepublishOnly": "bun run check && bun test"
   },
   "dependencies": {
     "@cf-wasm/photon": "^0.4.0",

@@ -9,19 +9,19 @@ const ROOT = resolve(import.meta.dir, "../..");
 // mode "internal": a project inside this package at .cloud/<slug>, importing ../../src etc. (voidbase deploy).
 export function writeCloudProject(out: string, mode: "package" | "internal" = "package", extra: { hooksDir?: string; migrationsDir?: string; entry?: string; queue?: string | false; hub?: boolean } = {}): { files: number; out: string } {
   const parentPkg = existsSync("package.json") ? (JSON.parse(readFileSync("package.json", "utf8")) as { dependencies?: Record<string, string> }) : {};
-  const spec = parentPkg.dependencies?.voidbase ?? "^0.1.0";
+  const spec = parentPkg.dependencies?.["@voidbase-cloud/voidbase"] ?? parentPkg.dependencies?.voidbase ?? "^0.1.0";
   const own = JSON.parse(readFileSync(`${ROOT}/package.json`, "utf8")) as { devDependencies: Record<string, string> };
   const rel = (p: string) => p.replace(/\\/g, "/");
   // import targets: the voidbase package by name (visible project) or this package by relative path (internal
   // project at <package>/.cloud/<slug>; depth = how many directories the importing file sits below the project root)
   const pkg = (depth: number, target: string, byName: string) => (mode === "package" ? byName : "../".repeat(depth + 2) + target);
   const P = {
-    plugin: pkg(0, "hooks-plugin", "voidbase/plugin"), env: pkg(0, "env.ts", "voidbase/env"), // Void loads env.ts Node-style: the internal path needs its extension
-    app: pkg(2, "src/server/app", "voidbase/app"), cronsApp: pkg(1, "src/server/app", "voidbase/app"), crons: pkg(1, "src/server/crons", "voidbase/crons"),
-    schema: mode === "package" ? "voidbase/schema" : `${rel(ROOT)}/db/schema.ts`, // absolute: Void's drift check copies the project into .void/deploy-drift-check/<tmp>/ before drizzle-kit loads db/schema.ts
-    api: pkg(2, "src/server/api", "voidbase/api"),
-    jobs: pkg(1, "src/server/jobs", "voidbase/jobs"),
-    hub: pkg(0, "src/server/hub", "voidbase/hub"),
+    plugin: pkg(0, "hooks-plugin", "@voidbase-cloud/voidbase/plugin"), env: pkg(0, "env.ts", "@voidbase-cloud/voidbase/env"), // Void loads env.ts Node-style: the internal path needs its extension
+    app: pkg(2, "src/server/app", "@voidbase-cloud/voidbase/app"), cronsApp: pkg(1, "src/server/app", "@voidbase-cloud/voidbase/app"), crons: pkg(1, "src/server/crons", "@voidbase-cloud/voidbase/crons"),
+    schema: mode === "package" ? "@voidbase-cloud/voidbase/schema" : `${rel(ROOT)}/db/schema.ts`, // absolute: Void's drift check copies the project into .void/deploy-drift-check/<tmp>/ before drizzle-kit loads db/schema.ts
+    api: pkg(2, "src/server/api", "@voidbase-cloud/voidbase/api"),
+    jobs: pkg(1, "src/server/jobs", "@voidbase-cloud/voidbase/jobs"),
+    hub: pkg(0, "src/server/hub", "@voidbase-cloud/voidbase/hub"),
   };
   // the project's main.ts (its register(app) function) is composed into the Worker exactly as in `bun main.ts`
   const entry = extra.entry ? `\nimport { appApi } from "${P.api}";\nimport { register } from ${JSON.stringify(extra.entry)};\nregister(appApi());\n` : "";
@@ -29,7 +29,7 @@ export function writeCloudProject(out: string, mode: "package" | "internal" = "p
   // the hooks' cronAdd expressions become the Worker's triggers (plus an hourly maintenance tick)
   const triggers = cronTriggers(resolve(out, extra.hooksDir ?? "../pb_hooks"));
   const files: Record<string, string> = {
-    "package.json": JSON.stringify({ name: "cloud", private: true, type: "module", scripts: { dev: "vp dev --port 8090 --host 0.0.0.0", build: "vp build", preview: "vp preview --port 8090", "panel:sync": "voidbase panel sync --dest public/_", deploy: "void deploy" }, dependencies: { voidbase: spec }, devDependencies: { "@cloudflare/workers-types": own.devDependencies["@cloudflare/workers-types"], typescript: "^5.9.3", vite: own.devDependencies.vite, "vite-plus": own.devDependencies["vite-plus"], void: own.devDependencies.void } }, null, 2) + "\n",
+    "package.json": JSON.stringify({ name: "cloud", private: true, type: "module", scripts: { dev: "vp dev --port 8090 --host 0.0.0.0", build: "vp build", preview: "vp preview --port 8090", "panel:sync": "voidbase panel sync --dest public/_", deploy: "void deploy" }, dependencies: { "@voidbase-cloud/voidbase": spec }, devDependencies: { "@cloudflare/workers-types": own.devDependencies["@cloudflare/workers-types"], typescript: "^5.9.3", vite: own.devDependencies.vite, "vite-plus": own.devDependencies["vite-plus"], void: own.devDependencies.void } }, null, 2) + "\n",
     "vite.config.ts": `import { defineConfig, loadEnv } from "vite";\nimport { voidPlugin } from "void";\nimport { pbHooksPlugin } from "${P.plugin}";\n\n// the project's pb_hooks/ and pb_migrations/ (one directory up) are bundled into the Worker\nexport default defineConfig(({ mode }) => {\n  const env = loadEnv(mode, process.cwd(), "");\n  return { plugins: [voidPlugin({ persistTo: env.VOIDBASE_PERSIST_TO || undefined }), pbHooksPlugin({ dir: env.VOIDBASE_HOOKS_DIR || ${hooksDir}, migrationsDir: env.VOIDBASE_MIGRATIONS_DIR || ${migrationsDir}${extra.hub !== false ? `, hubEntry: ${JSON.stringify(P.hub)}` : ""} })] };\n});\n`,
     "void.json": JSON.stringify({ $schema: "./node_modules/void/schema.json", worker: { compatibility_date: "2026-09-05", compatibility_flags: ["nodejs_compat"] }, routing: { notFound: "404-page" }, inference: { bindings: { db: true, storage: true } } }, null, 2) + "\n",
     "env.ts": `export { default } from "${P.env}";\n`,

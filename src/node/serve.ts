@@ -1,6 +1,6 @@
 // `voidbase serve`: the PocketBase-shaped single process. The same Hono app that runs on Cloudflare, with D1 on
 // bun:sqlite, R2 on the filesystem, SMTP on node sockets and the cron scheduler on a timer.
-//   import { serve } from "voidbase";  serve({ http: "127.0.0.1:8090", dir: "pb_data", publicDir: "../sk/build" });
+//   import { serve } from "@voidbase-cloud/voidbase";  serve({ http: "127.0.0.1:8090", dir: "pb_data", publicDir: "../sk/build" });
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { d1, openDatabase } from "./d1";

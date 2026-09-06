@@ -9,7 +9,7 @@ Codename: `kanz-zjy`. Progress map: `surface/surface.json` rendered by `bun run 
 
 ```ts
 // main.ts
-import { voidbase, parseServeArgs, type VoidbaseApp } from "voidbase";
+import { voidbase, parseServeArgs, type VoidbaseApp } from "@voidbase-cloud/voidbase";
 export function register(app: VoidbaseApp) {
   app.hooks.onRecordAfterCreateSuccess(async (e) => { /* ... */ }, "posts");   // the same on* functions pb_hooks get
   app.router.get("/api/hello", (c) => c.json({ hello: "world" }));              // Hono-style routes
@@ -20,6 +20,16 @@ if (import.meta.main) { const app = await voidbase(parseServeArgs()); register(a
 
 `bun main.ts --http 127.0.0.1:8090` runs it; `voidbase deploy` composes `register` into the Worker as well.
 `voidbase-sveltekit-starter/vb` is the worked example (audit log, `hooks` collection actions, passkeys).
+
+## Install
+
+```bash
+bun add @voidbase-cloud/voidbase        # the package: library, CLI (`voidbase`) and the Cloudflare project generator
+bunx @voidbase-cloud/voidbase serve     # or run the CLI without installing
+```
+
+Releases are tagged `vX.Y.Z` and published from GitHub Actions to npm (with provenance once the repository is
+public) and to GitHub Packages; see [docs/releasing.md](docs/releasing.md).
 
 ## Run it like PocketBase
 

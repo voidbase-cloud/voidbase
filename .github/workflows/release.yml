@@ -1,0 +1,82 @@
+# Publishes @voidbase-cloud/voidbase when a vX.Y.Z tag is pushed (see docs/releasing.md).
+# "Run workflow" with dry_run runs everything with `npm publish --dry-run` and creates no release.
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "run every step but publish nothing"
+        type: boolean
+        default: true
+permissions:
+  contents: write   # the GitHub release
+  packages: write   # GitHub Packages
+  id-token: write   # npm provenance
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '--dry-run' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.3.14" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", registry-url: "https://registry.npmjs.org", scope: "@voidbase-cloud" }
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Check and test
+        run: |
+          bun run check
+          bun test
+          bun test/cloud-rest.ts
+      - name: Version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "push" ] && [ "${GITHUB_REF_NAME}" != "v$VERSION" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match package.json version $VERSION"; exit 1; fi
+          if npm view "@voidbase-cloud/voidbase@$VERSION" version >/dev/null 2>&1; then
+            echo "@voidbase-cloud/voidbase@$VERSION is already on npm"; [ -n "$DRY_RUN" ] || exit 1; fi
+      - name: Pack
+        run: |
+          npm pack
+          ls -la voidbase-cloud-voidbase-*.tgz
+          npm pack --dry-run 2>&1 | tail -n 40
+      - name: Smoke-install the tarball
+        run: |
+          TARBALL="$PWD/$(ls voidbase-cloud-voidbase-*.tgz)"
+          mkdir -p /tmp/smoke && cd /tmp/smoke
+          bun init -y >/dev/null
+          bun add "$TARBALL"
+          bunx voidbase help | head -n 5
+          node -e "const p=require('@voidbase-cloud/voidbase/package.json'); if (p.version !== '${{ steps.version.outputs.version }}') throw new Error('version mismatch')"
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          PROVENANCE=""; [ "${{ github.event.repository.private }}" = "false" ] && PROVENANCE="--provenance"
+          echo "provenance: ${PROVENANCE:-off (private repository)}  dry run: ${DRY_RUN:-no}"
+          npm publish "$(ls voidbase-cloud-voidbase-*.tgz)" --access public $PROVENANCE $DRY_RUN
+      - name: Publish to GitHub Packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "@voidbase-cloud:registry=https://npm.pkg.github.com" > .npmrc
+          echo "//npm.pkg.github.com/:_authToken=\${NODE_AUTH_TOKEN}" >> .npmrc
+          npm publish "$(ls voidbase-cloud-voidbase-*.tgz)" --registry=https://npm.pkg.github.com $DRY_RUN
+          rm -f .npmrc
+      - name: Release notes
+        run: |
+          awk -v v="${{ steps.version.outputs.version }}" '/^## /{p=($2==v)} p' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "voidbase ${{ steps.version.outputs.version }}" > notes.md
+          cat notes.md
+      - name: GitHub release
+        if: ${{ env.DRY_RUN == '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "v${{ steps.version.outputs.version }}" voidbase-cloud-voidbase-*.tgz --title "v${{ steps.version.outputs.version }}" --notes-file notes.md

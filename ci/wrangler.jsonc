@@ -1,0 +1,11 @@
+// The status Worker a Workers Builds project deploys at the end of a build (docs/ci.md): the page scripts/ci-status.ts
+// renders into ci/public (steps, suites, screenshots, logs, status.json, badge.svg). Assets only, no code. Workers
+// Builds names the Worker after the project it builds (voidbase-ci, voidbase-release) and a build of another branch
+// uploads a version, so the pull request gets a preview URL of its results.
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "voidbase-ci",
+  "compatibility_date": "2026-01-01",
+  "assets": { "directory": "./public", "html_handling": "auto-trailing-slash", "not_found_handling": "none" },
+  "observability": { "enabled": false }
+}

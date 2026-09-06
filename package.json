@@ -114,7 +114,10 @@
     "pack:check": "npm pack --dry-run",
     "prepublishOnly": "bun run check && bun test",
     "prepare": "husky || true",
-    "build:exe": "bun scripts/build-exe.ts"
+    "build:exe": "bun scripts/build-exe.ts",
+    "ci": "bash scripts/ci.sh",
+    "release": "bash scripts/release.sh",
+    "cf:builds": "bun scripts/cf-builds.ts"
   },
   "dependencies": {
     "@cf-wasm/photon": "^0.4.0",

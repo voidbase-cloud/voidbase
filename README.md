@@ -26,6 +26,14 @@ bun test/conformance/compare.ts          # same requests at both servers, JSON d
 bun test/panel-smoke.ts                  # headless login through the unmodified panel, screenshot to /tmp/panel.png
 ```
 
+## Use as a package (the starter's `vb/`)
+
+`pocketbase-sveltekit-starter/vb` is the reference consumer: a few one-line Void entry files import `voidbase/app`,
+`voidbase/middleware`, `voidbase/crons`, `voidbase/schema`, `voidbase/env` and the `pbHooksPlugin` from
+`voidbase/plugin`, with the project's own `pb_hooks/` and `pb_migrations/` next to them (package `exports`). Its
+`entrypoint.sh` is a drop-in for the PocketBase one: same `PB_*` environment, same port. The panel is fetched from the
+pinned PocketBase release when no local `ui/dist` is around (`scripts/sync-panel.ts`).
+
 ## CLI
 
 `bun bin/voidbase.ts --help` (or `voidbase` when installed): `init`, `dev`, `build`, `preview`, `deploy [--cloudflare]`,

@@ -7,16 +7,29 @@
 // title replaces <title> in index.html, docsUrl rewrites the https://pocketbase.io/docs links in the bundles.
 // The panel code itself is untouched; run without a brand dir to get the stock panel back.
 //   bun scripts/sync-panel.ts [--brand <dir>] [--dest <dir>]
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+// Source: POCKETBASE_UI_DIST, else ../pocketbase/ui/dist, else the pinned release tarball (POCKETBASE_PANEL_VERSION) cached under ~/.cache/voidbase.
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, arr) => (a.startsWith("--") ? [a.slice(2), arr[i + 1] ?? "1"] : [])).filter((x) => x.length));
-const src = resolve(process.env.POCKETBASE_UI_DIST ?? `${import.meta.dir}/../../pocketbase/ui/dist`);
+const PANEL_VERSION = process.env.POCKETBASE_PANEL_VERSION ?? "0.40.2";
+let src = resolve(process.env.POCKETBASE_UI_DIST ?? `${import.meta.dir}/../../pocketbase/ui/dist`);
 const dest = resolve(args.dest ?? `${import.meta.dir}/../public/_`);
 const brandDir = args.brand ?? process.env.VOIDBASE_BRAND_DIR;
 if (!existsSync(`${src}/index.html`)) {
-  console.error(`panel dist not found at ${src} (set POCKETBASE_UI_DIST)`);
-  process.exit(1);
+  // no local PocketBase checkout: fetch the committed ui/dist of the pinned release once into a cache
+  const cache = resolve(`${process.env.XDG_CACHE_HOME ?? `${process.env.HOME}/.cache`}/voidbase/panel-${PANEL_VERSION}`);
+  if (!existsSync(`${cache}/index.html`)) {
+    console.log(`downloading PocketBase ${PANEL_VERSION} admin panel (ui/dist) from GitHub`);
+    const res = await fetch(`https://codeload.github.com/pocketbase/pocketbase/tar.gz/refs/tags/v${PANEL_VERSION}`);
+    if (!res.ok) { console.error(`download failed: HTTP ${res.status} (set POCKETBASE_UI_DIST to a local ui/dist)`); process.exit(1); }
+    mkdirSync(cache, { recursive: true });
+    const tgz = `${cache}.tgz`; writeFileSync(tgz, new Uint8Array(await res.arrayBuffer()));
+    const tar = Bun.spawnSync(["tar", "-xzf", tgz, "-C", cache, "--strip-components=3", `pocketbase-${PANEL_VERSION}/ui/dist`]);
+    if (tar.exitCode !== 0) { console.error(new TextDecoder().decode(tar.stderr)); process.exit(1); }
+    rmSync(tgz, { force: true });
+  }
+  src = cache;
 }
 rmSync(dest, { recursive: true, force: true });
 cpSync(src, dest, { recursive: true });

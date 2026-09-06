@@ -8,6 +8,17 @@
   "bin": {
     "voidbase": "bin/voidbase.ts"
   },
+  "exports": {
+    "./app": "./src/server/app.ts",
+    "./crons": "./src/server/crons.ts",
+    "./plugin": "./hooks-plugin.ts",
+    "./middleware": "./middleware/01.request-context.ts",
+    "./schema": "./db/schema.ts",
+    "./env": "./env.ts",
+    "./scripts/*": "./scripts/*",
+    "./db/migrations/*": "./db/migrations/*",
+    "./package.json": "./package.json"
+  },
   "files": [
     "bin",
     "src",

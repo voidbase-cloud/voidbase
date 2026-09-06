@@ -63,6 +63,17 @@ await page.locator('form button[type="submit"]').first().click();
 await page.waitForTimeout(1500);
 results.signedIn = /Signed in as|user@example.com/.test(await text());
 
+// a fresh backend has no posts yet: seed one with an image so the list, thumbnails and view have something to show
+const seedAuth = await fetch(`${base}/api/collections/users/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: "user@example.com", password: "changeme123" }) }).then((r) => r.json()) as { token: string; record: { id: string } };
+let seededPostId = "";
+if (((await fetch(`${base}/api/collections/posts/records?perPage=1`).then((r) => r.json())) as { totalItems: number }).totalItems === 0) {
+  const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mP8z8BQz8DAwMDAxMAAAB8ABKQP6iEAAAAASUVORK5CYII="), (c) => c.charCodeAt(0));
+  const fd = new FormData(); fd.append("title", "Seed post"); fd.append("slug", `seed-${Date.now()}`); fd.append("body", "Seeded by the smoke test."); fd.append("user", seedAuth.record.id); fd.append("files", new Blob([png], { type: "image/png" }), "seed.png");
+  const seeded = await fetch(`${base}/api/collections/posts/records`, { method: "POST", headers: { authorization: seedAuth.token }, body: fd });
+  seededPostId = seeded.status === 200 ? String(((await seeded.json()) as { id: string }).id) : "";
+  results.seededPost = seeded.status;
+}
+
 // posts list: thumbnails and realtime subscription
 await page.goto(`${base}/posts/`, { waitUntil: "networkidle" });
 await page.waitForTimeout(1200);
@@ -139,6 +150,7 @@ const since = new Date(stamp - 5000).toISOString().replace("T", " ");
 const leftovers = await fetch(`${base}/api/collections/posts/records?perPage=50&filter=${encodeURIComponent(`created >= "${since}"`)}`, { headers: { authorization: auth.token } }).then((r) => r.json()) as { items: { id: string }[] };
 for (const p of leftovers.items ?? []) await fetch(`${base}/api/collections/posts/records/${p.id}`, { method: "DELETE", headers: { authorization: auth.token } });
 results.cleanedUp = (leftovers.items ?? []).length;
+if (seededPostId) await fetch(`${base}/api/collections/posts/records/${seededPostId}`, { method: "DELETE", headers: { authorization: auth.token } });
 // remove the signed-up user (superuser API)
 const su = await fetch(`${base}/api/collections/_superusers/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: "admin@example.com", password: "changeme123" }) }).then((r) => r.json()) as { token: string };
 const signedUp = await fetch(`${base}/api/collections/users/records?filter=${encodeURIComponent(`email = '${signupEmail}'`)}`, { headers: { authorization: su.token } }).then((r) => r.json()) as { items: { id: string }[] };

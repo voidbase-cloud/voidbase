@@ -52,6 +52,15 @@ jobs:
       - name: Differential suites and panel tests
         working-directory: voidbase
         run: ./scripts/ci-suites.sh http://127.0.0.1:8090 http://127.0.0.1:5180
+      - name: Differential suites against `voidbase serve` (Bun runtime, SQLite + local files)
+        working-directory: voidbase
+        run: |
+          ./scripts/dev.sh stop
+          (VOIDBASE_SUPERUSER_EMAIL=admin@example.com VOIDBASE_SUPERUSER_PASSWORD=changeme123 setsid nohup bun bin/voidbase.ts serve --http 127.0.0.1:8093 --dir .void/pb_data --hooksDir ../pocketbase-sveltekit-starter/pb/pb_hooks --migrationsDir ../pocketbase-sveltekit-starter/pb/pb_migrations > .void/serve.log 2>&1 &)
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:8093/api/health && break; sleep 1; done
+          ./scripts/seed-app-user.sh http://127.0.0.1:8093
+          CI_BROWSER=0 CI_LOGS=.void/ci-logs-bun ./scripts/ci-suites.sh http://127.0.0.1:8090 http://127.0.0.1:8093
+          ./scripts/dev.sh start 5180
       - name: Fresh-database boot (production build in workerd)
         working-directory: voidbase
         run: bun test/fresh-db.ts 5181

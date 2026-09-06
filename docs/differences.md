@@ -21,7 +21,7 @@ this page lists where the platform forces a different shape, and the limits that
 
 | Topic | PocketBase | voidbase |
 | --- | --- | --- |
-| Process | long-running binary, in-memory state | stateless isolates. Anything PocketBase keeps in memory (resend limits, OTP attempts, MFA sessions, WebAuthn challenges, backup lock) lives in `_params` or its own table |
+| Process | long-running binary, in-memory state | `voidbase serve` is a long-running Bun process with SQLite and local files (limits below do not apply there: transactions are real, rate limits exact, realtime pushes from memory); on Cloudflare, stateless isolates. Anything PocketBase keeps in memory (resend limits, OTP attempts, MFA sessions, WebAuthn challenges, backup lock) lives in `_params` or its own table |
 | Rate limits | per process, exact | per isolate, **approximate**: each isolate keeps its own fixed-window counters. Configure limits as a safety net, not as billing |
 | Realtime | in-process broadcaster | every SSE connection polls the `_changes` table from inside its own request, about once a second; connections in one isolate share the read. Events arrive within roughly one second and cost one D1 read per second per isolate while at least one client is connected (zero when idle) |
 | Crons | in-process scheduler | Cloudflare cron trigger every minute runs the due jobs (`runDue`). A job may run on any isolate; keep jobs idempotent. `POST /api/crons/:id` runs a job on demand |

@@ -1,6 +1,6 @@
 import { one, run } from "./db";
 import { nowString } from "./ids";
-import { env as voidEnv } from "void/env";
+import { env as voidEnv } from "#platform/env";
 
 // Defaults mirror PocketBase core/settings_model.go (captured from a 0.40.2 instance).
 // Stored as JSON in _params under id "settings". Secrets are stored but never returned by GET.

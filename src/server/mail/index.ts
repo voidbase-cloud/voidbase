@@ -3,7 +3,7 @@
 // message is logged (PocketBase would hand it to sendmail, which a Worker does not have).
 import type { Collection } from "../collections/model";
 import { signJWT } from "../jwt";
-import { env as voidEnv } from "void/env";
+import { env as voidEnv } from "#platform/env";
 import { loadSettings } from "../settings";
 import type { Row } from "../types";
 import { trigger } from "../hooks/runtime";

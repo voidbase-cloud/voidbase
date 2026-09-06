@@ -3,7 +3,7 @@
 // Only sizes declared on the field (plus the default 100x100) are honoured; anything else, a non-image original
 // or a failed generation serves the original, exactly like PocketBase. Generated thumbs are cached in R2 under
 // {collection}/{record}/thumbs_{filename}/{size}_{filename}. Resizing runs in Photon (Rust -> wasm).
-import { PhotonImage, SamplingFilter, crop, resize } from "@cf-wasm/photon";
+import { PhotonImage, SamplingFilter, crop, resize } from "#platform/photon";
 
 export const THUMB_SIZE_RE = /^(\d+)x(\d+)(t|b|f)?$/;
 export const IMAGE_CONTENT_TYPES = ["image/png", "image/jpg", "image/jpeg", "image/gif", "image/webp"];

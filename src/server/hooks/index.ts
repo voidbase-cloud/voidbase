@@ -1,7 +1,7 @@
 // Loads the bundled pb_hooks files, exposes the JSVM-compatible globals, mounts routerAdd routes.
-import { logger } from "void/log";
+import { logger } from "#platform/log";
 import type { Hono, MiddlewareHandler } from "hono";
-import { files, hooks, hooksDir, modules } from "virtual:voidbase-hooks";
+import { files, hooks, hooksDir, modules } from "#platform/hooks";
 import { loadCollections } from "../collections/model";
 import { loadSettings } from "../settings";
 import type { AppEnv } from "../types";

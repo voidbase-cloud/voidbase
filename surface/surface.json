@@ -58,6 +58,11 @@
       "title": "Two unmodified oracles",
       "choice": "The PocketBase 0.40.2 admin panel and the pocketbase JS SDK 0.28, both untouched, define done. Schema is data, edited at runtime.",
       "why": "The panel exercises the superuser surface that apps never touch; the starter exercises the app surface."
+    },
+    {
+      "id": "d7",
+      "title": "voidbase serve: the same server as a single Bun process",
+      "body": "The Hono app is platform-neutral; everything Cloudflare-specific sits behind #platform/* modules (env, log, sse, sockets, hooks, migrations, photon) with a Workers flavour and a Bun flavour. `voidbase serve` runs the app on bun:sqlite (D1 API shim, batches as transactions) and the filesystem (R2 API shim) with PocketBase's flags, so a consumer is a pb_hooks + pb_migrations + package.json directory, exactly like a PocketBase folder; `voidbase cloud init` generates the Void project for the Cloudflare deploy from the same directory. Verified: all 31 differential and browser suites pass against the Bun runtime too."
     }
   ],
   "statuses": {
@@ -2428,6 +2433,21 @@
           "status": "done",
           "milestone": "m6",
           "notes": "bin/voidbase.ts (package.json bin): init (scaffold .env, pb_hooks, pb_migrations, panel sync), dev/build/preview/deploy wrappers over vp/void, superuser upsert|list, import, export, panel sync --brand, app sync, seed-user; remote commands via --url/--admin. Exercised against the dev server (upsert create+update, list, import, export)."
+        },
+        {
+          "id": "prod.serve",
+          "title": "voidbase serve: PocketBase-shaped single process (Bun) with the same hooks, migrations, panel and flags",
+          "surface": "voidbase serve --http --dir --hooksDir --migrationsDir --publicDir --dev",
+          "oracles": [
+            "prod",
+            "starter",
+            "admin"
+          ],
+          "hours": 6,
+          "status": "done",
+          "milestone": "m6",
+          "verify": "All differential suites pass against the Bun runtime; the starter runs on vb/ with a one-script swap",
+          "notes": "src/node/{d1,storage,assets,panel,serve}.ts + src/platform/{workers,node}/*. D1 on bun:sqlite (batch = transaction, raw/first/run/all), R2 on the filesystem with .meta sidecars, SSE and SMTP on node streams/sockets, hooks compiled at startup with the same transform, cron on a timer, PocketBase's pb_data/types.d.ts written for editors, `superuser upsert` offline on pb_data, `--dev` restarts on hook changes. scripts/ci-suites.sh against `voidbase serve` on 8093: 31/31 suites pass (the one diff found was Bun's JSON content-type default, now explicit). pocketbase-sveltekit-starter/vb is the consumer: pb_hooks + pb_migrations + package.json + an entrypoint.sh identical in contract to pb/; `bun run backend:vb` in sk; test/starter-smoke.ts green against it; `voidbase cloud init` writes the Void project for Cloudflare and it builds."
         },
         {
           "id": "prod.export",

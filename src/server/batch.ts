@@ -110,7 +110,7 @@ async function readBatchBody(c: Context<AppEnv>): Promise<{ requests: InternalRe
       if (typeof raw === "string") payload = JSON.parse(raw) as typeof payload;
       for (const [key, value] of fd.entries()) {
         const m = /^requests[.[](\d+)[.\]]\.?(.+)$/.exec(key.replace(/\]\./, "."));
-        if (!m || !(value instanceof File)) continue;
+        if (!m || typeof value === "string") continue;
         const idx = Number(m[1]); const field = m[2]!.replace(/^\./, "");
         if (!files.has(idx)) files.set(idx, []);
         files.get(idx)!.push([field, value]);

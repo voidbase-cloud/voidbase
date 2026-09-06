@@ -1,4 +1,4 @@
-import { env as voidEnv } from "void/env";
+import { env as voidEnv } from "#platform/env";
 import { invalidateCollections, type Collection } from "./collections/model";
 import { systemCollections } from "./collections/system";
 import { all, ident, one, run } from "./db";
@@ -45,21 +45,27 @@ async function upsertSuperuserFromEnv(db: D1Database): Promise<void> {
   const email = voidEnv.VOIDBASE_SUPERUSER_EMAIL;
   const password = voidEnv.VOIDBASE_SUPERUSER_PASSWORD;
   if (!email || !password) return;
+  await upsertSuperuser(db, email, password);
+}
+
+// `pocketbase superuser upsert EMAIL PASS`
+export async function upsertSuperuser(db: D1Database, email: string, password: string): Promise<"created" | "updated" | "unchanged"> {
   const table = ident("_superusers");
   const existing = await one(db, `SELECT id, password FROM ${table} WHERE email = ? LIMIT 1`, [email]);
   const now = nowString();
   if (existing) {
     // Only rehash when the stored hash no longer matches the configured password (cheap check first).
     const { verifyPassword } = await import("./password");
-    if (await verifyPassword(password, String(existing.password ?? ""))) return;
+    if (await verifyPassword(password, String(existing.password ?? ""))) return "unchanged";
     await run(db, `UPDATE ${table} SET password = ?, tokenKey = ?, updated = ? WHERE id = ?`, [
       await hashPassword(password), randomString(50), now, existing.id,
     ]);
-    return;
+    return "updated";
   }
   await run(
     db,
     `INSERT OR IGNORE INTO ${table} (id, password, tokenKey, email, emailVisibility, verified, created, updated) VALUES (?,?,?,?,?,?,?,?)`,
     [randomId(), await hashPassword(password), randomString(50), email, false, true, now, now],
   );
+  return "created";
 }

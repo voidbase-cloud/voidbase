@@ -6,7 +6,7 @@
 // query result (plain data) so the D1 read cost stays near one query per second per isolate. Zero cost when
 // nobody is connected.
 import type { Context } from "hono";
-import { eventStream } from "void/sse";
+import { eventStream } from "#platform/sse";
 import type { Collection } from "../collections/model";
 import { loadCollections } from "../collections/model";
 import { one, stmt } from "../db";

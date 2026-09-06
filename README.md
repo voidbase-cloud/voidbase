@@ -5,7 +5,20 @@ The unmodified PocketBase admin panel (0.40.2) and the unmodified `pocketbase` J
 
 Codename: `kanz-zjy`. Progress map: `surface/surface.json` rendered by `bun run surface`.
 
-## Run locally
+## Run it like PocketBase
+
+```bash
+bun install
+bunx voidbase serve --http 127.0.0.1:8090 --dir pb_data --hooksDir pb_hooks --migrationsDir pb_migrations --publicDir ./public
+```
+
+One Bun process, SQLite in `pb_data/data.db`, files in `pb_data/storage/`, the admin panel at `/_/`, the same
+`pb_hooks` and `pb_migrations` you would give PocketBase (`--dev` restarts on hook changes, `voidbase superuser
+upsert email pass` works offline on `pb_data`). The Cloudflare deployment runs the same code on D1 and R2: put a
+`voidbase cloud init` project next to your hooks and `void deploy` it (see docs/deploy.md). The PocketBase-shaped
+consumer is `pocketbase-sveltekit-starter/vb`.
+
+## Run locally (this checkout, Workers dev server)
 
 ```bash
 bun install

@@ -1,6 +1,6 @@
 // SMTP client on Cloudflare TCP sockets (tools/mailer/smtp.go semantics): implicit TLS when settings.smtp.tls,
 // otherwise opportunistic STARTTLS when the server offers it; AUTH PLAIN (default) or LOGIN; EHLO with localName.
-import { connect } from "cloudflare:sockets";
+import { connect, type Socket } from "#platform/sockets";
 
 export interface SMTPConfig { host: string; port: number; username: string; password: string; authMethod: string; tls: boolean; localName: string }
 export interface Envelope { from: string; to: string[]; data: string }

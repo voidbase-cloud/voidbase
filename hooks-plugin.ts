@@ -4,6 +4,8 @@
 // contain them become `async`, and the change propagates to callers (also across files via exported names).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+const PLATFORM_MODULES = ["env", "log", "sse", "sockets", "hooks", "migrations", "photon"];
 import ts from "typescript";
 import type { Plugin } from "vite";
 
@@ -170,8 +172,11 @@ export function compileMigrationsDir(dir: string): string {
 export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string } = {}): Plugin {
   const dir = resolve(options.dir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks");
   const migrationsDir = resolve(options.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations");
+  const here = resolve(fileURLToPath(new URL(".", import.meta.url)));
   return {
     name: "voidbase-pb-hooks",
+    // the Workers build takes the workers flavour of every #platform module (package.json "imports" covers Bun/Node)
+    config() { return { resolve: { alias: PLATFORM_MODULES.map((n) => ({ find: `#platform/${n}`, replacement: resolve(here, "src/platform/workers", `${n}.ts`) })) } }; },
     resolveId(id) { return id === VIRTUAL ? RESOLVED : id === VIRTUAL_MIGRATIONS ? RESOLVED_MIGRATIONS : null; },
     load(id) {
       if (id === RESOLVED) {

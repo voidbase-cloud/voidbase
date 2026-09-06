@@ -2,7 +2,7 @@
 // tracked in _pbMigrations (file, applied). The `app` handed to `up` is $app plus importCollections, so the
 // starter's snapshot migration creates its schema on a fresh database and later migrations can use
 // findCollectionByNameOrId / save / delete like they do in PocketBase.
-import { migrations } from "virtual:voidbase-migrations";
+import { migrations } from "#platform/migrations";
 import { invalidateCollections, loadCollections } from "../collections/model";
 import { importCollections } from "../collections/service";
 import { all, stmt } from "../db";

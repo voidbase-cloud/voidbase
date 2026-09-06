@@ -22,7 +22,7 @@ export class ApiError extends Error {
     return { data: this.data, message: this.message, status: this.status };
   }
   response() {
-    return Response.json(this.toJSON(), { status: this.status });
+    return jsonResponse(this.toJSON(), { status: this.status });
   }
 }
 
@@ -44,3 +44,10 @@ export const V = {
   }),
   invalidFormat: { code: "validation_invalid_format", message: "Invalid format." },
 };
+
+// Response.json() picks a runtime-specific default content type (workerd: application/json, Bun: with charset);
+// PocketBase answers with a bare application/json, so set it explicitly.
+export function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
+  const headers = new Headers(init.headers); headers.set("content-type", "application/json");
+  return new Response(JSON.stringify(body), { ...init, headers });
+}

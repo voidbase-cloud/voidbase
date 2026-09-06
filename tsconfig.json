@@ -10,6 +10,9 @@
     "types": [
       "void/env",
       "@cloudflare/workers-types"
+    ],
+    "customConditions": [
+      "workerd"
     ]
   },
   "include": [
@@ -20,5 +23,14 @@
     "queues",
     "db",
     "env.ts"
+  ],
+  "exclude": [
+    "bin",
+    "hooks-plugin.ts",
+    "scripts",
+    "src/node",
+    "src/platform/node",
+    "surface",
+    "test"
   ]
 }

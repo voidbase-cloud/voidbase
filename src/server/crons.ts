@@ -2,7 +2,7 @@
 // maintenance jobs. Cloudflare fires crons/every-minute.ts once a minute; runDue matches every job's expression
 // against that minute. The superuser API lists jobs and runs one on demand.
 import type { Hono } from "hono";
-import { logger } from "void/log";
+import { logger } from "#platform/log";
 import { requireSuperuser } from "./auth";
 import { run } from "./db";
 import { notFound } from "./errors";

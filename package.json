@@ -17,7 +17,40 @@
     "./env": "./env.ts",
     "./scripts/*": "./scripts/*",
     "./db/migrations/*": "./db/migrations/*",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    ".": "./src/node/serve.ts",
+    "./serve": "./src/node/serve.ts",
+    "./static": "./src/server/static.ts"
+  },
+  "imports": {
+    "#platform/env": {
+      "workerd": "./src/platform/workers/env.ts",
+      "default": "./src/platform/node/env.ts"
+    },
+    "#platform/log": {
+      "workerd": "./src/platform/workers/log.ts",
+      "default": "./src/platform/node/log.ts"
+    },
+    "#platform/sse": {
+      "workerd": "./src/platform/workers/sse.ts",
+      "default": "./src/platform/node/sse.ts"
+    },
+    "#platform/sockets": {
+      "workerd": "./src/platform/workers/sockets.ts",
+      "default": "./src/platform/node/sockets.ts"
+    },
+    "#platform/hooks": {
+      "workerd": "./src/platform/workers/hooks.ts",
+      "default": "./src/platform/node/hooks.ts"
+    },
+    "#platform/migrations": {
+      "workerd": "./src/platform/workers/migrations.ts",
+      "default": "./src/platform/node/migrations.ts"
+    },
+    "#platform/photon": {
+      "workerd": "./src/platform/workers/photon.ts",
+      "default": "./src/platform/node/photon.ts"
+    }
   },
   "files": [
     "bin",
@@ -38,7 +71,9 @@
     "COMPAT.md",
     "CHANGELOG.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "types",
+    "tsconfig.node.json"
   ],
   "keywords": [
     "pocketbase",
@@ -66,13 +101,14 @@
     "@simplewebauthn/server": "^14.0.1",
     "bcryptjs": "^3.0.2",
     "fflate": "^0.8.3",
-    "hono": "^4.11.9"
+    "hono": "^4.11.9",
+    "typescript": "^5.9.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250903.0",
+    "@types/bun": "^1.4.1",
     "playwright": "^1.63.0",
     "pocketbase": "0.28.0",
-    "typescript": "^5.9.3",
     "vite": "^8.0.10",
     "vite-plus": "^0.1.21",
     "void": "^0.10.13"

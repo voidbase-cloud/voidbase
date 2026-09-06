@@ -5,7 +5,8 @@ import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "no
 import { resolve } from "node:path";
 
 const src = resolve(process.env.VOIDBASE_APP_DIR ?? `${import.meta.dir}/../../pocketbase-sveltekit-starter/sk/build`);
-const dest = resolve(`${import.meta.dir}/../public`);
+const destArg = process.argv.indexOf("--dest");
+const dest = resolve(destArg >= 0 ? process.argv[destArg + 1]! : `${import.meta.dir}/../public`);
 if (!existsSync(`${src}/index.html`)) {
   console.error(`app build not found at ${src} (set VOIDBASE_APP_DIR; for the starter run \`bun run build\` in sk/)`);
   process.exit(1);

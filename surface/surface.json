@@ -2361,8 +2361,9 @@
             "prod"
           ],
           "hours": 4,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "done",
+          "milestone": "m6",
+          "notes": "test/conformance/security.ts (69 differential cases): filter/sort/fields injection, quoted/traversal collection names, hidden-field filtering, system collections as a user, superuser-only endpoints as user and guest, file/verification token misuse, tampered and stale tokens (password change invalidates), file path traversal, batch disabled, writes to views, guest user creation with verified=true, malformed bodies. Fixes from the review: PocketBase's per-endpoint malformed-body messages, RequireSameCollectionContextAuth 403 wording, files route collection message. Identifiers are whitelisted (\\w+ and backquoted) and every value is a bound parameter."
         },
         {
           "id": "prod.observability",
@@ -2372,8 +2373,9 @@
             "prod"
           ],
           "hours": 2,
-          "status": "todo",
-          "milestone": "m6"
+          "status": "partial",
+          "milestone": "m6",
+          "notes": "Unhandled request errors, hook file failures and cron failures go through void/log logger.error with structured fields (method, path, job, hook, error) so `void project logs --level error` filters them; every API request is also a _logs row (panel Logs). Request metrics come from `void project requests`. Error alerting (email/webhook on error spikes) not built."
         },
         {
           "id": "prod.perf",

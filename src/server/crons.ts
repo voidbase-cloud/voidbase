@@ -2,6 +2,7 @@
 // maintenance jobs. Cloudflare fires crons/every-minute.ts once a minute; runDue matches every job's expression
 // against that minute. The superuser API lists jobs and runs one on demand.
 import type { Hono } from "hono";
+import { logger } from "void/log";
 import { requireSuperuser } from "./auth";
 import { run } from "./db";
 import { notFound } from "./errors";
@@ -32,7 +33,7 @@ export function allJobs(backupsCron = ""): CronJob[] {
 }
 
 export async function runJob(env: AppEnv["Bindings"], job: CronJob): Promise<void> {
-  try { await withHookStore(env.DB, env, () => job.fn(env)); } catch (err) { console.error(`voidbase: cron ${job.id} failed`, err); }
+  try { await withHookStore(env.DB, env, () => job.fn(env)); } catch (err) { logger.error("voidbase: cron job failed", { job: job.id, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }); }
 }
 
 // tools/cron matcher for one minute (UTC, like PocketBase)

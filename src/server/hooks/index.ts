@@ -1,4 +1,5 @@
 // Loads the bundled pb_hooks files, exposes the JSVM-compatible globals, mounts routerAdd routes.
+import { logger } from "void/log";
 import type { Hono, MiddlewareHandler } from "hono";
 import { files, hooks, hooksDir, modules } from "virtual:voidbase-hooks";
 import { loadCollections } from "../collections/model";
@@ -86,8 +87,8 @@ export function loadHooks() {
   for (const h of hooks) {
     try {
       // top-level registrations run synchronously inside run(); the returned promise only settles handlers
-      void h.run(GLOBALS).catch((err) => console.error(`voidbase: hook ${h.name} failed`, err));
-    } catch (err) { console.error(`voidbase: hook ${h.name} failed`, err); }
+      void h.run(GLOBALS).catch((err) => logger.error("voidbase: hook file failed", { hook: h.name, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }));
+    } catch (err) { logger.error("voidbase: hook file failed", { hook: h.name, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }); }
   }
   console.log(`voidbase: loaded ${hooks.length} hook file(s) from ${hooksDir}, ${routes.length} route(s)`);
 }

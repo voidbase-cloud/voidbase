@@ -79,7 +79,7 @@ async function readBody(c: Context<AppEnv>): Promise<Record<string, unknown>> {
     const text = await c.req.text();
     return text ? JSON.parse(text) : {};
   } catch {
-    throw badRequest("Failed to read the request body.");
+    throw badRequest("An error occurred while loading the submitted data.");
   }
 }
 
@@ -134,9 +134,9 @@ async function dummyPasswordCheck(): Promise<false> {
 // POST /api/collections/:collection/auth-refresh
 export async function authRefresh(c: Context<AppEnv>, collection: Collection) {
   const auth = c.get("auth");
-  if (!auth || auth.collection.id !== collection.id) {
-    throw unauthorized("The request requires valid record authorization token.");
-  }
+  if (!auth) throw unauthorized("The request requires valid record authorization token.");
+  // RequireSameCollectionContextAuth names the token's own collection in its message
+  if (auth.collection.id !== collection.id) throw forbidden(`The request requires auth record from ${auth.collection.name} collection.`);
   const { recordContextFor } = await import("./app");
   const ctx = await recordContextFor(c);
   return requestHook("onRecordAuthRefreshRequest", c, collection.name, { collection: new CollectionRef(collection), record: HookRecord.fromRow(collection, auth.row) }, () => recordAuthResponse(c, ctx, collection, auth.row, "", {}));

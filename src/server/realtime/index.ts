@@ -95,7 +95,7 @@ export async function setSubscriptions(c: Context<AppEnv>, pre?: { clientId?: st
     try {
       const ct = c.req.header("content-type") ?? "";
       body = ct.includes("json") ? await c.req.json() : (Object.fromEntries((await c.req.formData()).entries()) as unknown as typeof body);
-    } catch { throw badRequest("Failed to read the submitted data."); }
+    } catch { throw badRequest(); }
   }
   const clientId = String(body.clientId ?? "");
   const subs = Array.isArray(body.subscriptions) ? body.subscriptions.map(String) : [];

@@ -9,6 +9,7 @@ import { fromColumn, toColumn } from "./records/values";
 import { expandRecords } from "./records/expand";
 import { hookGlobals, hookMiddleware, loadHooks, mountHookRoutes } from "./hooks";
 import { requestHook, requestHookResult, trigger } from "./hooks/runtime";
+import { logger } from "void/log";
 import type { Settings } from "./settings";
 import { applyPendingMigrations } from "./hooks/migrations";
 import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
@@ -67,7 +68,7 @@ app.use("*", hookMiddleware() as never);
 
 app.onError((err, c) => {
   if (err instanceof ApiError) return err.response();
-  console.error("voidbase: unhandled error", err);
+  logger.error("voidbase: unhandled error", { method: c.req.method, path: c.req.path, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err), stack: err instanceof Error ? err.stack : undefined });
   return c.json({ data: {}, message: "Something went wrong while processing your request.", status: 500 }, 500);
 });
 
@@ -136,7 +137,7 @@ app.get("/api/collections/:collection", async (c) => {
 
 app.post("/api/collections", async (c) => {
   requireSuperuser(c);
-  const body = await readJSON(c);
+  const body = await readJSON(c, "Failed to load the collection type data due to invalid formatting.");
   return requestHookResult("onCollectionCreateRequest", c, String(body.name ?? ""), { collection: new CollectionRef(body) }, async (ev) => collectionToJSON(await createCollection(c.env.DB, (ev.collection as CollectionRef).toRaw())));
 });
 
@@ -167,7 +168,7 @@ app.delete("/api/collections/:collection/truncate", async (c) => {
 
 app.put("/api/collections/import", async (c) => {
   requireSuperuser(c);
-  const body = await readJSON(c);
+  const body = await readJSON(c, "An error occurred while loading the submitted data.");
   const items = body.collections;
   if (!Array.isArray(items) || items.length === 0) {
     throw badRequest("An error occurred while validating the submitted data.", { collections: { code: "validation_required", message: "Cannot be blank." } });
@@ -239,7 +240,7 @@ async function readRecordBody(c: Context<AppEnv>): Promise<Record<string, unknow
     if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("not an object");
     return v as Record<string, unknown>;
   } catch {
-    throw badRequest("Failed to read the submitted data.");
+    throw badRequest(); // PocketBase's RequestInfo body loading fails with the generic message
   }
 }
 
@@ -290,14 +291,14 @@ app.delete("/api/collections/:collection/records/:id", async (c) => {
 app.get("/api/realtime", (c) => requestHook("onRealtimeConnectRequest", c, null, { client: null, idleTimeout: 300 }, () => realtimeConnect(c)));
 app.post("/api/realtime", async (c) => {
   let body: { clientId?: string; subscriptions?: string[] } = {};
-  try { const ct = c.req.header("content-type") ?? ""; body = ct.includes("json") ? await c.req.json() : (Object.fromEntries((await c.req.formData()).entries()) as unknown as typeof body); } catch { throw badRequest("Failed to read the submitted data."); }
+  try { const ct = c.req.header("content-type") ?? ""; body = ct.includes("json") ? await c.req.json() : (Object.fromEntries((await c.req.formData()).entries()) as unknown as typeof body); } catch { throw badRequest(); }
   return requestHook("onRealtimeSubscribeRequest", c, null, { client: { id: String(body.clientId ?? "") }, subscriptions: Array.isArray(body.subscriptions) ? body.subscriptions : [] }, (ev) => realtimeSetSubscriptions(c, { clientId: String(body.clientId ?? ""), subscriptions: ev.subscriptions as string[] }));
 });
 
 // --- files ----------------------------------------------------------------
 app.get("/api/files/:collection/:recordId/:filename", async (c) => {
   const collection = await findCollection(c.env.DB, c.req.param("collection"));
-  if (!collection) throw notFound();
+  if (!collection) throw notFound("Missing or invalid collection context.");
   const row = await one(c.env.DB, `SELECT * FROM ${ident(collection.name)} WHERE id = ? LIMIT 1`, [c.req.param("recordId")]);
   if (!row) throw notFound();
   const filename = c.req.param("filename");
@@ -368,13 +369,13 @@ const MANUAL_EXTENSION_CONTENT_TYPES: Record<string, string> = {
 const parseBool = (v: string | undefined) => v !== undefined && ["1", "t", "T", "TRUE", "true", "True"].includes(v);
 
 // --- helpers --------------------------------------------------------------
-async function readJSON(c: Context<AppEnv>): Promise<Record<string, unknown>> {
+async function readJSON(c: Context<AppEnv>, message = "Failed to load the submitted data due to invalid formatting."): Promise<Record<string, unknown>> {
   try {
     const v = await c.req.json();
     if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("not an object");
     return v as Record<string, unknown>;
   } catch {
-    throw badRequest("Failed to load the submitted data due to invalid formatting.");
+    throw badRequest(message);
   }
 }
 

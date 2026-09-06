@@ -8,7 +8,7 @@ import { findAuthRecordByToken } from "./auth";
 import { verifyPassword } from "./password";
 import type { Collection } from "./collections/model";
 import { ident, one, run } from "./db";
-import { ApiError, badRequest, unauthorized } from "./errors";
+import { ApiError, badRequest, unauthorized, forbidden } from "./errors";
 import { nowString, randomString } from "./ids";
 import { sendRecordChangeEmail, sendRecordPasswordReset, sendRecordVerification } from "./mail";
 import { updateRecord, type RecordContext } from "./records/service";
@@ -138,7 +138,8 @@ export function mountAuthFlows(app: Hono<AppEnv>, deps: { collection: (c: Contex
     const collection = await deps.collection(c);
     if (collection.name === "_superusers") throw badRequest("All superusers can change their emails directly.");
     const auth = c.get("auth");
-    if (!auth || auth.collection.id !== collection.id) throw unauthorized("The request requires valid record authorization token."); // RequireAuth middleware wording
+    if (!auth) throw unauthorized("The request requires valid record authorization token.");
+    if (auth.collection.id !== collection.id) throw forbidden(`The request requires auth record from ${auth.collection.name} collection.`); // RequireSameCollectionContextAuth
     const body = await readBody(c);
     const newEmail = String(body.newEmail ?? "");
     if (!newEmail) throw validationFailed({ newEmail: REQUIRED });

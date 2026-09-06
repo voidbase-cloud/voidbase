@@ -43,7 +43,8 @@ async function call(method: string, path: string, body?: unknown) {
 for (const n of ["ks_all", "ks_all2", "1bad", "undefined", "ks_rec"]) await call("DELETE", `/api/collections/${n}`);
 
 // 1) import the starter snapshot
-const snapshotSrc = await Bun.file("../pocketbase-sveltekit-starter/pb/pb_migrations/1774379551_collections_snapshot.js").text();
+const starterDir = process.env.STARTER_DIR ?? "../pocketbase-sveltekit-starter";  // scripts/ci-oracles.sh exports it
+const snapshotSrc = await Bun.file(`${starterDir}/pb/pb_migrations/1774379551_collections_snapshot.js`).text();
 const snapshot = JSON.parse(/(\[\s*\{[\s\S]*\}\s*\])/.exec(snapshotSrc)![1]!);
 const imp = await call("PUT", "/api/collections/import", { collections: snapshot, deleteMissing: false });
 check("import starter snapshot -> 204", imp.status === 204, () => JSON.stringify(imp.json));

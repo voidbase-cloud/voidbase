@@ -94,7 +94,7 @@ jobs:
       - name: HTTP mail provider transport (production build)
         working-directory: voidbase
         run: bun test/mail-http.ts 5184
-      - name: Prebuilt executable smoke (single file: embedded panel, migrations, typings, wasm; the update flow)
+      - name: "Prebuilt executable smoke (single file with the panel, migrations, typings and wasm embedded; the update flow)"
         working-directory: voidbase
         run: bun test/exe-smoke.ts
         env:

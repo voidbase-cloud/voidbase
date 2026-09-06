@@ -23,6 +23,8 @@ page.on("response", (r) => {
   if (r.status() >= 400) failed.push(`${r.status()} ${r.request().method()} ${u.pathname}${u.search}`);
 });
 const results: Record<string, unknown> = {};
+// direct API calls go through the starter's Vite proxy, which occasionally resets a connection: retry those
+const fetchRetry = async (url: string, init?: RequestInit): Promise<Response> => { for (let i = 0; ; i++) { try { return await fetch(url, init); } catch (err) { if (i >= 4) throw err; await new Promise((r) => setTimeout(r, 500)); } } };
 const text = async () => (await page.locator("body").innerText()).replace(/\s+/g, " ");
 const waitForText = async (needle: string, ms: number) => {
   const until = Date.now() + ms;
@@ -64,12 +66,12 @@ await page.waitForTimeout(1500);
 results.signedIn = /Signed in as|user@example.com/.test(await text());
 
 // a fresh backend has no posts yet: seed one with an image so the list, thumbnails and view have something to show
-const seedAuth = await fetch(`${base}/api/collections/users/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: "user@example.com", password: "changeme123" }) }).then((r) => r.json()) as { token: string; record: { id: string } };
+const seedAuth = await fetchRetry(`${base}/api/collections/users/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: "user@example.com", password: "changeme123" }) }).then((r) => r.json()) as { token: string; record: { id: string } };
 let seededPostId = "";
-if (((await fetch(`${base}/api/collections/posts/records?perPage=1`).then((r) => r.json())) as { totalItems: number }).totalItems === 0) {
+if (((await fetchRetry(`${base}/api/collections/posts/records?perPage=1`).then((r) => r.json())) as { totalItems: number }).totalItems === 0) {
   const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR4nGP4z8AAQv8ZYAwAQ84H+VjtZqAAAAAASUVORK5CYII="), (c) => c.charCodeAt(0));
   const fd = new FormData(); fd.append("title", "Seed post"); fd.append("slug", `seed-${Date.now()}`); fd.append("body", "Seeded by the smoke test."); fd.append("user", seedAuth.record.id); fd.append("files", new Blob([png], { type: "image/png" }), "seed.png");
-  const seeded = await fetch(`${base}/api/collections/posts/records`, { method: "POST", headers: { authorization: seedAuth.token }, body: fd });
+  const seeded = await fetchRetry(`${base}/api/collections/posts/records`, { method: "POST", headers: { authorization: seedAuth.token }, body: fd });
   seededPostId = seeded.status === 200 ? String(((await seeded.json()) as { id: string }).id) : "";
   results.seededPost = seeded.status;
 }
@@ -84,14 +86,14 @@ results.realtimeSubscribed = api.some((l) => l.includes("GET /api/realtime")) &&
 results.pagination = /page 1 of \d+/.test((await page.locator('nav[aria-label="Pagination"]').first().innerText().catch(() => "")).replace(/\s+/g, " "));
 
 // create a post through the API as the same user; the open page must pick it up over realtime
-const auth = await fetch(`${base}/api/collections/users/auth-with-password`, {
+const auth = await fetchRetry(`${base}/api/collections/users/auth-with-password`, {
   method: "POST", headers: { "content-type": "application/json" },
   body: JSON.stringify({ identity: "user@example.com", password: "changeme123" }),
 }).then((r) => r.json()) as { token: string; record: { id: string } };
 const stamp = Date.now();
 const title = `Starter smoke ${stamp}`;
 const slug = `starter-smoke-${stamp}`;
-const cr = await fetch(`${base}/api/collections/posts/records`, {
+const cr = await fetchRetry(`${base}/api/collections/posts/records`, {
   method: "POST", headers: { "content-type": "application/json", authorization: auth.token },
   body: JSON.stringify({ title, slug, body: "Created through the API while the starter was watching.", user: auth.record.id }),
 });
@@ -147,14 +149,14 @@ await browser.close();
 
 // clean up what Generate created during this run (the API-created post was deleted through the UI)
 const since = new Date(stamp - 5000).toISOString().replace("T", " ");
-const leftovers = await fetch(`${base}/api/collections/posts/records?perPage=50&filter=${encodeURIComponent(`created >= "${since}"`)}`, { headers: { authorization: auth.token } }).then((r) => r.json()) as { items: { id: string }[] };
-for (const p of leftovers.items ?? []) await fetch(`${base}/api/collections/posts/records/${p.id}`, { method: "DELETE", headers: { authorization: auth.token } });
+const leftovers = await fetchRetry(`${base}/api/collections/posts/records?perPage=50&filter=${encodeURIComponent(`created >= "${since}"`)}`, { headers: { authorization: auth.token } }).then((r) => r.json()) as { items: { id: string }[] };
+for (const p of leftovers.items ?? []) await fetchRetry(`${base}/api/collections/posts/records/${p.id}`, { method: "DELETE", headers: { authorization: auth.token } });
 results.cleanedUp = (leftovers.items ?? []).length;
-if (seededPostId) await fetch(`${base}/api/collections/posts/records/${seededPostId}`, { method: "DELETE", headers: { authorization: auth.token } });
+if (seededPostId) await fetchRetry(`${base}/api/collections/posts/records/${seededPostId}`, { method: "DELETE", headers: { authorization: auth.token } });
 // remove the signed-up user (superuser API)
-const su = await fetch(`${base}/api/collections/_superusers/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: "admin@example.com", password: "changeme123" }) }).then((r) => r.json()) as { token: string };
-const signedUp = await fetch(`${base}/api/collections/users/records?filter=${encodeURIComponent(`email = '${signupEmail}'`)}`, { headers: { authorization: su.token } }).then((r) => r.json()) as { items: { id: string }[] };
-for (const u of signedUp.items ?? []) await fetch(`${base}/api/collections/users/records/${u.id}`, { method: "DELETE", headers: { authorization: su.token } });
+const su = await fetchRetry(`${base}/api/collections/_superusers/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: "admin@example.com", password: "changeme123" }) }).then((r) => r.json()) as { token: string };
+const signedUp = await fetchRetry(`${base}/api/collections/users/records?filter=${encodeURIComponent(`email = '${signupEmail}'`)}`, { headers: { authorization: su.token } }).then((r) => r.json()) as { items: { id: string }[] };
+for (const u of signedUp.items ?? []) await fetchRetry(`${base}/api/collections/users/records/${u.id}`, { method: "DELETE", headers: { authorization: su.token } });
 
 console.log(JSON.stringify(results, null, 1));
 console.log("api calls:", api.length, "| failed:", failed.length ? failed : "none");

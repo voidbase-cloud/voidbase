@@ -7,8 +7,13 @@ export interface ProviderContext { name: string; clientId: string; clientSecret:
 type Raw = Record<string, unknown>;
 
 const oidc: ProviderDefaults = { displayName: "OIDC", pkce: true, scopes: ["openid", "email", "profile"] };
+// Cloudflare OAuth (developers.cloudflare.com/fundamentals/oauth): plain OIDC on dash.cloudflare.com whose userinfo
+// carries only `sub`, so identity comes from the API's GET /user. Resource scopes (API token permission names such
+// as workers-platform.write) are added per provider with extra.scopes; extra.apiBase overrides the API for tests.
+export const CF_API_BASE = "https://api.cloudflare.com/client/v4";
+const cloudflare: ProviderDefaults = { displayName: "Cloudflare", pkce: true, scopes: ["openid", "offline_access"], authURL: "https://dash.cloudflare.com/oauth2/auth", tokenURL: "https://dash.cloudflare.com/oauth2/token", userInfoURL: "https://dash.cloudflare.com/oauth2/userinfo" };
 export const PROVIDER_DEFAULTS: Record<string, ProviderDefaults> = {
-  oidc, oidc2: oidc, oidc3: oidc,
+  oidc, oidc2: oidc, oidc3: oidc, cloudflare,
   apple: { displayName: "Apple", pkce: true, scopes: ["name", "email"], authURL: "https://appleid.apple.com/auth/authorize", tokenURL: "https://appleid.apple.com/auth/token" },
   bitbucket: { displayName: "Bitbucket", pkce: false, scopes: ["account"], authURL: "https://bitbucket.org/site/oauth2/authorize", tokenURL: "https://bitbucket.org/site/oauth2/access_token", userInfoURL: "https://api.bitbucket.org/2.0/user" },
   box: { displayName: "Box", pkce: true, scopes: ["root_readonly"], authURL: "https://account.box.com/api/oauth2/authorize", tokenURL: "https://api.box.com/oauth2/token", userInfoURL: "https://api.box.com/2.0/users/me" },
@@ -66,6 +71,12 @@ export async function fetchRawUser(p: ProviderContext, token: Token): Promise<Ra
       if (p.userInfoURL) return getJSON(p.userInfoURL, token);
       if (!token.id_token) throw new Error("empty id_token");
       return jwtClaims(String(token.id_token));
+    case "cloudflare": {
+      const info = p.userInfoURL ? await getJSON(p.userInfoURL, token) : (token.id_token ? jwtClaims(String(token.id_token)) : {});
+      const base = String(p.extra.apiBase || CF_API_BASE).replace(/\/$/, "");
+      const me = await getJSON(`${base}/user`, token);
+      return { ...info, cf_user: (me.result ?? me) as Raw };
+    }
     case "linear": return graphQL(p.userInfoURL, token, "query { viewer { id displayName name email avatarUrl active } }");
     case "monday": return graphQL(p.userInfoURL, token, "query { me { id enabled name email is_verified photo_small } }");
     case "twitch": return getJSON(p.userInfoURL, token, { "Client-Id": p.clientId });
@@ -112,6 +123,7 @@ export function mapUser(p: ProviderContext, raw: Raw, token: Token): Omit<AuthUs
       const disc = str(raw.discriminator); if (!raw.global_name && disc && disc !== "0") name += "#" + disc;
       return { ...base, id, name, username: str(raw.username), avatarURL: raw.avatar ? `https://cdn.discordapp.com/avatars/${id}/${str(raw.avatar)}.png` : "", email: truthy(raw.verified) ? str(raw.email) : "" };
     }
+    case "cloudflare": { const u = (raw.cf_user ?? {}) as Raw; const name = `${str(u.first_name)} ${str(u.last_name)}`.trim(); return { ...base, id: str(raw.sub) || str(u.id), name, username: str(u.username), email: str(u.email) }; }
     case "facebook": return { ...base, id: str(raw.id), name: str(raw.name), email: str(raw.email), avatarURL: str(get(raw, "picture", "data", "url")) };
     case "gitea": if (!truthy(raw.active)) throw new Error("the Gitea user is not active"); return { ...base, id: str(raw.id), name: str(raw.full_name), username: str(raw.login), avatarURL: str(raw.avatar_url) };
     case "gitee": return { ...base, id: str(raw.id), name: str(raw.name), username: str(raw.login), avatarURL: str(raw.avatar_url), email: raw.email && isEmail(str(raw.email)) ? str(raw.email) : "" };

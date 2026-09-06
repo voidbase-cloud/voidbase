@@ -15,6 +15,7 @@ for s in $POSITIONAL; do want "$s" && run "$s" bun "test/conformance/$s.ts" "$PB
 for s in $FLAGGED; do want "$s" && run "$s" bun "test/conformance/$s.ts" --pb "$PB" --vb "$VB"; done
 want sdk-suite && run sdk-suite bun test/sdk-suite.ts "$PB" "$VB"
 want unit && run unit bun test
+want cloud-rest && run cloud-rest bun test/cloud-rest.ts
 if [ "${CI_BROWSER:-1}" = "1" ]; then
   want panel-smoke && run panel-smoke bun test/panel-smoke.ts "$VB" "$LOGS/panel.png"
   want panel-collections && run panel-collections bun test/panel-collections.ts "$VB" "$LOGS/panel-collections.png"

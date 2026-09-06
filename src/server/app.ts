@@ -12,7 +12,7 @@ import { requestHook, requestHookResult, trigger } from "./hooks/runtime";
 import { logger } from "#platform/log";
 import { env as voidEnv } from "#platform/env";
 import type { Settings } from "./settings";
-import { applyPendingMigrations } from "./hooks/migrations";
+import { applyPendingMigrations, withHookStore } from "./hooks/migrations";
 import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
 import { deletePrefix } from "./records/files";
 import { authWithOAuth2, mountOAuth2Redirect } from "./oauth2";
@@ -69,7 +69,8 @@ app.use("*", async (c, next) => {
   if (s3.enabled) c.env = { ...c.env, STORAGE: s3Bucket(s3) };
   attachJobs(c.env);
   attachHub(c.env);
-  if (!served) { served = true; await trigger("onBootstrap", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined); await trigger("onServe", { app: undefined as unknown, router: app, next: async () => undefined as unknown }, null, async () => undefined); }
+  // onBootstrap/onServe handlers may use $app (find/save records and collections) like PocketBase's, so they run inside a hook store
+  if (!served) { served = true; await withHookStore(c.env.DB, c.env, async () => { await trigger("onBootstrap", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined); await trigger("onServe", { app: undefined as unknown, router: app, next: async () => undefined as unknown }, null, async () => undefined); }); }
   c.set("auth", await loadAuth(c));
   try { maintenanceIfDue(c.env, (p) => c.executionCtx.waitUntil(p)); } catch { /* no execution context */ }
   await next();

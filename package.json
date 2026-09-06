@@ -22,7 +22,9 @@
     "./serve": "./src/node/serve.ts",
     "./static": "./src/server/static.ts",
     "./api": "./src/server/api.ts",
-    "./passkeys": "./src/server/webauthn.ts"
+    "./passkeys": "./src/server/webauthn.ts",
+    "./cloud": "./src/cloud/rest.ts",
+    "./bundle": "./src/node/bundle.ts"
   },
   "imports": {
     "#platform/env": {

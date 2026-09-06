@@ -64,6 +64,15 @@ https://developers.cloudflare.com/fundamentals/api/reference/permissions/ should
 stop matching (the token then needs those permissions, picked by hand at
 https://dash.cloudflare.com/?to=/:account/api-tokens).
 
+### A custom domain
+
+`voidbase deploy --domain api.example.com` (or `VOIDBASE_DEPLOY_DOMAIN`) turns workers.dev off for the Worker and attaches
+the hostname through the Workers Custom Domains API after the upload: Cloudflare creates the DNS record and the
+certificate (a minute or two), and the token needs nothing beyond Workers Scripts edit, provided the zone is on the same
+account. Cloudflare still requires the account to have a workers.dev subdomain before it accepts any upload (error
+10063): open Workers & Pages once, or `PUT /accounts/<id>/workers/subdomain {"subdomain": "<name>"}`.
+`destroyInstance` in `voidbase/cloud` detaches custom domains before deleting the Worker.
+
 ### What the deploy wires up, and the knobs
 
 | Binding | What it does | Knob |
@@ -101,6 +110,29 @@ people who want to edit it (extra routes, bindings, a custom domain in `wrangler
 `voidbase deploy --dir <dir>`, or by hand: `wrangler login`, `CLOUDFLARE_ACCOUNT_ID`, then
 `void deploy --backend cloudflare --provision` (interactive shells only; commit the `wrangler.jsonc` it writes for
 CI). Every `.env*` file that backend loads ships as plaintext worker vars, so keep secrets in `wrangler secret put`.
+
+## Option D: instances created by a control plane (`voidbase bundle` + `voidbase/cloud`)
+
+`voidbase deploy` builds on your machine. A service that creates voidbase instances for other people (the site's
+/cloud page is one: sign in with Cloudflare, one click, an instance in the user's own account) cannot build, so it
+uploads a prebuilt release over Cloudflare's REST API instead:
+
+```bash
+voidbase bundle                                   # builds the generic Worker + panel once -> .cloud/releases/<version>/
+voidbase bundle --push https://<control plane> --token <superuser token>   # ... and stores it in that instance (POST /api/vbcloud/releases)
+```
+
+`voidbase/cloud` (src/cloud/rest.ts, plain fetch, runs in a Worker) then does what the deploy does, from the
+release: `provisionInstance(cf, { account, name, release, superuser })` creates `<name>-db`, `<name>-storage`,
+`<name>-jobs`, applies the D1 migrations through `/query` (tracked in wrangler's `d1_migrations` table), uploads the
+assets through an upload session and the script with its bindings, DO migration, cron trigger and workers.dev
+subdomain, tagged `voidbase` + `voidbase-release:<version>`; `destroyInstance` removes all of it (worker first,
+bucket last, emptied before); `listVoidbaseWorkers` finds instances by tag. The token is the user's OAuth access token
+(`cloudflare` OAuth2 provider, see `voidbase-site/vb/cloud`) or an API token with the same permissions.
+`test/cloud-rest.ts` exercises it against `test/cf-mock.ts`. The hub and the queue are decided when the release
+is bundled (`voidbase bundle --no-hub` / `--no-queue`), not per instance: an instance can leave them out at
+provisioning, but cannot add what the release does not carry. Tokens a control plane keeps go to rest sealed
+with `VOIDBASE_ENCRYPTION_KEY` (`sealSecret` / `openSecret` from `voidbase/cloud`).
 
 ## After deploying
 

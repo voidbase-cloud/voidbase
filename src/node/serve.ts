@@ -31,7 +31,7 @@ export function applySystemMigrations(db: ReturnType<typeof openDatabase>): numb
 // Bun loads ./.env itself; a project that keeps its environment one level up (the SvelteKit starter) gets that too.
 // PB_* names from the PocketBase starter convention are accepted as aliases of the VOIDBASE_* ones.
 const ENV_ALIASES: Record<string, string> = { PB_SUPERUSER_EMAIL: "VOIDBASE_SUPERUSER_EMAIL", PB_SUPERUSER_PASSWORD: "VOIDBASE_SUPERUSER_PASSWORD", PB_USER_EMAIL: "VOIDBASE_USER_EMAIL", PB_USER_PASSWORD: "VOIDBASE_USER_PASSWORD", PB_ENCRYPTION_KEY: "VOIDBASE_ENCRYPTION_KEY" };
-export function loadEnv(files = [".env", "../.env"]): void {
+export function loadEnv(files = [".env", ".env.local", "../.env", "../.env.local"]): void {
   for (const f of files) {
     if (!existsSync(f)) continue;
     for (const line of readFileSync(f, "utf8").split("\n")) {

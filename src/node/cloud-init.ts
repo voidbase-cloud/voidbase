@@ -16,9 +16,9 @@ export function writeCloudProject(out: string, mode: "package" | "internal" = "p
   // project at <package>/.cloud/<slug>; depth = how many directories the importing file sits below the project root)
   const pkg = (depth: number, target: string, byName: string) => (mode === "package" ? byName : "../".repeat(depth + 2) + target);
   const P = {
-    plugin: pkg(0, "hooks-plugin", "voidbase/plugin"), env: pkg(0, "env", "voidbase/env"),
+    plugin: pkg(0, "hooks-plugin", "voidbase/plugin"), env: pkg(0, "env.ts", "voidbase/env"), // Void loads env.ts Node-style: the internal path needs its extension
     app: pkg(2, "src/server/app", "voidbase/app"), cronsApp: pkg(1, "src/server/app", "voidbase/app"), crons: pkg(1, "src/server/crons", "voidbase/crons"),
-    schema: pkg(1, "db/schema", "voidbase/schema"),
+    schema: mode === "package" ? "voidbase/schema" : `${rel(ROOT)}/db/schema.ts`, // absolute: Void's drift check copies the project into .void/deploy-drift-check/<tmp>/ before drizzle-kit loads db/schema.ts
     api: pkg(2, "src/server/api", "voidbase/api"),
     jobs: pkg(1, "src/server/jobs", "voidbase/jobs"),
     hub: pkg(0, "src/server/hub", "voidbase/hub"),

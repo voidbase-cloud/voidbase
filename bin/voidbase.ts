@@ -25,12 +25,16 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   init [dir]                         scaffold .env, pb_hooks/, pb_migrations/ in a fresh checkout and sync the panel
   dev [--port 5180]                  start the Void dev server (vp dev)
   build | preview [--port 5181]      production build / run the built Worker locally (vp build / vp preview)
-  deploy [--name worker] [--account id] [--public-dir ../sk/build] [--dry-run] [--no-queue] [--no-hub] [--analytics] [--rate-limit 300/10]
+  deploy [--name worker] [--account id] [--domain api.example.com] [--public-dir ../sk/build] [--dry-run] [--no-queue] [--no-hub] [--no-cron]
+         [--analytics] [--rate-limit 300/10]
                                      go live on your Cloudflare account with VOIDBASE_DEPLOY_CF_API_KEY: creates the D1
                                      database and R2 bucket, writes cloud/ (voidbase cloud init) with wrangler.jsonc,
                                      stores the superuser as worker secrets and runs void deploy --backend cloudflare
   deploy --void                      deploy to the Void platform instead (void auth login first)
   token                              print the Cloudflare dashboard link that creates VOIDBASE_DEPLOY_CF_API_KEY
+  bundle [--out dir] [--version v]   build the generic Worker + panel as a release directory (default .cloud/releases/<v>)
+         [--push http://vb --token t]  and optionally push it into a voidbase control plane (POST /api/vbcloud/releases)
+  release push <dir> --url http://vb --token <superuser token>   push a built release ( --no-activate keeps the current one)
   superuser list                     list superusers (--url, --admin)
   import <collections.json> [--delete-missing]   PUT /api/collections/import on a running instance (--url, --admin)
   export <outDir>                    SQLite + collections.json + storage/ from a running instance (--url, --admin)
@@ -58,6 +62,18 @@ async function login(): Promise<string> {
 switch (cmd) {
   case undefined: case "help": case "--help": console.log(HELP); break;
   case "token": { const { tokenHelp } = await import("../src/node/deploy-cf"); console.log(tokenHelp()); break; }
+  case "bundle": {
+    const { buildRelease, pushRelease } = await import("../src/node/bundle");
+    const r = await buildRelease({ out: flags.out as string | undefined, version: flags.version as string | undefined, hub: flags["no-hub"] ? false : undefined, queue: flags["no-queue"] ? false : undefined, keepProject: !!flags["keep-project"] });
+    if (flags.push) await pushRelease({ dir: r.dir, url: String(flags.push), token: String(flags.token ?? process.env.VOIDBASE_RELEASE_TOKEN ?? ""), activate: !flags["no-activate"] });
+    break;
+  }
+  case "release": {
+    if (sub !== "push") { console.error(`unknown release command "${sub}"\n\n${HELP}`); process.exit(1); }
+    const { pushRelease } = await import("../src/node/bundle");
+    await pushRelease({ dir: resolve(String(rest[0] ?? flags.dir ?? ".")), url: String(flags.url ?? process.env.VOIDBASE_URL ?? "http://127.0.0.1:8090"), token: String(flags.token ?? process.env.VOIDBASE_RELEASE_TOKEN ?? ""), activate: !flags["no-activate"] });
+    break;
+  }
   case "serve": {
     // --entry main.ts: the project's own composition (pb's "custom" build), otherwise the stock server
     if (!flags.dev) { if (flags.entry) { await run("bun", [resolve(flags.entry), ...process.argv.slice(3).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry")]); break; } const { serve } = await import("../src/node/serve"); await serve(serveOpts()); break; }
@@ -91,7 +107,7 @@ switch (cmd) {
   case "deploy": {
     if (flags.void) { await run("./node_modules/.bin/void", ["deploy"]); break; } // the Void platform (void auth login first)
     const { deployToCloudflare } = await import("../src/node/deploy-cf");
-    await deployToCloudflare({ name: flags.name, account: flags.account, dir: flags.dir, publicDir: flags["public-dir"] ?? flags.publicDir, dryRun: !!flags["dry-run"], regenerate: !!flags.regenerate, queue: flags["no-queue"] ? false : undefined, analytics: flags.analytics ? true : undefined, rateLimit: flags["rate-limit"], hub: flags["no-hub"] ? false : undefined });
+    await deployToCloudflare({ name: flags.name, account: flags.account, dir: flags.dir, publicDir: flags["public-dir"] ?? flags.publicDir, dryRun: !!flags["dry-run"], regenerate: !!flags.regenerate, queue: flags["no-queue"] ? false : undefined, cron: flags["no-cron"] ? false : undefined, domain: flags.domain as string | undefined, analytics: flags.analytics ? true : undefined, rateLimit: flags["rate-limit"], hub: flags["no-hub"] ? false : undefined });
     break;
   }
   case "superuser": {

@@ -1,6 +1,7 @@
 import { one, run } from "./db";
 import { nowString } from "./ids";
 import { env as voidEnv } from "#platform/env";
+import { aesOpen, aesSeal } from "./crypto";
 
 // Defaults mirror PocketBase core/settings_model.go (captured from a 0.40.2 instance).
 // Stored as JSON in _params under id "settings". Secrets are stored but never returned by GET.
@@ -46,19 +47,8 @@ export function invalidateSettings() {
 
 // ---- encryption at rest (PocketBase --encryptionEnv): AES-GCM with the key from VOIDBASE_ENCRYPTION_KEY --------
 const encryptionKey = () => { try { return String((voidEnv as Record<string, unknown>).VOIDBASE_ENCRYPTION_KEY ?? ""); } catch { return ""; } };
-const b64 = { enc: (b: Uint8Array) => btoa(String.fromCharCode(...b)), dec: (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0)) };
-async function aesKey(key: string) { return crypto.subtle.importKey("raw", new TextEncoder().encode(key), { name: "AES-GCM" }, false, ["encrypt", "decrypt"]); }
-export async function encryptSettings(json: string, key: string): Promise<string> {
-  const nonce = crypto.getRandomValues(new Uint8Array(12));
-  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, await aesKey(key), new TextEncoder().encode(json)));
-  const out = new Uint8Array(nonce.length + sealed.length); out.set(nonce); out.set(sealed, nonce.length);
-  return b64.enc(out); // nonce || ciphertext || tag, like security.Encrypt
-}
-export async function decryptSettings(encoded: string, key: string): Promise<string> {
-  const bytes = b64.dec(encoded);
-  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.slice(0, 12) }, await aesKey(key), bytes.slice(12));
-  return new TextDecoder().decode(plain);
-}
+export const encryptSettings = (json: string, key: string): Promise<string> => aesSeal(json, key);
+export const decryptSettings = (encoded: string, key: string): Promise<string> => aesOpen(encoded, key);
 async function readStored(raw: string): Promise<unknown> {
   if (raw.trimStart().startsWith("{")) return JSON.parse(raw);
   const key = encryptionKey();

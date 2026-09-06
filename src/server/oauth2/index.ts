@@ -25,7 +25,14 @@ export function providerConfig(c: Collection, name: string): ProviderConfig | nu
   const d = PROVIDER_DEFAULTS[name];
   return { ...p, displayName: p.displayName || d?.displayName || name, authURL: p.authURL || d?.authURL, tokenURL: p.tokenURL || d?.tokenURL, userInfoURL: p.userInfoURL || d?.userInfoURL, pkce: typeof p.pkce === "boolean" ? p.pkce : (d?.pkce ?? false) };
 }
-export const providerScopes = (name: string) => PROVIDER_DEFAULTS[name]?.scopes ?? [];
+// a provider's extra.scopes (array) replaces the catalog default: Cloudflare's resource scopes are chosen per OAuth client
+export const providerScopes = (p: ProviderConfig | string) => {
+  const name = typeof p === "string" ? p : p.name;
+  const extra = typeof p === "string" ? undefined : (p.extra?.scopes as unknown);
+  if (Array.isArray(extra) && extra.every((s) => typeof s === "string")) return extra as string[];
+  if (typeof extra === "string" && extra.trim()) return extra.split(/[\s,]+/).filter(Boolean);
+  return PROVIDER_DEFAULTS[name]?.scopes ?? [];
+};
 
 const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 export async function s256Challenge(verifier: string): Promise<string> {
@@ -35,7 +42,7 @@ export async function s256Challenge(verifier: string): Promise<string> {
 export function buildAuthURL(p: ProviderConfig, state: string, extra: Record<string, string>): string {
   const u = new URL(p.authURL ?? "");
   const params: Record<string, string> = { response_type: "code", client_id: p.clientId, state, ...extra };
-  const scopes = providerScopes(p.name);
+  const scopes = providerScopes(p);
   if (scopes.length) params.scope = scopes.join(" ");
   const encoded = Object.keys(params).sort().map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k]!).replace(/%20/g, "+")}`).join("&");
   return `${u.origin}${u.pathname}?${u.search ? u.search.slice(1) + "&" : ""}${encoded}`;

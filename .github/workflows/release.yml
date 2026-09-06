@@ -1,10 +1,11 @@
-# Releases compiled from Conventional Commits (docs/releasing.md), laid out like PocketBase's: the notes open with
-# the `./voidbase update` hint, the assets are voidbase_<version>_<os>_<arch>.zip per platform plus checksums.txt,
-# each archive carries a build provenance attestation, and the npm package goes out in the same run.
-#   push to master   -> release-please keeps a "chore(master): release X.Y.Z" PR up to date (CHANGELOG.md, package.json);
-#                       merging it tags vX.Y.Z, creates the GitHub release with the notes, and the publish job runs
+# The release flow (docs/releasing.md) is scripts/release.sh. It runs here on GitHub's runners unless the repository
+# variable CI_BACKEND is `cloudflare`; then Cloudflare Workers Builds runs it on every push to master and this job is
+# skipped (without the attestation step below and without npm provenance: only GitHub Actions can mint the OIDC token).
+#   push to master    -> release-please keeps the "chore(master): release X.Y.Z" PR up to date; once it is merged the
+#                        same run tags, creates the release, publishes to npm and GitHub Packages, builds and attaches
+#                        the executables and checksums, and puts the update hint in front of the notes
 #   release published -> a release cut by hand (gh release create vX.Y.Z --notes ...) publishes the same way
-#   workflow_dispatch -> the publish job with `npm publish --dry-run`, nothing published, no release touched
+#   workflow_dispatch -> a dry run: every step, nothing published, no release touched
 name: release
 on:
   push:
@@ -14,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "run every publish step but publish nothing"
+        description: "run every step but publish nothing"
         type: boolean
         default: true
 permissions:
@@ -24,138 +25,34 @@ permissions:
   id-token: write        # npm provenance and the build attestations
   attestations: write    # provenance attestations for the release archives
 jobs:
-  release-please:
-    if: github.event_name == 'push'
+  release:
+    if: vars.CI_BACKEND != 'cloudflare'
     runs-on: ubuntu-latest
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-    steps:
-      - uses: googleapis/release-please-action@v4
-        id: release
-        with:
-          # a RELEASE_PLEASE_TOKEN (fine-grained PAT: contents + pull requests write) makes CI run on the release PR;
-          # the workflow's own token cannot trigger other workflows
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-  publish:
-    needs: [release-please]
-    if: always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'release' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '--dry-run' || '' }}
-      TAG: ${{ needs.release-please.outputs.tag_name || github.event.release.tag_name || '' }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name || github.event.release.tag_name || github.ref }}
+          ref: ${{ github.event.release.tag_name || github.ref }}
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "1.3.14" }
       - uses: actions/setup-node@v4
-        with: { node-version: "22", registry-url: "https://registry.npmjs.org", scope: "@voidbase-cloud" }
-      - name: Install
-        run: bun install --frozen-lockfile
-      - name: Check and test
-        run: |
-          bun run check
-          bun test
-          bun test/cloud-rest.ts
-      - name: Version
-        id: version
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if [ -n "$TAG" ] && [ "$TAG" != "v$VERSION" ]; then echo "release tag $TAG does not match package.json version $VERSION"; exit 1; fi
-          if npm view "@voidbase-cloud/voidbase@$VERSION" version >/dev/null 2>&1; then
-            echo "@voidbase-cloud/voidbase@$VERSION is already on npm"; [ -n "$DRY_RUN" ] || exit 1; fi
-      - name: Pack
-        run: |
-          npm pack
-          ls -la voidbase-cloud-voidbase-*.tgz
-      - name: Smoke-install the tarball
-        run: |
-          TARBALL="$PWD/$(ls voidbase-cloud-voidbase-*.tgz)"
-          mkdir -p /tmp/smoke && cd /tmp/smoke
-          bun init -y >/dev/null
-          bun add "$TARBALL"
-          bunx voidbase help | head -n 5
-          node -e "const p=require('@voidbase-cloud/voidbase/package.json'); if (p.version !== '${{ steps.version.outputs.version }}') throw new Error('version mismatch')"
-      - name: Publish to npm
+        with: { node-version: "22" }
+      - id: release
+        run: ./scripts/release.sh ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }} ${{ github.event_name == 'release' && format('--tag {0}', github.event.release.tag_name) || '' }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          PROVENANCE=""; [ "${{ github.event.repository.private }}" = "false" ] && PROVENANCE="--provenance"
-          echo "provenance: ${PROVENANCE:-off (private repository)}  dry run: ${DRY_RUN:-no}"
-          npm publish "$(ls voidbase-cloud-voidbase-*.tgz)" --access public $PROVENANCE $DRY_RUN
-      - name: Publish to GitHub Packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "@voidbase-cloud:registry=https://npm.pkg.github.com" > .npmrc
-          echo "//npm.pkg.github.com/:_authToken=\${NODE_AUTH_TOKEN}" >> .npmrc
-          npm publish "$(ls voidbase-cloud-voidbase-*.tgz)" --registry=https://npm.pkg.github.com $DRY_RUN
-          rm -f .npmrc
-      - name: Attach the npm tarball to the release
-        if: ${{ env.DRY_RUN == '' && env.TAG != '' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$TAG" voidbase-cloud-voidbase-*.tgz --clobber
-  executables:
-    # PocketBase-style prebuilt executables: one zip per platform (the executable, CHANGELOG.md, LICENSE) plus
-    # checksums.txt, attached to the release with a build provenance attestation each
-    needs: [release-please]
-    if: always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'release' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    env:
-      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'yes' || '' }}
-      TAG: ${{ needs.release-please.outputs.tag_name || github.event.release.tag_name || '' }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.release-please.outputs.tag_name || github.event.release.tag_name || github.ref }}
-      # the executable smoke serves the unmodified starter's pb_hooks and pb_migrations
-      - uses: actions/checkout@v4
-        with: { repository: spinspire/pocketbase-sveltekit-starter, path: starter }
-      - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "1.3.14" }
-      - name: Install
-        run: bun install --frozen-lockfile
-      - name: Build every platform
-        run: |
-          bun run panel:sync
-          bun scripts/build-exe.ts --targets all --out dist/release
-          cat dist/release/checksums.txt
-      - name: Smoke the executable for this runner
-        run: bun test/exe-smoke.ts
-        env:
-          STARTER_VB_DIR: ${{ github.workspace }}/starter/pb
+          # a RELEASE_PLEASE_TOKEN (fine-grained PAT: contents + pull requests write) makes CI run on the release PR;
+          # the workflow's own token cannot trigger other workflows
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Attest the archives
-        if: ${{ env.DRY_RUN == '' }}
+        if: steps.release.outputs.executables == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
             dist/release/*.zip
             dist/release/checksums.txt
-      - name: Attach the archives to the release
-        if: ${{ env.DRY_RUN == '' && env.TAG != '' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$TAG" dist/release/*.zip dist/release/checksums.txt --clobber
-      - name: Release notes in PocketBase's shape
-        if: ${{ env.DRY_RUN == '' && env.TAG != '' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # the hint PocketBase opens every release with (`voidbase update` strips it again when printing the notes),
-          # then the notes release-please compiled from the commits (or the hand-written ones of a manual release)
-          gh release view "$TAG" --json body --jq .body > body.md
-          if ! grep -q "To update the prebuilt executable" body.md; then
-            { printf '> _To update the prebuilt executable you can run `./voidbase update`._\n\n'; cat body.md; } > notes.md
-            gh release edit "$TAG" --notes-file notes.md
-          fi
       - uses: actions/upload-artifact@v4
-        if: ${{ env.DRY_RUN != '' }}
-        with: { name: executables-dry-run, path: dist/release/checksums.txt }
+        if: always()
+        with: { name: release-status, path: ci/public, if-no-files-found: ignore }

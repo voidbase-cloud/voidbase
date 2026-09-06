@@ -1,0 +1,76 @@
+// scripts/cf-builds.ts and scripts/gh-release.ts against test/cf-mock.ts: the Builds API wants the user token, setup
+// connects the repository and creates the two Workers with three triggers and their variables (idempotently), builds
+// are triggered, listed, followed and cancelled, variables set; release assets are uploaded, replaced and the notes
+// rewritten through GitHub's API.
+//   bun test/cf-builds.ts        (starts its own cf-mock on a free port)
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+const probe = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() }); const PORT = probe.port; probe.stop(true);
+const MOCK = `http://127.0.0.1:${PORT}`; const PKG = resolve(import.meta.dir, "..");
+const mock = Bun.spawn(["bun", "test/cf-mock.ts", String(PORT)], { cwd: PKG, stdout: "ignore", stderr: "ignore" });
+for (let i = 0; i < 50; i++) { try { await fetch(`${MOCK}/__state`); break; } catch { await Bun.sleep(100); } }
+let pass = 0, fail = 0; const check = (l: string, ok: boolean, d = "") => { ok ? pass++ : fail++; console.log(`${ok ? "PASS" : "FAIL"}  ${l}${ok ? "" : "  " + d}`); };
+const base: Record<string, string | undefined> = { ...process.env, CLOUDFLARE_API_BASE: MOCK, GITHUB_API_URL: MOCK, CLOUDFLARE_ACCOUNT_ID: "acc123", GH_TOKEN: "gh-test", NPM_TOKEN: "npm-test", GH_PACKAGES_TOKEN: undefined, VOIDBASE_NPM_TOKEN: undefined, CF_BUILDS_POLL_MS: "50", GITHUB_REPOSITORY: "voidbase-cloud/voidbase" };
+const run = (script: string, args: string[], env: Record<string, string | undefined> = {}) => { const p = Bun.spawnSync(["bun", `scripts/${script}`, ...args], { cwd: PKG, env: { ...base, ...env } as Record<string, string>, stdout: "pipe", stderr: "pipe" }); return { code: p.exitCode, out: p.stdout.toString() + p.stderr.toString() }; };
+const cfb = (args: string[], env: Record<string, string | undefined> = {}) => run("cf-builds.ts", args, { CLOUDFLARE_BUILDS_TOKEN: "cf-test-user-token", ...env });
+const ghr = (args: string[]) => run("gh-release.ts", args);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const state = async () => (await (await fetch(`${MOCK}/__state`)).json()) as any;
+const scripts = async () => ((await (await fetch(`${MOCK}/accounts/acc123/workers/scripts`, { headers: { authorization: "Bearer cf-test-user-token" } })).json()) as { result: { id: string; tag: string }[] }).result;
+try {
+  const noToken = run("cf-builds.ts", ["status"], { CLOUDFLARE_BUILDS_TOKEN: undefined });
+  check("without CLOUDFLARE_BUILDS_TOKEN: exit 1 and what token to create", noToken.code === 1 && /user API token/.test(noToken.out), noToken.out.slice(0, 200));
+  const acct = cfb(["setup"], { CLOUDFLARE_BUILDS_TOKEN: "cf-test-token" });
+  check("an account-owned token: the Builds API's rejection is explained", acct.code === 1 && /user tokens only/.test(acct.out), acct.out.slice(0, 300));
+  const setup = cfb(["setup"]);
+  let s = await state(); let w = await scripts();
+  const byName = (n: string) => s.triggers.find((t: { trigger_name: string }) => t.trigger_name === n);
+  const tagOf = (n: string) => w.find((x) => x.id === n)?.tag;
+  check("setup: repository connected, two Workers with tags, three triggers", setup.code === 0 && s.connections.length === 1 && s.connections[0].repo_id === "1359087906" && s.connections[0].provider_account_name === "voidbase-cloud" && !!tagOf("voidbase-ci") && !!tagOf("voidbase-release") && s.triggers.length === 3, setup.out.slice(0, 400));
+  const prod = byName("voidbase-ci (master)"), preview = byName("voidbase-ci (branches)"), rel = byName("voidbase-release (master)");
+  check("the CI production trigger: master, `bun run ci`, deploys the status Worker, cache on", prod?.external_script_id === tagOf("voidbase-ci") && prod.build_command === "bun run ci" && /wrangler deploy -c ci\/wrangler\.jsonc/.test(prod.deploy_command) && JSON.stringify(prod.branch_includes) === '["master"]' && prod.build_caching_enabled === true && prod.build_token_uuid === "bt-1", JSON.stringify(prod));
+  check("the CI preview trigger: every other branch, versions upload for a preview URL", preview?.external_script_id === tagOf("voidbase-ci") && /versions upload -c ci\/wrangler\.jsonc/.test(preview.deploy_command) && JSON.stringify(preview.branch_includes) === '["*"]' && JSON.stringify(preview.branch_excludes) === '["master"]', JSON.stringify(preview));
+  check("the release trigger: master, `bun run release`, on the release Worker", rel?.external_script_id === tagOf("voidbase-release") && rel.build_command === "bun run release" && JSON.stringify(rel.branch_includes) === '["master"]', JSON.stringify(rel));
+  check("build variables: BUN_VERSION on the CI triggers, the secrets on the release trigger", s.buildEnv[prod.trigger_uuid]?.BUN_VERSION?.value === "1.3.14" && s.buildEnv[preview.trigger_uuid]?.BUN_VERSION?.value === "1.3.14" && s.buildEnv[rel.trigger_uuid]?.GH_TOKEN?.value === "gh-test" && s.buildEnv[rel.trigger_uuid]?.GH_TOKEN?.is_secret === true && s.buildEnv[rel.trigger_uuid]?.NPM_TOKEN?.is_secret === true && !s.buildEnv[rel.trigger_uuid]?.GH_PACKAGES_TOKEN, JSON.stringify(s.buildEnv));
+  check("setup's summary names what it created and how to start the first build", /created/.test(setup.out) && /secrets stored: GH_TOKEN, NPM_TOKEN/.test(setup.out) && /cf-builds\.ts build --branch master --follow/.test(setup.out), setup.out.slice(-400));
+  const again = cfb(["setup"]);
+  s = await state();
+  check("setup again: nothing duplicated, triggers updated in place", again.code === 0 && s.connections.length === 1 && s.triggers.length === 3 && (await scripts()).length === 2 && /updated/.test(again.out) && /exists/.test(again.out), again.out.slice(0, 300));
+  const status = cfb(["status"]);
+  check("status lists both projects, their triggers and no builds yet", status.code === 0 && /voidbase-ci \(tag/.test(status.out) && /voidbase-release \(tag/.test(status.out) && (status.out.match(/trigger [0-9a-f-]{36}/g) ?? []).length === 3 && /no builds yet/.test(status.out), status.out);
+  const build = cfb(["build", "--branch", "master"]);
+  const uuid = build.out.match(/build ([0-9a-f-]{36}) queued/)?.[1];
+  check("build --branch master: queued through the master trigger", build.code === 0 && !!uuid && /trigger "voidbase-ci \(master\)"/.test(build.out), build.out);
+  const dup = cfb(["build", "--branch", "master"]);
+  check("the same build requested again while queued: the pending one is returned", dup.code === 0 && dup.out.includes(uuid!) && /already pending/.test(dup.out), dup.out);
+  const list = cfb(["builds"]);
+  check("builds lists it", list.code === 0 && list.out.includes(uuid!) && /voidbase-ci: 1 builds/.test(list.out), list.out);
+  const logs = cfb(["logs", uuid!]);
+  check("logs prints the build log lines and the status", logs.code === 0 && /Executing user build command: bun run ci/.test(logs.out) && /status: running/.test(logs.out), logs.out);
+  const follow = cfb(["build", "--commit", "abc1234", "--follow"]);
+  check("build --commit --follow: waits for the end and reports success", follow.code === 0 && /Build completed/.test(follow.out) && /: success$/m.test(follow.out.trim()), follow.out);
+  const cancelMe = cfb(["build", "--worker", "voidbase-release", "--branch", "master"]).out.match(/build ([0-9a-f-]{36})/)?.[1];
+  const cancel = cfb(["cancel", cancelMe!]);
+  s = await state();
+  check("cancel: the build is cancelled", cancel.code === 0 && /cancelled/.test(cancel.out) && s.builds.find((b: { build_uuid: string }) => b.build_uuid === cancelMe)?.status === "canceled", cancel.out);
+  const envSet = cfb(["env", "--worker", "voidbase-ci", "FOO=bar", "--secret", "SEC=1"]);
+  s = await state();
+  check("env: sets a variable and a secret on both CI triggers, secrets never echoed", envSet.code === 0 && (envSet.out.match(/FOO=bar SEC=\(secret\)/g) ?? []).length === 2 && !envSet.out.includes("SEC=1") && s.buildEnv[prod.trigger_uuid].SEC.is_secret === true, envSet.out);
+  const envOne = cfb(["env", "--worker", "voidbase-release", "--trigger", "voidbase-release (master)", "CI_BROWSER=0"]);
+  check("env --trigger: one trigger only, secrets shown as (secret)", envOne.code === 0 && /CI_BROWSER=0/.test(envOne.out) && /GH_TOKEN=\(secret\)/.test(envOne.out) && !envOne.out.includes("gh-test"), envOne.out);
+  // scripts/gh-release.ts against the mock's GitHub releases
+  const view = ghr(["view", "v9.9.9"]);
+  check("gh-release view: the release with its assets", view.code === 0 && JSON.parse(view.out).tag_name === "v9.9.9" && JSON.parse(view.out).assets.length === 0, view.out);
+  const missing = ghr(["view", "v0.0.0"]);
+  check("gh-release view of a missing release: exit 2", missing.code === 2 && /no release v0.0.0/.test(missing.out), missing.out);
+  const dir = mkdtempSync(join(tmpdir(), "vb-ghr-")); writeFileSync(`${dir}/checksums.txt`, "abc  voidbase_9.9.9_linux_amd64.zip\n"); writeFileSync(`${dir}/voidbase_9.9.9_linux_amd64.zip`, "zip");
+  const up = ghr(["upload", "v9.9.9", `${dir}/checksums.txt`, `${dir}/voidbase_9.9.9_linux_amd64.zip`]);
+  const up2 = ghr(["upload", "v9.9.9", `${dir}/checksums.txt`]);
+  s = await state();
+  check("gh-release upload: attaches files, a second upload replaces the same-named asset", up.code === 0 && up2.code === 0 && /replaced/.test(up2.out) && s.ghReleases[0].assets.length === 2 && s.ghReleases[0].assets.filter((a: { name: string }) => a.name === "checksums.txt").length === 1, up.out + up2.out);
+  writeFileSync(`${dir}/notes.md`, "> _To update the prebuilt executable you can run `./voidbase update`._\n\n### Features\n");
+  const notes = ghr(["notes", "v9.9.9", `${dir}/notes.md`]); const body = ghr(["body", "v9.9.9"]);
+  check("gh-release notes then body: the notes are replaced", notes.code === 0 && body.code === 0 && body.out.startsWith("> _To update the prebuilt executable"), notes.out + body.out);
+} finally { mock.kill(); }
+console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

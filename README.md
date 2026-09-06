@@ -36,7 +36,7 @@ platform, verifies its checksum and replaces the executable (`--backup` zips `pb
 toolchain (`deploy`, `bundle`, `dev`) stays with the npm package.
 
 Commits follow Conventional Commits (enforced by husky and CI); release-please turns them into a release PR,
-and merging it publishes to npm (with provenance once the repository is public) and GitHub Packages with the
+and merging it publishes to npm (with provenance) and GitHub Packages and attaches the executables, with the
 compiled notes; see [docs/releasing.md](docs/releasing.md).
 
 ## Run it like PocketBase
@@ -106,9 +106,12 @@ Your directory stays `pb_hooks` + `pb_migrations` + `pb_data`, like a PocketBase
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` checks out the two oracles (the starter and PocketBase's panel build), starts voidbase and
-a seeded reference PocketBase (`scripts/seed-reference.sh`), and runs every suite through `scripts/ci-suites.sh`,
-then `test/fresh-db.ts` and the starter smoke. The same scripts run locally against any pair of servers.
+`scripts/ci.sh` is the whole CI (`bun run ci` on a dev machine): it fetches the starter, syncs the panel, starts
+voidbase and a seeded reference PocketBase (`scripts/seed-reference.sh`), runs every suite through
+`scripts/ci-suites.sh` on the Workers and Bun runtimes, then the production-build boots, the prebuilt executable and
+the starter smoke, and renders a status page. `.github/workflows/ci.yml` runs it on GitHub Actions; Cloudflare
+Workers Builds can run it instead (`scripts/cf-builds.ts setup`, then the repository variable `CI_BACKEND=cloudflare`);
+see [docs/ci.md](docs/ci.md).
 
 ## Docs
 

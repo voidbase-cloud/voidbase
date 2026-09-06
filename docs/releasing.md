@@ -41,47 +41,56 @@ ci(release): compile release notes with release-please
 
 ## The release
 
-1. Push or merge conventional commits to `master`. `release.yml` runs release-please, which opens or updates the
-   pull request "chore(master): release X.Y.Z": the next version from the commit types, the `CHANGELOG.md`
-   section compiled from the commits, the `package.json` bump. Keep merging work; the PR follows.
-2. Merge the PR. release-please tags `vX.Y.Z` and creates the GitHub release with that section as notes.
-3. The `publish` job of the same run then installs, typechecks, runs the unit and cloud-rest tests, packs, smoke-
-   installs the tarball and runs the CLI from it, publishes to npm (`--provenance` when the repository is public)
-   and to GitHub Packages, and attaches the tarball to the release.
-4. The `executables` job builds the prebuilt executables for every platform (`scripts/build-exe.ts`: Bun
-   cross-compiles from one runner; the panel, the system migrations and the hooks typings are embedded), smokes the
-   runner's own build (`test/exe-smoke.ts`: serve with pb_hooks, the panel from the embedded zip, a thumbnail through
-   the wasm, then `voidbase update` against a mock GitHub API), attaches `voidbase_<version>_<os>_<arch>.zip` for
-   linux/darwin/windows × amd64/arm64 (plus musl builds) and `checksums.txt` to the release, attests each archive
-   with `actions/attest-build-provenance`, and puts the release notes in PocketBase's shape: the
-   `./voidbase update` hint first, then the compiled notes.
+`scripts/release.sh` is the whole flow; `release.yml` runs it on GitHub Actions and Cloudflare Workers Builds runs it
+as the `voidbase-release` project (docs/ci.md). It is idempotent: a re-run after a partial failure does only what is
+still missing.
+
+1. Push or merge conventional commits to `master`. `release-pr` (release-please) opens or updates the pull request
+   "chore(master): release X.Y.Z": the next version from the commit types, the `CHANGELOG.md` section compiled from
+   the commits, the `package.json` bump. Keep merging work; the PR follows.
+2. Merge the PR. `github-release` tags `vX.Y.Z` and creates the GitHub release with that section as notes.
+3. `publish`, when release `v<package.json version>` exists and npm lacks the version: install, typecheck, the unit
+   and cloud-rest tests, `npm pack`, a smoke install of the tarball that runs the CLI from it, `npm publish`
+   (`--provenance` on GitHub Actions, which alone can mint the OIDC token), the GitHub Packages copy, and the tarball
+   attached to the release (`scripts/gh-release.ts`).
+4. `executables`, when that release lacks `checksums.txt`: the prebuilt executables for every platform
+   (`scripts/build-exe.ts`: Bun cross-compiles from one machine; the panel, the system migrations and the hooks
+   typings are embedded), the smoke of the machine's own build (`test/exe-smoke.ts`: serve with pb_hooks, the panel
+   from the embedded zip, a thumbnail through the wasm, then `voidbase update` against a mock GitHub API),
+   `voidbase_<version>_<os>_<arch>.zip` for linux/darwin/windows × amd64/arm64 (plus musl builds) and `checksums.txt`
+   attached to the release, and the release notes in PocketBase's shape: the `./voidbase update` hint first, then the
+   compiled notes. On GitHub Actions the workflow then attests each archive with `actions/attest-build-provenance`.
 
 The layout mirrors PocketBase's releases: the zip holds the executable, `CHANGELOG.md` and `LICENSE`;
 `checksums.txt` is goreleaser's format (`<sha256>  <file>`), which `voidbase update` checks before replacing the
 executable. Verify an archive's provenance with `gh attestation verify voidbase_X.Y.Z_linux_amd64.zip --owner
-voidbase-cloud`. For the "Immutable" badge and the release attestation GitHub adds itself, enable immutable releases
-once in the repository settings (Settings > General > Releases); it is a setting, not something the workflow can
-turn on.
+voidbase-cloud` (releases built on Cloudflare have no attestation). For the "Immutable" badge and the release
+attestation GitHub adds itself, enable immutable releases once in the repository settings (Settings > General >
+Releases); it is a setting, not something the workflow can turn on.
 
 `.release-please-manifest.json` holds the released version (0.1.0 was cut by hand and its notes written by hand;
 everything after it is compiled). `release-please-config.json` maps commit types to changelog sections.
 
 ## Rehearsals and manual paths
 
-- Actions > release > Run workflow with `dry_run` on (or `gh workflow run release.yml -f dry_run=true`): the
-  publish job with `npm publish --dry-run`, nothing published, no release touched.
-- A release cut by hand also publishes: `gh release create vX.Y.Z --notes-file notes.md` after bumping
-  `package.json` to X.Y.Z on `master`; the `release: published` event runs the publish job against that tag.
+- `bun run release -- --dry-run` (or Actions > release > Run workflow with `dry_run` on, or `gh workflow run
+  release.yml -f dry_run=true`): every step with release-please in dry-run mode and `npm publish --dry-run`, nothing
+  published, no release touched. `GH_TOKEN` (read access is enough) and `NPM_TOKEN` must be set.
+- A release cut by hand also publishes: `gh release create vX.Y.Z --notes-file notes.md` after bumping `package.json`
+  to X.Y.Z on `master`; the `release: published` event runs `scripts/release.sh --tag vX.Y.Z` against that tag, and on
+  Cloudflare `bun scripts/cf-builds.ts build --worker voidbase-release --commit <sha>` does the same.
 - Publishing from a machine: `bun run check && bun test`, then
   `NPM_CONFIG_//registry.npmjs.org/:_authToken=$VOIDBASE_NPM_TOKEN npm publish --access public`.
 
-Secrets and permissions: `NPM_TOKEN` (repository secret, an npm granular token with publish rights on the
-`@voidbase-cloud` scope). release-please opens the release PR with the workflow's own token only if the
-organization allows it (voidbase-cloud > Settings > Actions > General > "Allow GitHub Actions to create and
-approve pull requests", then the same switch on the repository); otherwise add `RELEASE_PLEASE_TOKEN`, a
-fine-grained PAT with contents and pull requests write on this repository, which the workflow prefers when
-present and which also makes CI run on the release PR (the workflow's own token cannot trigger other workflows).
-GitHub Packages and the release assets use the workflow's `GITHUB_TOKEN`.
+Secrets and permissions. On GitHub Actions: `NPM_TOKEN` (repository secret, an npm granular token with publish rights
+on the `@voidbase-cloud` scope); release-please opens the release PR with the workflow's own token only if the
+organization allows it (voidbase-cloud > Settings > Actions > General > "Allow GitHub Actions to create and approve
+pull requests", then the same switch on the repository); otherwise add `RELEASE_PLEASE_TOKEN`, a fine-grained PAT with
+contents and pull requests write on this repository, which the workflow prefers when present and which also makes CI
+run on the release PR (the workflow's own token cannot trigger other workflows). GitHub Packages and the release
+assets use the workflow's `GITHUB_TOKEN`. On Cloudflare the same three are build secrets of the release trigger:
+`GH_TOKEN` (the PAT), `NPM_TOKEN`, and optionally `GH_PACKAGES_TOKEN` (a classic PAT with `write:packages`; without it
+the GitHub Packages copy is skipped).
 
 Consumers: `bun add @voidbase-cloud/voidbase`; from GitHub Packages instead, `.npmrc` with
 `@voidbase-cloud:registry=https://npm.pkg.github.com` and a token with `read:packages`.

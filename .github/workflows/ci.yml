@@ -1,118 +1,25 @@
+# One flow, two backends (docs/ci.md): scripts/ci.sh is the whole CI. It runs here on GitHub's runners unless the
+# repository variable CI_BACKEND is `cloudflare`, in which case Cloudflare Workers Builds runs the same script on every
+# push (the Cloudflare GitHub App starts the build and posts the check run) and this job is skipped.
 name: ci
 on:
   push:
     branches: [master, main]
   pull_request:
+  workflow_dispatch:
 jobs:
-  commitlint:
+  ci:
+    if: vars.CI_BACKEND != 'cloudflare'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CHROME_PATH: /usr/bin/google-chrome
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "1.3.14" }
-      - run: bun install --frozen-lockfile
-      - name: Commit messages follow Conventional Commits (commitlint.config.js)
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            node_modules/.bin/commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
-          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
-            node_modules/.bin/commitlint --last --verbose
-          else
-            node_modules/.bin/commitlint --from "${{ github.event.before }}" --to "${{ github.sha }}" --verbose
-          fi
-  conformance:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      VOIDBASE_SUPERUSER_EMAIL: admin@example.com
-      VOIDBASE_SUPERUSER_PASSWORD: changeme123
-      VOIDBASE_HOOKS_DIR: ../pocketbase-sveltekit-starter/pb/pb_hooks
-      VOIDBASE_MIGRATIONS_DIR: ../pocketbase-sveltekit-starter/pb/pb_migrations
-      AUDITLOG: posts,users
-      VOIDBASE_LOG_MIN_LEVEL: "0"
-      CHROME_PATH: /usr/bin/google-chrome
-    steps:
-      - uses: actions/checkout@v4
-        with: { path: voidbase }
-      # the two oracles: the starter (hooks, migrations, frontend) and PocketBase's committed panel build
-      - uses: actions/checkout@v4
-        with: { repository: spinspire/pocketbase-sveltekit-starter, path: pocketbase-sveltekit-starter }
-      - uses: actions/checkout@v4
-        with: { repository: pocketbase/pocketbase, ref: v0.40.2, path: pocketbase, sparse-checkout: ui/dist }
-      - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "1.3.14" }
-      - name: Install
-        working-directory: voidbase
-        run: |
-          bun install --frozen-lockfile
-          bun run panel:sync
-          # the starter's frontend build next to the panel, as a deployment ships it (the SPA shell the boot test checks)
-          (cd ../pocketbase-sveltekit-starter/sk && bun install --frozen-lockfile && bunx svelte-kit sync && bun run build)
-          bun run app:sync
-          ./node_modules/.bin/void prepare
-      - name: Typecheck and unit tests
-        working-directory: voidbase
-        run: |
-          bunx tsc --noEmit -p tsconfig.json
-          bun test
-      - name: Start voidbase (dev server on 5180)
-        working-directory: voidbase
-        run: |
-          # the Worker reads its vars from .env files (Void bakes them), not from the shell: write the job's values
-          printf 'VOIDBASE_SUPERUSER_EMAIL=%s\nVOIDBASE_SUPERUSER_PASSWORD=%s\nVOIDBASE_HOOKS_DIR=%s\nVOIDBASE_MIGRATIONS_DIR=%s\nAUDITLOG=%s\nVOIDBASE_LOG_MIN_LEVEL=0\n' "$VOIDBASE_SUPERUSER_EMAIL" "$VOIDBASE_SUPERUSER_PASSWORD" "$VOIDBASE_HOOKS_DIR" "$VOIDBASE_MIGRATIONS_DIR" "$AUDITLOG" > .env
-          ./node_modules/.bin/void db migrate
-          ./scripts/dev.sh start 5180
-          ./scripts/seed-app-user.sh http://127.0.0.1:5180
-      - name: Start the reference PocketBase (8090) and test helpers
-        working-directory: voidbase
-        run: |
-          ./scripts/seed-reference.sh .void/reference 8090 0.39.11 ../pocketbase-sveltekit-starter
-          (setsid nohup bun test/smtp-sink.ts > .void/sink.log 2>&1 &)
-          (setsid nohup bun test/mock-oidc.ts > .void/oidc.log 2>&1 &)
-          (setsid nohup bun test/s3-mock.ts > .void/s3.log 2>&1 &)
-          (setsid nohup bun test/cf-mock.ts > .void/cf.log 2>&1 &)
-          sleep 2
-      - name: Differential suites and panel tests
-        working-directory: voidbase
-        run: ./scripts/ci-suites.sh http://127.0.0.1:8090 http://127.0.0.1:5180
-      - name: Differential suites against `voidbase serve` (Bun runtime, SQLite + local files)
-        working-directory: voidbase
-        run: |
-          ./scripts/dev.sh stop
-          (VOIDBASE_SUPERUSER_EMAIL=admin@example.com VOIDBASE_SUPERUSER_PASSWORD=changeme123 setsid nohup bun bin/voidbase.ts serve --http 127.0.0.1:8093 --dir .void/pb_data --hooksDir ../pocketbase-sveltekit-starter/pb/pb_hooks --migrationsDir ../pocketbase-sveltekit-starter/pb/pb_migrations > .void/serve.log 2>&1 &)
-          for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:8093/api/health && break; sleep 1; done
-          ./scripts/seed-app-user.sh http://127.0.0.1:8093
-          CI_BROWSER=0 CI_LOGS=.void/ci-logs-bun ./scripts/ci-suites.sh http://127.0.0.1:8090 http://127.0.0.1:8093
-          ./scripts/dev.sh start 5180
-      - name: voidbase deploy dry run against the Cloudflare API mock
-        working-directory: voidbase
-        run: bun test/deploy-cf.ts
-      - name: Fresh-database boot (production build in workerd)
-        working-directory: voidbase
-        run: bun test/fresh-db.ts 5181
-      - name: HTTP mail provider transport (production build)
-        working-directory: voidbase
-        run: bun test/mail-http.ts 5184
-      - name: "Prebuilt executable smoke (single file with the panel, migrations, typings and wasm embedded; the update flow)"
-        working-directory: voidbase
-        run: bun test/exe-smoke.ts
-        env:
-          STARTER_VB_DIR: ../pocketbase-sveltekit-starter/pb
-      - name: Starter app smoke (unmodified pocketbase-sveltekit-starter against voidbase)
-        working-directory: voidbase
-        run: |
-          (cd ../pocketbase-sveltekit-starter/sk && bun install --frozen-lockfile && bunx svelte-kit sync)
-          STARTER_SK_DIR=../pocketbase-sveltekit-starter/sk ./scripts/starter.sh start 5174 http://127.0.0.1:5180
-          bun test/starter-smoke.ts http://127.0.0.1:5174 .void/ci-logs/starter.png
-      - name: Logs on failure
-        if: failure()
-        working-directory: voidbase
-        run: |
-          echo "--- dev.log"; tail -n 80 .void/dev.log || true
-          echo "--- reference"; tail -n 40 .void/reference/pb.log || true
-          echo "--- preview.log"; tail -n 60 .void/preview.log || true
-          for f in .void/ci-logs/*.log; do echo "--- $f"; tail -n 30 "$f"; done
+      - run: ./scripts/ci.sh
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: ci-logs, path: voidbase/.void/ci-logs, if-no-files-found: ignore }
+        with: { name: ci-status, path: ci/public, if-no-files-found: ignore }

@@ -18,3 +18,5 @@ public/*
 .cloud
 # written by scripts/build-exe.ts while compiling the executables
 src/node/embedded.generated.json
+# rendered by scripts/ci-status.ts, deployed by Workers Builds as the status Worker (ci/wrangler.jsonc)
+ci/public

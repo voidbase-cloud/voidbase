@@ -1,0 +1,178 @@
+// Cloudflare Workers Builds for this repository through the Builds REST API (docs/ci.md): connects the GitHub
+// repository, creates the CI project and the release project (each a Worker that serves its status page) with their
+// triggers and build variables, triggers builds and follows their logs.
+//   bun scripts/cf-builds.ts setup [--repo voidbase-cloud/voidbase] [--ci voidbase-ci] [--release voidbase-release] [--branch master] [--no-release]
+//   bun scripts/cf-builds.ts status [--ci voidbase-ci] [--release voidbase-release]
+//   bun scripts/cf-builds.ts build [--worker voidbase-ci] [--branch master | --commit <sha>] [--follow]
+//   bun scripts/cf-builds.ts builds [--worker voidbase-ci]
+//   bun scripts/cf-builds.ts logs <build-uuid> [--follow]
+//   bun scripts/cf-builds.ts cancel <build-uuid>
+//   bun scripts/cf-builds.ts env [--worker voidbase-ci] [--trigger <name>] KEY=value ... [--secret KEY=value] ...
+// Auth: CLOUDFLARE_BUILDS_TOKEN, a *user* API token (My Profile > API Tokens) with "Workers Builds Configuration: Edit"
+// and "Workers Scripts: Edit"; the Builds API rejects account-owned tokens. CLOUDFLARE_ACCOUNT_ID picks the account when
+// the token reaches several. `setup` stores the release project's secrets from the environment when they are set:
+// GH_TOKEN (release-please, release assets), NPM_TOKEN or VOIDBASE_NPM_TOKEN, GH_PACKAGES_TOKEN. CLOUDFLARE_API_BASE
+// and GITHUB_API_URL point everything at test/cf-mock.ts.
+import { CfApi, CfError, resolveAccount } from "../src/cloud/rest";
+
+const [cmd = "status", ...rest] = process.argv.slice(2);
+const args: Record<string, string> = {}; const positional: string[] = []; const secretArgs: string[] = [];
+for (let i = 0; i < rest.length; i++) {
+  const a = rest[i]!;
+  if (a === "--secret") secretArgs.push(rest[++i] ?? "");
+  else if (a.startsWith("--")) { const v = rest[i + 1]; if (v !== undefined && !v.startsWith("--")) { args[a.slice(2)] = v; i++; } else args[a.slice(2)] = "1"; }
+  else positional.push(a);
+}
+const token = process.env.CLOUDFLARE_BUILDS_TOKEN;
+if (!token) {
+  console.error("CLOUDFLARE_BUILDS_TOKEN is not set. The Builds API takes a user API token (dash.cloudflare.com/profile/api-tokens) with\n  Workers Builds Configuration: Edit and Workers Scripts: Edit; account-owned tokens (VOIDBASE_DEPLOY_CF_API_KEY) are rejected.");
+  process.exit(1);
+}
+const cf = new CfApi(token, process.env.CLOUDFLARE_API_BASE);
+const GITHUB_API = (process.env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
+const CI = args.ci ?? "voidbase-ci", RELEASE = args.release ?? "voidbase-release", BRANCH = args.branch ?? "master";
+const BUN_VERSION = "1.3.14";  // the version CI pins (setup-bun in the workflows); the image's default is older
+const DEPLOY = "./node_modules/.bin/wrangler deploy -c ci/wrangler.jsonc";
+const PREVIEW = "./node_modules/.bin/wrangler versions upload -c ci/wrangler.jsonc";
+
+interface Trigger { trigger_uuid: string; trigger_name: string; external_script_id?: string; build_command?: string; deploy_command?: string; root_directory?: string; branch_includes?: string[]; branch_excludes?: string[]; path_includes?: string[]; path_excludes?: string[]; build_caching_enabled?: boolean; [k: string]: unknown }
+interface Build { build_uuid: string; status?: string; created_on?: string; created_at?: string; build_trigger_metadata?: { branch?: string; commit_hash?: string; [k: string]: unknown }; [k: string]: unknown }
+type EnvVars = Record<string, { value: string; is_secret: boolean }>;
+
+const die = (m: string): never => { console.error(m); process.exit(1); };
+const guide = (e: unknown): never => {
+  if (e instanceof CfError && e.path.includes("/builds/") && (e.has(10000) || e.status === 401 || e.status === 403))
+    die(`${e.message}\n  The Builds API accepts user tokens only: create one at dash.cloudflare.com/profile/api-tokens with Workers Builds\n  Configuration: Edit and Workers Scripts: Edit, and put it in CLOUDFLARE_BUILDS_TOKEN (account-owned tokens are rejected).`);
+  die(e instanceof Error ? e.message : String(e));
+};
+const account = await resolveAccount(cf, process.env.CLOUDFLARE_ACCOUNT_ID).catch(guide);
+const A = `/accounts/${account.id}`;
+const dash = (name: string) => `https://dash.cloudflare.com/${account.id}/workers/services/view/${name}`;
+
+async function workers(): Promise<{ id: string; tag?: string }[]> { return (await cf.json<{ id: string; tag?: string }[]>("GET", `${A}/workers/scripts`)).result ?? []; }
+async function workerTag(name: string): Promise<string> {
+  const w = (await workers()).find((s) => s.id === name);
+  return w?.tag ?? die(`no Worker ${name} on account ${account.name}; run \`bun scripts/cf-builds.ts setup\` first`);
+}
+async function ensureWorker(name: string): Promise<{ tag: string; created: boolean }> {
+  const found = (await workers()).find((s) => s.id === name);
+  if (found?.tag) return { tag: found.tag, created: false };
+  // a placeholder Worker so the project exists; the first build replaces it with the status page (assets only)
+  const form = new FormData();
+  form.set("metadata", new Blob([JSON.stringify({ main_module: "index.js", compatibility_date: "2026-01-01" })], { type: "application/json" }));
+  form.set("index.js", new File([`export default { fetch: () => new Response("${name}: no build yet\\n") };`], "index.js", { type: "application/javascript+module" }));
+  await cf.form("PUT", `${A}/workers/scripts/${name}`, form);
+  const tag = (await workers()).find((s) => s.id === name)?.tag ?? die(`Worker ${name} uploaded but not listed with a tag`);
+  return { tag, created: true };
+}
+async function triggers(tag: string): Promise<Trigger[]> { return (await cf.json<Trigger[]>("GET", `${A}/builds/workers/${tag}/triggers`)).result ?? []; }
+async function ensureTrigger(tag: string, connection: string, buildToken: string, want: Omit<Trigger, "trigger_uuid">): Promise<{ uuid: string; created: boolean }> {
+  const existing = (await triggers(tag)).find((t) => t.trigger_name === want.trigger_name);
+  if (existing) { await cf.json("PATCH", `${A}/builds/triggers/${existing.trigger_uuid}`, { ...want, build_token_uuid: buildToken }); return { uuid: existing.trigger_uuid, created: false }; }
+  const r = await cf.json<Trigger>("POST", `${A}/builds/triggers`, { ...want, external_script_id: tag, repo_connection_uuid: connection, build_token_uuid: buildToken });
+  return { uuid: r.result.trigger_uuid, created: true };
+}
+async function setEnv(trigger: string, vars: EnvVars): Promise<void> { if (Object.keys(vars).length) await cf.json("PATCH", `${A}/builds/triggers/${trigger}/environment_variables`, vars); }
+async function latestBuild(tag: string): Promise<Build | null> { const r = await cf.json<Build[]>("GET", `${A}/builds/workers/${tag}/builds`); return (r.result ?? [])[0] ?? null; }
+const when = (b: Build) => b.created_on ?? b.created_at ?? "";
+const describe = (b: Build) => `${b.build_uuid}  ${(b.status ?? "?").padEnd(10)} ${(b.build_trigger_metadata?.branch ?? "").padEnd(12)} ${(b.build_trigger_metadata?.commit_hash ?? "").slice(0, 10).padEnd(10)} ${when(b)}`;
+async function printLogs(uuid: string, from = 0): Promise<{ next: number; status: string }> {
+  const r = await cf.json<{ lines?: ({ line?: string; message?: string; ts?: string } | string)[]; status?: string; build?: { status?: string } }>("GET", `${A}/builds/builds/${uuid}/logs`);
+  const lines = r.result?.lines ?? [];
+  for (const l of lines.slice(from)) console.log(typeof l === "string" ? l : `${l.ts ? l.ts + "  " : ""}${l.line ?? l.message ?? JSON.stringify(l)}`);
+  let status = r.result?.status ?? r.result?.build?.status ?? "";
+  if (!status) { const b = await cf.json<Build>("GET", `${A}/builds/builds/${uuid}`, undefined, [10000]).catch(() => null); status = b?.result?.status ?? ""; }
+  return { next: lines.length, status };
+}
+const FINAL = new Set(["success", "failure", "failed", "canceled", "cancelled", "timed_out", "error"]);
+async function follow(uuid: string): Promise<void> {
+  let from = 0, status = "";
+  for (;;) {
+    const r = await printLogs(uuid, from); from = r.next; status = r.status;
+    if (FINAL.has(status)) break;
+    await Bun.sleep(Number(process.env.CF_BUILDS_POLL_MS ?? 5000));
+  }
+  console.log(`build ${uuid}: ${status || "finished"}`);
+  if (status && status !== "success") process.exit(1);
+}
+
+try {
+  if (cmd === "setup") {
+    const repo = args.repo ?? "voidbase-cloud/voidbase";
+    const gh = await fetch(`${GITHUB_API}/repos/${repo}`, { headers: { accept: "application/vnd.github+json", "user-agent": "voidbase-cf-builds", ...(process.env.GH_TOKEN ? { authorization: `Bearer ${process.env.GH_TOKEN}` } : {}) } });
+    if (!gh.ok) die(`GitHub: ${gh.status} for ${repo}`);
+    const info = (await gh.json()) as { id: number; name: string; owner: { id: number; login: string }; default_branch: string };
+    console.log(`account ${account.name} (${account.id}); repository ${repo} (id ${info.id}, owner ${info.owner.login} ${info.owner.id})`);
+    // 1. the repository connection (needs the "Cloudflare Workers and Pages" GitHub App installed for the repository)
+    const conn = await cf.json<{ repo_connection_uuid?: string; uuid?: string; id?: string }>("PUT", `${A}/builds/repos/connections`, { provider_type: "github", provider_account_id: String(info.owner.id), provider_account_name: info.owner.login, repo_id: String(info.id), repo_name: info.name });
+    const connection = conn.result?.repo_connection_uuid ?? conn.result?.uuid ?? conn.result?.id ?? die(`connection created but no uuid in ${JSON.stringify(conn.result)}`);
+    console.log(`repository connection ${connection}`);
+    // 2. the build token Workers Builds deploys with (the dashboard creates one under Settings > Builds > API token)
+    const tokens = (await cf.json<{ build_token_uuid: string; build_token_name?: string }[]>("GET", `${A}/builds/tokens`)).result ?? [];
+    const buildToken = tokens[0]?.build_token_uuid ?? die(`no build token on the account yet: open ${dash(CI)} > Settings > Builds > API token > Create new token once, then rerun setup`);
+    console.log(`build token ${buildToken}${tokens[0]?.build_token_name ? ` (${tokens[0].build_token_name})` : ""}`);
+    // 3. the projects: two Workers, three triggers
+    const ci = await ensureWorker(CI);
+    console.log(`Worker ${CI}: ${ci.created ? "created" : "exists"} (tag ${ci.tag})`);
+    const common = { root_directory: "/", path_includes: ["*"], path_excludes: [], build_caching_enabled: true };
+    const prod = await ensureTrigger(ci.tag, connection, buildToken, { trigger_name: `${CI} (${BRANCH})`, build_command: "bun run ci", deploy_command: DEPLOY, branch_includes: [BRANCH], branch_excludes: [], ...common });
+    const preview = await ensureTrigger(ci.tag, connection, buildToken, { trigger_name: `${CI} (branches)`, build_command: "bun run ci", deploy_command: PREVIEW, branch_includes: ["*"], branch_excludes: [BRANCH], ...common });
+    const vars: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false }, CI_BROWSER: { value: "1", is_secret: false } };
+    await setEnv(prod.uuid, vars); await setEnv(preview.uuid, vars);
+    console.log(`  trigger ${prod.uuid} ${BRANCH}: ${prod.created ? "created" : "updated"}; build \`bun run ci\`, deploy \`${DEPLOY}\``);
+    console.log(`  trigger ${preview.uuid} other branches: ${preview.created ? "created" : "updated"}; deploy \`${PREVIEW}\` (preview URL on the pull request)`);
+    if (!args["no-release"]) {
+      const rel = await ensureWorker(RELEASE);
+      console.log(`Worker ${RELEASE}: ${rel.created ? "created" : "exists"} (tag ${rel.tag})`);
+      const t = await ensureTrigger(rel.tag, connection, buildToken, { trigger_name: `${RELEASE} (${BRANCH})`, build_command: "bun run release", deploy_command: DEPLOY, branch_includes: [BRANCH], branch_excludes: [], ...common });
+      const secrets: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false } };
+      const gh = process.env.GH_TOKEN, npm = process.env.NPM_TOKEN ?? process.env.VOIDBASE_NPM_TOKEN, ghp = process.env.GH_PACKAGES_TOKEN;
+      if (gh) secrets.GH_TOKEN = { value: gh, is_secret: true };
+      if (npm) secrets.NPM_TOKEN = { value: npm, is_secret: true };
+      if (ghp) secrets.GH_PACKAGES_TOKEN = { value: ghp, is_secret: true };
+      await setEnv(t.uuid, secrets);
+      console.log(`  trigger ${t.uuid} ${BRANCH}: ${t.created ? "created" : "updated"}; build \`bun run release\`; secrets stored: ${Object.keys(secrets).filter((k) => secrets[k]!.is_secret).join(", ") || "none (set GH_TOKEN and NPM_TOKEN in the environment and rerun, or `env --worker " + RELEASE + " --secret GH_TOKEN=...`)"}`);
+    }
+    console.log(`\ndone. Pushes to ${repo} now build on Cloudflare (${dash(CI)}); first build: bun scripts/cf-builds.ts build --branch ${BRANCH} --follow`);
+  } else if (cmd === "status") {
+    for (const name of [CI, RELEASE]) {
+      const w = (await workers()).find((s) => s.id === name);
+      if (!w?.tag) { console.log(`${name}: no such Worker`); continue; }
+      const ts = await triggers(w.tag); const last = await latestBuild(w.tag);
+      console.log(`${name} (tag ${w.tag}) ${dash(name)}`);
+      for (const t of ts) console.log(`  trigger ${t.trigger_uuid}  ${t.trigger_name}: branches ${JSON.stringify(t.branch_includes ?? [])}${t.branch_excludes?.length ? ` minus ${JSON.stringify(t.branch_excludes)}` : ""}; build \`${t.build_command ?? ""}\`; deploy \`${t.deploy_command ?? ""}\``);
+      console.log(last ? `  latest build: ${describe(last)}` : "  no builds yet");
+    }
+  } else if (cmd === "build") {
+    const name = args.worker ?? CI; const tag = await workerTag(name);
+    const ts = await triggers(tag); const branch = args.commit ? undefined : args.branch ?? BRANCH;
+    const t = args.trigger ? ts.find((x) => x.trigger_name === args.trigger) : ts.find((x) => (branch ? (x.branch_includes ?? []).includes(branch) : true)) ?? ts[0];
+    if (!t) die(`no trigger on ${name}`);
+    const body = args.commit ? { commit_hash: args.commit, ...(args.branch ? { branch: args.branch } : {}) } : { branch };
+    const r = await cf.json<{ build_uuid: string; status?: string; already_exists?: boolean }>("POST", `${A}/builds/triggers/${t.trigger_uuid}/builds`, body);
+    console.log(`build ${r.result.build_uuid} ${r.result.status ?? "queued"} on ${name} via trigger "${t.trigger_name}" (${JSON.stringify(body)})${r.result.already_exists ? " (already pending)" : ""}`);
+    if (args.follow) await follow(r.result.build_uuid);
+  } else if (cmd === "builds") {
+    const name = args.worker ?? CI; const tag = await workerTag(name);
+    const list = (await cf.json<Build[]>("GET", `${A}/builds/workers/${tag}/builds`)).result ?? [];
+    if (args.json) console.log(JSON.stringify(list, null, 2)); else { console.log(`${name}: ${list.length} builds`); for (const b of list) console.log("  " + describe(b)); }
+  } else if (cmd === "logs") {
+    const uuid = positional[0] ?? die("logs: build uuid missing");
+    if (args.follow) await follow(uuid); else { const r = await printLogs(uuid); if (r.status) console.log(`status: ${r.status}`); }
+  } else if (cmd === "cancel") {
+    const uuid = positional[0] ?? die("cancel: build uuid missing");
+    await cf.json("PUT", `${A}/builds/builds/${uuid}/cancel`); console.log(`build ${uuid} cancelled`);
+  } else if (cmd === "env") {
+    const name = args.worker ?? CI; const tag = await workerTag(name); const ts = await triggers(tag);
+    const targets = args.trigger ? ts.filter((t) => t.trigger_name === args.trigger) : ts;
+    if (!targets.length) die(`no trigger${args.trigger ? ` named ${args.trigger}` : ""} on ${name}`);
+    const vars: EnvVars = {};
+    for (const kv of positional) { const i = kv.indexOf("="); if (i < 1) die(`expected KEY=value, got ${kv}`); vars[kv.slice(0, i)] = { value: kv.slice(i + 1), is_secret: false }; }
+    for (const kv of secretArgs) { const i = kv.indexOf("="); if (i < 1) die(`expected --secret KEY=value, got ${kv}`); vars[kv.slice(0, i)] = { value: kv.slice(i + 1), is_secret: true }; }
+    for (const t of targets) {
+      if (Object.keys(vars).length) await setEnv(t.trigger_uuid, vars);
+      const now = (await cf.json<EnvVars>("GET", `${A}/builds/triggers/${t.trigger_uuid}/environment_variables`)).result ?? {};
+      console.log(`${name} "${t.trigger_name}": ${Object.entries(now).map(([k, v]) => `${k}=${v.is_secret ? "(secret)" : v.value}`).join(" ") || "(no variables)"}`);
+    }
+  } else die("usage: bun scripts/cf-builds.ts setup|status|build|builds|logs|cancel|env ... (see the header of the script)");
+} catch (e) { guide(e); }

@@ -2486,9 +2486,21 @@
             "prod"
           ],
           "hours": 2,
+          "status": "done",
+          "milestone": "m6",
+          "notes": "package.json (@voidbase-cloud/voidbase, release-please bumps it), LICENSE (MIT), NOTICE, CHANGELOG.md compiled from Conventional Commits (husky + commitlint enforce them). Releases v0.1.0-v0.2.x on npm and GitHub with PocketBase-shaped assets (voidbase_<v>_<os>_<arch>.zip, checksums.txt, attestations) and the ./voidbase update hint; scripts/release.sh is the flow (docs/releasing.md)."
+        },
+        {
+          "id": "prod.ci",
+          "title": "CI and release flows portable across GitHub Actions and Cloudflare Workers Builds",
+          "surface": "scripts/ci.sh, scripts/release.sh",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 6,
           "status": "partial",
           "milestone": "m6",
-          "notes": "package.json 0.1.0 with license, bin, files, keywords, engines; LICENSE (MIT), NOTICE (PocketBase MIT attribution for the panel and API design, dependency licenses), CHANGELOG.md; `bun pm pack --dry-run` packs 97 files / 0.66 MB. Publishing to npm needs credentials and is the owner's call."
+          "notes": "One script per flow (scripts/ci.sh, scripts/release.sh; scripts/ci-lib.sh records steps, scripts/ci-status.ts renders ci/public as the status page and badge); the workflows only call them and skip when the repository variable CI_BACKEND is cloudflare. Workers Builds side: ci/wrangler.jsonc (the status Worker each project deploys), scripts/ci-browser.sh (Chrome without root on the build image), scripts/cf-builds.ts (connect, triggers, variables, builds, logs through the Builds API; test/cf-builds.ts against the mock). Partial: the GitHub App install and a user token are account-side steps, so no live Cloudflare build has run yet; provenance and attestations stay GitHub-only (OIDC)."
         }
       ]
     },

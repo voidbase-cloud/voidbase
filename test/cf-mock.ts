@@ -1,18 +1,29 @@
 // In-memory Cloudflare REST API for tests: the endpoints `voidbase deploy` (D1/R2/queue provisioning) and
 // `voidbase/cloud` (script upload with assets, schedules, subdomain, D1 query, teardown) use, with a fixed bearer token.
 //   bun test/cf-mock.ts [port=5197]      token: cf-test-token   account: acc123
-// A second token, cf-test-token-noqueues, is accepted everywhere except the Queues endpoints (a token without Queues edit).
+// A second token, cf-test-token-noqueues, is accepted everywhere except the Queues endpoints (a token without Queues edit);
+// cf-test-user-token is the user token the Workers Builds endpoints (/builds/*) demand.
 // GET /__state dumps everything, DELETE /__calls resets it, GET /__calls lists the requests made.
 const port = Number(process.argv[2] ?? 5197); const TOKEN = "cf-test-token"; const TOKEN_NOQUEUES = "cf-test-token-noqueues"; const ACCOUNT = "acc123";
+// The Workers Builds endpoints accept only the user token (the real API rejects account-owned tokens); GitHub's repository and
+// release endpoints (scripts/cf-builds.ts setup, scripts/gh-release.ts) are served too, unauthenticated, under /repos.
+const USER_TOKEN = "cf-test-user-token"; const GH_REPO = { id: 1359087906, name: "voidbase", owner: { id: 325612581, login: "voidbase-cloud" }, default_branch: "master" };
 const UPLOAD_JWT = "upload-jwt", COMPLETION_JWT = "completion-jwt";
-interface Script { metadata: Record<string, unknown>; modules: string[]; schedules: string[]; subdomain: boolean; assets: string[]; migrationTag: string | null; created_on: string; modified_on: string }
+interface Script { tag: string; metadata: Record<string, unknown>; modules: string[]; schedules: string[]; subdomain: boolean; assets: string[]; migrationTag: string | null; created_on: string; modified_on: string }
+interface Trigger { trigger_uuid: string; external_script_id: string; repo_connection_uuid: string; build_token_uuid: string; trigger_name: string; [k: string]: unknown }
+interface Build { build_uuid: string; status: string; created_on: string; trigger: { trigger_uuid: string; external_script_id: string }; build_trigger_metadata: { branch?: string; commit_hash?: string }; build_trigger_source: string }
+interface GhRelease { id: number; tag_name: string; html_url: string; body: string; upload_url: string; assets: { id: number; name: string; size: number }[] }
 const d1 = new Map<string, string>(); const d1Migrations = new Map<string, string[]>(); const d1Queries = new Map<string, string[]>();
 const r2 = new Map<string, Set<string>>(); const queues = new Map<string, string>(); const consumers = new Map<string, Record<string, unknown>[]>();
-const scripts = new Map<string, Script>(); const zones = [{ id: "zone123", name: "example.com" }]; const domains = new Map<string, { id: string; hostname: string; service: string; zone_id: string; environment: string }>(); const uploadedHashes = new Set<string>(); const pendingSessions = new Map<string, Set<string>>(); const calls: string[] = [];
+const scripts = new Map<string, Script>();
+const connections = new Map<string, Record<string, unknown>>(); const triggers = new Map<string, Trigger>(); const builds = new Map<string, Build>(); const buildEnv = new Map<string, Record<string, { value: string; is_secret: boolean }>>();
+const ghReleases = new Map<string, GhRelease>(); let ghIds = 100;
+const seedGh = () => { ghReleases.clear(); ghReleases.set("v9.9.9", { id: 9, tag_name: "v9.9.9", html_url: "https://github.com/voidbase-cloud/voidbase/releases/tag/v9.9.9", body: "### Features\n\n* something new\n", upload_url: `http://127.0.0.1:${port}/__uploads/repos/voidbase-cloud/voidbase/releases/9/assets{?name,label}`, assets: [] }); };
+seedGh(); const zones = [{ id: "zone123", name: "example.com" }]; const domains = new Map<string, { id: string; hostname: string; service: string; zone_id: string; environment: string }>(); const uploadedHashes = new Set<string>(); const pendingSessions = new Map<string, Set<string>>(); const calls: string[] = [];
 const ok = (result: unknown, extra: Record<string, unknown> = {}, status = 200) => Response.json({ success: true, errors: [], messages: [], result, ...extra }, { status });
 const err = (status: number, code: number, message: string) => Response.json({ success: false, errors: [{ code, message }], messages: [], result: null }, { status });
-const reset = () => { calls.length = 0; domains.clear(); d1.clear(); d1Migrations.clear(); d1Queries.clear(); r2.clear(); queues.clear(); consumers.clear(); scripts.clear(); uploadedHashes.clear(); pendingSessions.clear(); };
-const state = () => ({ domains: [...domains.values()], d1: [...d1.entries()], d1Migrations: Object.fromEntries(d1Migrations), d1Queries: Object.fromEntries(d1Queries), r2: Object.fromEntries([...r2.entries()].map(([k, v]) => [k, [...v]])), queues: [...queues.entries()], consumers: Object.fromEntries(consumers), scripts: Object.fromEntries(scripts), uploadedHashes: [...uploadedHashes] });
+const reset = () => { calls.length = 0; connections.clear(); triggers.clear(); builds.clear(); buildEnv.clear(); seedGh(); domains.clear(); d1.clear(); d1Migrations.clear(); d1Queries.clear(); r2.clear(); queues.clear(); consumers.clear(); scripts.clear(); uploadedHashes.clear(); pendingSessions.clear(); };
+const state = () => ({ connections: [...connections.values()], triggers: [...triggers.values()], builds: [...builds.values()], buildEnv: Object.fromEntries(buildEnv), ghReleases: [...ghReleases.values()], domains: [...domains.values()], d1: [...d1.entries()], d1Migrations: Object.fromEntries(d1Migrations), d1Queries: Object.fromEntries(d1Queries), r2: Object.fromEntries([...r2.entries()].map(([k, v]) => [k, [...v]])), queues: [...queues.entries()], consumers: Object.fromEntries(consumers), scripts: Object.fromEntries(scripts), uploadedHashes: [...uploadedHashes] });
 Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, async fetch(req) {
   const url = new URL(req.url); const p = url.pathname; const A = `/accounts/${ACCOUNT}`;
   if (p === "/__calls") { if (req.method === "DELETE") { reset(); return new Response(null, { status: 204 }); } return Response.json(calls); }
@@ -26,7 +37,33 @@ Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, 
     for (const [, pending] of pendingSessions) { for (const h of [...pending]) if (uploadedHashes.has(h)) pending.delete(h); if (pending.size === 0) done = true; }
     return done ? ok({ jwt: COMPLETION_JWT }, {}, 201) : ok({});
   }
-  if (bearer !== `Bearer ${TOKEN}` && bearer !== `Bearer ${TOKEN_NOQUEUES}`) return err(400, 10000, "Authentication error");
+  // ---- GitHub (unauthenticated in the mock): the repository, releases and asset uploads
+  if (p === `/repos/${GH_REPO.owner.login}/${GH_REPO.name}`) return Response.json(GH_REPO);
+  { const m = p.match(/^\/repos\/[^/]+\/[^/]+\/releases\/tags\/([^/]+)$/); if (m) { const r = ghReleases.get(decodeURIComponent(m[1]!)); return r ? Response.json(r) : Response.json({ message: "Not Found" }, { status: 404 }); } }
+  { const m = p.match(/^\/repos\/[^/]+\/[^/]+\/releases\/(\d+)$/); if (m && req.method === "PATCH") { const r = [...ghReleases.values()].find((x) => x.id === Number(m[1])); if (!r) return Response.json({ message: "Not Found" }, { status: 404 }); const b = (await req.json()) as { body?: string }; if (typeof b.body === "string") r.body = b.body; return Response.json(r); } }
+  { const m = p.match(/^\/repos\/[^/]+\/[^/]+\/releases\/assets\/(\d+)$/); if (m && req.method === "DELETE") { for (const r of ghReleases.values()) { const i = r.assets.findIndex((a) => a.id === Number(m[1])); if (i >= 0) { r.assets.splice(i, 1); return new Response(null, { status: 204 }); } } return Response.json({ message: "Not Found" }, { status: 404 }); } }
+  { const m = p.match(/^\/__uploads\/repos\/[^/]+\/[^/]+\/releases\/(\d+)\/assets$/); if (m && req.method === "POST") { const r = [...ghReleases.values()].find((x) => x.id === Number(m[1])); const name = url.searchParams.get("name") ?? ""; if (!r || !name) return Response.json({ message: "bad upload" }, { status: 422 }); if (r.assets.some((a) => a.name === name)) return Response.json({ message: "Validation Failed: already_exists" }, { status: 422 }); const size = (await req.arrayBuffer()).byteLength; const asset = { id: ++ghIds, name, size }; r.assets.push(asset); return Response.json(asset, { status: 201 }); } }
+  if (bearer !== `Bearer ${TOKEN}` && bearer !== `Bearer ${TOKEN_NOQUEUES}` && bearer !== `Bearer ${USER_TOKEN}`) return err(400, 10000, "Authentication error");
+  // ---- workers builds (user token only)
+  if (p.startsWith(`${A}/builds/`)) {
+    if (bearer !== `Bearer ${USER_TOKEN}`) return err(401, 10000, "Authentication error");
+    if (p === `${A}/builds/repos/connections` && req.method === "PUT") { const b = (await req.json()) as Record<string, unknown>; const existing = [...connections.values()].find((c) => c.provider_type === b.provider_type && c.repo_id === b.repo_id); if (existing) return ok(existing); const c = { repo_connection_uuid: crypto.randomUUID(), ...b }; connections.set(c.repo_connection_uuid, c); return ok(c); }
+    if (p === `${A}/builds/tokens` && req.method === "GET") return ok([{ build_token_uuid: "bt-1", build_token_name: "Workers Builds - Test Account" }]);
+    const byTag = (tag: string) => [...scripts.values()].some((s) => s.tag === tag);
+    if (p === `${A}/builds/triggers` && req.method === "POST") { const b = (await req.json()) as Partial<Trigger>; if (!b.external_script_id || !byTag(b.external_script_id)) return err(404, 10000, "worker not found for external_script_id"); if (!b.repo_connection_uuid || !connections.has(b.repo_connection_uuid)) return err(400, 10000, "unknown repo_connection_uuid"); if (b.build_token_uuid !== "bt-1") return err(400, 10000, "unknown build_token_uuid"); const t = { ...b, trigger_uuid: crypto.randomUUID() } as Trigger; triggers.set(t.trigger_uuid, t); return ok(t); }
+    { const m = p.match(new RegExp(`^${A}/builds/workers/([^/]+)/(triggers|builds)$`)); if (m && req.method === "GET") { const list = [...triggers.values()].filter((t) => t.external_script_id === m[1]); if (m[2] === "triggers") return ok(list); const uuids = new Set(list.map((t) => t.trigger_uuid)); return ok([...builds.values()].filter((b) => uuids.has(b.trigger.trigger_uuid)).reverse()); } }
+    { const m = p.match(new RegExp(`^${A}/builds/triggers/([^/]+)(?:/(builds|environment_variables|purge_build_cache))?$`)); if (m) { const t = triggers.get(m[1]!); if (!t) return err(404, 10000, "trigger not found");
+        if (!m[2] && req.method === "PATCH") { Object.assign(t, (await req.json()) as Record<string, unknown>); return ok(t); }
+        if (m[2] === "builds" && req.method === "POST") { const b = (await req.json()) as { branch?: string; commit_hash?: string }; if (!b.branch && !b.commit_hash) return err(400, 10000, "branch or commit_hash required"); const pending = [...builds.values()].find((x) => x.trigger.trigger_uuid === t.trigger_uuid && x.status === "queued"); if (pending) return ok({ build_uuid: pending.build_uuid, status: pending.status, created_on: pending.created_on, already_exists: true }); const build: Build = { build_uuid: crypto.randomUUID(), status: "queued", created_on: new Date().toISOString(), trigger: { trigger_uuid: t.trigger_uuid, external_script_id: t.external_script_id }, build_trigger_metadata: { branch: b.branch ?? "master", commit_hash: b.commit_hash ?? "deadbeef".repeat(5) }, build_trigger_source: "api" }; builds.set(build.build_uuid, build); return ok({ build_uuid: build.build_uuid, status: build.status, branch: b.branch, worker: [...scripts.entries()].find(([, s]) => s.tag === t.external_script_id)?.[0] }); }
+        if (m[2] === "environment_variables" && req.method === "GET") return ok(buildEnv.get(t.trigger_uuid) ?? {});
+        if (m[2] === "environment_variables" && req.method === "PATCH") { const cur = buildEnv.get(t.trigger_uuid) ?? {}; Object.assign(cur, (await req.json()) as Record<string, { value: string; is_secret: boolean }>); buildEnv.set(t.trigger_uuid, cur); return ok(cur); }
+        if (m[2] === "purge_build_cache" && req.method === "POST") return ok(null); } }
+    { const m = p.match(new RegExp(`^${A}/builds/builds/([^/]+)(?:/(logs|cancel))?$`)); if (m) { const b = builds.get(m[1]!); if (!b) return err(404, 10000, "build not found");
+        if (m[2] === "logs" && req.method === "GET") { if (b.status === "queued") b.status = "running"; else if (b.status === "running") b.status = "success"; const lines = [{ ts: b.created_on, line: `Initializing build environment (${b.build_trigger_metadata.branch} ${b.build_trigger_metadata.commit_hash})` }, { ts: b.created_on, line: "Executing user build command: bun run ci" }, ...(b.status === "success" ? [{ ts: new Date().toISOString(), line: "Build completed" }] : [])]; return ok({ lines, truncated: false, status: b.status }); }
+        if (m[2] === "cancel" && req.method === "PUT") { b.status = "canceled"; return ok(b); }
+        if (!m[2] && req.method === "GET") return ok(b); } }
+    return err(404, 7000, `no builds route for ${req.method} ${p}`);
+  }
   if (p === "/zones") { const name = url.searchParams.get("name"); return ok(zones.filter((z) => !name || z.name === name)); }
   if (p === `${A}/workers/domains` && req.method === "GET") { const svc = url.searchParams.get("service"), host = url.searchParams.get("hostname"); return ok([...domains.values()].filter((d) => (!svc || d.service === svc) && (!host || d.hostname === host))); }
   if (p === `${A}/workers/domains` && req.method === "PUT") { const b = (await req.json()) as { hostname: string; service: string; zone_id: string; environment?: string }; if (!zones.some((z) => z.id === b.zone_id)) return err(404, 100116, "zone not found"); if (!scripts.has(b.service)) return err(404, 10007, "script not found"); const id = crypto.randomUUID().replace(/-/g, ""); const d = { id, hostname: b.hostname, service: b.service, zone_id: b.zone_id, environment: b.environment ?? "production" }; domains.set(id, d); return ok(d); }
@@ -64,7 +101,7 @@ Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, 
       else { const key = decodeURIComponent(m[3]!); if (req.method === "PUT") { objs.add(key); return ok({ key }); } if (req.method === "DELETE") { objs.delete(key); return ok(null); } } } }
   // ---- workers
   if (p === `${A}/workers/subdomain`) return ok({ subdomain: "testsub" });
-  if (p === `${A}/workers/scripts` && req.method === "GET") return ok([...scripts.entries()].map(([id, s]) => ({ id, tags: (s.metadata.tags as string[]) ?? [], created_on: s.created_on, modified_on: s.modified_on })));
+  if (p === `${A}/workers/scripts` && req.method === "GET") return ok([...scripts.entries()].map(([id, s]) => ({ id, tag: s.tag, tags: (s.metadata.tags as string[]) ?? [], created_on: s.created_on, modified_on: s.modified_on })));
   { const m = p.match(new RegExp(`^${A}/workers/scripts/([^/]+)(?:/(settings|assets-upload-session|schedules|subdomain))?$`));
     if (m) { const name = m[1]!; const sub = m[2]; const s = scripts.get(name);
       if (!sub && req.method === "PUT") {
@@ -75,7 +112,7 @@ Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, 
         const tag = (metadata.migrations as { tag: string }[] | undefined)?.at(-1)?.tag ?? s?.migrationTag ?? null;
         if (s && metadata.migrations && s.migrationTag === tag) return err(400, 10023, `migration tag ${tag} already applied`);
         const now = new Date().toISOString();
-        scripts.set(name, { metadata, modules, schedules: s?.schedules ?? [], subdomain: s?.subdomain ?? false, assets: metadata.assets ? [...uploadedHashes] : (s?.assets ?? []), migrationTag: tag, created_on: s?.created_on ?? now, modified_on: now });
+        scripts.set(name, { tag: s?.tag ?? crypto.randomUUID().replace(/-/g, ""), metadata, modules, schedules: s?.schedules ?? [], subdomain: s?.subdomain ?? false, assets: metadata.assets ? [...uploadedHashes] : (s?.assets ?? []), migrationTag: tag, created_on: s?.created_on ?? now, modified_on: now });
         return ok({ id: name, migration_tag: tag });
       }
       if (!sub && req.method === "DELETE") { if (!s) return err(404, 10007, "workers.api.error.script_not_found"); scripts.delete(name); return ok(null); }

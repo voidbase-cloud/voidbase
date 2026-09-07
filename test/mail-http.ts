@@ -15,7 +15,7 @@ try {
   await $`rm -rf ${STATE}`.quiet();
   // fixture hooks provide /api/hooktest/boom for the alert-webhook check
   const buildEnv = { ...process.env, VOIDBASE_PERSIST_TO: STATE, VOIDBASE_HOOKS_DIR: "test/fixtures/hooks", VOIDBASE_MIGRATIONS_DIR: "test/fixtures/migrations" }; delete buildEnv.VOIDBASE_SUPERUSER_EMAIL; delete buildEnv.VOIDBASE_SUPERUSER_PASSWORD;
-  await $`bun run build`.env(buildEnv).quiet();
+  await $`bun run build:app`.env(buildEnv).quiet();
   await $`bun scripts/seed-d1.ts ${STATE}`.quiet();
   preview = Bun.spawn(["setsid", "./node_modules/.bin/vp", "preview", "--port", String(port), "--host", "127.0.0.1", "--strictPort"], { env: { ...process.env, VOIDBASE_PERSIST_TO: STATE }, stdout: Bun.file(".void/preview-mail.log"), stderr: Bun.file(".void/preview-mail.log") });
   let health = 0; for (let i = 0; i < 90 && health !== 200; i++) { await Bun.sleep(1000); health = await fetch(`${base}/api/health`).then((r) => r.status).catch(() => 0); }
@@ -47,6 +47,6 @@ try {
 } finally {
   if (preview) { try { process.kill(-preview.pid, "SIGTERM"); } catch { preview.kill("SIGTERM"); } await preview.exited; }
   try { unlinkSync(".env.local"); } catch { /* gone */ }
-  await $`bun run build`.quiet(); // leave dist/ built without the test variables
+  await $`bun run build:app`.quiet(); // leave dist/ built without the test variables
 }
 console.log(`\n${pass} pass, ${fail} fail`); process.exit(fail ? 1 : 0);

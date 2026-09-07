@@ -12,7 +12,7 @@ const testEnv = { ...process.env, VOIDBASE_MIGRATIONS_DIR: "test/fixtures/migrat
 // Void bakes .env into the worker vars but strips any key that the shell also exports with the same value,
 // and Bun auto-loads .env into process.env: keep the superuser credentials out of the build's environment.
 const buildEnv = { ...testEnv }; delete buildEnv.VOIDBASE_SUPERUSER_EMAIL; delete buildEnv.VOIDBASE_SUPERUSER_PASSWORD;
-await $`bun run build`.env(buildEnv).quiet();
+await $`bun run build:app`.env(buildEnv).quiet();
 // The system tables come from Void's Drizzle migrations (void deploy applies them in production; `void db migrate`
 // only knows the default .void state). Seed the isolated D1 file the same way: miniflare names the database file
 // deterministically, so reuse the dev file name and apply db/migrations/*.sql in order.
@@ -140,7 +140,7 @@ try {
 } finally {
   try { process.kill(-preview.pid, "SIGTERM"); } catch { preview.kill("SIGTERM"); }
   await preview.exited;
-  await $`bun run build`.quiet(); // leave dist/ built from the project's own configuration
+  await $`bun run build:app`.quiet(); // leave dist/ built from the project's own configuration
 }
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

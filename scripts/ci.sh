@@ -15,6 +15,9 @@ cd "$(dirname "$0")/.."; ROOT="$PWD"
 export VOIDBASE_SUPERUSER_EMAIL="${VOIDBASE_SUPERUSER_EMAIL:-admin@example.com}"
 export VOIDBASE_SUPERUSER_PASSWORD="${VOIDBASE_SUPERUSER_PASSWORD:-changeme123}"
 export AUDITLOG="${AUDITLOG:-posts,users}" VOIDBASE_LOG_MIN_LEVEL=0
+# `bun run build` means the CI suite when automation calls it (scripts/pipeline.ts). Anything this script
+# starts is already inside the suite, so for those it means this project's Vite build, and cannot recurse.
+export VOIDBASE_CI_INNER=1
 BACKEND=$(ci_backend); export CI_BACKEND_NAME="$BACKEND"
 PORT="${CI_PORT:-5180}"; PB_PORT="${CI_PB_PORT:-8090}"; VB="http://127.0.0.1:$PORT"; PB="http://127.0.0.1:$PB_PORT"
 LOGS="$ROOT/.void/ci-logs"; rm -rf "$LOGS" "$CI_STEPS_TSV" .void/ci-plan.txt .void/ci-plan.json; mkdir -p "$LOGS"

@@ -16,6 +16,8 @@
 //   .secret()   the Worker's encrypted secrets; read by hooks and routes; never listed, never in a build
 //   (plain)     server configuration: the Worker's plain vars; read by hooks and routes; never in a client build
 //   .public()   the Worker's plain vars *and* the client build (`import.meta.env.KEY`): what the browser may know
+//   local()     the tooling's own: the deploy token, the deploy target; read by voidbase on this machine or in CI,
+//               never stored on the Worker, never in a build
 //
 // The validators are Void's own (`string()`, `number()`, `boolean()`, `url()`, `email()`, `oneOf()`, `json()`,
 // each with `.optional()`, `.default()`, `.secret()`, `.public()`), the same ones a Void project's env.ts uses, so
@@ -44,7 +46,7 @@ export interface StandardSchema<Output = unknown> {
 type StandardResult<Output> = { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<{ readonly message: string }> };
 export type OutputOf<S> = S extends StandardSchema<infer O> ? O : never;
 
-export type Access = "secret" | "server" | "public";
+export type Access = "secret" | "server" | "public" | "local";
 
 export interface Entry<S extends StandardSchema = StandardSchema> {
   schema: S;
@@ -73,6 +75,8 @@ export function secret<S extends StandardSchema>(schema: S, description?: string
 export function server<S extends StandardSchema>(schema: S, description?: string): Marked<S> { return entry({ schema, access: "server", description }); }
 /** Tiers any Standard Schema validator as public: a Worker var the browser may also know (`.public()` on Void's). */
 export function pub<S extends StandardSchema>(schema: S, description?: string): Marked<S> { return entry({ schema, access: "public", description }); }
+/** The tooling's own values (the deploy token, the deploy target): read by voidbase here or in CI, never deployed. */
+export function local<S extends StandardSchema>(schema: S, description?: string): Marked<S> { return entry({ schema, access: "local", description }); }
 
 export type Spec = Record<string, StandardSchema | Entry>;
 type SchemaOf<E> = E extends Entry<infer S> ? S : E extends StandardSchema ? E : never;

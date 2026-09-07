@@ -157,12 +157,13 @@ already lists its copy):
 
 ```ts
 // vb_secrets/main.ts
-import { defineSecrets, describe, string, number, url } from "@voidbase-cloud/voidbase/secrets";
+import { defineSecrets, describe, local, string, number, url } from "@voidbase-cloud/voidbase/secrets";
 
 export default defineSecrets({
   SMTP_PASSWORD: describe(string().secret(), "the mail provider's SMTP password"),   // the Worker's secrets
   MAX_INSTANCES: number().default(5),                                                 // a Worker var
   PUBLIC_API_URL: url().optional().public(),                                          // a var the browser gets too
+  VOIDBASE_DEPLOY_CF_API_KEY: local(string(), "the deploy token"),                   // the tooling's, never deployed
 });
 ```
 

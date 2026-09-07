@@ -2,7 +2,7 @@ import { describe as group, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { defineSecrets, describe, number, pub, secret, string, url } from "../../src/env/define";
+import { defineSecrets, describe, local, number, pub, secret, string, url } from "../../src/env/define";
 import { loadSecrets, parseSecretsDeclaration, readSecretsValues, secretsState } from "../../src/node/secrets";
 import { generateSecretsDeclaration } from "../../src/adapter/codegen";
 
@@ -20,11 +20,12 @@ export default defineSecrets({
 
 group("pb_secrets: the declaration", () => {
   test("tiers come from Void's .secret()/.public() or the wrappers; a bare validator is server configuration", () => {
-    const d = defineSecrets({ A: string().secret(), B: string(), C: url().public(), D: secret(string(), "d"), E: pub(number()) });
-    expect(d.names).toEqual(["A", "B", "C", "D", "E"]);
+    const d = defineSecrets({ A: string().secret(), B: string(), C: url().public(), D: secret(string(), "d"), E: pub(number()), F: local(string(), "the deploy token") });
+    expect(d.names).toEqual(["A", "B", "C", "D", "E", "F"]);
     expect(d.of("secret")).toEqual(["A", "D"]);
     expect(d.of("server")).toEqual(["B"]);
     expect(d.of("public")).toEqual(["C", "E"]);
+    expect(d.of("local")).toEqual(["F"]);
     expect(d.entries.D.description).toBe("d");
   });
   test("values are parsed through the validators: defaults filled in, numbers coerced, bad and missing values named without their values", async () => {
@@ -53,7 +54,7 @@ group("pb_secrets: the declaration", () => {
     expect(d.names).toEqual(["SMTP_PASSWORD", "MAX_USERS", "ADMIN_EMAILS", "SITE_URL", "REQUIRED_PLAIN"]);
     expect(d.access).toEqual({ SMTP_PASSWORD: "secret", MAX_USERS: "server", ADMIN_EMAILS: "server", SITE_URL: "public", REQUIRED_PLAIN: "server" });
     expect(d.descriptions).toEqual({ SMTP_PASSWORD: "the SMTP password" });
-    expect(parseSecretsDeclaration(`export default defineSecrets({ A: secret(z.string(), "a"), B: pub(z.string()), C: server(z.string()) })`).access).toEqual({ A: "secret", B: "public", C: "server" });
+    expect(parseSecretsDeclaration(`export default defineSecrets({ A: secret(z.string(), "a"), B: pub(z.string()), C: server(z.string()), D: local(string()) })`).access).toEqual({ A: "secret", B: "public", C: "server", D: "local" });
     expect(() => parseSecretsDeclaration(`export default {}`, "x.ts")).toThrow(/does not call defineSecrets/);
     expect(generateSecretsDeclaration(d)).toContain('export { default } from "../../vb_secrets/main";');
   });

@@ -111,19 +111,25 @@ The app's configuration is declared once, in code, with Void's validators, and v
 
 ```ts
 // pb_secrets/main.ts                                   committed
-import { defineSecrets, describe, string, number, url } from "@voidbase-cloud/voidbase/secrets";
+import { defineSecrets, describe, local, string, number, url } from "@voidbase-cloud/voidbase/secrets";
 
 export default defineSecrets({
   SMTP_PASSWORD: describe(string().secret(), "the mail provider's password"),
   ADMIN_EMAILS: string().default(""),
   MAX_UPLOAD_MB: number().default(10),
   PUBLIC_SITE_URL: url().optional().public(),
+  VOIDBASE_DEPLOY_CF_API_KEY: local(string(), "the deploy token"),
+  VOIDBASE_DEPLOY_NAME: local(string().default("my-app")),
 });
 ```
 
 ```
-pb_secrets/secrets.json    { "SMTP_PASSWORD": "...", "ADMIN_EMAILS": "me@example.com" }    git-ignored
+pb_secrets/secrets.json    { "SMTP_PASSWORD": "...", "ADMIN_EMAILS": "me@example.com", "VOIDBASE_DEPLOY_CF_API_KEY": "..." }    git-ignored
 ```
+
+With the deploy token and target declared as `local`, there is no `.env` file left: everything the app or the
+tooling needs is either declared with a default or valued in `secrets.json` (this machine) and the build's
+environment (CI).
 
 Every key has an access tier, which decides where its value lives and who can read it:
 
@@ -132,6 +138,7 @@ Every key has an access tier, which decides where its value lives and who can re
 | secret | `string().secret()` (or `secret(schema)`) | the Worker's encrypted secrets | hooks and routes; never listed, never in a build |
 | server | a bare validator | the Worker's plain vars | hooks and routes; never in a client build |
 | public | `.public()` (or `pub(schema)`) | the Worker's vars and the client build (`import.meta.env.KEY`) | everyone, the browser included |
+| local | `local(schema)` | `secrets.json` on this machine, the build's environment in CI | voidbase's own tooling: the deploy token, the deploy target; never on the Worker, never in a build |
 
 The validators are the ones a Void project's `env.ts` uses (`string()`, `number()`, `boolean()`, `url()`,
 `email()`, `oneOf()`, `json()`, each with `.optional()` and `.default()`), and any Standard Schema validator works

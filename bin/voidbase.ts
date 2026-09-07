@@ -110,7 +110,7 @@ switch (cmd) {
     // list (default): a row per declared name
     let onWorker: string[] | null = null; let worker = "";
     try { const t = await deployTarget({ name: flags.name, account: flags.account, log: () => undefined }); worker = t.name; onWorker = await workerSecretNames(t.api, t.account.id, t.name); } catch { /* no token here: local view only */ }
-    console.log(`${dir}: ${def.names.length} declared (${secretNames.length} secret, ${def.of("server").length} server, ${def.of("public").length} public)${state.values ? `, ${state.provided.length} valued in secrets.json` : ", no secrets.json"}${onWorker ? `, worker "${worker}" has ${onWorker.filter((k) => secretNames.includes(k)).length} of the secrets` : " (set VOIDBASE_DEPLOY_CF_API_KEY to compare with the Worker)"}`);
+    console.log(`${dir}: ${def.names.length} declared (${secretNames.length} secret, ${def.of("server").length} server, ${def.of("public").length} public${def.of("local").length ? `, ${def.of("local").length} local, never deployed` : ""})${state.values ? `, ${state.provided.length} valued in secrets.json` : ", no secrets.json"}${onWorker ? `, worker "${worker}" has ${onWorker.filter((k) => secretNames.includes(k)).length} of the secrets` : " (set VOIDBASE_DEPLOY_CF_API_KEY to compare with the Worker)"}`);
     for (const i of state.info) {
       const where = state.provided.includes(i.name) ? "local value" : i.fallback !== undefined ? `default ${i.access === "secret" ? "(set)" : JSON.stringify(i.fallback)}` : i.optional ? "optional, unset" : "no local value";
       const worker = onWorker && i.access === "secret" ? `  ${onWorker.includes(i.name) ? "on the worker" : "NOT on the worker"}` : "";

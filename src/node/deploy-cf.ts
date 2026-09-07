@@ -84,7 +84,7 @@ export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" 
   const secrets = await loadSecrets(secretsDir);
   if (secrets.invalid.length) throw new Error(`${secretsDir}: ${secrets.invalid.map((i) => `${i.name}: ${i.message}`).join(", ")}`);
   loadEnv(); const fromFiles = loadEnvFiles(); if (fromFiles.length) log(`from .env: ${fromFiles.join(", ")}`);
-  if (secrets.state.definition) { const d = secrets.state.definition; log(`${secretsDir}: ${d.names.length} declared (${d.of("secret").length} secret, ${d.of("server").length} server, ${d.of("public").length} public), ${secrets.state.provided.length} valued here${secrets.undeclared.length ? `; in secrets.json but not declared (not deployed): ${secrets.undeclared.join(", ")}` : ""}`); }
+  if (secrets.state.definition) { const d = secrets.state.definition; log(`${secretsDir}: ${d.names.length} declared (${d.of("secret").length} secret, ${d.of("server").length} server, ${d.of("public").length} public${d.of("local").length ? `, ${d.of("local").length} local` : ""}), ${secrets.state.provided.length} valued here${secrets.undeclared.length ? `; in secrets.json but not declared (not deployed): ${secrets.undeclared.join(", ")}` : ""}`); }
   const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || ""; // empty means unset
   if (!token) { log(`${TOKEN_ENV} is not set.\n\n${tokenHelp()}`); throw new Error(`${TOKEN_ENV} missing`); }
   const name = slug(opts.name || process.env.VOIDBASE_DEPLOY_NAME || projectName());

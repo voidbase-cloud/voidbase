@@ -62,7 +62,7 @@ export function parseSecretsDeclaration(code: string, file = "pb_secrets/main.ts
     while (ts.isCallExpression(node)) {
       const fn = calleeName(node);
       if (fn === "describe") { description ??= literal(node.arguments[1]); node = node.arguments[0] ?? node; if (node === expr) break; continue; }
-      if (fn === "secret" || fn === "server" || fn === "pub" || fn === "public") {
+      if (fn === "secret" || fn === "server" || fn === "pub" || fn === "public" || fn === "local") {
         if (ts.isIdentifier(node.expression)) { tier ??= fn === "pub" ? "public" : (fn as Access); description ??= literal(node.arguments[1]); node = node.arguments[0] ?? node; if (!node || node === expr) break; continue; }
         tier ??= fn === "secret" ? "secret" : "public"; // Void's .secret() / .public() on a validator chain
       }
@@ -226,12 +226,14 @@ export function declarationScaffold(pkg = "@voidbase-cloud/voidbase"): string {
 //   .secret()   the Worker's encrypted secrets, never listed, never in a build (\`voidbase secrets push\` stores them)
 //   (plain)     server configuration: a plain Worker var, hooks and routes only
 //   .public()   a Worker var the browser may know too: a client build inlines it as import.meta.env.NAME
-import { defineSecrets, describe, string, number } from "${pkg}/secrets";
+//   local()     the tooling's own (the deploy token, the deploy target): read here or in CI, never deployed
+import { defineSecrets, describe, local, string, number } from "${pkg}/secrets";
 
 export default defineSecrets({
   // SMTP_PASSWORD: describe(string().secret(), "the mail provider's SMTP password"),
   // MAX_UPLOAD_MB: number().default(10),
   // PUBLIC_SITE_URL: string().optional().public(),
+  // VOIDBASE_DEPLOY_CF_API_KEY: local(string().optional(), "the deploy token (voidbase token prints the link)"),
 });
 `;
 }

@@ -38,7 +38,7 @@ try {
   check("middleware keeps its numeric order, every vb_hooks/ file names the hook it is, crons and queues are named after their files", m.middleware.map((x) => x.name).join() === "01.first,02.second" && m.hooks.map((x) => `${x.name}:${x.hook}`).join() === "00.boot:onBootstrap,10.audit:onRecordsListRequest" && m.crons[0]?.name === "tick" && m.queues[0]?.name === "mail", JSON.stringify([m.middleware.map((x) => x.name), m.hooks.map((x) => `${x.name}:${x.hook}`), m.crons.map((c) => c.name), m.queues.map((q) => q.name)]));
   check("the queue producer binding follows Void's naming", m.queues[0]?.binding === "QUEUE_MAIL", m.queues[0]?.binding ?? "");
   check("an app with server code is not a static build", m.mode === "server" && m.migrations.length === 1, `${m.mode} ${m.migrations.length}`);
-  check("vb_migrations/ and vb_hooks/ are the only directories the adapter adds to a Void app", m.extras.migrationsDir === "vb_migrations" && Object.keys(m.extras).length === 1 && m.hooks.length === 2, JSON.stringify([m.extras, m.hooks.length]));
+  check("vb_migrations/, vb_hooks/ and vb_secrets/ are the only directories the adapter adds to a Void app", m.extras.migrationsDir === "vb_migrations" && m.extras.secretsDir === "vb_secrets" && Object.keys(m.extras).length === 2 && m.hooks.length === 2, JSON.stringify([m.extras, m.hooks.length]));
 
   // a vb_hooks/ file that names no hook cannot be registered anywhere, so the build says so instead of dropping it
   writeFileSync(`${WORK}/vb_hooks/99.orphan.ts`, 'export default async () => {};\n');
@@ -56,6 +56,14 @@ try {
   try { scanVoidApp({ root: WORK }); } catch (err) { misplaced = err instanceof Error ? err.message : String(err); }
   check("a PocketBase hook left in middleware/ is sent to vb_hooks/", /99\.misplaced\.ts is a PocketBase hook \("onBootstrap"\)/.test(misplaced) && /vb_hooks\//.test(misplaced), misplaced.split("\n")[0] ?? "(no error)");
   rmSync(`${WORK}/middleware/99.misplaced.ts`);
+  // a value in vb_secrets/secrets.json that main.ts does not declare would never reach the Worker, so the build says so
+  const secretsJson = readFileSync(`${WORK}/vb_secrets/secrets.json`, "utf8");
+  writeFileSync(`${WORK}/vb_secrets/secrets.json`, JSON.stringify({ ...JSON.parse(secretsJson), STRAY_SECRET: "x" }));
+  let stray = "";
+  try { scanVoidApp({ root: WORK }); } catch (err) { stray = err instanceof Error ? err.message : String(err); }
+  check("a secret value that vb_secrets/main.ts does not declare fails the build, by name", /STRAY_SECRET, which vb_secrets\/main\.ts does not declare/.test(stray), stray.split("\n")[0] ?? "(no error)");
+  writeFileSync(`${WORK}/vb_secrets/secrets.json`, secretsJson);
+  check("vb_secrets/main.ts names the secrets without being run", m.secrets?.names.join() === "TEST_SECRET,OTHER_SECRET" && m.extras.secretsDir === "vb_secrets", JSON.stringify(m.secrets));
 
   // ---- the conversion, through the Vite plugin the app actually uses ---------------------------------------------
   // --bun: Vite's config loader hands the config to the runtime, and voidbase ships TypeScript sources
@@ -73,6 +81,7 @@ try {
   check("the generated app is PocketBase-shaped: main.ts, package.json, .gitignore, pb_hooks, pb_migrations, pb_public", ["main.ts", "package.json", ".gitignore", "pb_hooks", "pb_migrations", "pb_public"].every((f) => existsSync(`${WORK}/.voidbase/${f}`)), readdirSync(`${WORK}/.voidbase`).join(" "));
   check("its main.ts is only the runner: every line of the app's server code is in pb_hooks", !/registerVoidApp/.test(mainTs) && !/\bfrom "\.\.\//.test(mainTs), mainTs.slice(0, 400));
   check("nothing is generated into the project root: it stays a plain Void app", !existsSync(`${WORK}/main.ts`) && !existsSync(`${WORK}/pb_hooks`) && !existsSync(`${WORK}/pb_public`) && !existsSync(`${WORK}/pb_migrations`), readdirSync(WORK).join(" "));
+  check("vb_secrets/ becomes pb_secrets/: the declaration in the shape voidbase deploy reads, the values beside it, git-ignored", /secrets\(\{\n  TEST_SECRET: "a value/.test(readFileSync(`${WORK}/.voidbase/pb_secrets/main.pb.js`, "utf8")) && existsSync(`${WORK}/.voidbase/pb_secrets/secrets.json`) && /^pb_secrets\/secrets\.json$/m.test(readFileSync(`${WORK}/.voidbase/.gitignore`, "utf8")), readdirSync(`${WORK}/.voidbase`).join(" "));
   check("vb_migrations/ is copied in as the generated app's pb_migrations", existsSync(`${WORK}/.voidbase/pb_migrations/1800000001_marker.js`), readdirSync(`${WORK}/.voidbase/pb_migrations`).join(" "));
   const migration = readFileSync(`${WORK}/.voidbase/pb_migrations/0001_outbox.void.js`, "utf8");
   check("a Drizzle migration becomes a PocketBase migration, split on its statement markers", /CREATE TABLE/.test(migration) && /CREATE INDEX/.test(migration) && (migration.match(/execSQL/g) ?? []).length === 2, migration.slice(0, 160));
@@ -144,6 +153,8 @@ try {
   await fetch(`${base}/api/collections/_superusers/records`, { headers: { authorization: su.token } });
   const boot3 = await get("/api/from-bootstrap");
   check("an event hook is registered on its own hook, limited to the collections it tags", boot1.json.lists === 0 && boot3.json.lists === 1, JSON.stringify([boot1.json, boot3.json]));
+  const secret = await get("/api/secret");
+  check("a declared secret's local value reaches the app through $os.getenv; an unvalued one is empty", secret.json.fromOs === "s3cret-from-file" && secret.json.missing === "", JSON.stringify(secret.json));
   const marker = await get("/api/marker");
   check("the project's own pb_migration ran alongside the generated ones", marker.json.marker === 0, JSON.stringify(marker));
   const root = await get("/");

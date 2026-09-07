@@ -105,7 +105,7 @@ export function voidbaseAdapter(options: AdapterOptions = {}) {
     async closeBundle(this: { environment?: { name?: string } }) {
       const clientDir = options.clientDir ?? (clientOut && existsSync(resolve(root, clientOut)) ? clientOut : undefined);
       const { manifest, copied, bundleBytes } = await report(() => adapt(root, { ...options, clientDir }));
-      const counts = `${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.hooks.length} hook(s), ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)${bundleBytes ? ` -> pb_hooks/void-app.js (${Math.round(bundleBytes / 1024)} kB)` : ""}`;
+      const counts = `${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.hooks.length} hook(s), ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)${manifest.secrets ? `, ${manifest.secrets.names.length} secret(s)` : ""}${bundleBytes ? ` -> pb_hooks/void-app.js (${Math.round(bundleBytes / 1024)} kB)` : ""}`;
       if (!hasClient || this.environment?.name === "client") {
           log(`${manifest.mode === "static" ? "static site" : counts}; ${copied} entr(ies) into ${options.publicDir ?? ".voidbase/pb_public"}`);
         for (const u of manifest.unsupported) console.warn(`voidbase: ${u.what} is not carried over — ${u.why}`);

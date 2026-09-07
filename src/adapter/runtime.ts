@@ -124,6 +124,21 @@ export function defineHook<E = HookEvent>(hook: HookName, handler: (e: E) => unk
   return Object.assign(handler, { hook, tags }) as HookModule<E>;
 }
 
+/**
+ * `vb_secrets/main.ts`: the secrets the app needs, named where the build can read them. Their values live in
+ * `vb_secrets/secrets.json` (git-ignored) on a dev machine and as the Worker's secrets once deployed; the app reads
+ * them like any binding (`c.env.SMTP_PASSWORD`, `pb.$os.getenv("SMTP_PASSWORD")`):
+ *
+ *     export default defineSecrets({
+ *       SMTP_PASSWORD: "the mail provider's SMTP password",
+ *     });
+ *
+ * The result is the declaration itself, so `keyof typeof secrets` names them for the app's own typing.
+ */
+export function defineSecrets<const T extends Record<string, string | { description?: string }>>(secrets: T): T {
+  return secrets;
+}
+
 const AUTH = Symbol.for("voidbase.auth");
 /** The authenticated record of this request, exactly as a PocketBase hook sees it (`e.auth`). */
 export function authOf(c: Context): HookRecord | null {

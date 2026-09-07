@@ -332,6 +332,19 @@
           "notes": "sync deploys (creating what does not exist, updating what does; a vb layout, a Void app with the adapter, is built first and deployed from the pb layout it generates in .voidbase/; a pb layout, PocketBase's structure, deploys in place), then connects the GitHub repository to Workers Builds through the Builds API with CLOUDFLARE_BUILDS_TOKEN (a local() key): a production trigger that builds and runs `bunx voidbase sync` (in a build, the deploy alone) and a branches trigger that builds and checks; the build environment gets BUN_VERSION, the deploy token (secret) and the declared server values the machine has. What the API cannot do, installing the GitHub App for the repository and creating the build token, is one dashboard step the first run points at; the second run finishes. An existing trigger keeps its watch paths, so a GitHub-started pipeline (this repository's own) is not switched. The new-project flow (Cloudflare + GitHub account, fork voidbase-site and push, fill secrets.json and sync, then push) is docs/deploy.md. Deploying from an installed package needed three fixes found by deploying from a fresh clone: the generated project moves out of node_modules with a self-contained env.ts, a Node loader (src/node/ts-loader.mjs, via NODE_OPTIONS) transpiles the package's TypeScript and resolves its extensionless imports for Void's env probe, and the hub is imported by name. test/deploy-cf.ts (28) covers the dry-run plan; the real path was verified by a deploy of voidbase.cloud from a fresh clone (health 200)."
         },
         {
+          "id": "platform.presence",
+          "title": "Presence: who is here now, fanned out by the hub and written nowhere",
+          "surface": "GET/POST /api/presence, the `presence` realtime topic; VOIDBASE_PRESENCE, _MAX, _TTL",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 4,
+          "status": "done",
+          "milestone": "m6",
+          "verify": "A client subscribed to `presence` receives the roster when another joins or moves, with no row written and only the members holding a slot able to send",
+          "notes": "src/server/realtime/presence.ts holds the rule as a pure function (rosterAfter): the newest VOIDBASE_PRESENCE_MAX arrivals hold a slot, a join evicts the one that joined first, a beat from anyone without a slot is dropped (which is what bounds the write path), a slot expires after VOIDBASE_PRESENCE_TTL of silence, and coordinates and text are clamped. The roster lives in the instance's hub Durable Object (in memory, never storage, never D1) and is fanned out on the `presence` topic through the same socket loop as record changes, so a client subscribes with pb.realtime.subscribe(\"presence\") and nothing new reaches the SDK; parseSubscription and dispatch carry the topic without a collection or a rule. POST /api/presence {op: join|beat|leave} updates it, GET returns it. Off unless the instance sets VOIDBASE_PRESENCE=1 (the endpoints are anonymous), and setting it to 0 is the switch to pull if fanout ever costs too much: the client then falls back to something canned. Cost: watchers pay one hibernatable socket each and zero D1; the write path is MAX clients however many are watching. voidbase.cloud's landing page draws the last three visitors' cursors over the hero preview this way (src/components/PresenceCursors.tsx, joining debounced 2 s, beats throttled to ~12 Hz, canned drift when disabled). test/unit/presence.test.ts (6), test/fresh-db.ts asserts the default-off shape."
+        },
+        {
           "id": "platform.deploy-void",
           "title": "Deploy to the Void platform with D1, R2, and DO provisioned from imports",
           "surface": "void deploy",

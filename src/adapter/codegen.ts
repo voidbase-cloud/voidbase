@@ -185,8 +185,9 @@ export function generateTsconfig(root: string): string | null {
     // the project's own void, else the one this package ships with
     const bin = [join(root, "node_modules", ".bin", "void"), resolve(import.meta.dir, "../../node_modules/.bin/void")].find((b) => existsSync(b));
     try {
-      const r = Bun.spawnSync(bin ? [bin, "prepare"] : ["bunx", "void", "prepare"], { cwd: root, stdout: "pipe", stderr: "pipe" });
-      if (r.exitCode !== 0) console.warn(`voidbase: void prepare failed (${r.stderr.toString().trim().split("\n").at(-1) ?? ""}); no tsconfig fragment written`);
+      // no stdin (nothing to answer) and a deadline: a build must never sit on this
+      const r = Bun.spawnSync(bin ? [bin, "prepare"] : ["bunx", "void", "prepare"], { cwd: root, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 120_000, killSignal: "SIGKILL" });
+      if (r.exitCode !== 0) console.warn(`voidbase: void prepare ${r.exitCode === null ? "timed out" : "failed"} (${r.stderr.toString().trim().split("\n").at(-1) ?? ""}); no tsconfig fragment written`);
     } catch (err) { console.warn(`voidbase: void prepare could not run (${err instanceof Error ? err.message : String(err)}); no tsconfig fragment written`); }
   }
   if (!existsSync(voidTs)) return null;

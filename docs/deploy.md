@@ -118,15 +118,20 @@ pb_secrets/secrets.json    { "SMTP_PASSWORD": "..." }                           
 lines). `secrets.json` holds the values on your machine; the shell outranks it, and it outranks the `.env` files,
 so a dev placeholder such as `VOIDBASE_SUPERUSER_PASSWORD=changeme123` never shadows it. `voidbase serve` loads them into the environment, so
 `$os.getenv("SMTP_PASSWORD")` and the app's own code see the same names locally as on Cloudflare. `voidbase deploy`
-stores every declared value as the Worker's secrets (encrypted, per Worker: two instances never share one) next to
-the superuser, and refuses to deploy while a declared secret has neither a local value nor one already on the
-Worker. That is what makes CI simple: a checkout without `secrets.json` deploys with nothing but the deploy token,
-because the values were pushed once from a machine that has them:
+stores the declared values the Worker does not have yet as the Worker's secrets (encrypted, per Worker: two
+instances never share one) next to the superuser, and refuses to deploy while a declared secret has neither a local
+value nor one already on the Worker. A value the Worker already holds is left alone by a deploy: a deploy ships
+code, and a checkout whose `secrets.json` carries dev values (another OAuth client, the placeholder password) must
+not overwrite production by deploying. Replacing is explicit:
 
 ```bash
 voidbase secrets              # each declared name: local value or not, on the Worker or not
-voidbase secrets push         # store the local values on the Worker without redeploying
+voidbase secrets push         # store the local values on the Worker (replacing), without redeploying
 ```
+
+That is also what makes CI simple: a checkout without `secrets.json` deploys with nothing but the deploy token,
+because the values were pushed once from a machine that has them. The superuser follows the same rule: a checkout
+without credentials of its own keeps the superuser the Worker has.
 
 A value in `secrets.json` that `main.pb.js` does not declare is never deployed (the list says so). `VOIDBASE_DEPLOY_SECRETS=A,B`
 still stores environment variables as secrets for a deploy driven purely by the shell. Cloudflare's account-level

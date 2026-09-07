@@ -179,17 +179,26 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     writeFileSync(credFile, JSON.stringify({ email, password }, null, 2) + "\n", { mode: 0o600 });
   }
 
-  // the Worker's secrets: the superuser, VOIDBASE_DEPLOY_SECRETS=X,Y from the environment, and every declared
-  // pb_secrets/ name with a local value. A declared name with no value here must already be on the Worker.
+  // the Worker's secrets: the superuser, VOIDBASE_DEPLOY_SECRETS=X,Y from the environment, and the declared
+  // pb_secrets/ names the Worker does not have yet. A deploy ships code; a value the Worker already holds is
+  // replaced only by `voidbase secrets push`, so a checkout whose secrets.json carries dev values (another OAuth
+  // client, the placeholder password) cannot overwrite production by deploying. A declared name with no value
+  // here must already be on the Worker.
   const declared = pbSecrets.state.declaration?.names ?? [];
   const secretMap = new Map<string, string>(keepSuperuser ? [] : [["VOIDBASE_SUPERUSER_EMAIL", email], ["VOIDBASE_SUPERUSER_PASSWORD", password]]);
   for (const k of extraSecrets) if (process.env[k]) secretMap.set(k, process.env[k]!);
-  for (const k of declared) { const v = pbSecrets.state.values?.[k]; if (v !== undefined) secretMap.set(k, v); }
+  const kept: string[] = [];
+  for (const k of declared) {
+    const v = pbSecrets.state.values?.[k]; if (v === undefined) continue;
+    if (onWorker.includes(k)) { kept.push(k); continue; }
+    if (k === "VOIDBASE_SUPERUSER_PASSWORD" && v === "changeme123") { log("secrets: VOIDBASE_SUPERUSER_PASSWORD in secrets.json is the dev placeholder, not stored"); continue; }
+    secretMap.set(k, v);
+  }
   const missingSecrets = declared.filter((k) => !secretMap.has(k) && !onWorker.includes(k));
   if (missingSecrets.length) {
     const msg = `${missingSecrets.length} declared secret(s) have no value in ${secretsDir}/secrets.json and are not on the Worker "${name}" yet: ${missingSecrets.join(", ")}. Push them once from a machine that has them: voidbase secrets push --name ${name}`;
     if (opts.dryRun) log(`secrets: ${msg}`); else throw new Error(msg);
-  } else if (declared.length) log(`secrets: ${declared.length} declared, ${declared.filter((k) => onWorker.includes(k)).length} already on the Worker, ${declared.filter((k) => secretMap.has(k)).length} stored from here`);
+  } else if (declared.length) log(`secrets: ${declared.length} declared; ${declared.filter((k) => secretMap.has(k)).length} stored from here, ${kept.length} kept as the Worker has them (voidbase secrets push replaces)`);
   const secrets = [...secretMap.entries()];
 
   const url = domain ? `https://${domain}` : await workersSubdomain(api, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null));

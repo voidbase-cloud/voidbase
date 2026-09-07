@@ -167,8 +167,9 @@ export default defineSecrets({
 
 The adapter writes them into `.voidbase/pb_secrets/` in PocketBase's shape (`main.pb.js` with `secrets({...})`,
 `secrets.json` copied beside it), which is what `voidbase serve` and `voidbase deploy` read: locally the values
-enter the process environment, on Cloudflare they become the Worker's secrets, and a deploy refuses to go ahead
-while a declared secret has no value anywhere. The app reads them like any other binding: `c.env.SMTP_PASSWORD` in
+enter the process environment, on Cloudflare they become the Worker's secrets (a deploy stores what the Worker
+lacks, `voidbase secrets push` replaces), and a deploy refuses to go ahead while a declared secret has no value
+anywhere. The app reads them like any other binding: `c.env.SMTP_PASSWORD` in
 a route, `pb.$os.getenv("SMTP_PASSWORD")` in a hook. A value in `secrets.json` that `main.ts` does not declare
 fails the build, by name: it would silently never reach the Worker. Details and the `voidbase secrets` commands:
 `docs/deploy.md`.

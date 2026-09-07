@@ -3,6 +3,15 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.5.1](https://github.com/voidbase-cloud/voidbase/compare/v0.5.0...v0.5.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **adapter:** the void prepare spawn gets no stdin and a two-minute deadline ([a5f5797](https://github.com/voidbase-cloud/voidbase/commit/a5f5797e44b4d4d5fda6011661308cdb05c5cd75))
+* **deploy:** an installed package deploys from the consumer's tree with a self-contained env.ts ([eae7e94](https://github.com/voidbase-cloud/voidbase/commit/eae7e94b8c8b58e5db0fa8b1a2ec537da0db4fab))
+* **deploy:** an installed package deploys: Node loads its TypeScript, the hub is imported by name ([c00ec5b](https://github.com/voidbase-cloud/voidbase/commit/c00ec5b9ebd66a70680191f7766f407e212363b0))
+
 ## [0.5.0](https://github.com/voidbase-cloud/voidbase/compare/v0.4.1...v0.5.0) (2026-09-07)
 
 

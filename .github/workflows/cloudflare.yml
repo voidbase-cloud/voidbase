@@ -4,6 +4,13 @@
 # merged release PR is published (docs/releasing.md), and a release published by hand is picked up by the build of the
 # tagged commit. The variables and the secret below are written by `bun scripts/cf-builds.ts setup --github`; until
 # they exist the job is skipped.
+#
+# One change should cost one build. Two events here would otherwise buy nothing, and both are declined below:
+#   - release-please's own pull request. Its diff is a changelog, a version and a manifest, generated from commits the
+#     master build already ran. There is nothing in it a build could find.
+#   - the release it publishes, while hot mode is on. In hot mode the master build that merged the release PR is the
+#     one that published to npm, so a build of the same commit would repeat it. With hot mode off that build is not
+#     redundant, it is where the executables of the release are built, so it still runs.
 name: cloudflare
 on:
   push:
@@ -15,7 +22,10 @@ on:
 jobs:
   start:
     # no variables yet: nothing to start. Pull requests from forks: no secrets, and their commits are not in the connected repository.
-    if: vars.CF_ACCOUNT_ID != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: >-
+      vars.CF_ACCOUNT_ID != ''
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && !startsWith(github.head_ref, 'release-please--')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -27,7 +37,20 @@ jobs:
       TRIGGER: ${{ (github.event_name == 'pull_request' || (github.ref_type == 'branch' && github.ref_name != 'master')) && vars.CF_CI_TRIGGER_BRANCHES || vars.CF_CI_TRIGGER_MASTER }}
       WAIT: ${{ vars.CF_BUILDS_WAIT }}
     steps:
+      - name: A release published in hot mode was already published by the build that merged it
+        id: covered
+        if: github.event_name == 'release'
+        run: |
+          # hot mode lives on the trigger, so it is read from there rather than kept in a second place that can drift
+          hot=$(curl -sS "$API/triggers/$TRIGGER/environment_variables" -H "Authorization: Bearer $TOKEN" | jq -r '.result.CI_HOT.value // "0"')
+          if [ "$hot" = "1" ]; then
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            echo "hot mode: the master build that merged this release published it; nothing to build again"
+          else
+            echo "hot mode off: this build is where the release's executables are built"
+          fi
       - name: Start the build
+        if: steps.covered.outputs.skip != '1'
         run: |
           [ -n "$TRIGGER" ] || { echo "no trigger uuid in the repository variables (bun scripts/cf-builds.ts setup --github)"; exit 1; }
           body=$(printf '{"commit_hash":"%s"%s}' "$COMMIT" "${BRANCH:+,\"branch\":\"$BRANCH\"}")
@@ -37,7 +60,7 @@ jobs:
           echo "ci: build $uuid ($(printf '%s' "$res" | jq -r '.result.status // "queued"')) of $COMMIT${BRANCH:+ on $BRANCH}"
           echo "uuid=$uuid" >> "$GITHUB_ENV"
       - name: Wait for the build (repository variable CF_BUILDS_WAIT=1)
-        if: env.WAIT == '1'
+        if: env.WAIT == '1' && steps.covered.outputs.skip != '1'
         run: |
           unknown=0
           while :; do

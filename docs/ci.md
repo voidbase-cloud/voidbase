@@ -76,6 +76,29 @@ forces a full run. A commit that edits a suite's file always runs that suite. Th
 last green run count, not only the last one: a Cloudflare build checks out a single commit, so the planner deepens
 the history until the last green run's commit is reachable before it reads them.
 
+## The three commands
+
+Cloudflare Workers Builds calls three commands, and both projects answer with the same three words:
+
+```
+Build command     bun run build
+Deploy command    bun run deploy
+Version command   bun run version      (a branch build; set as the branch trigger's command)
+Root directory    /
+```
+
+Nothing in the dashboard says what they mean. `scripts/pipeline.ts` reads that from the environment
+(`scripts/environment.ts`), as granular controls rather than a named environment, which is what twelve-factor asks
+for: `WORKERS_CI` / `WORKERS_CI_BUILD_UUID` say a Cloudflare build is running this, `WORKERS_CI_BRANCH` says which
+branch, `PRODUCTION_BRANCH` (default `master`) says which branch is production, and `WRANGLER_CI_OVERRIDE_NAME`
+says which Worker that build may deploy. A deploy off the production branch says there is nothing to do rather than
+taking production's place, and every run prints what it read.
+
+Here `build` runs this suite when automation calls it and this project's own Vite build when a person does;
+`deploy` publishes the status page; `version` uploads it as a version. voidbase.cloud answers the same three words
+with its own meanings (build the site and typecheck it, deploy the instance, read back the configuration a branch
+would deploy with).
+
 ## What is kept between runs
 
 `CI_CACHE_DIR` holds the downloads: Playwright's headless shell and the unpacked libraries, the Ubuntu packages,

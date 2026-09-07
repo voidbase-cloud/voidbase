@@ -106,7 +106,7 @@
   },
   "scripts": {
     "dev": "vp dev",
-    "build": "vp build",
+    "build": "bun scripts/pipeline.ts build",
     "preview": "vp preview",
     "panel:sync": "bun scripts/sync-panel.ts",
     "surface": "bun surface/render.ts",
@@ -119,7 +119,10 @@
     "build:exe": "bun scripts/build-exe.ts",
     "ci": "bash scripts/ci.sh",
     "release": "bash scripts/release.sh",
-    "cf:builds": "bun scripts/cf-builds.ts"
+    "cf:builds": "bun scripts/cf-builds.ts",
+    "deploy": "bun scripts/pipeline.ts deploy",
+    "version": "bun scripts/pipeline.ts version",
+    "build:app": "vp build"
   },
   "dependencies": {
     "@cf-wasm/photon": "^0.4.0",

@@ -35,10 +35,27 @@ try {
   check("_-prefixed files are not routes", !urls.some((u) => u.includes("helpers")), urls.join(" "));
   check(".dev.ts is a route in development and absent from a build", dev.routes.some((r) => r.url === "/api/debug") && !urls.includes("/api/debug"), urls.join(" "));
   check("a literal segment is registered ahead of its sibling param, and catch-alls come last", urls.indexOf("/api/users/me") < urls.indexOf("/api/users/:id") && urls.indexOf("/api/users/:id") < urls.indexOf("/api/assets/*"), urls.join(" "));
-  check("middleware keeps its numeric order, crons and queues are named after their files", m.middleware.map((x) => x.name).join() === "01.first,02.second" && m.crons[0]?.name === "tick" && m.queues[0]?.name === "mail", JSON.stringify([m.middleware.map((x) => x.name), m.crons.map((c) => c.name), m.queues.map((q) => q.name)]));
+  check("middleware keeps its numeric order, every vb_hooks/ file names the hook it is, crons and queues are named after their files", m.middleware.map((x) => x.name).join() === "01.first,02.second" && m.hooks.map((x) => `${x.name}:${x.hook}`).join() === "00.boot:onBootstrap,10.audit:onRecordsListRequest" && m.crons[0]?.name === "tick" && m.queues[0]?.name === "mail", JSON.stringify([m.middleware.map((x) => x.name), m.hooks.map((x) => `${x.name}:${x.hook}`), m.crons.map((c) => c.name), m.queues.map((q) => q.name)]));
   check("the queue producer binding follows Void's naming", m.queues[0]?.binding === "QUEUE_MAIL", m.queues[0]?.binding ?? "");
   check("an app with server code is not a static build", m.mode === "server" && m.migrations.length === 1, `${m.mode} ${m.migrations.length}`);
-  check("the project's own voidbase side is found: src/voidbase/register.ts and vb_migrations/", m.extras.register === "src/voidbase/register.ts" && m.extras.migrationsDir === "vb_migrations", JSON.stringify(m.extras));
+  check("vb_migrations/ and vb_hooks/ are the only directories the adapter adds to a Void app", m.extras.migrationsDir === "vb_migrations" && Object.keys(m.extras).length === 1 && m.hooks.length === 2, JSON.stringify([m.extras, m.hooks.length]));
+
+  // a vb_hooks/ file that names no hook cannot be registered anywhere, so the build says so instead of dropping it
+  writeFileSync(`${WORK}/vb_hooks/99.orphan.ts`, 'export default async () => {};\n');
+  let orphan = "";
+  try { scanVoidApp({ root: WORK }); } catch (err) { orphan = err instanceof Error ? err.message : String(err); }
+  check("a vb_hooks/ file attached to no hook fails the build, by name", /99\.orphan\.ts is not attached to a hook/.test(orphan) && /defineHook/.test(orphan), orphan.split("\n")[0] ?? "(no error)");
+  writeFileSync(`${WORK}/vb_hooks/99.orphan.ts`, 'export const hook = "onRecordCreated";\nexport default () => {};\n');
+  let badName = "";
+  try { scanVoidApp({ root: WORK }); } catch (err) { badName = err instanceof Error ? err.message : String(err); }
+  check("a hook name that is not PocketBase's fails the build, with the nearest real ones", /"onRecordCreated", which is not one of PocketBase's hooks/.test(badName) && /onRecordCreate\b/.test(badName), badName.split("\n")[0] ?? "(no error)");
+  rmSync(`${WORK}/vb_hooks/99.orphan.ts`);
+  // and a PocketBase hook left in Void's middleware/ would be called with the wrong arguments, so it is sent next door
+  writeFileSync(`${WORK}/middleware/99.misplaced.ts`, 'import { defineHook } from "@voidbase-cloud/voidbase/adapter";\nexport default defineHook("onBootstrap", async (e) => { await e.next(); });\n');
+  let misplaced = "";
+  try { scanVoidApp({ root: WORK }); } catch (err) { misplaced = err instanceof Error ? err.message : String(err); }
+  check("a PocketBase hook left in middleware/ is sent to vb_hooks/", /99\.misplaced\.ts is a PocketBase hook \("onBootstrap"\)/.test(misplaced) && /vb_hooks\//.test(misplaced), misplaced.split("\n")[0] ?? "(no error)");
+  rmSync(`${WORK}/middleware/99.misplaced.ts`);
 
   // ---- the conversion, through the Vite plugin the app actually uses ---------------------------------------------
   // --bun: Vite's config loader hands the config to the runtime, and voidbase ships TypeScript sources
@@ -46,13 +63,15 @@ try {
   const buildOut = build.stdout.toString() + build.stderr.toString();
   check("vite build succeeds with voidbaseAdapter() in the plugin list", build.exitCode === 0, buildOut.slice(-600));
   const generated = readFileSync(`${WORK}/.voidbase/void-entry.ts`, "utf8");
-  check("the bundle entry imports the app's own modules and mounts them", generated.includes('from "../routes/api/hello"') && generated.includes("mountVoidApp(api, {"), generated.slice(0, 200));
+  check("the bundle entry imports the app's own modules and mounts them", generated.includes('from "../routes/api/hello"') && generated.includes("mountVoidApp({") && /hook: "onBootstrap", handler: hook0/.test(generated), generated.slice(0, 200));
   const bundle = readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.js`, "utf8");
   check("routes and middleware are compiled into a pb_hooks bundle, marked so the hook transform leaves it alone", bundle.startsWith("// voidbase:raw") && /module\.exports/.test(bundle) && !/require\("node:async_hooks"\)/.test(bundle) && /globalThis/.test(bundle), bundle.slice(0, 120));
+  check("the hook publishes the hook globals before it requires the bundle, so pb works at module init",
+    /globalThis\.__voidbaseHooks = __g;[\s\S]*require\(/.test(readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.pb.js`, "utf8")), readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.pb.js`, "utf8").slice(-200));
   check("the hook that registers it uses only hook globals", /require\(`\$\{__hooks\}\/void-app\.js`\)/.test(readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.pb.js`, "utf8")), readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.pb.js`, "utf8").slice(-200));
   const mainTs = readFileSync(`${WORK}/.voidbase/main.ts`, "utf8");
   check("the generated app is PocketBase-shaped: main.ts, package.json, .gitignore, pb_hooks, pb_migrations, pb_public", ["main.ts", "package.json", ".gitignore", "pb_hooks", "pb_migrations", "pb_public"].every((f) => existsSync(`${WORK}/.voidbase/${f}`)), readdirSync(`${WORK}/.voidbase`).join(" "));
-  check("its main.ts carries only the project's own register(): the Void code is in pb_hooks", !/registerVoidApp/.test(mainTs) && /from "\.\.\/src\/voidbase\/register"/.test(mainTs), mainTs.slice(0, 300));
+  check("its main.ts is only the runner: every line of the app's server code is in pb_hooks", !/registerVoidApp/.test(mainTs) && !/\bfrom "\.\.\//.test(mainTs), mainTs.slice(0, 400));
   check("nothing is generated into the project root: it stays a plain Void app", !existsSync(`${WORK}/main.ts`) && !existsSync(`${WORK}/pb_hooks`) && !existsSync(`${WORK}/pb_public`) && !existsSync(`${WORK}/pb_migrations`), readdirSync(WORK).join(" "));
   check("vb_migrations/ is copied in as the generated app's pb_migrations", existsSync(`${WORK}/.voidbase/pb_migrations/1800000001_marker.js`), readdirSync(`${WORK}/.voidbase/pb_migrations`).join(" "));
   const migration = readFileSync(`${WORK}/.voidbase/pb_migrations/0001_outbox.void.js`, "utf8");
@@ -101,9 +120,11 @@ try {
   const guarded = await get("/api/collections-count", { method: "POST" });
   check("requireAuth() refuses an unauthenticated request the way $apis.requireAuth does", guarded.status === 401, `${guarded.status} ${JSON.stringify(guarded.json).slice(0, 80)}`);
   const order = await get("/api/order");
-  check("global middleware runs in file order before the handler", JSON.stringify(order.json.middleware) === JSON.stringify(["01", "02"]), JSON.stringify(order.json));
+  check("middleware runs in file order before the handler", JSON.stringify(order.json.middleware) === JSON.stringify(["01", "02"]), JSON.stringify(order.json));
   const missing = await get("/api/nope");
   check("an unknown /api path is still a 404", missing.status === 404, String(missing.status));
+  const health = await fetch(`${base}/api/health`);
+  check("Void middleware wraps every request, PocketBase's own endpoints included", health.headers.get("x-void-middleware") === "all", `${health.status} ${health.headers.get("x-void-middleware")}`);
 
   const enqueued = await get("/api/enqueue", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ to: "queue@example.com" }) });
   const outbox1 = await get("/api/outbox");
@@ -116,8 +137,13 @@ try {
   const outbox2 = await get("/api/outbox");
   check("running the cron reaches the app's scheduled handler with the bindings", (outbox2.json.outbox as string[])?.includes("cron@example.com"), JSON.stringify(outbox2.json));
 
-  const fromRegister = await get("/api/from-register");
-  check("the project's own register() is composed into the generated app", fromRegister.json.register === true, JSON.stringify(fromRegister));
+  const boot1 = await get("/api/from-bootstrap");
+  const boot2 = await get("/api/from-bootstrap");
+  check("a tsconfig alias whose target is a directory resolves to its index file", boot1.status === 200, `${boot1.status}`);
+  check("an onBootstrap hook ran once when the app mounted, not once per request", boot1.json.boots === 1 && boot2.json.boots === 1 && boot1.json.requests === 1 && boot2.json.requests === 2, JSON.stringify([boot1.json, boot2.json]));
+  await fetch(`${base}/api/collections/_superusers/records`, { headers: { authorization: su.token } });
+  const boot3 = await get("/api/from-bootstrap");
+  check("an event hook is registered on its own hook, limited to the collections it tags", boot1.json.lists === 0 && boot3.json.lists === 1, JSON.stringify([boot1.json, boot3.json]));
   const marker = await get("/api/marker");
   check("the project's own pb_migration ran alongside the generated ones", marker.json.marker === 0, JSON.stringify(marker));
   const root = await get("/");

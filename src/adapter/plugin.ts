@@ -5,8 +5,9 @@
 //   export default defineConfig({ plugins: [voidPlugin(), voidbaseAdapter()] });
 //
 // The whole voidbase app is generated under `.voidbase/`, in PocketBase's layout: the client build lands in
-// `.voidbase/pb_public` (served at `/`), routes/middleware/crons/queues become `.voidbase/void-app.ts` which the
-// generated `.voidbase/main.ts` registers, and `src/voidbase/` carries whatever the project owns on that side.
+// `.voidbase/pb_public` (served at `/`), and the server code (routes/, middleware/, vb_hooks/, crons/, queues/)
+// is bundled into `.voidbase/pb_hooks/`. The whole `.voidbase/` directory is build output: delete it and the next
+// build makes it again.
 // The project root stays a plain Void app. Void's own dist/ssr worker is left alone: voidbase composes the
 // generated main.ts into its own Worker on deploy, so the app's server code is bundled there instead.
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -33,7 +34,7 @@ export async function adapt(root: string, opts: AdapterOptions & { clientDir?: s
   const manifest = scanVoidApp({ root, dev: false });
   const { written } = writeVoidbaseApp(manifest, { pkg: opts.pkg, migrations: opts.migrations });
 
-  // routes/, middleware/, crons/ and queues/ become one bundled hook: a hook cannot import from npm, and Void's
+  // routes/, middleware/, vb_hooks/, crons/ and queues/ become one bundled hook: a hook cannot import from npm, and Void's
   // handlers do (see src/adapter/bundle.ts)
   let bundleBytes = 0;
   if (hasServerCode(manifest)) {
@@ -79,6 +80,11 @@ export function voidbaseAdapter(options: AdapterOptions = {}) {
   let clientOut: string | undefined;
   let hasClient = false;
   const log = (msg: string) => { if (!options.quiet) console.log(`voidbase: ${msg}`); };
+  // Rolldown prints only a plugin error's first line, and the adapter's build errors say what to change on the
+  // lines after it. Print the whole thing before it is rethrown.
+  const report = async <T>(work: () => T | Promise<T>): Promise<T> => {
+    try { return await work(); } catch (err) { if (err instanceof Error && err.message.includes("\n")) console.error(err.message); throw err; }
+  };
 
   return {
     name: "voidbase-adapter",
@@ -90,16 +96,16 @@ export function voidbaseAdapter(options: AdapterOptions = {}) {
       hasClient = !!config.environments?.client;
       clientOut = fromEnv ?? config.build?.outDir;
     },
-    buildStart() {
+    async buildStart() {
       // keep the glue in step with the files while developing, so `voidbase serve --entry main.ts` sees new routes
-      const manifest = scanVoidApp({ root, dev: process.env.NODE_ENV !== "production" });
+      const manifest = await report(() => scanVoidApp({ root, dev: process.env.NODE_ENV !== "production" }));
       writeVoidbaseApp(manifest, { pkg: options.pkg, migrations: options.migrations });
     },
     // fires once per built environment; the work is idempotent and the client builds last, so report only then
     async closeBundle(this: { environment?: { name?: string } }) {
       const clientDir = options.clientDir ?? (clientOut && existsSync(resolve(root, clientOut)) ? clientOut : undefined);
-      const { manifest, copied, bundleBytes } = await adapt(root, { ...options, clientDir });
-      const counts = `${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)${bundleBytes ? ` -> pb_hooks/void-app.js (${Math.round(bundleBytes / 1024)} kB)` : ""}`;
+      const { manifest, copied, bundleBytes } = await report(() => adapt(root, { ...options, clientDir }));
+      const counts = `${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.hooks.length} hook(s), ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)${bundleBytes ? ` -> pb_hooks/void-app.js (${Math.round(bundleBytes / 1024)} kB)` : ""}`;
       if (!hasClient || this.environment?.name === "client") {
           log(`${manifest.mode === "static" ? "static site" : counts}; ${copied} entr(ies) into ${options.publicDir ?? ".voidbase/pb_public"}`);
         for (const u of manifest.unsupported) console.warn(`voidbase: ${u.what} is not carried over — ${u.why}`);

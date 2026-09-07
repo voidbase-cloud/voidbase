@@ -5,7 +5,21 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
-    "types": ["void/env"]
+    "types": [
+      "void/env"
+    ],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    }
   },
-  "include": ["src", "routes", "middleware", "crons", "queues", "db"]
+  "include": [
+    "src",
+    "routes",
+    "middleware",
+    "crons",
+    "queues",
+    "db"
+  ]
 }

@@ -21,19 +21,24 @@ export interface GenerateOptions {
 /** The bundle entry: imports the app's own modules and hands them to the hook runtime. Bundled into pb_hooks. */
 export function generateServerModule(m: VoidManifest, opts: GenerateOptions = {}): string {
   const pkg = opts.pkg ?? ADAPTER_PACKAGE;
-  const lines: string[] = [BANNER, "//", "// The project's routes, middleware, crons and queues, as one module for the generated pb_hooks bundle.", ""];
-  lines.push(`import { mountVoidApp, type HookApi } from "${pkg}/adapter";`);
+  const lines: string[] = [BANNER, "//", "// The project's routes, middleware, vb_hooks, crons and queues, as one module for the generated pb_hooks bundle.", ""];
+  lines.push(`import { mountVoidApp } from "${pkg}/adapter";`);
   m.routes.forEach((r, i) => lines.push(`import * as ${ident("route", i)} from "${importPath(r.file)}";`));
   m.middleware.forEach((x, i) => lines.push(`import ${ident("middleware", i)} from "${importPath(x.file)}";`));
+  m.hooks.forEach((x, i) => lines.push(`import ${ident("hook", i)} from "${importPath(x.file)}";`));
   m.crons.forEach((x, i) => lines.push(`import * as ${ident("cron", i)} from "${importPath(x.file)}";`));
   m.queues.forEach((x, i) => lines.push(`import ${ident("queue", i)} from "${importPath(x.file)}";`));
-  lines.push("", "export function register(api: HookApi): void {", "  mountVoidApp(api, {");
+  lines.push("", "export function register(): void {", "  mountVoidApp({");
 
   lines.push("    routes: [");
   m.routes.forEach((r, i) => {
     const splat = r.splat ? `, splat: ${JSON.stringify(r.splat)}` : "";
     lines.push(`      { url: ${JSON.stringify(r.url)}, hookPath: ${JSON.stringify(r.hookPath)}, methods: ${JSON.stringify(r.methods)}, params: ${JSON.stringify(r.params)}${splat}, mod: ${ident("route", i)} },`);
   });
+  lines.push("    ],");
+
+  lines.push("    hooks: [");
+  m.hooks.forEach((x, i) => lines.push(`      { hook: ${JSON.stringify(x.hook)}, handler: ${ident("hook", i)} },`));
   lines.push("    ],");
 
   lines.push(`    middleware: [${m.middleware.map((_, i) => ident("middleware", i)).join(", ")}],`);
@@ -53,16 +58,15 @@ export function generateServerModule(m: VoidManifest, opts: GenerateOptions = {}
 /** The pb_hooks file that registers the bundle: the one place the hook globals are in scope. */
 export function generateHookWrapper(): string {
   return `${BANNER}
-// The project's routes, middleware, crons and queues. The code itself is in void-app.js beside this file, bundled
+// The project's routes, middleware, vb_hooks, crons and queues. The code is in void-app.js beside this file, bundled
 // because a hook cannot import from npm; this is where the hook globals it needs are in scope.
-const voidApp = require(\`\${__hooks}/void-app.js\`);
+//
+// \`__g\` is the object every hook file is handed its globals from: $app, $apis, routerAdd, routerUse, cronAdd, the
+// error classes and every on* event registrar. Publishing it is what makes \`pb\` work inside the bundle, and it is
+// published *before* the bundle is required so a module can register an event hook while it is initialising.
+globalThis.__voidbaseHooks = __g;
 
-voidApp.register({
-  routerAdd, cronAdd, env: $env, jobs: $jobs,
-  // PocketBase's own API, for routes that read and write collections
-  $app, $apis, $os, Record,
-  ApiError, BadRequestError, UnauthorizedError, ForbiddenError, NotFoundError, InternalServerError, ValidationError,
-});
+require(\`\${__hooks}/void-app.js\`).register();
 `;
 }
 
@@ -75,13 +79,13 @@ export function generateMainEntry(m: VoidManifest, opts: GenerateOptions = {}): 
     "// The voidbase app this Void project builds into: `bun .voidbase/main.ts` runs it, `voidbase deploy` from this",
     "// directory ships it. Edit the project, not this file.",
     "//",
-    "// routes/, middleware/, crons/ and queues/ are not registered here: they are compiled into pb_hooks.",
+    "// The whole app -- routes/, middleware/, crons/ and queues/ -- is compiled into pb_hooks, so nothing but the",
+    "// runner is left here.",
     `import type { VoidbaseApp } from "${pkg}";`,
   ];
-  if (m.extras.register) lines.push(`import { register as registerApp } from "${importPath(m.extras.register)}";`);
-  lines.push("", "export function register(app: VoidbaseApp) {");
-  if (m.extras.register) lines.push(`  registerApp(app); // ${m.extras.register}`);
-  else lines.push("  // nothing to register: the project has no TypeScript extensions of its own");
+  lines.push("", "export function register(_app: VoidbaseApp) {");
+  lines.push("  // nothing to register here: routes/, middleware/, crons/ and queues/ are the app's server code, and");
+  lines.push("  // they are compiled into pb_hooks. Everything under src/ reaches PocketBase through them.");
   lines.push("}", "");
   lines.push(`if (import.meta.main) {
   // the Bun runtime, imported dynamically (and hidden from the bundler) because \`voidbase deploy\` composes this

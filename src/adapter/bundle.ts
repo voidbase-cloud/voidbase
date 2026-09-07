@@ -8,7 +8,7 @@
 //     (src/server/hooks/runtime.ts);
 //   - the output carries the `// voidbase:raw` pragma, which tells the hook compiler to leave it alone instead of
 //     running the await-insertion transform over it (hooks-plugin.ts).
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { BunPlugin } from "bun";
 
@@ -30,7 +30,7 @@ const builtinShims: BunPlugin = {
     build.onResolve({ filter: /^(node:)?async_hooks$/ }, () => ({ path: "async_hooks", namespace: "voidbase-shim" }));
     build.onResolve({ filter: /^(node:)?module$/ }, () => ({ path: "module", namespace: "voidbase-shim" }));
     build.onResolve({ filter: /^node:/ }, (args) => {
-      throw new Error(`voidbase: ${args.path} cannot be used in code compiled into pb_hooks (imported by ${args.importer}). A hook has no module resolution; move that work into src/voidbase/register.ts, which main.ts imports normally.`);
+      throw new Error(`voidbase: ${args.path} cannot be used in code compiled into pb_hooks (imported by ${args.importer}). A hook has no module resolution, so nothing reachable from routes/, middleware/, crons/ or queues/ may import a node builtin.`);
     });
     build.onLoad({ filter: /.*/, namespace: "voidbase-shim" }, (args) => ({
       contents: args.path === "async_hooks" ? ASYNC_HOOKS_SHIM : MODULE_SHIM,
@@ -47,7 +47,10 @@ const builtinShims: BunPlugin = {
  *    at) are compiler-only, so the bundler is told about them explicitly.
  */
 const CODE_EXT = ["", ".ts", ".tsx", ".mts", ".js", ".jsx", ".mjs", "/index.ts", "/index.tsx", "/index.js"];
-const asFile = (base: string): string | null => CODE_EXT.map((e) => base + e).find((p) => existsSync(p) && !p.endsWith("/")) ?? null;
+// the bare "" comes first so `@schema` -> db/schema.ts wins over a `db/schema/` directory, but an alias whose target
+// is a directory (`@/shared` -> src/shared) has to fall through to its index file rather than resolve to the folder
+const isFile = (p: string) => { try { return statSync(p).isFile(); } catch { return false; } };
+const asFile = (base: string): string | null => CODE_EXT.map((e) => base + e).find(isFile) ?? null;
 
 /** every `paths` entry of a tsconfig fragment, with its targets resolved against that file */
 function pathsOf(file: string): Record<string, string[]> {

@@ -97,7 +97,15 @@ taking production's place, and every run prints what it read.
 Here `build` runs this suite when automation calls it and this project's own Vite build when a person does;
 `deploy` publishes the status page; `version` uploads it as a version. voidbase.cloud answers the same three words
 with its own meanings (build the site and typecheck it, deploy the instance, read back the configuration a branch
-would deploy with).
+would deploy with). `voidbase sync` writes these three into the triggers it creates whenever the project has the
+scripts, so a project set up from the CLI and one set up by hand in the dashboard end up saying the same thing.
+
+A build that never finishes costs the same as one that fails, only twenty minutes later, so voidbase.cloud's `build`
+gives its Vite build a deadline (`BUILD_TIMEOUT`, 150 seconds) and tries once more (`BUILD_ATTEMPTS`). It runs under
+`timeout`, which signals the whole process group: Void's prerender step occasionally spins in a grandchild after the
+client bundle is written, and killing only the child we can see would leave that one running against the retry.
+Before the deadline the verb prints the process tree, so a hang leaves evidence in the build log rather than
+silence.
 
 ## What is kept between runs
 

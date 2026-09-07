@@ -220,10 +220,12 @@ A brand-new project is four steps:
    `local()` keys. Run `voidbase sync`. It builds a Void app, deploys, stores the secrets on the Worker, and connects
    the repository. One step the API cannot do it asks of you the first time: in the dashboard page it prints,
    connect the repository, which installs the Cloudflare Workers and Pages GitHub App for it and creates the build
-   token. Run `voidbase sync` again and the two triggers are in place: the production branch builds and runs
-   `bunx voidbase sync` (in a build, `sync` is the deploy alone: no secrets.json there, the Worker keeps its secrets,
-   the build's environment carries the deploy token and the declared server values), every other branch builds and
-   checks.
+   token. Run `voidbase sync` again and the two triggers are in place. Their commands are the project's own verbs
+   when it has them, `bun run build` then `bun run deploy` on the production branch and `bun run version` on every
+   other, so what the dashboard shows is three words and the project decides what they mean by reading the
+   environment (see [ci.md](ci.md#the-three-commands)). A project without those scripts gets commands that say the
+   whole thing: the build, then `bunx voidbase sync`, which in a build is the deploy alone (no secrets.json there,
+   the Worker keeps its secrets, the build's environment carries the deploy token and the declared server values).
 4. Push. Cloudflare builds, and the instance stays in step with the repository.
 
 `--dry-run` prints the plan; `--no-ci` deploys only; `--repo owner/name` and `--branch` override what git says.

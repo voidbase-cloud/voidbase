@@ -97,8 +97,15 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   // trigger; the commands run from the repository root (where the lockfile is) and step into the project.
   const prefix = prefixFromGit(root);
   const step = prefix ? `cd ${prefix} && ` : "";
-  const buildCmd = voidApp ? `${step}${hasScript("build") ? "bun run build" : "bunx --bun vite build"}${hasScript("check") ? " && bun run check" : ""}` : prefix ? `echo "${prefix}: nothing to build"` : "true";
-  const deployCmd = `${step}bunx voidbase sync --name ${deployed.name}${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN ? ` --domain ${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN}` : ""}`;
+  // The commands are the project's own verbs when it has them: `bun run build`, `bun run deploy`, `bun run version`
+  // mean the same three things in a build, on a branch and on a laptop, and the project decides what they do by
+  // reading the environment. A project without them gets commands that say the whole thing, which is what the CLI
+  // did before the verbs existed.
+  const buildCmd = hasScript("build") ? `${step}bun run build` : voidApp ? `${step}bunx --bun vite build` : prefix ? `echo "${prefix}: nothing to build"` : "true";
+  const deployCmd = hasScript("deploy") ? `${step}bun run deploy` : `${step}bunx voidbase sync --name ${deployed.name}${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN ? ` --domain ${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN}` : ""}`;
+  // Workers Builds gives a trigger one deploy command, so a branch trigger spends it on the third verb: what this
+  // branch would deploy with, which changes nothing live.
+  const branchCmd = hasScript("version") ? `${step}bun run version` : `echo "branch build: built${hasScript("check") ? " and checked" : ""}, nothing to deploy"`;
   if (opts.dryRun) { log(`\nci (dry run): would connect ${repo} to Worker ${deployed.name}: branch ${branch} builds \`${buildCmd}\` and deploys \`${deployCmd}\`; other branches build only`); return; }
 
   const cf = new CfApi(buildsToken, API);
@@ -118,7 +125,7 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   const existing = await triggers(cf, account.id, tag);
   const common = { root_directory: "/", build_caching: true, path_includes: ["*"], path_excludes: [] as string[] };
   const prod = await ensureTrigger(cf, account.id, tag, connection, buildToken, { trigger_name: `${deployed.name} (${branch})`, build_command: buildCmd, deploy_command: deployCmd, branch_includes: [branch], branch_excludes: [], ...common });
-  const rest = await ensureTrigger(cf, account.id, tag, connection, buildToken, { trigger_name: `${deployed.name} (branches)`, build_command: buildCmd, deploy_command: `echo "branch build: built${hasScript("check") ? " and checked" : ""}, nothing to deploy"`, branch_includes: ["*"], branch_excludes: [branch], ...common });
+  const rest = await ensureTrigger(cf, account.id, tag, connection, buildToken, { trigger_name: `${deployed.name} (branches)`, build_command: buildCmd, deploy_command: branchCmd, branch_includes: ["*"], branch_excludes: [branch], ...common });
 
   // what a build on Cloudflare needs: Bun, the deploy token, and the declared server/public values this machine has
   // (a build has no secrets.json; the Worker keeps its secrets)
@@ -133,7 +140,7 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
 
   log(`\nci: ${repo} -> Worker ${deployed.name} (account ${account.name})`);
   log(`  ${prod.created ? "created" : "updated"} trigger "${deployed.name} (${branch})": a push to ${branch} runs \`${buildCmd}\`, then \`${deployCmd}\`${existing.length && !prod.created ? " (watch paths left as they were)" : ""}`);
-  log(`  ${rest.created ? "created" : "updated"} trigger "${deployed.name} (branches)": every other branch builds${hasScript("check") ? " and checks" : ""}, nothing deploys`);
+  log(`  ${rest.created ? "created" : "updated"} trigger "${deployed.name} (branches)": every other branch runs \`${buildCmd}\`, then \`${branchCmd}\`; nothing live is touched`);
   log(`  build environment: BUN_VERSION${deployToken ? ", VOIDBASE_DEPLOY_CF_API_KEY (secret)" : ""}${plain.length ? `, ${plain.join(", ")}` : ""}`);
   log(`  the pipeline: push to ${branch} and watch it at ${link}`);
 }

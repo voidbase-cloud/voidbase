@@ -178,6 +178,17 @@ export const queues: typeof Typed.queues = new Proxy({}, {
 /** Void's tsconfig fragment with the two runtime-breaking mappings repointed at the shims. */
 export function generateTsconfig(root: string): string | null {
   const voidTs = join(root, ".void", "tsconfig.json");
+  // a fresh checkout has no .void/ yet: Void writes it during its own build, after the project's tsconfig (which
+  // extends the fragment generated here) has already been read. `void prepare` is Void's own way to generate it
+  // without booting Vite, so it runs once here, where the fragment is needed.
+  if (!existsSync(voidTs)) {
+    // the project's own void, else the one this package ships with
+    const bin = [join(root, "node_modules", ".bin", "void"), resolve(import.meta.dir, "../../node_modules/.bin/void")].find((b) => existsSync(b));
+    try {
+      const r = Bun.spawnSync(bin ? [bin, "prepare"] : ["bunx", "void", "prepare"], { cwd: root, stdout: "pipe", stderr: "pipe" });
+      if (r.exitCode !== 0) console.warn(`voidbase: void prepare failed (${r.stderr.toString().trim().split("\n").at(-1) ?? ""}); no tsconfig fragment written`);
+    } catch (err) { console.warn(`voidbase: void prepare could not run (${err instanceof Error ? err.message : String(err)}); no tsconfig fragment written`); }
+  }
   if (!existsSync(voidTs)) return null;
   const base = JSON.parse(readFileSync(voidTs, "utf8")) as { compilerOptions?: { paths?: Record<string, string[]> } };
   const paths: Record<string, string[]> = {};

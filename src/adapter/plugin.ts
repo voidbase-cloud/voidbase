@@ -95,6 +95,10 @@ export function voidbaseAdapter(options: AdapterOptions = {}) {
     // values and the shell, inlined as import.meta.env.KEY. Secrets and server keys never enter the client build.
     async config(cfg: { root?: string }) {
       const projectRoot = cfg.root ? resolve(cfg.root) : root;
+      // a fresh checkout has no .voidbase/ yet, and the project's tsconfig extends the fragment written there, which
+      // Vite reads before any build hook runs: generate the app now (buildStart does it again, idempotently)
+      const manifest = await report(() => scanVoidApp({ root: projectRoot, dev: process.env.NODE_ENV !== "production" }));
+      writeVoidbaseApp(manifest, { pkg: options.pkg, migrations: options.migrations });
       const loaded = await report(() => loadDefinition(join(projectRoot, SECRETS_DIR)));
       if (!loaded) return undefined;
       const raw: Record<string, unknown> = { ...(readSecretsValues(join(projectRoot, SECRETS_DIR)) ?? {}) };

@@ -122,6 +122,8 @@ builds; see [docs/ci.md](docs/ci.md).
 
 ## Docs
 
+- [docs/setup.md](docs/setup.md): **start here.** Connecting to an instance with the SDK or the admin panel, and the four ways to run one of your own.
+- [docs/adapter.md](docs/adapter.md): running a Void app on voidbase, built into one Worker.
 - [docs/deploy.md](docs/deploy.md): Void platform or your own Cloudflare account.
 - [docs/differences.md](docs/differences.md): what the platform changes (D1 batches, per-isolate limits, polling realtime, backups format).
 - [docs/hooks.md](docs/hooks.md): `pb_hooks` and `pb_migrations` on Workers, supported events and globals.

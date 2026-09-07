@@ -181,7 +181,7 @@ switch (cmd) {
     if (!existsSync(`${dir}/pb_hooks/main.pb.js`)) writeFileSync(`${dir}/pb_hooks/main.pb.js`, `/// <reference path="../pb_data/types.d.ts" />\nrouterAdd("GET", "/api/hello", (e) => e.json(200, { hello: "voidbase" }));\n`);
     console.log("pb_hooks/, pb_migrations/ and pb_secrets/ ready (.gitignore covers pb_data/, pb_secrets/secrets.json and .cloud/)");
     await run("bun", ["scripts/sync-panel.ts"]).catch(() => undefined);
-    console.log("\nnext: bun install && ./node_modules/.bin/void db migrate && voidbase dev");
+    console.log("\nnext: voidbase serve   (the API on 8090, the admin panel at /_/; docs/setup.md)");
     break;
   }
   case "dev": await run("./node_modules/.bin/vp", ["dev", "--port", flags.port ?? "5180", "--host", flags.host ?? "127.0.0.1"]); break;

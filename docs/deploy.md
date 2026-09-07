@@ -177,6 +177,32 @@ binding's `namespace_id` is hashed from the name, because Cloudflare shares coun
 id across Workers. The realtime hub is a Durable Object class exported from the instance's own Worker rather than a Worker shared
 by apps. `test/deploy-cf.ts` asserts the naming.
 
+## `voidbase sync`: the instance and its pipeline
+
+`voidbase deploy` is one machine deploying. `voidbase sync` is the whole loop: it deploys (creating what does not
+exist, updating what does), then connects the project's GitHub repository to Cloudflare Workers Builds, so that
+from then on a push to the production branch deploys from Cloudflare and every other branch is built and checked.
+A brand-new project is four steps:
+
+1. Create a Cloudflare account and a GitHub account (a Cloudflare account alone runs the instance).
+2. Fork or clone voidbase-site (or `voidbase init` in an empty directory) and push it to GitHub. Nothing is deployed
+   by that push: the repository is not connected yet.
+3. Fill in `pb_secrets/secrets.json` (a Void app: `vb_secrets/secrets.json`): the secrets, the deploy token
+   `VOIDBASE_DEPLOY_CF_API_KEY` (`voidbase token` prints the link that creates it) and `CLOUDFLARE_BUILDS_TOKEN`, a
+   *user* API token with "Workers Builds Configuration: Edit" and "Workers Scripts: Edit", both declared as
+   `local()` keys. Run `voidbase sync`. It builds a Void app, deploys, stores the secrets on the Worker, and connects
+   the repository. One step the API cannot do it asks of you the first time: in the dashboard page it prints,
+   connect the repository, which installs the Cloudflare Workers and Pages GitHub App for it and creates the build
+   token. Run `voidbase sync` again and the two triggers are in place: the production branch builds and runs
+   `bunx voidbase sync` (in a build, `sync` is the deploy alone: no secrets.json there, the Worker keeps its secrets,
+   the build's environment carries the deploy token and the declared server values), every other branch builds and
+   checks.
+4. Push. Cloudflare builds, and the instance stays in step with the repository.
+
+`--dry-run` prints the plan; `--no-ci` deploys only; `--repo owner/name` and `--branch` override what git says.
+A project whose builds are started from GitHub instead (this repository's own CI) keeps its watch paths: `sync`
+never switches an existing trigger between the two.
+
 ## Option B: the Void platform
 
 ```bash

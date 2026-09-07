@@ -10,7 +10,7 @@ import { embedded, isExecutable } from "../src/node/embedded";
 // the version: the executable carries it, a checkout reads package.json
 async function currentVersion(): Promise<string> { return (await embedded())?.version ?? (JSON.parse(await Bun.file(resolve(import.meta.dir, "../package.json")).text()) as { version: string }).version; }
 // the prebuilt executable serves; the Cloudflare toolchain (Void, Vite, wrangler) comes with the npm package
-const TOOLCHAIN = new Set(["dev", "build", "preview", "deploy", "bundle", "release", "cloud", "panel", "app", "init", "seed-user"]);
+const TOOLCHAIN = new Set(["dev", "build", "preview", "deploy", "sync", "bundle", "release", "cloud", "panel", "app", "init", "seed-user"]);
 
 const ROOT = resolve(`${import.meta.dir}/..`);
 const argv = process.argv.slice(2);
@@ -42,6 +42,11 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      database and R2 bucket, writes cloud/ (voidbase cloud init) with wrangler.jsonc,
                                      stores the superuser as worker secrets and runs void deploy --backend cloudflare
   deploy --void                      deploy to the Void platform instead (void auth login first)
+  sync [dir] [--repo owner/name] [--branch main] [--no-build] [--no-ci] [--dry-run]
+                                     the instance and its pipeline: deploy (a Void app is built first and deployed from
+                                     .voidbase/), then connect the GitHub repository to Cloudflare Workers Builds so a
+                                     push to the branch deploys and other branches build. Needs CLOUDFLARE_BUILDS_TOKEN
+                                     (a local() key) for the pipeline part; in CI, sync is the deploy alone
   token                              print the Cloudflare dashboard link that creates VOIDBASE_DEPLOY_CF_API_KEY
   secrets [list] [--dir pb_secrets]  what pb_secrets/main.ts declares (secret / server / public), which have a value in
   secrets push [--name worker]       secrets.json (git-ignored) or a default, which secrets the Worker has; push stores the
@@ -182,6 +187,12 @@ switch (cmd) {
   case "dev": await run("./node_modules/.bin/vp", ["dev", "--port", flags.port ?? "5180", "--host", flags.host ?? "127.0.0.1"]); break;
   case "build": await run("./node_modules/.bin/vp", ["build"]); break;
   case "preview": await run("./node_modules/.bin/vp", ["preview", "--port", flags.port ?? "5181", "--host", flags.host ?? "127.0.0.1"]); break;
+  case "sync": {
+    // the instance and its pipeline in one go (src/node/sync.ts): deploy, then connect the repository to Workers Builds
+    const { sync } = await import("../src/node/sync");
+    await sync({ dir: sub, name: flags.name, account: flags.account, domain: flags.domain, dryRun: !!flags["dry-run"], build: !flags["no-build"], ci: !flags["no-ci"], repo: flags.repo, branch: flags.branch });
+    break;
+  }
   case "deploy": {
     if (flags.void) { await run("./node_modules/.bin/void", ["deploy"]); break; } // the Void platform (void auth login first)
     const { deployToCloudflare } = await import("../src/node/deploy-cf");

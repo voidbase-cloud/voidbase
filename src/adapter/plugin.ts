@@ -14,7 +14,8 @@ import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFile
 import { join, resolve } from "node:path";
 import { bundleHookApp } from "./bundle";
 import { generateHookWrapper, hasServerCode, writeVoidbaseApp, type GenerateOptions } from "./codegen";
-import { scanVoidApp, type VoidManifest } from "./scan";
+import { scanVoidApp, SECRETS_DIR, type VoidManifest } from "./scan";
+import { loadDefinition, readSecretsValues } from "../node/secrets";
 
 export interface AdapterOptions extends GenerateOptions {
   /** where the built site goes inside the generated app; voidbase serves it at `/` */
@@ -90,6 +91,20 @@ export function voidbaseAdapter(options: AdapterOptions = {}) {
     name: "voidbase-adapter",
     // after voidPlugin, so the manifest sees whatever it generated into .void/
     enforce: "post" as const,
+    // the browser's share of the configuration: every `public` key of vb_secrets/main.ts, parsed from the local
+    // values and the shell, inlined as import.meta.env.KEY. Secrets and server keys never enter the client build.
+    async config(cfg: { root?: string }) {
+      const projectRoot = cfg.root ? resolve(cfg.root) : root;
+      const loaded = await report(() => loadDefinition(join(projectRoot, SECRETS_DIR)));
+      if (!loaded) return undefined;
+      const raw: Record<string, unknown> = { ...(readSecretsValues(join(projectRoot, SECRETS_DIR)) ?? {}) };
+      for (const k of loaded.definition.of("public")) if (process.env[k]) raw[k] = process.env[k];
+      const ev = await loaded.definition.evaluate(raw, ["public"]);
+      if (ev.invalid.length) throw new Error(`voidbase: ${SECRETS_DIR}: ${ev.invalid.map((i) => `${i.name}: ${i.message}`).join(", ")}`);
+      const define: Record<string, string> = {};
+      for (const [k, v] of Object.entries(ev.stored)) define[`import.meta.env.${k}`] = JSON.stringify(v);
+      return { define };
+    },
     configResolved(config: { root: string; build?: { outDir?: string }; environments?: Record<string, { build?: { outDir?: string } }> }) {
       root = config.root ?? root;
       const fromEnv = config.environments?.client?.build?.outDir;

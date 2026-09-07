@@ -27,6 +27,7 @@
   "exclude": [
     "bin",
     "hooks-plugin.ts",
+    "src/env/define.ts",
     "scripts",
     "src/adapter/codegen.ts",
     "src/adapter/index.ts",

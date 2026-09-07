@@ -198,11 +198,10 @@ const OUT = ".voidbase";
 export const hasServerCode = (m: VoidManifest) => !!(m.routes.length || m.middleware.length || m.crons.length || m.queues.length);
 
 /** Writes the whole generated app under `<root>/.voidbase`. Everything in there is build output. */
-/** pb_secrets/main.pb.js: what vb_secrets/main.ts declared, as the declaration `voidbase deploy` and `voidbase serve` read. */
+/** pb_secrets/main.ts: the project's declaration, re-exported where `voidbase serve` and `voidbase deploy` look for it. */
 export function generateSecretsDeclaration(d: SecretsDeclaration): string {
-  const lines = [BANNER, "//", `// The secrets the app declares in ${d.file}. Read by voidbase serve and voidbase deploy, never run; the values`, "// live in secrets.json beside this file (git-ignored) and, once deployed, as the Worker's secrets.", "secrets({"];
-  for (const n of d.names) lines.push(`  ${n}: ${JSON.stringify(d.descriptions[n] ?? "")},`);
-  lines.push("});", "");
+  const target = "../" + importPath(d.file.replace(/\.(ts|js|mjs)$/, "")); // pb_secrets/ is one level below .voidbase/
+  const lines = [BANNER, "//", `// The app's configuration is declared in ${d.file}: ${d.names.map((n) => `${n} (${d.access[n]})`).join(", ") || "nothing yet"}.`, "// voidbase serve and voidbase deploy import it from here; the local values are in secrets.json beside this file.", `export { default } from "${target}";`, ""];
   return lines.join("\n");
 }
 
@@ -257,10 +256,11 @@ export function writeVoidbaseApp(m: VoidManifest, opts: GenerateOptions & { migr
   }
   if (existsSync(migrationsOut) && !readdirSync(migrationsOut).length) rmSync(migrationsOut, { recursive: true, force: true });
 
-  // pb_secrets: the declaration vb_secrets/main.ts makes, in the shape `voidbase deploy` reads, and the values beside it
+  // pb_secrets: the declaration vb_secrets/main.ts makes, where `voidbase serve` and `voidbase deploy` look for it
+  // (a re-export: the validators and their types stay the project's), and the local values beside it
   drop("pb_secrets");
   if (m.secrets) {
-    put("pb_secrets/main.pb.js", generateSecretsDeclaration(m.secrets));
+    put("pb_secrets/main.ts", generateSecretsDeclaration(m.secrets));
     const values = join(m.root, m.extras.secretsDir!, "secrets.json");
     if (existsSync(values)) { cpSync(values, join(m.root, OUT, "pb_secrets/secrets.json")); written.push(`${OUT}/pb_secrets/secrets.json`); }
   }

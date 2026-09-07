@@ -63,7 +63,7 @@ try {
   try { scanVoidApp({ root: WORK }); } catch (err) { stray = err instanceof Error ? err.message : String(err); }
   check("a secret value that vb_secrets/main.ts does not declare fails the build, by name", /STRAY_SECRET, which vb_secrets\/main\.ts does not declare/.test(stray), stray.split("\n")[0] ?? "(no error)");
   writeFileSync(`${WORK}/vb_secrets/secrets.json`, secretsJson);
-  check("vb_secrets/main.ts names the secrets without being run", m.secrets?.names.join() === "TEST_SECRET,OTHER_SECRET" && m.extras.secretsDir === "vb_secrets", JSON.stringify(m.secrets));
+  check("vb_secrets/main.ts names the configuration and its tiers without being run", m.secrets?.names.join() === "TEST_SECRET,OTHER_SECRET,MAX_ITEMS,PUBLIC_LABEL" && m.secrets.access.TEST_SECRET === "secret" && m.secrets.access.MAX_ITEMS === "server" && m.secrets.access.PUBLIC_LABEL === "public" && m.extras.secretsDir === "vb_secrets", JSON.stringify(m.secrets));
 
   // ---- the conversion, through the Vite plugin the app actually uses ---------------------------------------------
   // --bun: Vite's config loader hands the config to the runtime, and voidbase ships TypeScript sources
@@ -81,7 +81,7 @@ try {
   check("the generated app is PocketBase-shaped: main.ts, package.json, .gitignore, pb_hooks, pb_migrations, pb_public", ["main.ts", "package.json", ".gitignore", "pb_hooks", "pb_migrations", "pb_public"].every((f) => existsSync(`${WORK}/.voidbase/${f}`)), readdirSync(`${WORK}/.voidbase`).join(" "));
   check("its main.ts is only the runner: every line of the app's server code is in pb_hooks", !/registerVoidApp/.test(mainTs) && !/\bfrom "\.\.\//.test(mainTs), mainTs.slice(0, 400));
   check("nothing is generated into the project root: it stays a plain Void app", !existsSync(`${WORK}/main.ts`) && !existsSync(`${WORK}/pb_hooks`) && !existsSync(`${WORK}/pb_public`) && !existsSync(`${WORK}/pb_migrations`), readdirSync(WORK).join(" "));
-  check("vb_secrets/ becomes pb_secrets/: the declaration in the shape voidbase deploy reads, the values beside it, git-ignored", /secrets\(\{\n  TEST_SECRET: "a value/.test(readFileSync(`${WORK}/.voidbase/pb_secrets/main.pb.js`, "utf8")) && existsSync(`${WORK}/.voidbase/pb_secrets/secrets.json`) && /^pb_secrets\/secrets\.json$/m.test(readFileSync(`${WORK}/.voidbase/.gitignore`, "utf8")), readdirSync(`${WORK}/.voidbase`).join(" "));
+  check("vb_secrets/ becomes pb_secrets/: the declaration re-exported where voidbase deploy looks, the values beside it, git-ignored", /export \{ default \} from "\.\.\/\.\.\/vb_secrets\/main";/.test(readFileSync(`${WORK}/.voidbase/pb_secrets/main.ts`, "utf8")) && existsSync(`${WORK}/.voidbase/pb_secrets/secrets.json`) && /^pb_secrets\/secrets\.json$/m.test(readFileSync(`${WORK}/.voidbase/.gitignore`, "utf8")), readdirSync(`${WORK}/.voidbase`).join(" "));
   check("vb_migrations/ is copied in as the generated app's pb_migrations", existsSync(`${WORK}/.voidbase/pb_migrations/1800000001_marker.js`), readdirSync(`${WORK}/.voidbase/pb_migrations`).join(" "));
   const migration = readFileSync(`${WORK}/.voidbase/pb_migrations/0001_outbox.void.js`, "utf8");
   check("a Drizzle migration becomes a PocketBase migration, split on its statement markers", /CREATE TABLE/.test(migration) && /CREATE INDEX/.test(migration) && (migration.match(/execSQL/g) ?? []).length === 2, migration.slice(0, 160));
@@ -154,7 +154,7 @@ try {
   const boot3 = await get("/api/from-bootstrap");
   check("an event hook is registered on its own hook, limited to the collections it tags", boot1.json.lists === 0 && boot3.json.lists === 1, JSON.stringify([boot1.json, boot3.json]));
   const secret = await get("/api/secret");
-  check("a declared secret's local value reaches the app through $os.getenv; an unvalued one is empty", secret.json.fromOs === "s3cret-from-file" && secret.json.missing === "", JSON.stringify(secret.json));
+  check("a declared secret's local value reaches the app through $os.getenv; an unvalued one is empty; a default is filled in and typed", secret.json.fromOs === "s3cret-from-file" && secret.json.missing === "" && secret.json.max === 3 && secret.json.label === "fixture" && JSON.stringify(secret.json.unresolved) === '["OTHER_SECRET"]', JSON.stringify(secret.json));
   const marker = await get("/api/marker");
   check("the project's own pb_migration ran alongside the generated ones", marker.json.marker === 0, JSON.stringify(marker));
   const root = await get("/");

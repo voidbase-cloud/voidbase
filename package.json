@@ -37,7 +37,8 @@
     "./cloud": "./src/cloud/rest.ts",
     "./bundle": "./src/node/bundle.ts",
     "./adapter": "./src/adapter/runtime.ts",
-    "./adapter/plugin": "./src/adapter/index.ts"
+    "./adapter/plugin": "./src/adapter/index.ts",
+    "./secrets": "./src/env/define.ts"
   },
   "imports": {
     "#platform/env": {

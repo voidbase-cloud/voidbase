@@ -22,6 +22,7 @@
     "src/platform/node",
     "src/server",
     "hooks-plugin.ts",
+    "src/env/define.ts",
     "bin",
     "src/adapter"
   ]

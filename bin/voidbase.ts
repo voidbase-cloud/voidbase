@@ -43,8 +43,9 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      stores the superuser as worker secrets and runs void deploy --backend cloudflare
   deploy --void                      deploy to the Void platform instead (void auth login first)
   token                              print the Cloudflare dashboard link that creates VOIDBASE_DEPLOY_CF_API_KEY
-  secrets [list] [--dir pb_secrets]  the secrets pb_secrets/main.pb.js declares: which have a value in secrets.json (git-ignored)
-  secrets push [--name worker]       and which are on the Worker; push stores the local values as the Worker's secrets
+  secrets [list] [--dir pb_secrets]  what pb_secrets/main.ts declares (secret / server / public), which have a value in
+  secrets push [--name worker]       secrets.json (git-ignored) or a default, which secrets the Worker has; push stores the
+                                     local secrets on the Worker (vars are set by every deploy)
   update [--dir pb_data] [--backup]  prebuilt executable only: fetch the latest GitHub release for this platform, verify
                                      its checksum and replace the executable (--backup zips pb_data first)
   version                            print the version
@@ -90,23 +91,31 @@ switch (cmd) {
     const { secretsState, putWorkerSecrets, workerSecretNames, SECRETS_DIR } = await import("../src/node/secrets");
     const { deployTarget } = await import("../src/node/deploy-cf");
     const dir = resolve(flags.dir ?? process.env.VOIDBASE_SECRETS_DIR ?? SECRETS_DIR);
-    const state = secretsState(dir);
-    if (!state.declaration) { console.log(`${dir}/main.pb.js does not exist: no secrets declared (voidbase init writes one)`); break; }
+    const state = await secretsState(dir);
+    if (!state.definition) { console.log(`${dir}/main.ts does not exist: nothing declared (voidbase init writes one)`); break; }
+    const def = state.definition; const secretNames = def.of("secret");
     if (sub === "push") {
       const { api, account, name } = await deployTarget({ name: flags.name, account: flags.account, log: () => undefined });
-      const values: Record<string, string> = {}; for (const k of state.provided) values[k] = state.values![k]!;
-      if (!Object.keys(values).length) { console.log(`nothing to push: none of ${state.declaration.names.join(", ")} has a value in ${dir}/secrets.json`); break; }
+      // only the secret tier is pushed: vars are the code's, set by every deploy
+      const ev = await def.evaluate({ ...(state.values ?? {}) }, ["secret"]);
+      if (ev.invalid.length) throw new Error(`${dir}/secrets.json: ${ev.invalid.map((i) => `${i.name}: ${i.message}`).join(", ")}`);
+      const values: Record<string, string> = {}; for (const k of secretNames) if (state.provided.includes(k) && ev.stored[k] !== undefined) values[k] = ev.stored[k]!;
+      if (!Object.keys(values).length) { console.log(`nothing to push: none of ${secretNames.join(", ") || "(no secrets declared)"} has a value in ${dir}/secrets.json`); break; }
       const before = await workerSecretNames(api, account.id, name);
       const done = await putWorkerSecrets(api, account.id, name, values).catch((e: Error) => { throw new Error(`${e.message}\n  (the Worker "${name}" must exist: voidbase deploy creates it and stores the secrets itself)`); });
       console.log(`pushed ${done.length} secret(s) to worker "${name}" (account ${account.name}): ${done.map((k) => `${k}${before.includes(k) ? " (replaced)" : ""}`).join(", ")}`);
-      if (state.unprovided.length) console.log(`no local value, left as they are: ${state.unprovided.join(", ")}`);
+      const left = secretNames.filter((k) => !values[k]); if (left.length) console.log(`no local value, left as they are: ${left.join(", ")}`);
       break;
     }
     // list (default): a row per declared name
     let onWorker: string[] | null = null; let worker = "";
     try { const t = await deployTarget({ name: flags.name, account: flags.account, log: () => undefined }); worker = t.name; onWorker = await workerSecretNames(t.api, t.account.id, t.name); } catch { /* no token here: local view only */ }
-    console.log(`${dir}: ${state.declaration.names.length} declared${state.values ? `, ${state.provided.length} valued in secrets.json` : ", no secrets.json"}${onWorker ? `, worker "${worker}" has ${onWorker.filter((k) => state.declaration!.names.includes(k)).length} of them` : " (set VOIDBASE_DEPLOY_CF_API_KEY to compare with the Worker)"}`);
-    for (const k of state.declaration.names) console.log(`  ${k.padEnd(32)} ${state.provided.includes(k) ? "local value" : "no local value"}${onWorker ? `  ${onWorker.includes(k) ? "on the worker" : "NOT on the worker"}` : ""}${state.declaration.descriptions[k] ? `  ${state.declaration.descriptions[k]}` : ""}`);
+    console.log(`${dir}: ${def.names.length} declared (${secretNames.length} secret, ${def.of("server").length} server, ${def.of("public").length} public)${state.values ? `, ${state.provided.length} valued in secrets.json` : ", no secrets.json"}${onWorker ? `, worker "${worker}" has ${onWorker.filter((k) => secretNames.includes(k)).length} of the secrets` : " (set VOIDBASE_DEPLOY_CF_API_KEY to compare with the Worker)"}`);
+    for (const i of state.info) {
+      const where = state.provided.includes(i.name) ? "local value" : i.fallback !== undefined ? `default ${i.access === "secret" ? "(set)" : JSON.stringify(i.fallback)}` : i.optional ? "optional, unset" : "no local value";
+      const worker = onWorker && i.access === "secret" ? `  ${onWorker.includes(i.name) ? "on the worker" : "NOT on the worker"}` : "";
+      console.log(`  ${i.name.padEnd(30)} ${i.access.padEnd(7)} ${where.padEnd(18)}${worker}${i.description ? `  ${i.description}` : ""}`);
+    }
     if (state.undeclared.length) console.log(`  in secrets.json but not declared (never deployed): ${state.undeclared.join(", ")}`);
     break;
   }
@@ -158,7 +167,7 @@ switch (cmd) {
     mkdirSync(`${dir}/pb_hooks`, { recursive: true }); mkdirSync(`${dir}/pb_migrations`, { recursive: true }); mkdirSync(`${dir}/pb_secrets`, { recursive: true });
     { // pb_secrets/main.pb.js declares the secrets; secrets.json holds their values and never enters git
       const { declarationScaffold } = await import("../src/node/secrets");
-      if (!existsSync(`${dir}/pb_secrets/main.pb.js`)) writeFileSync(`${dir}/pb_secrets/main.pb.js`, declarationScaffold());
+      if (!existsSync(`${dir}/pb_secrets/main.ts`)) writeFileSync(`${dir}/pb_secrets/main.ts`, declarationScaffold());
       const gi = `${dir}/.gitignore`; const have = existsSync(gi) ? await Bun.file(gi).text() : "";
       const lines = ["pb_data/", "pb_secrets/secrets.json"].filter((l) => !have.split("\n").some((x) => x.trim() === l || x.trim() === l.replace(/\/$/, "")));
       if (lines.length) writeFileSync(gi, `${have}${have && !have.endsWith("\n") ? "\n" : ""}${lines.join("\n")}\n`);

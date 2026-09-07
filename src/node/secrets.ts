@@ -1,81 +1,124 @@
-// pb_secrets/: the app's secrets, declared where the tooling can read them and valued where git cannot see them.
+// pb_secrets/: the app's configuration, declared where the tooling can read it and valued where git cannot see it.
 //
-//   pb_secrets/main.pb.js      the declaration, committed: `secrets({ NAME: "what it is", ... })`. Read, never run.
-//   pb_secrets/secrets.json    the values, git-ignored: `{ "NAME": "value", ... }`. On a dev machine only.
+//   pb_secrets/main.ts        the declaration, committed: `export default defineSecrets({ NAME: string().secret(), ... })`
+//   pb_secrets/secrets.json   the local values, git-ignored: `{ "NAME": "value", ... }`. On a dev machine only.
 //
-// `voidbase serve` loads the values into the process environment, so `$os.getenv("NAME")` and the app's own code see
-// them exactly as they will on Cloudflare. `voidbase deploy` stores the values as the Worker's secrets (encrypted,
-// per Worker, so two instances on one account never share one) and refuses to deploy while a declared secret has
-// neither a local value nor one already on the Worker: a CI checkout has no secrets.json, and that is the point --
-// the values are pushed once from a machine that has them (`voidbase secrets push`) and the pipeline needs nothing
-// but the deploy token. Cloudflare's account-level Secrets Store is deliberately not used: one store is shared by
-// every Worker of the account, and its bindings are read asynchronously, which `$os.getenv` is not.
+// The declaration (src/env/define.ts) gives every key a validator and an access tier: `secret` (the Worker's
+// encrypted secrets), `server` (plain Worker vars) or `public` (Worker vars the client build inlines too).
+// `voidbase serve` parses the local values and the shell through the validators and puts the result into the
+// process environment, so `$os.getenv("NAME")` and the app's own code see what they will see on Cloudflare.
+// `voidbase deploy` stores secrets the Worker lacks as its secrets and every server/public value as its vars, and
+// refuses to deploy while a value is invalid or a required one is missing everywhere: a CI checkout has no
+// secrets.json, and that is the point -- the secrets are pushed once from a machine that has them (`voidbase
+// secrets push`), the plain values come from the deploy's environment or the declared defaults, and the pipeline
+// needs nothing but the deploy token.
+//
+// Cloudflare's account-level Secrets Store is deliberately not used: one store is shared by every Worker of the
+// account, and its bindings are read asynchronously, which `$os.getenv` is not.
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import ts from "typescript";
 import type { CfApi } from "../cloud/rest";
+import { isDefinition, type Access, type Definition, type Evaluation, type KeyInfo, type Spec } from "../env/define";
 
 export const SECRETS_DIR = "pb_secrets";
-export const DECLARATION_FILE = "main.pb.js";
+export const DECLARATION_FILES = ["main.ts", "main.js", "main.mjs"];
 export const VALUES_FILE = "secrets.json";
 const NAME = /^[A-Z][A-Z0-9_]*$/;
+
+// ---- the declaration, read from the source without running it (what the adapter's scan needs) -------------------
 
 export interface SecretsDeclaration {
   /** the file the names came from */
   file: string;
   /** declared names, in file order */
   names: string[];
+  /** the tier of each name */
+  access: Record<string, Access>;
   /** what each one is, when the declaration says */
   descriptions: Record<string, string>;
 }
 
 /**
- * The names a declaration file names, without evaluating it: `secrets({ A: "what A is", B: "" })`, or
- * `secrets(["A", "B"])`. The same reader serves the adapter's `defineSecrets({...})` in vb_secrets/main.ts.
+ * The names, tiers and descriptions a declaration file declares, without evaluating it:
+ *
+ *     export default defineSecrets({
+ *       SMTP_PASSWORD: string().secret(),                       -> secret
+ *       ADMIN_EMAILS: describe(string().default(""), "who..."), -> server, described
+ *       API_URL: url().optional().public(),                     -> public
+ *       OTHER: secret(zodSchema, "..."),                        -> secret, described
+ *     })
  */
-export function parseSecretsDeclaration(code: string, file = DECLARATION_FILE, callee: string | string[] = ["secrets", "defineSecrets"]): SecretsDeclaration {
-  const callees = new Set(Array.isArray(callee) ? callee : [callee]);
+export function parseSecretsDeclaration(code: string, file = "pb_secrets/main.ts"): SecretsDeclaration {
   const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
-  const names: string[] = []; const descriptions: Record<string, string> = {};
-  const text = (n: ts.Node | undefined) => (n && (ts.isStringLiteralLike(n) || ts.isIdentifier(n)) ? n.text : null);
-  const add = (name: string | null, description: string | null) => {
-    if (!name) return;
-    if (!NAME.test(name)) throw new Error(`voidbase: ${file}: "${name}" is not a secret name (UPPER_CASE, letters, digits and underscores, like an environment variable)`);
-    if (!names.includes(name)) names.push(name);
-    if (description) descriptions[name] = description;
+  const names: string[] = []; const access: Record<string, Access> = {}; const descriptions: Record<string, string> = {};
+  const literal = (n: ts.Node | undefined) => (n && ts.isStringLiteralLike(n) ? n.text : null);
+  const calleeName = (c: ts.CallExpression) => (ts.isIdentifier(c.expression) ? c.expression.text : ts.isPropertyAccessExpression(c.expression) ? c.expression.name.text : "");
+  // the tier and description of one value expression: wrappers first, then Void's .secret()/.public() chain
+  const classify = (expr: ts.Expression): { access: Access; description: string | null } => {
+    let description: string | null = null; let tier: Access | null = null;
+    let node: ts.Expression = expr;
+    while (ts.isCallExpression(node)) {
+      const fn = calleeName(node);
+      if (fn === "describe") { description ??= literal(node.arguments[1]); node = node.arguments[0] ?? node; if (node === expr) break; continue; }
+      if (fn === "secret" || fn === "server" || fn === "pub" || fn === "public") {
+        if (ts.isIdentifier(node.expression)) { tier ??= fn === "pub" ? "public" : (fn as Access); description ??= literal(node.arguments[1]); node = node.arguments[0] ?? node; if (!node || node === expr) break; continue; }
+        tier ??= fn === "secret" ? "secret" : "public"; // Void's .secret() / .public() on a validator chain
+      }
+      node = ts.isPropertyAccessExpression(node.expression) ? node.expression.expression : node.expression;
+      if (!ts.isCallExpression(node)) break;
+    }
+    return { access: tier ?? "server", description };
   };
+  const add = (name: string | null, expr: ts.Expression | undefined) => {
+    if (!name) return;
+    if (!NAME.test(name)) throw new Error(`voidbase: ${file}: "${name}" is not a configuration name (UPPER_CASE, letters, digits and underscores, like an environment variable)`);
+    const c = expr ? classify(expr) : { access: "server" as Access, description: null };
+    if (!names.includes(name)) names.push(name);
+    access[name] = c.access; if (c.description) descriptions[name] = c.description;
+  };
+  let found = false;
   const visit = (node: ts.Node) => {
-    if (ts.isCallExpression(node)) {
-      const fn = ts.isIdentifier(node.expression) ? node.expression.text : ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : "";
+    if (ts.isCallExpression(node) && calleeName(node) === "defineSecrets") {
+      found = true;
       const arg = node.arguments[0];
-      if (callees.has(fn) && arg) {
-        if (ts.isObjectLiteralExpression(arg)) {
-          for (const p of arg.properties) {
-            if (ts.isPropertyAssignment(p)) {
-              const init = p.initializer;
-              const description = ts.isStringLiteralLike(init) ? init.text
-                : ts.isObjectLiteralExpression(init) ? text(init.properties.find((q): q is ts.PropertyAssignment => ts.isPropertyAssignment(q) && text(q.name) === "description")?.initializer) : null;
-              add(text(p.name), description);
-            } else if (ts.isShorthandPropertyAssignment(p)) add(p.name.text, null);
-          }
-        } else if (ts.isArrayLiteralExpression(arg)) for (const el of arg.elements) add(text(el), null);
-        else throw new Error(`voidbase: ${file}: ${fn}() takes an object of names ({ NAME: "what it is" }) or an array of names`);
+      if (!arg || !ts.isObjectLiteralExpression(arg)) throw new Error(`voidbase: ${file}: defineSecrets() takes an object literal: { NAME: string().secret(), ... }`);
+      for (const p of arg.properties) {
+        if (ts.isPropertyAssignment(p)) add(ts.isStringLiteralLike(p.name) || ts.isIdentifier(p.name) ? p.name.text : null, p.initializer);
+        else if (ts.isShorthandPropertyAssignment(p)) add(p.name.text, undefined);
       }
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
-  return { file, names, descriptions };
+  if (!found) throw new Error(`voidbase: ${file} does not call defineSecrets(): export default defineSecrets({ ... })`);
+  return { file, names, access, descriptions };
 }
 
-/** The declaration of a pb_secrets/ directory, or null when there is none. */
+/** The declaration file of a pb_secrets/ directory, or null. */
+export function declarationFile(dir = SECRETS_DIR): string | null {
+  return DECLARATION_FILES.map((f) => join(resolve(dir), f)).find((f) => existsSync(f)) ?? null;
+}
+
+/** The declaration of a pb_secrets/ directory, read statically, or null when there is none. */
 export function readSecretsDeclaration(dir = SECRETS_DIR): SecretsDeclaration | null {
-  const file = join(resolve(dir), DECLARATION_FILE);
-  if (!existsSync(file)) return null;
-  return parseSecretsDeclaration(readFileSync(file, "utf8"), file);
+  const file = declarationFile(dir);
+  return file ? parseSecretsDeclaration(readFileSync(file, "utf8"), file) : null;
 }
 
-/** The values of a pb_secrets/ directory (`secrets.json`), or null when the file is absent. Every value is a string. */
+// ---- the declaration, imported (what serve, deploy and the build need: the validators themselves) ---------------
+
+/** Imports the declaration module and returns its definition, or null when the directory has none. */
+export async function loadDefinition(dir = SECRETS_DIR): Promise<{ file: string; definition: Definition<Spec> } | null> {
+  const file = declarationFile(dir);
+  if (!file) return null;
+  const mod = (await import(pathToFileURL(file).href)) as { default?: unknown };
+  if (!isDefinition(mod.default)) throw new Error(`voidbase: ${file} must export defineSecrets({ ... }) as its default export`);
+  return { file, definition: mod.default };
+}
+
+/** The local values of a pb_secrets/ directory (`secrets.json`), or null when the file is absent. Every value is a string. */
 export function readSecretsValues(dir = SECRETS_DIR): Record<string, string> | null {
   const file = join(resolve(dir), VALUES_FILE);
   if (!existsSync(file)) return null;
@@ -84,7 +127,7 @@ export function readSecretsValues(dir = SECRETS_DIR): Record<string, string> | n
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`voidbase: ${file} must be an object: { "NAME": "value" }`);
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-    if (!NAME.test(k)) throw new Error(`voidbase: ${file}: "${k}" is not a secret name (UPPER_CASE, letters, digits and underscores)`);
+    if (!NAME.test(k)) throw new Error(`voidbase: ${file}: "${k}" is not a configuration name (UPPER_CASE, letters, digits and underscores)`);
     if (v === null || v === undefined) continue;
     out[k] = typeof v === "string" ? v : typeof v === "object" ? JSON.stringify(v) : String(v);
   }
@@ -93,7 +136,12 @@ export function readSecretsValues(dir = SECRETS_DIR): Record<string, string> | n
 
 export interface SecretsState {
   dir: string;
-  declaration: SecretsDeclaration | null;
+  /** the declaration file, or null when there is none */
+  file: string | null;
+  definition: Definition<Spec> | null;
+  /** what each key is: tier, description, default */
+  info: KeyInfo[];
+  /** the local values, or null when there is no secrets.json */
   values: Record<string, string> | null;
   /** declared names with a local value */
   provided: string[];
@@ -103,34 +151,51 @@ export interface SecretsState {
   undeclared: string[];
 }
 
-/** What a pb_secrets/ directory declares and holds, and how the two compare. */
-export function secretsState(dir = SECRETS_DIR): SecretsState {
-  const declaration = readSecretsDeclaration(dir);
+/** What a pb_secrets/ directory declares and holds locally, and how the two compare. */
+export async function secretsState(dir = SECRETS_DIR): Promise<SecretsState> {
+  const loaded = await loadDefinition(dir);
   const values = readSecretsValues(dir);
-  if (!declaration && values && Object.keys(values).length) {
-    throw new Error(`voidbase: ${join(resolve(dir), VALUES_FILE)} holds ${Object.keys(values).length} secret(s) but nothing declares them. Name them in ${join(dir, DECLARATION_FILE)}:\n  secrets({ ${Object.keys(values).map((k) => `${k}: ""`).join(", ")} })`);
+  if (!loaded && values && Object.keys(values).length) {
+    throw new Error(`voidbase: ${join(resolve(dir), VALUES_FILE)} holds ${Object.keys(values).length} value(s) but nothing declares them. Name them in ${join(dir, "main.ts")}:\n  export default defineSecrets({ ${Object.keys(values).map((k) => `${k}: string().secret()`).join(", ")} })`);
   }
-  const names = declaration?.names ?? [];
+  const names = loaded?.definition.names ?? [];
   const have = new Set(Object.keys(values ?? {}));
   return {
-    dir: resolve(dir), declaration, values,
+    dir: resolve(dir), file: loaded?.file ?? null, definition: loaded?.definition ?? null, info: loaded ? await loaded.definition.info() : [], values,
     provided: names.filter((n) => have.has(n)),
     unprovided: names.filter((n) => !have.has(n)),
     undeclared: [...have].filter((n) => !names.includes(n)),
   };
 }
 
+export interface LoadedSecrets {
+  state: SecretsState;
+  /** the parse of the local values under the environment (the environment wins) */
+  evaluation: Evaluation<Spec> | null;
+  /** names this call put into the environment (from the file or a default) */
+  loaded: string[];
+  /** declared names with no value anywhere and no default */
+  missing: string[];
+  /** declared names whose value was refused, by name and reason */
+  invalid: { name: string; message: string }[];
+  /** local values that no declaration names */
+  undeclared: string[];
+}
+
 /**
- * Puts the local values into an environment (the process's, for `voidbase serve` and `voidbase deploy`), never over
- * a value that is already there. Returns what to tell the user: names loaded, names still missing, names nobody
- * declared.
+ * Parses the local values and the environment through the declaration and puts every stored value (defaults
+ * included) into the environment, never over a value that is already there. Nothing throws for a missing or
+ * refused value: the caller decides (serve warns, deploy stops).
  */
-export function loadSecrets(dir = SECRETS_DIR, into: Record<string, string | undefined> = process.env): { loaded: string[]; missing: string[]; undeclared: string[]; state: SecretsState } {
-  const state = secretsState(dir);
+export async function loadSecrets(dir = SECRETS_DIR, into: Record<string, string | undefined> = process.env): Promise<LoadedSecrets> {
+  const state = await secretsState(dir);
+  if (!state.definition) return { state, evaluation: null, loaded: [], missing: [], invalid: [], undeclared: state.undeclared };
+  const raw: Record<string, unknown> = { ...(state.values ?? {}) };
+  for (const n of state.definition.names) if (into[n] !== undefined && into[n] !== "") raw[n] = into[n];
+  const evaluation = await state.definition.evaluate(raw);
   const loaded: string[] = [];
-  for (const [k, v] of Object.entries(state.values ?? {})) { if (into[k] === undefined || into[k] === "") { into[k] = v; loaded.push(k); } }
-  const missing = state.unprovided.filter((n) => !into[n]);
-  return { loaded, missing, undeclared: state.undeclared, state };
+  for (const [k, v] of Object.entries(evaluation.stored)) if (into[k] === undefined || into[k] === "") { into[k] = v; loaded.push(k); }
+  return { state, evaluation, loaded, missing: evaluation.missing, invalid: evaluation.invalid, undeclared: state.undeclared };
 }
 
 // ---- the Worker's secrets, through the Workers API (what `wrangler secret put` calls) -----------------------------
@@ -152,18 +217,21 @@ export async function putWorkerSecrets(api: CfApi, account: string, worker: stri
   return done;
 }
 
-/** The scaffold `voidbase init` writes: a declaration with nothing in it yet, and how to fill it. */
-export function declarationScaffold(): string {
-  return `/// <reference path="../pb_data/types.d.ts" />
-// The secrets this app needs. This file is read by \`voidbase serve\` and \`voidbase deploy\`, never run: it names the
-// secrets, and pb_secrets/secrets.json (git-ignored) holds their values on your machine:
+/** The scaffold `voidbase init` writes: a declaration with an example of each tier, and how the values arrive. */
+export function declarationScaffold(pkg = "@voidbase-cloud/voidbase"): string {
+  return `// The app's configuration: declared here, valued in pb_secrets/secrets.json (git-ignored) on your machine and in
+// the Worker's secrets and vars once deployed. Read by \`voidbase serve\` and \`voidbase deploy\`; in hooks,
+// $os.getenv("NAME"); in TypeScript, \`await definition.read(env)\` gives the typed values.
 //
-//   { "SMTP_PASSWORD": "..." }
-//
-// \`voidbase deploy\` stores the values as this Worker's secrets; \`voidbase secrets push\` does only that. A checkout
-// without secrets.json (CI) deploys as long as every name below is already on the Worker. In hooks: $os.getenv("NAME").
-secrets({
-  // SMTP_PASSWORD: "the mail provider's SMTP password",
+//   .secret()   the Worker's encrypted secrets, never listed, never in a build (\`voidbase secrets push\` stores them)
+//   (plain)     server configuration: a plain Worker var, hooks and routes only
+//   .public()   a Worker var the browser may know too: a client build inlines it as import.meta.env.NAME
+import { defineSecrets, describe, string, number } from "${pkg}/secrets";
+
+export default defineSecrets({
+  // SMTP_PASSWORD: describe(string().secret(), "the mail provider's SMTP password"),
+  // MAX_UPLOAD_MB: number().default(10),
+  // PUBLIC_SITE_URL: string().optional().public(),
 });
 `;
 }

@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseRedirects, writeCloudProject, type RedirectEntry } from "./cloud-init";
 import { loadEnv } from "./serve";
-import { loadSecrets, SECRETS_DIR, workerSecretNames } from "./secrets";
+import { loadSecrets, SECRETS_DIR, workerSecretNames, type LoadedSecrets } from "./secrets";
 import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findZone, rateLimitNamespace, resolveAccount, workersSubdomain } from "../cloud/rest";
 
 const API = (process.env.CLOUDFLARE_API_BASE ?? "https://api.cloudflare.com/client/v4").replace(/\/$/, "");
@@ -75,15 +75,16 @@ export function loadEnvFiles(files = [".env", ".env.local", "../.env", "../.env.
 }
 
 /** The environment, the token, the account and the worker name a deploy (or `voidbase secrets`) targets. */
-export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" | "log"> = {}): Promise<{ api: CfApi; token: string; account: { id: string; name: string }; name: string; secretsDir: string; secrets: ReturnType<typeof loadSecrets> }> {
+export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" | "log"> = {}): Promise<{ api: CfApi; token: string; account: { id: string; name: string }; name: string; secretsDir: string; secrets: LoadedSecrets }> {
   const log = opts.log ?? ((l: string) => console.log(l));
   // pb_secrets/ first: the declared names, and on a dev machine their values, which count as environment from here
   // on. The shell outranks secrets.json, and secrets.json outranks the .env files, so a dev placeholder in .env
   // (VOIDBASE_SUPERUSER_PASSWORD=changeme123) never shadows the real value kept beside the declaration.
   const secretsDir = resolve(process.env.VOIDBASE_SECRETS_DIR || SECRETS_DIR);
-  const secrets = loadSecrets(secretsDir);
+  const secrets = await loadSecrets(secretsDir);
+  if (secrets.invalid.length) throw new Error(`${secretsDir}: ${secrets.invalid.map((i) => `${i.name}: ${i.message}`).join(", ")}`);
   loadEnv(); const fromFiles = loadEnvFiles(); if (fromFiles.length) log(`from .env: ${fromFiles.join(", ")}`);
-  if (secrets.state.declaration) log(`${secretsDir}: ${secrets.state.declaration.names.length} secret(s) declared, ${secrets.state.provided.length} valued here${secrets.undeclared.length ? `; in secrets.json but not declared (not deployed): ${secrets.undeclared.join(", ")}` : ""}`);
+  if (secrets.state.definition) { const d = secrets.state.definition; log(`${secretsDir}: ${d.names.length} declared (${d.of("secret").length} secret, ${d.of("server").length} server, ${d.of("public").length} public), ${secrets.state.provided.length} valued here${secrets.undeclared.length ? `; in secrets.json but not declared (not deployed): ${secrets.undeclared.join(", ")}` : ""}`); }
   const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || ""; // empty means unset
   if (!token) { log(`${TOKEN_ENV} is not set.\n\n${tokenHelp()}`); throw new Error(`${TOKEN_ENV} missing`); }
   const name = slug(opts.name || process.env.VOIDBASE_DEPLOY_NAME || projectName());
@@ -157,6 +158,16 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const extraVars = listed("VOIDBASE_DEPLOY_VARS"), extraSecrets = listed("VOIDBASE_DEPLOY_SECRETS");
   const baked: Record<string, string> = { VOIDBASE_WORKER_NAME: name, VOIDBASE_ACCOUNT_ID: account.id };
   for (const k of ["AUDITLOG", ...extraVars]) if (process.env[k]) baked[k] = process.env[k]!;
+  // the declared server and public values, parsed (defaults filled in): a var is the code's to set on every deploy
+  const definition = pbSecrets.state.definition;
+  const plainKeys = definition ? definition.of("server", "public") : [];
+  for (const k of plainKeys) { const v = pbSecrets.evaluation?.stored[k]; if (v !== undefined) baked[k] = v; }
+  const missingVars = pbSecrets.missing.filter((k) => plainKeys.includes(k));
+  if (missingVars.length) {
+    const msg = `${missingVars.length} declared value(s) have no value in ${secretsDir}/secrets.json or the environment and no default: ${missingVars.join(", ")}`;
+    if (opts.dryRun) log(`vars: ${msg}`); else throw new Error(msg);
+  }
+  if (plainKeys.length) log(`vars: ${plainKeys.filter((k) => baked[k] !== undefined).join(", ") || "none"}${definition!.of("public").length ? ` (public: ${definition!.of("public").join(", ")})` : ""}`);
   writeFileSync(`${cloud}/.env`, Object.entries(baked).map(([k, v]) => `${k}=${v}\n`).join(""));
   log(`project: ${cloud}`);
 
@@ -184,12 +195,12 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   // replaced only by `voidbase secrets push`, so a checkout whose secrets.json carries dev values (another OAuth
   // client, the placeholder password) cannot overwrite production by deploying. A declared name with no value
   // here must already be on the Worker.
-  const declared = pbSecrets.state.declaration?.names ?? [];
+  const declared = definition ? definition.of("secret") : [];
   const secretMap = new Map<string, string>(keepSuperuser ? [] : [["VOIDBASE_SUPERUSER_EMAIL", email], ["VOIDBASE_SUPERUSER_PASSWORD", password]]);
   for (const k of extraSecrets) if (process.env[k]) secretMap.set(k, process.env[k]!);
   const kept: string[] = [];
   for (const k of declared) {
-    const v = pbSecrets.state.values?.[k]; if (v === undefined) continue;
+    const v = pbSecrets.evaluation?.stored[k]; if (v === undefined) continue;
     if (onWorker.includes(k)) { kept.push(k); continue; }
     if (k === "VOIDBASE_SUPERUSER_PASSWORD" && v === "changeme123") { log("secrets: VOIDBASE_SUPERUSER_PASSWORD in secrets.json is the dev placeholder, not stored"); continue; }
     secretMap.set(k, v);

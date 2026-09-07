@@ -1,28 +1,65 @@
-import { describe, expect, test } from "bun:test";
+import { describe as group, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { defineSecrets, describe, number, pub, secret, string, url } from "../../src/env/define";
 import { loadSecrets, parseSecretsDeclaration, readSecretsValues, secretsState } from "../../src/node/secrets";
 import { generateSecretsDeclaration } from "../../src/adapter/codegen";
 
 const dir = () => mkdtempSync(join(tmpdir(), "vb-secrets-"));
+const DEFINE = resolve(import.meta.dir, "../../src/env/define.ts");
+const declaration = `import { defineSecrets, describe, string, number, url } from ${JSON.stringify(DEFINE)};
+export default defineSecrets({
+  SMTP_PASSWORD: describe(string().secret(), "the SMTP password"),
+  MAX_USERS: number().default(5),
+  ADMIN_EMAILS: string().default(""),
+  SITE_URL: url().optional().public(),
+  REQUIRED_PLAIN: string(),
+});
+`;
 
-describe("pb_secrets", () => {
-  test("the declaration is read, not run: an object of names with descriptions, or an array", () => {
-    const d = parseSecretsDeclaration(`/// <reference path="../pb_data/types.d.ts" />\nsecrets({\n  SMTP_PASSWORD: "the SMTP password",\n  API_KEY: { description: "upstream" },\n  PLAIN: "",\n});\nthrow new Error("never evaluated");\n`);
-    expect(d.names).toEqual(["SMTP_PASSWORD", "API_KEY", "PLAIN"]);
-    expect(d.descriptions).toEqual({ SMTP_PASSWORD: "the SMTP password", API_KEY: "upstream" });
-    expect(parseSecretsDeclaration(`secrets(["A_1", "B"])`).names).toEqual(["A_1", "B"]);
+group("pb_secrets: the declaration", () => {
+  test("tiers come from Void's .secret()/.public() or the wrappers; a bare validator is server configuration", () => {
+    const d = defineSecrets({ A: string().secret(), B: string(), C: url().public(), D: secret(string(), "d"), E: pub(number()) });
+    expect(d.names).toEqual(["A", "B", "C", "D", "E"]);
+    expect(d.of("secret")).toEqual(["A", "D"]);
+    expect(d.of("server")).toEqual(["B"]);
+    expect(d.of("public")).toEqual(["C", "E"]);
+    expect(d.entries.D.description).toBe("d");
   });
-  test("the adapter's defineSecrets is the same declaration in TypeScript", () => {
-    const d = parseSecretsDeclaration(`import { defineSecrets } from "@voidbase-cloud/voidbase/adapter";\nexport default defineSecrets({ CF_OAUTH_CLIENT_SECRET: "OAuth client secret", GH_TOKEN: "" });\n`, "vb_secrets/main.ts", "defineSecrets");
-    expect(d.names).toEqual(["CF_OAUTH_CLIENT_SECRET", "GH_TOKEN"]);
-    expect(generateSecretsDeclaration(d)).toContain('secrets({\n  CF_OAUTH_CLIENT_SECRET: "OAuth client secret",\n  GH_TOKEN: "",\n});');
+  test("values are parsed through the validators: defaults filled in, numbers coerced, bad and missing values named without their values", async () => {
+    const d = defineSecrets({ N: number().default(5), U: url(), S: string().secret(), O: string().optional() });
+    const r = await d.evaluate({ U: "not a url", N: "7" });
+    expect(r.values.N).toBe(7);
+    expect(r.stored).toEqual({ N: "7" });
+    expect(r.missing).toEqual(["S"]);
+    expect(r.invalid.map((i) => i.name)).toEqual(["U"]);
+    expect(JSON.stringify(r)).not.toContain("not a url");
+    await expect(d.read({ U: "https://x.test", S: "s" })).resolves.toEqual({ N: 5, U: "https://x.test", S: "s" });
+    await expect(d.read({})).rejects.toThrow(/U: missing.*S: missing|S: missing.*U: missing/);
   });
-  test("a name that is not an environment-variable name fails, by file", () => {
-    expect(() => parseSecretsDeclaration(`secrets({ "smtp-password": "" })`, "pb_secrets/main.pb.js")).toThrow(/pb_secrets\/main\.pb\.js: "smtp-password" is not a secret name/);
-    expect(() => parseSecretsDeclaration(`secrets("A")`)).toThrow(/object of names/);
+  test("a lookup function is a source too, and a tier filter reads only what that tier may see", async () => {
+    const d = defineSecrets({ S: string().secret(), P: string().public() });
+    const env: Record<string, string> = { S: "hidden", P: "shown" };
+    expect(await d.read((n) => env[n], ["public"])).toEqual({ P: "shown" } as never);
+    expect((await d.info()).map((i) => `${i.name}:${i.access}:${i.optional}`)).toEqual(["S:secret:false", "P:public:false"]);
   });
+  test("a name that is not an environment-variable name, or a value that is no validator, fails at definition", () => {
+    expect(() => defineSecrets({ "smtp-password": string() })).toThrow(/"smtp-password" is not a configuration name/);
+    expect(() => defineSecrets({ A: "nope" as never })).toThrow(/A needs a validator/);
+  });
+  test("read statically for the build: names, tiers and descriptions, without running the file", () => {
+    const d = parseSecretsDeclaration(declaration + 'throw new Error("never evaluated");\n', "vb_secrets/main.ts");
+    expect(d.names).toEqual(["SMTP_PASSWORD", "MAX_USERS", "ADMIN_EMAILS", "SITE_URL", "REQUIRED_PLAIN"]);
+    expect(d.access).toEqual({ SMTP_PASSWORD: "secret", MAX_USERS: "server", ADMIN_EMAILS: "server", SITE_URL: "public", REQUIRED_PLAIN: "server" });
+    expect(d.descriptions).toEqual({ SMTP_PASSWORD: "the SMTP password" });
+    expect(parseSecretsDeclaration(`export default defineSecrets({ A: secret(z.string(), "a"), B: pub(z.string()), C: server(z.string()) })`).access).toEqual({ A: "secret", B: "public", C: "server" });
+    expect(() => parseSecretsDeclaration(`export default {}`, "x.ts")).toThrow(/does not call defineSecrets/);
+    expect(generateSecretsDeclaration(d)).toContain('export { default } from "../../vb_secrets/main";');
+  });
+});
+
+group("pb_secrets: the directory", () => {
   test("values: strings stay, numbers and objects are stringified, nulls are skipped, non-objects fail", () => {
     const d = dir(); writeFileSync(join(d, "secrets.json"), JSON.stringify({ A: "x", N: 3, O: { k: 1 }, Z: null }));
     expect(readSecretsValues(d)).toEqual({ A: "x", N: "3", O: '{"k":1}' });
@@ -30,25 +67,28 @@ describe("pb_secrets", () => {
     expect(() => readSecretsValues(d)).toThrow(/must be an object/);
     expect(readSecretsValues(dir())).toBeNull();
   });
-  test("state: provided, unprovided and undeclared names; values with no declaration are refused", () => {
+  test("state: the declaration is imported; provided, unprovided and undeclared names; values with no declaration are refused", async () => {
     const d = dir();
-    writeFileSync(join(d, "main.pb.js"), `secrets({ A: "", B: "" })`);
-    writeFileSync(join(d, "secrets.json"), JSON.stringify({ A: "1", C: "3" }));
-    const st = secretsState(d);
-    expect([st.provided, st.unprovided, st.undeclared]).toEqual([["A"], ["B"], ["C"]]);
+    writeFileSync(join(d, "main.ts"), declaration);
+    writeFileSync(join(d, "secrets.json"), JSON.stringify({ SMTP_PASSWORD: "1", STRAY: "3" }));
+    const st = await secretsState(d);
+    expect(st.definition?.names.length).toBe(5);
+    expect([st.provided, st.unprovided, st.undeclared]).toEqual([["SMTP_PASSWORD"], ["MAX_USERS", "ADMIN_EMAILS", "SITE_URL", "REQUIRED_PLAIN"], ["STRAY"]]);
+    expect(st.info.find((i) => i.name === "MAX_USERS")).toMatchObject({ access: "server", optional: true, fallback: "5" });
     const bare = dir(); writeFileSync(join(bare, "secrets.json"), JSON.stringify({ A: "1" }));
-    expect(() => secretsState(bare)).toThrow(/nothing declares them/);
+    await expect(secretsState(bare)).rejects.toThrow(/nothing declares them/);
     const none = dir(); mkdirSync(join(none, "sub"));
-    expect(secretsState(join(none, "sub")).declaration).toBeNull();
+    expect((await secretsState(join(none, "sub"))).definition).toBeNull();
   });
-  test("loadSecrets fills an environment without overwriting it and reports what is still missing", () => {
+  test("loadSecrets fills an environment (defaults included) without overwriting it, and reports what is missing or refused", async () => {
     const d = dir();
-    writeFileSync(join(d, "main.pb.js"), `secrets({ A: "", B: "", C: "" })`);
-    writeFileSync(join(d, "secrets.json"), JSON.stringify({ A: "from-file", B: "from-file" }));
-    const env: Record<string, string | undefined> = { B: "from-shell" };
-    const r = loadSecrets(d, env);
-    expect(env).toEqual({ A: "from-file", B: "from-shell" });
-    expect(r.loaded).toEqual(["A"]);
-    expect(r.missing).toEqual(["C"]);
+    writeFileSync(join(d, "main.ts"), declaration);
+    writeFileSync(join(d, "secrets.json"), JSON.stringify({ SMTP_PASSWORD: "from-file", MAX_USERS: "9", SITE_URL: "nope" }));
+    const env: Record<string, string | undefined> = { MAX_USERS: "3" };
+    const r = await loadSecrets(d, env);
+    expect(env).toEqual({ MAX_USERS: "3", SMTP_PASSWORD: "from-file", ADMIN_EMAILS: "" });
+    expect(r.loaded).toEqual(["SMTP_PASSWORD", "ADMIN_EMAILS"]);
+    expect(r.missing).toEqual(["REQUIRED_PLAIN"]);
+    expect(r.invalid.map((i) => i.name)).toEqual(["SITE_URL"]);
   });
 });

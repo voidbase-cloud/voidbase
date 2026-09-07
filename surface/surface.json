@@ -307,16 +307,16 @@
         },
         {
           "id": "platform.secrets",
-          "title": "Secrets: pb_secrets/ declared and git-ignored, stored as the Worker's secrets",
-          "surface": "pb_secrets/main.pb.js + secrets.json, voidbase secrets [push], vb_secrets/main.ts (defineSecrets)",
+          "title": "Configuration and secrets: one declaration with Void's validators, tiered secret / server / public",
+          "surface": "pb_secrets/main.ts (defineSecrets + string()/number()/url()... .secret() .public()), pb_secrets/secrets.json, voidbase secrets [push], vb_secrets/main.ts",
           "oracles": [
             "prod"
           ],
           "hours": 3,
           "status": "done",
           "milestone": "m6",
-          "verify": "A declared secret's local value reaches $os.getenv locally; a deploy stores it on the Worker and refuses when a declared secret has no value anywhere",
-          "notes": "pb_secrets/main.pb.js declares (`secrets({ NAME: \"what it is\" })`, read with the TypeScript parser, never run); pb_secrets/secrets.json (git-ignored, `voidbase init` writes the .gitignore line) holds the values. `voidbase serve` loads them into the process environment ($os.getenv now falls back to it on Bun, like PocketBase); `voidbase deploy` stores every declared value as the Worker's own secrets next to the superuser and fails while a declared name has neither a local value nor one already on the Worker (a CI checkout has no secrets.json and needs only the deploy token). `voidbase secrets` lists local/Worker presence per name; `voidbase secrets push` stores the values through the Workers API without redeploying. The adapter raises it to vb_secrets/main.ts (`export default defineSecrets({...})`) + vb_secrets/secrets.json, generated into .voidbase/pb_secrets/; a value nothing declares fails the build. Cloudflare's account-level Secrets Store was considered and rejected: one store per account is shared by every Worker (the isolation rule) and its bindings are async, which $os.getenv is not. test/unit/secrets.test.ts (6), test/deploy-cf.ts (+3), test/adapter.ts (+4)."
+          "verify": "A declared key parses through its validator (default filled, number typed) into the environment locally and the Worker's secrets/vars on deploy; public keys reach the client build and nothing else does; a deploy refuses invalid or missing values",
+          "notes": "pb_secrets/main.ts exports defineSecrets({...}) built on Void's env validators (Standard Schema; string(), number(), boolean(), url(), email(), oneOf(), json() with .optional()/.default(); `.secret()` and `.public()` set the tier, a bare validator is server configuration; secret()/server()/pub() wrap any Standard Schema; describe() adds text). Values: pb_secrets/secrets.json (git-ignored) then the shell (shell > file > .env), parsed wherever read: `voidbase serve` puts stored strings (defaults included) into the environment; `voidbase deploy` bakes server+public values as Worker vars on every deploy, stores secrets the Worker lacks (never replaces one: `voidbase secrets push` does), keeps the Worker's superuser when the checkout has no credentials, and fails on invalid or missing values with names only (a refused value is redacted from the validator's message). The adapter re-exports vb_secrets/main.ts into .voidbase/pb_secrets/main.ts, copies secrets.json, fails the build on an undeclared value, and its Vite config hook inlines every `public` key as import.meta.env.KEY so the static site knows exactly what it was declared to know. Typed access: `await definition.read((n) => $os.getenv(n))` on both runtimes. Twelve-factor III shape: declared in code, valued per deploy in the environment, never grouped by environment. Secrets Store rejected (account-shared, async). test/unit/secrets.test.ts (8), test/deploy-cf.ts (26), test/adapter.ts (56)."
         },
         {
           "id": "platform.deploy-void",

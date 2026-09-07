@@ -23,7 +23,7 @@ export default defineConfig({ plugins: [voidPlugin(), voidbaseAdapter()] });
   .gitignore          pb_data/
   pb_hooks/           routes/, middleware/, vb_hooks/, crons/ and queues/, compiled
   pb_migrations/      the project's vb_migrations/, plus one file per Drizzle migration
-  pb_secrets/         the project's vb_secrets/: the declaration in PocketBase's shape, the values beside it
+  pb_secrets/         the project's vb_secrets/: the declaration re-exported, the local values beside it
   pb_public/          the client build, served at /
   pb_data/            created on first run
   void-entry.ts       what the bundler builds into pb_hooks/void-app.js
@@ -48,7 +48,7 @@ The project root is Void's, with three additions, all optional and all named for
 | --- | --- |
 | `vb_hooks/` | PocketBase's hooks, one per file, registered once when the app mounts |
 | `vb_migrations/` | PocketBase JS migrations, copied into the generated `pb_migrations/` beside the ones generated from `db/migrations` |
-| `vb_secrets/` | `main.ts` declares the app's secrets with `defineSecrets`; `secrets.json` (git-ignored) holds their values |
+| `vb_secrets/` | `main.ts` declares the app's configuration with `defineSecrets` and Void's validators, tiered secret / server / public; `secrets.json` (git-ignored) holds the local values |
 
 They sit at the project root beside Void's own `db/`, which `vb_migrations/` is the counterpart of. Everything else
 is Void's, and means what Void means by it: `routes/`, `middleware/`, `crons/` and `queues/` are the server code,
@@ -149,30 +149,39 @@ process, so a registration made then is held and replayed, or dropped with the p
 (`pb.$app` and the rest) outside a request, a cron tick or a hook still throws.
 
 
-### Secrets
+### Configuration and secrets
 
-The secrets the app needs are named in `vb_secrets/main.ts`, where the build can read them without running anything,
-and valued in `vb_secrets/secrets.json`, which stays out of git (add it to `.gitignore`; the generated app's own
-`.gitignore` already lists its copy):
+The app's configuration is declared in `vb_secrets/main.ts`, with the validators a Void `env.ts` uses, and valued in
+`vb_secrets/secrets.json`, which stays out of git (add it to `.gitignore`; the generated app's own `.gitignore`
+already lists its copy):
 
 ```ts
 // vb_secrets/main.ts
-import { defineSecrets } from "@voidbase-cloud/voidbase/adapter";
+import { defineSecrets, describe, string, number, url } from "@voidbase-cloud/voidbase/secrets";
 
 export default defineSecrets({
-  SMTP_PASSWORD: "the mail provider's SMTP password",
-  CF_OAUTH_CLIENT_SECRET: "the OAuth app's client secret",
+  SMTP_PASSWORD: describe(string().secret(), "the mail provider's SMTP password"),   // the Worker's secrets
+  MAX_INSTANCES: number().default(5),                                                 // a Worker var
+  PUBLIC_API_URL: url().optional().public(),                                          // a var the browser gets too
 });
 ```
 
-The adapter writes them into `.voidbase/pb_secrets/` in PocketBase's shape (`main.pb.js` with `secrets({...})`,
-`secrets.json` copied beside it), which is what `voidbase serve` and `voidbase deploy` read: locally the values
-enter the process environment, on Cloudflare they become the Worker's secrets (a deploy stores what the Worker
-lacks, `voidbase secrets push` replaces), and a deploy refuses to go ahead while a declared secret has no value
-anywhere. The app reads them like any other binding: `c.env.SMTP_PASSWORD` in
-a route, `pb.$os.getenv("SMTP_PASSWORD")` in a hook. A value in `secrets.json` that `main.ts` does not declare
-fails the build, by name: it would silently never reach the Worker. Details and the `voidbase secrets` commands:
-`docs/deploy.md`.
+One declaration serves the three places the app runs. The Worker: `voidbase deploy` stores secrets as the Worker's
+secrets and the rest as its vars, and refuses to deploy while a value is invalid or missing everywhere. The build:
+every `public` key is inlined into the client as `import.meta.env.KEY`, parsed and defaulted, and no other key can
+reach it. The static site therefore knows exactly what it was declared to know. Locally, `bun .voidbase/main.ts`
+parses `secrets.json` and the shell into the environment, defaults included. Routes and hooks read
+`c.env.SMTP_PASSWORD` or `pb.$os.getenv("SMTP_PASSWORD")`, or the typed values through the same declaration:
+
+```ts
+import config from "../../vb_secrets/main";
+const { MAX_INSTANCES } = await config.read((n) => pb.$os.getenv(n));   // a number, on both runtimes
+```
+
+The adapter writes a re-export into `.voidbase/pb_secrets/main.ts`, where `voidbase serve` and `voidbase deploy`
+look for the declaration, and copies `secrets.json` beside it. A value in `secrets.json` that `main.ts` does not
+declare fails the build, by name: it would silently never reach the Worker. Details, the tiers and the `voidbase
+secrets` commands: `docs/deploy.md`.
 
 ## What maps to what
 
@@ -182,7 +191,7 @@ fails the build, by name: it would silently never reach the Worker. Details and 
 | `routes/**/*.ts` | `.voidbase/pb_hooks/void-app.js` | `[id]` → `:id`, `[...rest]` → catch-all, `(group)/` stripped, `_file.ts` ignored, `.dev.ts` / `.prod.ts` honoured |
 | `middleware/*.ts` | `routerUse(...)`, in file order | every request, as in Void (see below) |
 | `vb_hooks/*.ts` | the hook each file names, registered once | `onBootstrap`, `onRecordCreate`, the mailer hooks |
-| `vb_secrets/main.ts` + `secrets.json` | `.voidbase/pb_secrets/main.pb.js` + `secrets.json` | `voidbase deploy` stores the values as the Worker's secrets; `bun .voidbase/main.ts` loads them (see below) |
+| `vb_secrets/main.ts` + `secrets.json` | `.voidbase/pb_secrets/main.ts` (a re-export) + `secrets.json` | secrets to the Worker's secrets, the rest to its vars, `public` keys into the client build (see below) |
 | `crons/*.ts` | `cronAdd(<file name>, cron, handler)` | listed by `GET /api/crons`, runnable with `POST /api/crons/<name>` |
 | `queues/*.ts` | a voidbase job per message | `void/queues` and `c.env.QUEUE_<NAME>` produce; the consumer runs on the jobs queue, or inline where there is none |
 | `db/schema.ts` + `void/db` | Drizzle over voidbase's D1 | the same database PocketBase's collections live in |

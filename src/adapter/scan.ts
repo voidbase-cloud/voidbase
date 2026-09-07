@@ -5,7 +5,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, relative, resolve } from "node:path";
 import ts from "typescript";
 import { EVENT_HOOKS } from "../../hooks-plugin";
-import { parseSecretsDeclaration, readSecretsValues, VALUES_FILE, type SecretsDeclaration } from "../node/secrets";
+import { DECLARATION_FILES, parseSecretsDeclaration, readSecretsValues, VALUES_FILE, type SecretsDeclaration } from "../node/secrets";
 
 const CODE = new Set([".ts", ".tsx", ".mts", ".js", ".jsx", ".mjs"]);
 export const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "ALL"] as const;
@@ -36,7 +36,7 @@ export interface VoidMigration { file: string; name: string }
 export interface VoidbaseExtras {
   /** vb_migrations/: PocketBase JS migrations, copied in beside the ones generated from db/migrations */
   migrationsDir?: string;
-  /** vb_secrets/: main.ts declares the secrets (defineSecrets), secrets.json (git-ignored) holds their values */
+  /** vb_secrets/: main.ts declares the configuration (defineSecrets), secrets.json (git-ignored) holds the local values */
   secretsDir?: string;
 }
 /** The two directories this adapter adds to a Void app, both named for the voidbase thing they are, both sitting
@@ -71,7 +71,7 @@ export interface VoidManifest {
   crons: VoidModule[];
   queues: VoidQueue[];
   migrations: VoidMigration[];
-  /** vb_secrets/main.ts: the secrets the app declares (their values are never part of the manifest) */
+  /** vb_secrets/main.ts: the configuration the app declares, names and tiers only (values are never part of the manifest) */
   secrets: SecretsDeclaration | null;
   /** the app's own voidbase side (vb_migrations/, vb_secrets/) */
   extras: VoidbaseExtras;
@@ -237,16 +237,17 @@ export function scanVoidApp(opts: ScanOptions = {}): VoidManifest {
     secretsDir: isDir(join(root, SECRETS_DIR)) ? SECRETS_DIR : undefined,
   };
 
-  // vb_secrets/: main.ts names the secrets (`export default defineSecrets({ NAME: "what it is" })`), read without
-  // running it; secrets.json beside it is the git-ignored values file. Values that nothing declares are a build
-  // error: they would silently never reach the Worker.
+  // vb_secrets/: main.ts declares the configuration (`export default defineSecrets({ NAME: string().secret(), ... })`),
+  // read here without running it (names and tiers; the validators run where values are parsed); secrets.json
+  // beside it is the git-ignored local values file. Values that nothing declares are a build error: they would
+  // silently never reach the Worker.
   let secrets: SecretsDeclaration | null = null;
   if (extras.secretsDir) {
-    const decl = ["main.ts", "main.js"].map((f) => join(root, SECRETS_DIR, f)).find((f) => existsSync(f));
+    const decl = DECLARATION_FILES.map((f) => join(root, SECRETS_DIR, f)).find((f) => existsSync(f));
     const values = readSecretsValues(join(root, SECRETS_DIR));
-    if (!decl && values && Object.keys(values).length) throw new Error(`voidbase: ${SECRETS_DIR}/${VALUES_FILE} holds ${Object.keys(values).join(", ")} but ${SECRETS_DIR}/main.ts does not exist to declare them:\n  export default defineSecrets({ ${Object.keys(values).map((k) => `${k}: ""`).join(", ")} })`);
+    if (!decl && values && Object.keys(values).length) throw new Error(`voidbase: ${SECRETS_DIR}/${VALUES_FILE} holds ${Object.keys(values).join(", ")} but ${SECRETS_DIR}/main.ts does not exist to declare them:\n  export default defineSecrets({ ${Object.keys(values).map((k) => `${k}: string().secret()`).join(", ")} })`);
     if (decl) {
-      secrets = parseSecretsDeclaration(readFileSync(decl, "utf8"), relative(root, decl), "defineSecrets");
+      secrets = parseSecretsDeclaration(readFileSync(decl, "utf8"), relative(root, decl));
       const undeclared = Object.keys(values ?? {}).filter((k) => !secrets!.names.includes(k));
       if (undeclared.length) throw new Error(`voidbase: ${SECRETS_DIR}/${VALUES_FILE} holds ${undeclared.join(", ")}, which ${relative(root, decl)} does not declare. Add them to defineSecrets({...}) or remove them: an undeclared value never reaches the Worker.`);
     }

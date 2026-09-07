@@ -71,7 +71,7 @@ What it does, in order: resolves the account through the token, creates `<name>-
 ids and, when the directory has a `main.ts` exporting `register(app)`, composes it into the Worker; stores the
 superuser as worker secrets (from `VOIDBASE_SUPERUSER_*` / `PB_SUPERUSER_*`, or a generated
 password saved in `pb_data/.superuser-credentials`; the local dev default `changeme123` never goes live) together
-with the secrets `pb_secrets/` declares (below), syncs
+with the secrets and vars `pb_secrets/` declares (below), syncs
 the admin panel and your frontend build into that project, and runs `void deploy --backend cloudflare`,
 which builds, applies the D1 migrations and uploads the Worker with its cron trigger. It ends with the
 `https://<name>.<your-subdomain>.workers.dev` URL and a health check. Re-running is idempotent: existing resources
@@ -104,39 +104,62 @@ account. Cloudflare still requires the account to have a workers.dev subdomain b
 | `HUB` (Durable Object `VoidbaseHub`, SQLite-backed, in this Worker) | the realtime hub: every SSE connection holds one hibernatable socket to it, writes publish to it, so events arrive in tens of milliseconds instead of the D1 poll's second, and idle apps cost nothing (the object sleeps). Free plan included | `--no-hub` / `VOIDBASE_DEPLOY_HUB=0` keeps the D1 poll |
 | Smart Placement | the Worker runs next to its D1 database | always on |
 
-### Secrets: `pb_secrets/`
+### Configuration and secrets: `pb_secrets/`
 
-The app's own secrets (an SMTP password, OAuth client secrets, `VOIDBASE_ENCRYPTION_KEY`) have a directory, in
-PocketBase's naming:
+The app's configuration is declared once, in code, with Void's validators, and valued in each deploy's environment
+(twelve-factor III): locally a git-ignored file, on Cloudflare the Worker's own secrets and vars.
+
+```ts
+// pb_secrets/main.ts                                   committed
+import { defineSecrets, describe, string, number, url } from "@voidbase-cloud/voidbase/secrets";
+
+export default defineSecrets({
+  SMTP_PASSWORD: describe(string().secret(), "the mail provider's password"),
+  ADMIN_EMAILS: string().default(""),
+  MAX_UPLOAD_MB: number().default(10),
+  PUBLIC_SITE_URL: url().optional().public(),
+});
+```
 
 ```
-pb_secrets/main.pb.js      secrets({ SMTP_PASSWORD: "the mail provider's password", ... })   committed
-pb_secrets/secrets.json    { "SMTP_PASSWORD": "..." }                                       git-ignored
+pb_secrets/secrets.json    { "SMTP_PASSWORD": "...", "ADMIN_EMAILS": "me@example.com" }    git-ignored
 ```
 
-`main.pb.js` names the secrets and is read, never run (`voidbase init` writes an empty one and the `.gitignore`
-lines). `secrets.json` holds the values on your machine; the shell outranks it, and it outranks the `.env` files,
-so a dev placeholder such as `VOIDBASE_SUPERUSER_PASSWORD=changeme123` never shadows it. `voidbase serve` loads them into the environment, so
-`$os.getenv("SMTP_PASSWORD")` and the app's own code see the same names locally as on Cloudflare. `voidbase deploy`
-stores the declared values the Worker does not have yet as the Worker's secrets (encrypted, per Worker: two
-instances never share one) next to the superuser, and refuses to deploy while a declared secret has neither a local
-value nor one already on the Worker. A value the Worker already holds is left alone by a deploy: a deploy ships
-code, and a checkout whose `secrets.json` carries dev values (another OAuth client, the placeholder password) must
-not overwrite production by deploying. Replacing is explicit:
+Every key has an access tier, which decides where its value lives and who can read it:
+
+| tier | declared as | lives in | readable by |
+| --- | --- | --- | --- |
+| secret | `string().secret()` (or `secret(schema)`) | the Worker's encrypted secrets | hooks and routes; never listed, never in a build |
+| server | a bare validator | the Worker's plain vars | hooks and routes; never in a client build |
+| public | `.public()` (or `pub(schema)`) | the Worker's vars and the client build (`import.meta.env.KEY`) | everyone, the browser included |
+
+The validators are the ones a Void project's `env.ts` uses (`string()`, `number()`, `boolean()`, `url()`,
+`email()`, `oneOf()`, `json()`, each with `.optional()` and `.default()`), and any Standard Schema validator works
+inside `secret()` / `server()` / `pub()`. A value is parsed through its validator wherever it is read, so a default is
+filled in, a number is a number, and a bad or missing value stops the process with the key's name, never its value.
+In hooks, `$os.getenv("NAME")` (the stored string); in TypeScript, `await definition.read((n) => $os.getenv(n))`
+gives the typed values.
+
+`voidbase init` writes an empty declaration and the `.gitignore` lines. `voidbase serve` parses `secrets.json` and
+the shell and puts the result, defaults included, into the environment (the shell outranks the file, the file
+outranks `.env`). `voidbase deploy` stores every server and public value as the Worker's vars on every deploy (a var
+is the code's to set), stores the secrets the Worker does not have yet as its secrets, and refuses to deploy while a
+value is invalid or a required one is missing everywhere. A secret the Worker already holds is left alone by a
+deploy: a deploy ships code, and a checkout whose `secrets.json` carries dev values (another OAuth client, the
+placeholder password) must not overwrite production by deploying. Replacing is explicit:
 
 ```bash
-voidbase secrets              # each declared name: local value or not, on the Worker or not
-voidbase secrets push         # store the local values on the Worker (replacing), without redeploying
+voidbase secrets              # each key: tier, local value or default, and for secrets whether the Worker has it
+voidbase secrets push         # store the local secrets on the Worker (replacing), without redeploying
 ```
 
-That is also what makes CI simple: a checkout without `secrets.json` deploys with nothing but the deploy token,
-because the values were pushed once from a machine that has them. The superuser follows the same rule: a checkout
-without credentials of its own keeps the superuser the Worker has.
-
-A value in `secrets.json` that `main.pb.js` does not declare is never deployed (the list says so). `VOIDBASE_DEPLOY_SECRETS=A,B`
-still stores environment variables as secrets for a deploy driven purely by the shell. Cloudflare's account-level
-Secrets Store is deliberately not used: one store is shared by every Worker of the account, and its bindings are
-read asynchronously, which `$os.getenv` is not.
+That is what makes CI simple: a checkout without `secrets.json` deploys with nothing but the deploy token, because
+the secrets were pushed once from a machine that has them and the plain values come from the declared defaults or the
+build's environment. The superuser follows the same rule: a checkout without credentials of its own keeps the
+superuser the Worker has. A value in `secrets.json` that the declaration does not name is never deployed (the list
+says so). `VOIDBASE_DEPLOY_VARS=A,B` and `VOIDBASE_DEPLOY_SECRETS=X,Y` still bake or store plain environment variables
+for a deploy driven purely by the shell. Cloudflare's account-level Secrets Store is deliberately not used: one store
+is shared by every Worker of the account, and its bindings are read asynchronously, which `$os.getenv` is not.
 
 ### Every instance is isolated
 

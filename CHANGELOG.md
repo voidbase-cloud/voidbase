@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.4.1](https://github.com/voidbase-cloud/voidbase/compare/v0.4.0...v0.4.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **adapter:** a fresh checkout builds ([ace9519](https://github.com/voidbase-cloud/voidbase/commit/ace9519dd2cfed0d01aed0ea9732bd9e283efb76))
+
 ## [0.4.0](https://github.com/voidbase-cloud/voidbase/compare/v0.3.0...v0.4.0) (2026-09-07)
 
 

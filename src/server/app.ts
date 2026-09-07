@@ -9,6 +9,8 @@ import { fromColumn, toColumn } from "./records/values";
 import { expandRecords } from "./records/expand";
 import { globalHookMiddleware, hookGlobals, hookMiddleware, loadHooks, mountHookRoutes } from "./hooks";
 import { requestHook, requestHookResult, trigger } from "./hooks/runtime";
+import { hubActive, hubPresence } from "./realtime/hub-client";
+import { PRESENCE_TOPIC, presenceEnabled, presenceMax, presenceTtlMs } from "./realtime/presence";
 import { logger } from "#platform/log";
 import { env as voidEnv } from "#platform/env";
 import type { Settings } from "./settings";
@@ -348,6 +350,25 @@ app.delete("/api/collections/:collection/records/:id", async (c) => {
   const ctx = await recordContext(c);
   await deleteRecord(ctx, collection, c.req.param("id"));
   return c.body(null, 204);
+});
+
+// --- presence: who is here now, and where their cursor is (src/server/realtime/presence.ts) ------------------
+// Off unless the instance asks for it (VOIDBASE_PRESENCE=1): the endpoints are anonymous and public by design. The
+// roster lives in the hub, never in the database, and only the members holding a slot may beat, so the write path
+// is bounded by VOIDBASE_PRESENCE_MAX however many people are watching.
+app.get("/api/presence", async (c) => {
+  if (!presenceEnabled() || !hubActive()) return c.json({ enabled: false, max: 0, members: [] });
+  const r = await hubPresence("beat", { id: "" }, { max: presenceMax(), ttlMs: presenceTtlMs() });
+  return c.json({ enabled: true, max: presenceMax(), ttl: Math.round(presenceTtlMs() / 1000), topic: PRESENCE_TOPIC, members: r?.members ?? [] });
+});
+app.post("/api/presence", async (c) => {
+  if (!presenceEnabled() || !hubActive()) return c.json({ enabled: false, max: 0, members: [], holdsSlot: false });
+  let body: Record<string, unknown> = {};
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { body = {}; }
+  const op = String(body.op ?? "beat");
+  if (!["join", "beat", "leave"].includes(op)) throw badRequest("op must be join, beat or leave.");
+  const r = await hubPresence(op, body, { max: presenceMax(), ttlMs: presenceTtlMs() });
+  return c.json({ enabled: true, max: presenceMax(), topic: PRESENCE_TOPIC, members: r?.members ?? [], holdsSlot: !!r?.holdsSlot });
 });
 
 // --- realtime -------------------------------------------------------------

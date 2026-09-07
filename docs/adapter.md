@@ -240,7 +240,7 @@ because the adapter calls Void's own `convertReturnValue`.
 ## Things to know
 
 **voidbase's API wins.** `/api/collections`, `/api/files`, `/api/realtime`, `/api/settings`, `/api/logs`,
-`/api/backups`, `/api/crons`, `/api/batch`, `/api/health`, `/api/webauthn` (voidbase's passkey endpoints) and `/_/`
+`/api/backups`, `/api/crons`, `/api/batch`, `/api/health`, `/api/webauthn` (passkeys), `/api/presence` and `/_/`
 are voidbase's own. An app route on one of those paths never runs; the build warns and names it. Everything else
 under `/api` is yours.
 

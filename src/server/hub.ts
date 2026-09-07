@@ -4,10 +4,16 @@
 // new_sqlite_classes migration), so no two instances share it or anything else. Every SSE connection holds one
 // hibernatable WebSocket here; a record write POSTs /publish and the object sends the change to the sockets whose
 // filter includes the collection, then goes back to sleep. Nothing is stored beyond each socket's attachment.
+import { PRESENCE_RECORD, PRESENCE_TOPIC, publicMembers, rosterAfter, type PresenceInput, type PresenceMember, type PresenceOp } from "./realtime/presence";
+
 interface Attachment { id: string; all: boolean; collections: string[]; since: number }
 interface Change { collection: string; recordId: string; action: string; data?: unknown }
 
 export class VoidbaseHub implements DurableObject {
+  // Presence lives in memory only: a roster of who is here now (src/server/realtime/presence.ts). Losing it when
+  // the object hibernates costs nothing -- the members re-join on their next beat, and nothing was worth storing.
+  private presence: PresenceMember[] = [];
+
   constructor(private readonly state: DurableObjectState) {
     // keepalive answered without waking the object; the alarm sweeps sockets that stopped pinging
     this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
@@ -46,16 +52,16 @@ export class VoidbaseHub implements DurableObject {
     if (req.method !== "POST") return new Response("Not Found", { status: 404 });
     const body = (await req.json()) as Record<string, unknown>;
     if (url.pathname === "/sweep") { const before = this.state.getWebSockets().length; const open = this.sweep(Number(body.staleMs ?? 150_000)); return Response.json({ before, closed: before - open, open, after: this.state.getWebSockets().length }); }
-    if (url.pathname === "/publish") {
-      const changes = (body.changes ?? []) as Change[];
-      let delivered = 0;
-      for (const ws of this.state.getWebSockets()) {
-        const att = this.attachment(ws);
-        const mine = att.all ? changes : changes.filter((ch) => att.collections.includes(ch.collection));
-        if (!mine.length) continue;
-        try { ws.send(JSON.stringify({ t: "changes", changes: mine })); delivered++; } catch { this.drop(ws); }
-      }
-      return Response.json({ delivered });
+    if (url.pathname === "/publish") return Response.json({ delivered: this.fanout((body.changes ?? []) as Change[]) });
+    if (url.pathname === "/presence") {
+      // one request updates the roster and fans it out: the object is already awake for the socket loop
+      const { members, changed, member } = rosterAfter(this.presence, String(body.op ?? "beat") as PresenceOp, (body.member ?? {}) as PresenceInput, {
+        max: Number(body.max ?? 3), ttlMs: Number(body.ttlMs ?? 12_000), now: Date.now(),
+      });
+      this.presence = members;
+      const holds = !!member && members.some((m) => m.id === member.id);
+      if (changed) this.fanout([{ collection: PRESENCE_TOPIC, recordId: PRESENCE_RECORD, action: "message", data: { members: publicMembers(members) } }]);
+      return Response.json({ members: publicMembers(members), holdsSlot: holds });
     }
     if (url.pathname === "/client" || url.pathname === "/control") {
       const clientId = String(body.clientId ?? "");
@@ -65,6 +71,18 @@ export class VoidbaseHub implements DurableObject {
       return Response.json({ delivered });
     }
     return new Response("Not Found", { status: 404 });
+  }
+
+  /** sends the changes to every socket whose filter includes them; returns how many were reached */
+  private fanout(changes: Change[]): number {
+    let delivered = 0;
+    for (const ws of this.state.getWebSockets()) {
+      const att = this.attachment(ws);
+      const mine = att.all ? changes : changes.filter((ch) => att.collections.includes(ch.collection));
+      if (!mine.length) continue;
+      try { ws.send(JSON.stringify({ t: "changes", changes: mine })); delivered++; } catch { this.drop(ws); }
+    }
+    return delivered;
   }
 
   // the connection narrows what it wants: {t:"filter", collections:[names] | "*"}

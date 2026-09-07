@@ -24,6 +24,20 @@ export async function publishChanges(changes: ChangeEvent[]): Promise<void> {
   try { const r = await post("/publish", { changes }); if (!r.ok) logger.error("voidbase: hub publish failed", { status: r.status }); }
   catch (err) { logger.error("voidbase: hub publish failed", { error: err instanceof Error ? err.message : String(err) }); }
 }
+/**
+ * Presence (src/server/realtime/presence.ts): the roster lives in the hub, so one request both updates it and fans
+ * it out to the sockets that asked for the topic. Without a hub there is no shared place to keep it, and presence
+ * is off.
+ */
+export async function hubPresence(op: string, member: unknown, o: { max: number; ttlMs: number }): Promise<{ members: unknown[]; holdsSlot: boolean } | null> {
+  if (!hub) return null;
+  try {
+    const r = await post("/presence", { op, member, max: o.max, ttlMs: o.ttlMs });
+    if (!r.ok) { logger.error("voidbase: hub presence failed", { status: r.status }); return null; }
+    return (await r.json()) as { members: unknown[]; holdsSlot: boolean };
+  } catch (err) { logger.error("voidbase: hub presence failed", { error: err instanceof Error ? err.message : String(err) }); return null; }
+}
+
 /** One-off message to one client (the OAuth2 redirect hand-off). */
 export async function publishToClient(clientId: string, event: string, data: unknown): Promise<boolean> {
   if (!hub) return false;

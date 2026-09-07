@@ -58,7 +58,7 @@ function nearestHooks(name: string): string[] {
 }
 
 /** paths voidbase serves itself; an app route under one of these never reaches the app (PocketBase answers first) */
-export const RESERVED_PREFIXES = ["/api/backups", "/api/batch", "/api/collections", "/api/crons", "/api/files", "/api/health", "/api/logs", "/api/realtime", "/api/settings", "/api/webauthn", "/_/"];
+export const RESERVED_PREFIXES = ["/api/backups", "/api/batch", "/api/collections", "/api/crons", "/api/files", "/api/health", "/api/logs", "/api/presence", "/api/realtime", "/api/settings", "/api/webauthn", "/_/"];
 
 export interface VoidManifest {
   root: string;

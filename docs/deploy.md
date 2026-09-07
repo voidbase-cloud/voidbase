@@ -169,6 +169,27 @@ says so). `VOIDBASE_DEPLOY_VARS=A,B` and `VOIDBASE_DEPLOY_SECRETS=X,Y` still bak
 for a deploy driven purely by the shell. Cloudflare's account-level Secrets Store is deliberately not used: one store
 is shared by every Worker of the account, and its bindings are read asynchronously, which `$os.getenv` is not.
 
+### Presence: live cursors without a database
+
+An instance can tell every connected client who is here now and where their cursor is, with no row written:
+
+```
+VOIDBASE_PRESENCE=1        off unless the instance asks for it: the endpoints are anonymous and public
+VOIDBASE_PRESENCE_MAX=3    how many hold a slot at once (the newest arrivals; the oldest is evicted)
+VOIDBASE_PRESENCE_TTL=12   seconds a slot survives without a beat
+```
+
+`POST /api/presence` with `{"op":"join"|"beat"|"leave", "id", "name", "color", "x", "y"}` updates the roster, and
+every client subscribed to the `presence` topic (`pb.realtime.subscribe("presence", ...)`, the same call as a
+collection) is sent the whole roster. `GET /api/presence` answers with it for a client that would rather poll.
+
+The cost is bounded by construction: only the members holding a slot may beat, so the write path is
+`VOIDBASE_PRESENCE_MAX` clients however many are watching; the roster lives in the instance's hub (the Durable
+Object that already holds the SSE connections) and never in D1; and watchers pay one hibernatable socket each.
+`VOIDBASE_PRESENCE=0` turns the whole thing off, which is the switch to pull if the fanout ever costs more than it
+is worth: `GET /api/presence` then answers `{"enabled": false}` and a page can fall back to something canned.
+voidbase.cloud's landing page does exactly that.
+
 ### Every instance is isolated
 
 Two voidbase instances on one account never share a resource. Everything the deploy creates is named or derived from

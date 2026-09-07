@@ -127,6 +127,10 @@ try {
     await until(2, 3000);
     const ev = events[1]; const evRecord = ev ? (JSON.parse(ev.data) as { action: string; record: { id: string } }) : null;
     check("realtime event delivered through the hub within 3 s of the write", subscribed.status === 204 && !!made.id && ev?.event === "ks_mig/*" && evRecord?.action === "create" && evRecord.record.id === made.id, `${subscribed.status} ${made.id} ${ev?.event} ${ev ? ev.at - t0 + " ms" : "no event"}`);
+    // presence over the same connection: the roster is fanned out by the hub, and nothing is written to the database
+    const subPresence = await fetch(`${base}/api/realtime`, { method: "POST", headers: H, body: JSON.stringify({ clientId, subscriptions: ["ks_mig/*", "presence"] }) });
+    const off = (await fetch(`${base}/api/presence`).then((r) => r.json())) as { enabled: boolean };
+    check("presence is off unless the instance asks for it", subPresence.status === 204 && off.enabled === false, JSON.stringify(off));
     ac.abort(); await pump.catch(() => {});
   }
 } catch (err) {

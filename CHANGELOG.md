@@ -3,6 +3,19 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.6.2](https://github.com/voidbase-cloud/voidbase/compare/v0.6.1...v0.6.2) (2026-09-07)
+
+
+### Bug Fixes
+
+* **adapter:** the build never waits on a child it did not need ([904ce3b](https://github.com/voidbase-cloud/voidbase/commit/904ce3bc385b5614dce49986ba3d538392fc7afc))
+* **deps:** do not publish voidbase's own tsconfig ([8d6aec5](https://github.com/voidbase-cloud/voidbase/commit/8d6aec59e11c67d46611732f6f36f90adb4bd4c0))
+
+
+### Documentation
+
+* **surface:** presence ([d8d9ff4](https://github.com/voidbase-cloud/voidbase/commit/d8d9ff40589aff45938b4e632c640af4a99ea601))
+
 ## [0.6.1](https://github.com/voidbase-cloud/voidbase/compare/v0.6.0...v0.6.1) (2026-09-07)
 
 

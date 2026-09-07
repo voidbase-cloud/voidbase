@@ -12,6 +12,7 @@ bun install
 bun run panel:sync                      # unmodified PocketBase admin panel -> public/_  (see --brand in scripts/sync-panel.ts)
 bun run app:sync                        # optional: a built SvelteKit/SPA app -> public/  (deep links get index.html as the 404 page)
 bun run build                           # vp build; bundles pb_hooks and pb_migrations into the Worker
+                                        #   (in a Cloudflare build the same word runs the CI suite: docs/ci.md)
 ```
 
 Secrets and settings that must exist in production (declared in `env.ts`):

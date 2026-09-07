@@ -34,7 +34,7 @@ export interface SyncOptions extends Pick<DeployOptions, "name" | "account" | "d
   dir?: string;
   /** build a Void app before deploying (default: yes on a machine, never in CI) */
   build?: boolean;
-  /** connect the repository to Workers Builds (default: yes on a machine with CLOUDFLARE_BUILDS_TOKEN, never in CI) */
+  /** connect the repository to Workers Builds: true forces it, false skips it; by default a build (CI) only deploys */
   ci?: boolean;
   /** the GitHub repository, owner/name (default: the origin remote) */
   repo?: string;
@@ -78,8 +78,9 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   try { deployed = await deployToCloudflare({ name: opts.name, account: opts.account, domain: opts.domain, dryRun: opts.dryRun, log }); }
   finally { process.chdir(before); }
 
-  // 2. the pipeline
-  if (inCI || opts.ci === false) return;
+  // 2. the pipeline. A build deploys and nothing more (it has no Builds token and nothing to connect that the
+  // connection did not already set up), unless --ci says otherwise.
+  if (opts.ci === false || (inCI && opts.ci !== true)) return;
   const buildsToken = process.env[BUILDS_TOKEN_ENV];
   if (!buildsToken) {
     log(`\nci: not connected. To have every push deploy this instance from Cloudflare Workers Builds, declare ${BUILDS_TOKEN_ENV} as a local() key and value it in ${SECRETS_DIR}/secrets.json: a *user* API token (dash.cloudflare.com/profile/api-tokens) with "Workers Builds Configuration: Edit" and "Workers Scripts: Edit". Then run voidbase sync again.`);

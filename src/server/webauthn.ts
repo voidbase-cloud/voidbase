@@ -3,7 +3,9 @@
 // Credentials live in the app's `passkeys` collection (user, credential_id, credentials) exactly like the Go code;
 // the pending challenge lives in _params (the Go version keeps it in memory, which a Worker cannot rely on).
 import type { Context, Hono } from "hono";
-import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
+// loaded on the first passkey request rather than at startup: @simplewebauthn/server is half a megabyte, and most
+// apps have no `passkeys` collection and never reach these routes
+const webauthn = () => import("@simplewebauthn/server");
 import { recordAuthResponse } from "./auth-response";
 import { loadCollections } from "./collections/model";
 import { all, ident, one, run } from "./db";
@@ -78,14 +80,29 @@ async function takeSession(db: D1Database, userId: string): Promise<string | nul
   return s.expires > Date.now() ? s.challenge : null;
 }
 
-export function mountWebAuthn(app: Pick<Hono<AppEnv>, "get" | "post"> | { get: (p: string, h: (c: Context<AppEnv>) => Promise<Response>) => void; post: (p: string, h: (c: Context<AppEnv>) => Promise<Response>) => void }) {
+type Router = Pick<Hono<AppEnv>, "get" | "post"> | { get: (p: string, h: (c: Context<AppEnv>) => Promise<Response>) => void; post: (p: string, h: (c: Context<AppEnv>) => Promise<Response>) => void };
+
+/**
+ * Mounts the four passkey endpoints. voidbase's own app mounts them, so an app gets them for free; the export is
+ * for anyone putting them on a router of their own.
+ *
+ * They answer only when the app has a `passkeys` collection. Without one there is nowhere to keep a credential, so
+ * the feature is off and the endpoints are not there.
+ */
+export function mountWebAuthn(router: Router) {
+  const gated = (h: (c: Context<AppEnv>) => Promise<Response>) => async (c: Context<AppEnv>) => {
+    if (!(await loadCollections(c.env.DB)).has("passkeys")) return c.json({ status: 404, message: "Not Found.", data: {} }, 404);
+    return h(c);
+  };
+  const app = { get: (p: string, h: (c: Context<AppEnv>) => Promise<Response>) => router.get(p, gated(h) as never), post: (p: string, h: (c: Context<AppEnv>) => Promise<Response>) => router.post(p, gated(h) as never) };
+
   app.get("/api/webauthn/registration-options", async (c) => {
     const user = await findUser(c.env.DB, c.req.query("usernameOrEmail") ?? "");
     if (!user) return c.json(RESPONSES.failed, 400);
     try {
       const rp = await relyingParty(c);
       const existing = await credentialsOf(c.env.DB, String(user.id));
-      const options = await generateRegistrationOptions({
+      const options = await (await webauthn()).generateRegistrationOptions({
         rpName: rp.rpName, rpID: rp.rpID,
         userID: new TextEncoder().encode(String(user.id)),
         userName: String(user.username || user.email || user.id),
@@ -110,7 +127,7 @@ export function mountWebAuthn(app: Pick<Hono<AppEnv>, "get" | "post"> | { get: (
       const challenge = await takeSession(c.env.DB, String(user.id));
       if (!challenge) return c.json(RESPONSES.reg_error, 500);
       const { usernameOrEmail: _u, ...response } = body;
-      const verification = await verifyRegistrationResponse({ response: response as never, expectedChallenge: challenge, expectedOrigin: rp.origin, expectedRPID: rp.rpID, requireUserVerification: false });
+      const verification = await (await webauthn()).verifyRegistrationResponse({ response: response as never, expectedChallenge: challenge, expectedOrigin: rp.origin, expectedRPID: rp.rpID, requireUserVerification: false });
       if (!verification.verified || !verification.registrationInfo) return c.json(RESPONSES.reg_error, 500);
       const info = verification.registrationInfo;
       const cred: StoredCredential = {
@@ -131,7 +148,7 @@ export function mountWebAuthn(app: Pick<Hono<AppEnv>, "get" | "post"> | { get: (
     try {
       const rp = await relyingParty(c);
       const creds = await credentialsOf(c.env.DB, String(user.id));
-      const options = await generateAuthenticationOptions({ rpID: rp.rpID, userVerification: "preferred", allowCredentials: creds.map((e) => ({ id: e.cred.id, transports: e.cred.transports })) });
+      const options = await (await webauthn()).generateAuthenticationOptions({ rpID: rp.rpID, userVerification: "preferred", allowCredentials: creds.map((e) => ({ id: e.cred.id, transports: e.cred.transports })) });
       await putSession(c.env.DB, String(user.id), options.challenge);
       return c.json({ publicKey: options });
     } catch (err) {
@@ -151,7 +168,7 @@ export function mountWebAuthn(app: Pick<Hono<AppEnv>, "get" | "post"> | { get: (
       const { usernameOrEmail: _u, ...response } = body;
       const match = (await credentialsOf(c.env.DB, String(user.id))).find((e) => e.cred.id === response.id);
       if (!match) return c.json(RESPONSES.login_error, 500);
-      const verification = await verifyAuthenticationResponse({
+      const verification = await (await webauthn()).verifyAuthenticationResponse({
         response: response as never, expectedChallenge: challenge, expectedOrigin: rp.origin, expectedRPID: rp.rpID, requireUserVerification: false,
         credential: { id: match.cred.id, publicKey: b64url.decode(match.cred.publicKey), counter: match.cred.counter, transports: match.cred.transports },
       });

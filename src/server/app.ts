@@ -46,6 +46,7 @@ import { ApiError, badRequest, forbidden, notFound } from "./errors";
 import { randomIdSuffix, randomString } from "./ids";
 import { createCollection, deleteCollection, importCollections, inferViewFields, truncateCollection, updateCollection } from "./collections/service";
 import { loadSettings, publicSettings } from "./settings";
+import { mountWebAuthn } from "./webauthn";
 import type { AppEnv, Row } from "./types";
 
 export const app = new Hono<AppEnv>();
@@ -473,6 +474,8 @@ function sortBy<T extends object>(items: T[], sort: string, allowed: string[]): 
 }
 
 // --- passkeys (the starter's Go webauthn routes, native here) ---------------
+// mounted for every app; the routes answer only where a `passkeys` collection exists
+mountWebAuthn(app);
 mountOAuth2Redirect(app);
 mountSettingsApi(app);
 const authDeps = {

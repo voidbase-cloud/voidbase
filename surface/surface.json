@@ -307,8 +307,8 @@
         },
         {
           "id": "platform.secrets",
-          "title": "Configuration and secrets: one declaration with Void's validators, tiered secret / server / public",
-          "surface": "pb_secrets/main.ts (defineSecrets + string()/number()/url()... .secret() .public()), pb_secrets/secrets.json, voidbase secrets [push], vb_secrets/main.ts",
+          "title": "Configuration and secrets: one declaration, every key wrapped in its audience",
+          "surface": "pb_secrets/main.ts (defineSecrets with secret()/server()/browser()/local() around Void's validators), pb_secrets/secrets.json, voidbase secrets [push], vb_secrets/main.ts",
           "oracles": [
             "prod"
           ],
@@ -316,7 +316,20 @@
           "status": "done",
           "milestone": "m6",
           "verify": "A declared key parses through its validator (default filled, number typed) into the environment locally and the Worker's secrets/vars on deploy; public keys reach the client build and nothing else does; a deploy refuses invalid or missing values",
-          "notes": "pb_secrets/main.ts exports defineSecrets({...}) built on Void's env validators (Standard Schema; string(), number(), boolean(), url(), email(), oneOf(), json() with .optional()/.default(); `.secret()` and `.public()` set the tier, a bare validator is server configuration; secret()/server()/pub() wrap any Standard Schema; describe() adds text). Values: pb_secrets/secrets.json (git-ignored) then the shell (shell > file > .env), parsed wherever read: `voidbase serve` puts stored strings (defaults included) into the environment; `voidbase deploy` bakes server+public values as Worker vars on every deploy, stores secrets the Worker lacks (never replaces one: `voidbase secrets push` does), keeps the Worker's superuser when the checkout has no credentials, and fails on invalid or missing values with names only (a refused value is redacted from the validator's message). The adapter re-exports vb_secrets/main.ts into .voidbase/pb_secrets/main.ts, copies secrets.json, fails the build on an undeclared value, and its Vite config hook inlines every `public` key as import.meta.env.KEY so the static site knows exactly what it was declared to know. Typed access: `await definition.read((n) => $os.getenv(n))` on both runtimes. Twelve-factor III shape: declared in code, valued per deploy in the environment, never grouped by environment. Secrets Store rejected (account-shared, async). test/unit/secrets.test.ts (8), test/deploy-cf.ts (26), test/adapter.ts (56)."
+          "notes": "pb_secrets/main.ts exports defineSecrets({...}) built on Void's env validators (Standard Schema; string(), number(), boolean(), url(), email(), oneOf(), json() with .optional()/.default()). Every key is wrapped in the audience that may read it, and a bare validator is refused at definition and at build (the user: the file's maintainer answers for who may read what): secret() = the Worker's encrypted secrets, server() = plain Worker vars, browser() = vars the client build inlines as import.meta.env.KEY, local() = voidbase's own tooling (the deploy token, the deploy target, the Builds token), never deployed. Void's .secret()/.public() markers count as the tier too. Values: pb_secrets/secrets.json (git-ignored) then the shell (shell > file > .env), parsed wherever read: `voidbase serve` puts stored strings (defaults included) into the environment; `voidbase deploy` bakes server+public values as Worker vars on every deploy, stores secrets the Worker lacks (never replaces one: `voidbase secrets push` does), keeps the Worker's superuser when the checkout has no credentials, and fails on invalid or missing values with names only (a refused value is redacted). With the deploy token and target as local() keys a project has no .env file at all: voidbase.cloud runs that way. The adapter re-exports vb_secrets/main.ts into .voidbase/pb_secrets/main.ts, copies secrets.json, fails the build on an undeclared value, and its Vite config hook inlines every browser() key. Typed access: `await definition.read((n) => $os.getenv(n))` on both runtimes. Twelve-factor III shape. Secrets Store rejected (account-shared, async). test/unit/secrets.test.ts (8), test/deploy-cf.ts (28), test/adapter.ts (55)."
+        },
+        {
+          "id": "platform.sync",
+          "title": "voidbase sync: the instance and its pipeline in one command",
+          "surface": "voidbase sync [--repo] [--branch] [--no-build] [--no-ci] [--dry-run]; src/node/sync.ts, src/cloud/builds.ts",
+          "oracles": [
+            "prod"
+          ],
+          "hours": 4,
+          "status": "done",
+          "milestone": "m6",
+          "verify": "From a fresh fork with secrets.json filled in, sync creates the instance, stores its secrets and connects the repository so a push deploys from Cloudflare Workers Builds",
+          "notes": "sync deploys (creating what does not exist, updating what does; a vb layout, a Void app with the adapter, is built first and deployed from the pb layout it generates in .voidbase/; a pb layout, PocketBase's structure, deploys in place), then connects the GitHub repository to Workers Builds through the Builds API with CLOUDFLARE_BUILDS_TOKEN (a local() key): a production trigger that builds and runs `bunx voidbase sync` (in a build, the deploy alone) and a branches trigger that builds and checks; the build environment gets BUN_VERSION, the deploy token (secret) and the declared server values the machine has. What the API cannot do, installing the GitHub App for the repository and creating the build token, is one dashboard step the first run points at; the second run finishes. An existing trigger keeps its watch paths, so a GitHub-started pipeline (this repository's own) is not switched. The new-project flow (Cloudflare + GitHub account, fork voidbase-site and push, fill secrets.json and sync, then push) is docs/deploy.md. Deploying from an installed package needed three fixes found by deploying from a fresh clone: the generated project moves out of node_modules with a self-contained env.ts, a Node loader (src/node/ts-loader.mjs, via NODE_OPTIONS) transpiles the package's TypeScript and resolves its extensionless imports for Void's env probe, and the hub is imported by name. test/deploy-cf.ts (28) covers the dry-run plan; the real path was verified by a deploy of voidbase.cloud from a fresh clone (health 200)."
         },
         {
           "id": "platform.deploy-void",

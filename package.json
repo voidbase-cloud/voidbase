@@ -83,7 +83,6 @@
     "vite.config.ts",
     "void.json",
     "env.ts",
-    "tsconfig.json",
     ".env.example",
     "README.md",
     "COMPAT.md",

@@ -178,19 +178,11 @@ export const queues: typeof Typed.queues = new Proxy({}, {
 /** Void's tsconfig fragment with the two runtime-breaking mappings repointed at the shims. */
 export function generateTsconfig(root: string): string | null {
   const voidTs = join(root, ".void", "tsconfig.json");
-  // a fresh checkout has no .void/ yet: Void writes it during its own build, after the project's tsconfig (which
-  // extends the fragment generated here) has already been read. `void prepare` is Void's own way to generate it
-  // without booting Vite, so it runs once here, where the fragment is needed.
-  if (!existsSync(voidTs)) {
-    // the project's own void, else the one this package ships with
-    const bin = [join(root, "node_modules", ".bin", "void"), resolve(import.meta.dir, "../../node_modules/.bin/void")].find((b) => existsSync(b));
-    try {
-      // no stdin (nothing to answer) and a deadline: a build must never sit on this
-      const r = Bun.spawnSync(bin ? [bin, "prepare"] : ["bunx", "void", "prepare"], { cwd: root, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 120_000, killSignal: "SIGKILL" });
-      if (r.exitCode !== 0) console.warn(`voidbase: void prepare ${r.exitCode === null ? "timed out" : "failed"} (${r.stderr.toString().trim().split("\n").at(-1) ?? ""}); no tsconfig fragment written`);
-    } catch (err) { console.warn(`voidbase: void prepare could not run (${err instanceof Error ? err.message : String(err)}); no tsconfig fragment written`); }
-  }
-  if (!existsSync(voidTs)) return null;
+  // A fresh checkout has no .void/ yet: Void writes it during its own build, after the project's tsconfig (which
+  // extends the fragment written here) has already been read. Rather than run anything -- a build must never wait
+  // on a child process it did not need, and this one hung about one build in ten -- the fragment is written from
+  // what this adapter knows, and the pass at the end of the build replaces it once .void/ is there.
+  if (!existsSync(voidTs)) return JSON.stringify({ compilerOptions: { paths: { "void/db": ["./shim-db.ts"], "void/queues": ["./shim-queues.ts"] } } }, null, 2) + "\n";
   const base = JSON.parse(readFileSync(voidTs, "utf8")) as { compilerOptions?: { paths?: Record<string, string[]> } };
   const paths: Record<string, string[]> = {};
   for (const [key, targets] of Object.entries(base.compilerOptions?.paths ?? {})) {

@@ -47,6 +47,13 @@ try {
   check("second run is idempotent: resources exist, same ids, same password", second.code === 0 && /D1 .* exists/.test(second.out) && /R2 .* exists/.test(second.out) && readFileSync(`${PROJECT}/wrangler.jsonc`, "utf8") === cfg && creds2.password === creds.password, second.out.slice(0, 200));
   const calls = (await fetch(`${MOCK}/__calls`).then((r) => r.json())) as string[];
   check("only the expected API calls were made", calls.every((c) => /^GET \/accounts|d1\/database|r2\/buckets|queues|workers\/subdomain|workers\/scripts\/[^/]+\/secrets/.test(c)) && calls.filter((c) => c.startsWith("POST")).length === 3, calls.join(", "));
+  // a project that declares its own target is not deployed onto another one by an ambient environment
+  writeFileSync(`${dir}/pb_secrets/main.ts`, readFileSync(`${dir}/pb_secrets/main.ts`, "utf8").replace("export default defineSecrets({", 'export default defineSecrets({ VOIDBASE_DEPLOY_NAME: local(string().default("declared-name")),'));
+  const wrongTarget = run(["deploy", "--dry-run"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_DEPLOY_NAME: "someone-elses-worker" });
+  check("a declared deploy target is not overridden by the environment", wrongTarget.code === 1 && /declares VOIDBASE_DEPLOY_NAME=declared-name.*environment says someone-elses-worker/s.test(wrongTarget.out) && /--name someone-elses-worker to mean it/.test(wrongTarget.out), wrongTarget.out.slice(-300));
+  const meantIt = run(["deploy", "--dry-run", "--name", "someone-elses-worker"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_DEPLOY_NAME: "someone-elses-worker" });
+  check("--name says it on purpose and the deploy goes ahead", meantIt.code === 0 && /worker "someone-elses-worker"/.test(meantIt.out), meantIt.out.slice(-200));
+  writeFileSync(`${dir}/pb_secrets/main.ts`, readFileSync(`${dir}/pb_secrets/main.ts`, "utf8").replace(' VOIDBASE_DEPLOY_NAME: local(string().default("declared-name")),', ""));
   const named = run(["deploy", "--dry-run", "--name", "My Shop API", "--account", "acc123"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", PB_SUPERUSER_EMAIL: "owner@example.com", PB_SUPERUSER_PASSWORD: "s3cret-from-env" });
   const named2 = JSON.parse(readFileSync(`${PKG}/.cloud/my-shop-api/wrangler.jsonc`, "utf8").replace(/^\/\/.*\n/, "")) as { name: string };
   const noBuild = run(["deploy", "--dry-run", "--public-dir", "../sk/missing"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });

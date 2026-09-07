@@ -89,6 +89,15 @@ export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" 
   const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || ""; // empty means unset
   if (!token) { log(`${TOKEN_ENV} is not set.\n\n${tokenHelp()}`); throw new Error(`${TOKEN_ENV} missing`); }
   const name = slug(opts.name || process.env.VOIDBASE_DEPLOY_NAME || projectName());
+  // A project that declares its own deploy target may not be deployed onto another one by an ambient environment:
+  // a build that already carries VOIDBASE_DEPLOY_NAME (a repository whose CI deploys more than one instance) would
+  // otherwise put this project on that Worker, over whatever lives there. An explicit --name says it on purpose.
+  const declaredTarget = (key: string) => secrets.state.info.find((i) => i.name === key && i.access === "local")?.fallback;
+  const declaredName = declaredTarget("VOIDBASE_DEPLOY_NAME");
+  if (!opts.name && declaredName && slug(declaredName) !== name) {
+    const declaredDomain = declaredTarget("VOIDBASE_DEPLOY_DOMAIN");
+    throw new Error(`this project declares VOIDBASE_DEPLOY_NAME=${slug(declaredName)}${declaredDomain ? ` (${declaredDomain})` : ""} in ${secretsDir}/main.ts, but the environment says ${name}. Deploying would put it on that Worker, over whatever is there. Unset VOIDBASE_DEPLOY_NAME${declaredDomain ? " and VOIDBASE_DEPLOY_DOMAIN" : ""} for this deploy, or pass --name ${name} to mean it.`);
+  }
   const api = new CfApi(token, API);
   const account = await resolveAccount(api, opts.account || process.env.VOIDBASE_DEPLOY_CF_ACCOUNT_ID || undefined).catch((e: Error) => { throw new Error(`${e.message} (is it ${TOKEN_ENV} with Account Settings read?)`); });
   return { api, token, account, name, secretsDir, secrets };

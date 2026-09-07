@@ -206,6 +206,13 @@ A brand-new project is four steps:
 4. Push. Cloudflare builds, and the instance stays in step with the repository.
 
 `--dry-run` prints the plan; `--no-ci` deploys only; `--repo owner/name` and `--branch` override what git says.
+
+**A project is not deployed onto another project's Worker.** When `pb_secrets/main.ts` declares its own
+`VOIDBASE_DEPLOY_NAME` and the environment carries a different one, the deploy refuses and says both names: a
+repository whose CI deploys more than one instance (a site and its demo, say) would otherwise put the second one on
+the first one's Worker, over whatever lives there. Give each instance its target on the command line
+(`voidbase sync --name … --domain …`) or clear the ambient variables for that deploy; `--name` also says the
+override is deliberate.
 A project whose builds are started from GitHub instead (this repository's own CI) keeps its watch paths: `sync`
 never switches an existing trigger between the two.
 

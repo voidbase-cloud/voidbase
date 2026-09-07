@@ -73,7 +73,8 @@ The commits steer it: a Conventional Commit scope (`fix(records): ...`) puts tha
 (`SCOPE_KEYS` in the planner maps every scope of `commitlint.config.js` to suites), a `Tests:` trailer names checks
 that are never deferred (`Tests: thumbs s3`, `Tests: bun` for the Bun pass, `Tests: browser`), and `Tests: all`
 forces a full run. A commit that edits a suite's file always runs that suite. The messages of every commit since the
-last green run count, not only the last one.
+last green run count, not only the last one: a Cloudflare build checks out a single commit, so the planner deepens
+the history until the last green run's commit is reachable before it reads them.
 
 ## What is kept between runs
 

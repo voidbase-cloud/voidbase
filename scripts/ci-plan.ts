@@ -214,7 +214,17 @@ export function parseCommits(messages: string[]): Omit<CommitSignals, "changed">
   return { scopes: [...scopes], tests: [...tests], full, releasable, dryRun, releaseMerge };
 }
 function commitSignals(prevCommit: string): CommitSignals {
-  const ancestor = prevCommit && Bun.spawnSync(["git", "merge-base", "--is-ancestor", prevCommit, "HEAD"], { cwd: ROOT, stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+  const isAncestor = () => !!prevCommit && Bun.spawnSync(["git", "merge-base", "--is-ancestor", prevCommit, "HEAD"], { cwd: ROOT, stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+  let ancestor = isAncestor();
+  // a Cloudflare build checks out the one commit it builds. The record's commit is further back, and a push can
+  // carry several commits, so the history is deepened until it is reachable: reading the head commit alone would
+  // miss the other commits' scopes, their Tests: trailers and whether anything releasable was pushed.
+  if (prevCommit && !ancestor && git(["rev-parse", "--is-shallow-repository"]).trim() === "true") {
+    for (const depth of ["50", "500"]) {
+      Bun.spawnSync(["git", "fetch", "--quiet", `--deepen=${depth}`, "origin"], { cwd: ROOT, stdout: "ignore", stderr: "ignore" });
+      if ((ancestor = isAncestor())) break;
+    }
+  }
   const range = ancestor ? `${prevCommit}..HEAD` : "-1";
   const messages = git(["log", "--format=%B%x00", range]).split("\0").map((m) => m.trim()).filter(Boolean);
   const changed = ancestor ? git(["diff", "--name-only", prevCommit, "HEAD"]).split("\n").filter(Boolean) : [];

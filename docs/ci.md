@@ -21,7 +21,7 @@ build deploys.
 | reference | PocketBase 0.39.11 on 8090 (`CI_PB_PORT`) freshly seeded from the starter (again before the Bun pass: the reference keeps state the suites cannot undo, such as a stored S3 secret), the SMTP sink, the OIDC, S3 and Cloudflare API mocks, awaited before a first mail warms the SMTP transport; whatever already listens on a port is reused |
 | suites | `scripts/ci-suites.sh`: every differential suite, the SDK suite, the panel suites |
 | suites-bun | the same suites against `voidbase serve` on 8093 (Bun, SQLite, local files), without the browser suites |
-| deploy-cf, fresh-db, mail-http, exe-smoke | the deploy dry run against the API mock, the fresh-database boot and the HTTP mail transport of the production build, the prebuilt executable and its update flow |
+| deploy-cf, adapter, fresh-db, mail-http, exe-smoke | the deploy dry run against the API mock, a Void app converted and run through the adapter, the fresh-database boot and the HTTP mail transport of the production build, the prebuilt executable and its update flow |
 | starter | the unmodified starter frontend against voidbase |
 | release | on master, with `GH_TOKEN`: the release flow (docs/releasing.md) when a releasable commit was pushed, the release PR was merged, a `Release: dry-run` trailer asks for a rehearsal, or a release still needs npm or its executables |
 

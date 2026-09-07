@@ -33,6 +33,7 @@ export const KEY_META: Record<string, KeyMeta> = {
   "step:mail-http": { kind: "step", hot: "candidate", test: "test/mail-http.ts", seconds: 13 },
   "step:exe-smoke": { kind: "step", hot: "candidate", test: "test/exe-smoke.ts", seconds: 11 },
   "step:starter": { kind: "step", hot: "deferred", test: "test/starter-smoke.ts", seconds: 28 },
+  "step:adapter": { kind: "step", hot: "candidate", test: "test/adapter.ts", seconds: 20 },
 };
 const SUITE_SECONDS: Record<string, number> = { "auth-flows": 11, backups: 3, batch: 1, cascade: 3, "filter-corpus": 26, "filters-extra": 1, hardening: 57, "logs-crons": 7, "manage-rule": 1, oauth2: 2, "otp-mfa": 20, "protected-files": 1, providers: 1, rules: 3, s3: 5, security: 5, settings: 1, sql: 1, thumbs: 4, views: 1, compare: 1, records: 6, realtime: 1, collections: 2, "sdk-suite": 26, "cloud-rest": 1 };
 for (const s of CONFORMANCE) { KEY_META[`suite:${s}`] = { kind: "suite", hot: "candidate", test: `test/conformance/${s}.ts`, seconds: SUITE_SECONDS[s] ?? 5 }; KEY_META[`bun:${s}`] = { kind: "bun", hot: "deferred", test: `test/conformance/${s}.ts`, seconds: SUITE_SECONDS[s] ?? 5 }; }
@@ -54,7 +55,7 @@ export const SCOPE_KEYS: Record<string, string[]> = {
   hooks: ["step:fresh-db"], plugin: ["step:fresh-db"], migrations: ["step:fresh-db", "suite:collections"],
   settings: ["suite:settings"], logs: ["suite:logs-crons"], crons: ["suite:logs-crons"], backups: ["suite:backups"],
   hardening: ["suite:hardening", "suite:security"], deploy: ["step:deploy-cf"], cloud: ["suite:cloud-rest"], bundle: ["suite:cloud-rest"],
-  cli: ["step:exe-smoke"], serve: ["bun:records", "bun:collections", "bun:auth-flows"], panel: ["suite:panel-smoke"], starter: ["step:starter"],
+  cli: ["step:exe-smoke"], adapter: ["step:adapter"], serve: ["bun:records", "bun:collections", "bun:auth-flows"], panel: ["suite:panel-smoke"], starter: ["step:starter"],
 };
 
 // ---- the decision: what runs, given current hashes and the last green run's verified hashes
@@ -172,6 +173,8 @@ export function keyFiles(t: Tree): Record<string, Set<string>> {
   out["step:mail-http"] = union(t.closure(["test/mail-http.ts"], "bun"), SERVER, common);
   out["step:exe-smoke"] = union(t.closure(["test/exe-smoke.ts"], "bun"), CLI, ["scripts/build-exe.ts"], common);
   out["step:starter"] = union(t.closure(["test/starter-smoke.ts"], "bun"), SERVER, common, harnessSuites, harnessBrowser);
+  // the fixture is a whole Void app the test converts, so every file under it counts, not just what a closure reaches
+  out["step:adapter"] = union(t.closure(["test/adapter.ts"], "bun"), SERVER, t.under("src/adapter"), t.under("test/fixtures/void-app"), ["hooks-plugin.ts"], common);
   for (const s of CONFORMANCE) { const own = t.closure([`test/conformance/${s}.ts`], "bun"); out[`suite:${s}`] = union(own, SERVER, mocks, common, harnessSuites); out[`bun:${s}`] = union(own, BUN, mocks, common, harnessSuites); }
   { const own = t.closure(["test/sdk-suite.ts"], "bun"); out["suite:sdk-suite"] = union(own, SERVER, mocks, common, harnessSuites); out["bun:sdk-suite"] = union(own, BUN, mocks, common, harnessSuites); }
   out["suite:cloud-rest"] = union(t.closure(["test/cloud-rest.ts"], "bun"), mocks, common, harnessSuites);
@@ -251,7 +254,7 @@ if (import.meta.main) {
   if (signals.changed.length) console.log(`  changed: ${signals.changed.length} files (${signals.changed.slice(0, 6).join(", ")}${signals.changed.length > 6 ? ", ..." : ""})`);
   if (signals.scopes.length || signals.tests.length) console.log(`  commits: scopes ${signals.scopes.join(", ") || "none"}; Tests: ${signals.tests.join(", ") || "none"}`);
   console.log(`  release: ${signals.releaseMerge ? "release merge" : signals.releasable ? "releasable commits, the release PR is refreshed" : "nothing releasable"}${signals.dryRun ? "; dry run requested" : ""}`);
-  console.log(`  steps: ${["oracles", "typecheck", "unit", "browser", "boot", "reference", "suites", "suites-bun", "deploy-cf", "fresh-db", "mail-http", "exe-smoke", "starter"].map((s) => `${s}${decisions[`step:${s}`]!.run ? "" : "(skip)"}`).join(" ")}`);
+  console.log(`  steps: ${["oracles", "typecheck", "unit", "browser", "boot", "reference", "suites", "suites-bun", "deploy-cf", "adapter", "fresh-db", "mail-http", "exe-smoke", "starter"].map((s) => `${s}${decisions[`step:${s}`]!.run ? "" : "(skip)"}`).join(" ")}`);
   console.log(`  suites: ${selected(decisions, "suite:").join(" ") || "none"}`);
   console.log(`  bun: ${selected(decisions, "bun:").join(" ") || "none"}`);
 }

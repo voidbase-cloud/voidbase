@@ -100,6 +100,13 @@ with its own meanings (build the site and typecheck it, deploy the instance, rea
 would deploy with). `voidbase sync` writes these three into the triggers it creates whenever the project has the
 scripts, so a project set up from the CLI and one set up by hand in the dashboard end up saying the same thing.
 
+**One change, one build.** GitHub starts every build here, so the count is decided by which events
+`.github/workflows/cloudflare.yml` answers. It declines two: release-please's own pull request, whose diff is a
+changelog, a version and a manifest generated from commits the master build has already run, and the release that
+pull request publishes while hot mode is on, because in hot mode the master build that merged it is the one that
+published to npm. With hot mode off the release build still runs, since that is where a release's executables are
+built. So a push to master is one build, a pull request is two (its branch and the merge), and a release is one.
+
 A build that never finishes costs the same as one that fails, only twenty minutes later, so voidbase.cloud's `build`
 gives its Vite build a deadline (`BUILD_TIMEOUT`, 150 seconds) and tries once more (`BUILD_ATTEMPTS`). It runs under
 `timeout`, which signals the whole process group: Void's prerender step occasionally spins in a grandchild after the

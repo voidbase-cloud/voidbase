@@ -3,6 +3,18 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.6.0](https://github.com/voidbase-cloud/voidbase/compare/v0.5.1...v0.6.0) (2026-09-07)
+
+
+### Features
+
+* **hooks:** $app.importCollections, $app.truncateCollection and record.setPassword ([f0c41da](https://github.com/voidbase-cloud/voidbase/commit/f0c41dad9d4cf7d7eea1b90639720e82a379f9d6))
+
+
+### Bug Fixes
+
+* **deploy:** sync's CI default is a default, and the tests pin CI ([294ffba](https://github.com/voidbase-cloud/voidbase/commit/294ffbae80c00e9a31fd3aaa7d41a8615bebb61a))
+
 ## [0.5.1](https://github.com/voidbase-cloud/voidbase/compare/v0.5.0...v0.5.1) (2026-09-07)
 
 

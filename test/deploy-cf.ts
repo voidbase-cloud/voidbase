@@ -39,7 +39,7 @@ try {
   const syncPlan = run(["sync", "--dry-run", "--repo", "voidbase-cloud/voidbase", "--branch", "main"], { CI: "", VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", CLOUDFLARE_BUILDS_TOKEN: "cf-test-user-token" });
   const syncInCI = run(["sync", "--dry-run"], { CI: "true", VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", CLOUDFLARE_BUILDS_TOKEN: "cf-test-user-token" });
   check("in a build, sync is the deploy alone: nothing is connected", syncInCI.code === 0 && /pb layout/.test(syncInCI.out) && !/^ci/m.test(syncInCI.out), syncInCI.out.slice(-200));
-  check("voidbase sync --dry-run with a Builds token plans the connection: repository, Worker, branch, commands", syncPlan.code === 0 && /ci \(dry run\): would connect voidbase-cloud\/voidbase to Worker shopdemo-backend: branch main builds `true` and deploys `bunx voidbase sync`/.test(syncPlan.out), syncPlan.out.slice(-400));
+  check("voidbase sync --dry-run with a Builds token plans the connection: repository, Worker, branch, commands", syncPlan.code === 0 && /ci \(dry run\): would connect voidbase-cloud\/voidbase to Worker shopdemo-backend: branch main builds `.*` and deploys `bunx voidbase sync --name shopdemo-backend/.test(syncPlan.out), syncPlan.out.slice(-400));
   const creds = JSON.parse(readFileSync(`${dir}/pb_data/.superuser-credentials`, "utf8")) as { email: string; password: string };
   check("superuser credentials generated once, kept in pb_data", creds.email === "admin@example.com" && creds.password.length === 20, JSON.stringify(creds));
   const second = run(["deploy", "--dry-run", "--analytics"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });

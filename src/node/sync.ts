@@ -53,6 +53,10 @@ export function repoFromGit(root: string): string | null {
 export function branchFromGit(root: string): string {
   return sh(["git", "branch", "--show-current"], root) || "main";
 }
+/** where the project sits inside its repository ("demo/", or "" at the root) */
+export function prefixFromGit(root: string): string {
+  return sh(["git", "rev-parse", "--show-prefix"], root).replace(/\/*$/, "");
+}
 
 export async function sync(opts: SyncOptions = {}): Promise<void> {
   const log = opts.log ?? ((l: string) => console.log(l));
@@ -89,8 +93,12 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   const repo = opts.repo ?? repoFromGit(root);
   if (!repo) { log("\nci: not connected: no GitHub origin remote (push the project to GitHub, or pass --repo owner/name)"); return; }
   const branch = opts.branch ?? branchFromGit(root);
-  const buildCmd = voidApp ? `${hasScript("build") ? "bun run build" : "bunx --bun vite build"}${hasScript("check") ? " && bun run check" : ""}` : "true";
-  const deployCmd = "bunx voidbase sync";
+  // A Workers build may only deploy the Worker its trigger belongs to, so every instance in a repository has its own
+  // trigger; the commands run from the repository root (where the lockfile is) and step into the project.
+  const prefix = prefixFromGit(root);
+  const step = prefix ? `cd ${prefix} && ` : "";
+  const buildCmd = voidApp ? `${step}${hasScript("build") ? "bun run build" : "bunx --bun vite build"}${hasScript("check") ? " && bun run check" : ""}` : prefix ? `echo "${prefix}: nothing to build"` : "true";
+  const deployCmd = `${step}bunx voidbase sync --name ${deployed.name}${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN ? ` --domain ${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN}` : ""}`;
   if (opts.dryRun) { log(`\nci (dry run): would connect ${repo} to Worker ${deployed.name}: branch ${branch} builds \`${buildCmd}\` and deploys \`${deployCmd}\`; other branches build only`); return; }
 
   const cf = new CfApi(buildsToken, API);

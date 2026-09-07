@@ -228,6 +228,11 @@ A brand-new project is four steps:
 
 `--dry-run` prints the plan; `--no-ci` deploys only; `--repo owner/name` and `--branch` override what git says.
 
+**One trigger per instance.** A Cloudflare build may only deploy the Worker its trigger belongs to, so a repository
+that holds two instances (a site and a demo, say) gets a trigger for each, both watching the same branch. `sync`
+creates the one for the project it is run in, and its commands step into that project's directory
+(`cd demo && bunx voidbase sync --name …`), so the repository's lockfile is still what the build installs from.
+
 **A project is not deployed onto another project's Worker.** When `pb_secrets/main.ts` declares its own
 `VOIDBASE_DEPLOY_NAME` and the environment carries a different one, the deploy refuses and says both names: a
 repository whose CI deploys more than one instance (a site and its demo, say) would otherwise put the second one on

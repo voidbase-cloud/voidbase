@@ -3,6 +3,26 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.7.0](https://github.com/voidbase-cloud/voidbase/compare/v0.6.2...v0.7.0) (2026-09-07)
+
+
+### Features
+
+* **ci:** three verbs that read the environment, not the dashboard ([bd01033](https://github.com/voidbase-cloud/voidbase/commit/bd01033d3dea9ba6c0ae792a7def93f39d023890))
+* **cli:** voidbase sync writes the three verbs into the triggers it creates ([4d3815a](https://github.com/voidbase-cloud/voidbase/commit/4d3815a8e843ba10cec31178697ccff99921d3d9))
+
+
+### Bug Fixes
+
+* **ci:** a build started inside the CI suite is the app build, not the suite again ([50e1b4c](https://github.com/voidbase-cloud/voidbase/commit/50e1b4c44c96ce54a168d45e7f2e13c22cf9d060))
+* **test:** the OTP suite waits for the user's own mail, not whatever lands first ([0ddada3](https://github.com/voidbase-cloud/voidbase/commit/0ddada314d620c75c11f2ad7c6dc5bc686056a53))
+
+
+### Documentation
+
+* **ci:** record the three environment-reading verbs in the surface map ([57d7d1e](https://github.com/voidbase-cloud/voidbase/commit/57d7d1e4d34b93f040fa45af73324106a2b68761))
+* **deploy:** say what `bun run build` means in a Cloudflare build ([f61870e](https://github.com/voidbase-cloud/voidbase/commit/f61870eb0acaeec6e6ab6952ec0bd01b2e55311d))
+
 ## [0.6.2](https://github.com/voidbase-cloud/voidbase/compare/v0.6.1...v0.6.2) (2026-09-07)
 
 

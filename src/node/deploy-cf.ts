@@ -129,13 +129,18 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     else log(`Queue ${name}-jobs not created (${q.reason}): mail is sent inline and backups run in the cron tick. Give the token the Queues edit permission (${tokenDeepLink()}) to enable it, or VOIDBASE_DEPLOY_QUEUE=0 to silence this.`);
   }
 
-  // the Void project lives inside the voidbase package (<package>/.cloud/<slug>), not in the consumer's tree:
-  // its entry files import this package by relative path and resolve `void`/`vite` by walking up to node_modules
-  const PKG = resolve(import.meta.dir, "../.."); const cloud = opts.dir ? resolve(opts.dir) : resolve(PKG, ".cloud", name);
-  const consumer = resolve(".");
+  // the Void project lives inside the voidbase package (<package>/.cloud/<slug>) when the package is a checkout:
+  // its entry files import this package by relative path and resolve `void`/`vite` by walking up to node_modules.
+  // An installed package sits under node_modules, where Node refuses to strip types, and Void loads the project's
+  // env.ts with Node: the project then lives in the consumer's tree (<consumer>/.cloud/<slug>, git-ignored) and
+  // imports the package by name.
+  const PKG = resolve(import.meta.dir, "../.."); const consumer = resolve(".");
+  const installed = /[\\/]node_modules[\\/]/.test(PKG);
+  const cloud = opts.dir ? resolve(opts.dir) : installed ? resolve(consumer, ".cloud", name) : resolve(PKG, ".cloud", name);
+  const mode: "package" | "internal" = opts.dir || installed ? "package" : "internal";
   const entry = ["main.ts", "main.js"].map((f) => resolve(consumer, f)).find((f) => existsSync(f) && /export\s+(async\s+)?function\s+register\b|export\s*\{[^}]*\bregister\b/.test(readFileSync(f, "utf8")));
   if (entry) log(`composing ${entry} (register) into the Worker`);
-  writeCloudProject(cloud, opts.dir ? "package" : "internal", { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), entry, queue, hub });
+  writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), entry, queue, hub });
   if (!queue) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/queues`, { recursive: true, force: true }); }
   if (!cron) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/crons`, { recursive: true, force: true }); log("cron trigger disabled (VOIDBASE_DEPLOY_CRON=0 / --no-cron): maintenance runs lazily in requests"); }
   // Smart Placement runs the Worker next to its D1 database: PocketBase-shaped requests are several dependent queries.

@@ -169,12 +169,12 @@ switch (cmd) {
       const { declarationScaffold } = await import("../src/node/secrets");
       if (!existsSync(`${dir}/pb_secrets/main.ts`)) writeFileSync(`${dir}/pb_secrets/main.ts`, declarationScaffold());
       const gi = `${dir}/.gitignore`; const have = existsSync(gi) ? await Bun.file(gi).text() : "";
-      const lines = ["pb_data/", "pb_secrets/secrets.json"].filter((l) => !have.split("\n").some((x) => x.trim() === l || x.trim() === l.replace(/\/$/, "")));
+      const lines = ["pb_data/", "pb_secrets/secrets.json", ".cloud/"].filter((l) => !have.split("\n").some((x) => x.trim() === l || x.trim() === l.replace(/\/$/, "")));
       if (lines.length) writeFileSync(gi, `${have}${have && !have.endsWith("\n") ? "\n" : ""}${lines.join("\n")}\n`);
     }
     if (!existsSync(`${dir}/.env`)) { cpSync(`${ROOT}/.env.example`, `${dir}/.env`); console.log("wrote .env from .env.example (set VOIDBASE_SUPERUSER_EMAIL/PASSWORD)"); }
     if (!existsSync(`${dir}/pb_hooks/main.pb.js`)) writeFileSync(`${dir}/pb_hooks/main.pb.js`, `/// <reference path="../pb_data/types.d.ts" />\nrouterAdd("GET", "/api/hello", (e) => e.json(200, { hello: "voidbase" }));\n`);
-    console.log("pb_hooks/, pb_migrations/ and pb_secrets/ ready (.gitignore covers pb_data/ and pb_secrets/secrets.json)");
+    console.log("pb_hooks/, pb_migrations/ and pb_secrets/ ready (.gitignore covers pb_data/, pb_secrets/secrets.json and .cloud/)");
     await run("bun", ["scripts/sync-panel.ts"]).catch(() => undefined);
     console.log("\nnext: bun install && ./node_modules/.bin/void db migrate && voidbase dev");
     break;

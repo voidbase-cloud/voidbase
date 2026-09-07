@@ -236,7 +236,7 @@ export function writeVoidbaseApp(m: VoidManifest, opts: GenerateOptions & { migr
   // PocketBase's minimal layout, generated whole: https://pocketbase.io/docs/going-to-production/#minimal-setup
   put("main.ts", generateMainEntry(m, opts));
   put("package.json", generatePackageJson(m, opts));
-  put(".gitignore", "# the generated voidbase app is build output; this is what it makes at runtime\npb_data/\n# the values of the secrets vb_secrets/main.ts declares (copied from vb_secrets/secrets.json)\npb_secrets/secrets.json\n");
+  put(".gitignore", "# the generated voidbase app is build output; this is what it makes at runtime\npb_data/\n# the values of the secrets vb_secrets/main.ts declares (copied from vb_secrets/secrets.json)\npb_secrets/secrets.json\n# the Void project voidbase deploy writes when the package is installed under node_modules\n.cloud/\n");
 
   // the tsconfig fragment the project's own tsconfig extends, and the shims it points at
   const tsconfig = generateTsconfig(m.root);

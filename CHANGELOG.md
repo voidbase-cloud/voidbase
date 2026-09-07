@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.6.1](https://github.com/voidbase-cloud/voidbase/compare/v0.6.0...v0.6.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **deploy:** a project is not deployed onto another project's Worker ([03aa8ac](https://github.com/voidbase-cloud/voidbase/commit/03aa8ac18f849220774d1aa56e1063ffeb5bd353))
+
 ## [0.6.0](https://github.com/voidbase-cloud/voidbase/compare/v0.5.1...v0.6.0) (2026-09-07)
 
 

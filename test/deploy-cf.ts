@@ -39,12 +39,24 @@ try {
   const syncPlan = run(["sync", "--dry-run", "--repo", "voidbase-cloud/voidbase", "--branch", "main"], { CI: "", VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", CLOUDFLARE_BUILDS_TOKEN: "cf-test-user-token" });
   const syncInCI = run(["sync", "--dry-run"], { CI: "true", VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", CLOUDFLARE_BUILDS_TOKEN: "cf-test-user-token" });
   check("in a build, sync is the deploy alone: nothing is connected", syncInCI.code === 0 && /pb layout/.test(syncInCI.out) && !/^ci/m.test(syncInCI.out), syncInCI.out.slice(-200));
-  check("voidbase sync --dry-run with a Builds token plans the connection: repository, Worker, branch, commands", syncPlan.code === 0 && /ci \(dry run\): would connect voidbase-cloud\/voidbase to Worker shopdemo-backend: branch main builds `.*` and deploys `bunx voidbase sync --name shopdemo-backend/.test(syncPlan.out), syncPlan.out.slice(-400));
+  check("voidbase sync --dry-run with a Builds token plans the connection: repository, Worker, branch, commands", syncPlan.code === 0 && /ci \(dry run\): would connect voidbase-cloud\/voidbase to Worker shopdemo-backend: branch main builds `.*` and deploys `bunx @voidbase-cloud\/voidbase sync --name shopdemo-backend/.test(syncPlan.out), syncPlan.out.slice(-400));
   // a project that has the three verbs gets the three verbs, so the commands a person set in the dashboard survive
   writeFileSync(`${dir}/package.json`, JSON.stringify({ name: "vb", private: true, scripts: { build: "vite build", deploy: "voidbase deploy", version: "voidbase secrets" }, dependencies: { "@voidbase-cloud/voidbase": "link:@voidbase-cloud/voidbase" } }));
   const syncVerbs = run(["sync", "--dry-run", "--repo", "voidbase-cloud/voidbase", "--branch", "main"], { CI: "", VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", CLOUDFLARE_BUILDS_TOKEN: "cf-test-user-token" });
   check("a project with build/deploy/version scripts gets those verbs as its commands, not a spelled-out deploy", syncVerbs.code === 0 && /builds `bun run build` and deploys `bun run deploy`/.test(syncVerbs.out), syncVerbs.out.slice(-300));
   writeFileSync(`${dir}/package.json`, JSON.stringify({ name: "vb", private: true, dependencies: { "@voidbase-cloud/voidbase": "link:@voidbase-cloud/voidbase" } }));
+  // what `voidbase init` leaves behind is what a build machine needs: a pinned dependency and the verbs to run
+  {
+    const scaffold = mkdtempSync(join(tmpdir(), "vb-init-"));
+    const r = Bun.spawnSync(["bun", BIN, "init", scaffold], { env: { ...process.env } });
+    void r;
+    const pkg = existsSync(`${scaffold}/package.json`) ? (JSON.parse(readFileSync(`${scaffold}/package.json`, "utf8")) as { scripts?: Record<string, string>; dependencies?: Record<string, string> }) : null;
+    check("voidbase init writes a package.json pinning voidbase, with the verbs a pipeline calls", !!pkg?.dependencies?.["@voidbase-cloud/voidbase"] && pkg.scripts?.deploy === "voidbase deploy" && !!pkg.scripts?.version, JSON.stringify(pkg));
+    const ignored = existsSync(`${scaffold}/.gitignore`) ? readFileSync(`${scaffold}/.gitignore`, "utf8") : "";
+    check("and a .gitignore that keeps the values, the data and the generated project out of the repository", ["pb_data/", "pb_secrets/secrets.json", ".cloud/"].every((l) => ignored.includes(l)), JSON.stringify(ignored));
+    rmSync(scaffold, { recursive: true, force: true });
+  }
+
   const creds = JSON.parse(readFileSync(`${dir}/pb_data/.superuser-credentials`, "utf8")) as { email: string; password: string };
   check("superuser credentials generated once, kept in pb_data", creds.email === "admin@example.com" && creds.password.length === 20, JSON.stringify(creds));
   const second = run(["deploy", "--dry-run", "--analytics"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });

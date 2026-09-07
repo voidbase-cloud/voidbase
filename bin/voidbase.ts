@@ -215,9 +215,23 @@ switch (cmd) {
     }
     if (!existsSync(`${dir}/.env`)) { cpSync(`${ROOT}/.env.example`, `${dir}/.env`); console.log("wrote .env from .env.example (set VOIDBASE_SUPERUSER_EMAIL/PASSWORD)"); }
     if (!existsSync(`${dir}/pb_hooks/main.pb.js`)) writeFileSync(`${dir}/pb_hooks/main.pb.js`, `/// <reference path="../pb_data/types.d.ts" />\nrouterAdd("GET", "/api/hello", (e) => e.json(200, { hello: "voidbase" }));\n`);
+    // A package.json, because a project that deploys from CI needs one: it is what pins the version production runs,
+    // what makes `bunx voidbase` resolve locally rather than looking for a package that is not on npm, and what tells
+    // a build machine to install anything at all. The verbs match every other voidbase project's.
+    if (!existsSync(`${dir}/package.json`)) {
+      const pkg = {
+        name: dir.split("/").filter(Boolean).at(-1) ?? "voidbase-app",
+        private: true,
+        type: "module",
+        scripts: { dev: "voidbase serve --dev", start: "voidbase serve", deploy: "voidbase deploy", version: "voidbase secrets" },
+        dependencies: { "@voidbase-cloud/voidbase": `^${await currentVersion()}` },
+      };
+      writeFileSync(`${dir}/package.json`, `${JSON.stringify(pkg, null, 2)}\n`);
+      console.log(`wrote package.json (@voidbase-cloud/voidbase ^${await currentVersion()}; bun install to use bun run dev)`);
+    }
     console.log("pb_hooks/, pb_migrations/ and pb_secrets/ ready (.gitignore covers pb_data/, pb_secrets/secrets.json and .cloud/)");
     await run("bun", ["scripts/sync-panel.ts"]).catch(() => undefined);
-    console.log("\nnext: voidbase serve   (the API on 8090, the admin panel at /_/; docs/setup.md)");
+    console.log("\nnext: voidbase serve   (the API on 8090, the admin panel at /_/), or bun install && bun run dev");
     break;
   }
   case "dev": await run("./node_modules/.bin/vp", ["dev", "--port", flags.port ?? "5180", "--host", flags.host ?? "127.0.0.1"]); break;

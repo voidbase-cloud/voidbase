@@ -102,7 +102,7 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   // reading the environment. A project without them gets commands that say the whole thing, which is what the CLI
   // did before the verbs existed.
   const buildCmd = hasScript("build") ? `${step}bun run build` : voidApp ? `${step}bunx --bun vite build` : prefix ? `echo "${prefix}: nothing to build"` : "true";
-  const deployCmd = hasScript("deploy") ? `${step}bun run deploy` : `${step}bunx voidbase sync --name ${deployed.name}${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN ? ` --domain ${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN}` : ""}`;
+  const deployCmd = hasScript("deploy") ? `${step}bun run deploy` : `${step}bunx @voidbase-cloud/voidbase sync --name ${deployed.name}${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN ? ` --domain ${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN}` : ""}`;
   // Workers Builds gives a trigger one deploy command, so a branch trigger spends it on the third verb: what this
   // branch would deploy with, which changes nothing live.
   const branchCmd = hasScript("version") ? `${step}bun run version` : `echo "branch build: built${hasScript("check") ? " and checked" : ""}, nothing to deploy"`;

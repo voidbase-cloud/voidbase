@@ -52,6 +52,15 @@ try {
   check("second run is idempotent: resources exist, same ids, same password", second.code === 0 && /D1 .* exists/.test(second.out) && /R2 .* exists/.test(second.out) && readFileSync(`${PROJECT}/wrangler.jsonc`, "utf8") === cfg && creds2.password === creds.password, second.out.slice(0, 200));
   const calls = (await fetch(`${MOCK}/__calls`).then((r) => r.json())) as string[];
   check("only the expected API calls were made", calls.every((c) => /^GET \/accounts|d1\/database|r2\/buckets|queues|workers\/subdomain|workers\/scripts\/[^/]+\/secrets/.test(c)) && calls.filter((c) => c.startsWith("POST")).length === 3, calls.join(", "));
+
+  // managing instances without a project: both commands resolve the account from the token and nothing else
+  const onAccount = run(["instances"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+  check("voidbase instances: resolves the account and reports what is on it", onAccount.code === 0 && /instances? on|no voidbase instances on account Test Account/.test(onAccount.out), onAccount.out.slice(-200));
+  const gone = run(["destroy", "ghost-instance", "--yes"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+  check("voidbase destroy: names every resource it would remove, and reports what was not there", gone.code === 0 && /the Worker ghost-instance/.test(gone.out) && /the bucket ghost-instance-storage/.test(gone.out) && /0 deleted, 6 not there/.test(gone.out), gone.out.slice(-300));
+  const unconfirmed = run(["destroy", "ghost-instance"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+  check("voidbase destroy without --yes refuses when nobody can be asked", unconfirmed.code === 1 && /refusing to delete without a confirmation/.test(unconfirmed.out), unconfirmed.out.slice(-200));
+
   // a project that declares its own target is not deployed onto another one by an ambient environment
   writeFileSync(`${dir}/pb_secrets/main.ts`, readFileSync(`${dir}/pb_secrets/main.ts`, "utf8").replace("export default defineSecrets({", 'export default defineSecrets({ VOIDBASE_DEPLOY_NAME: local(string().default("declared-name")),'));
   const wrongTarget = run(["deploy", "--dry-run"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_DEPLOY_NAME: "someone-elses-worker" });

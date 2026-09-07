@@ -47,6 +47,9 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      .voidbase/), then connect the GitHub repository to Cloudflare Workers Builds so a
                                      push to the branch deploys and other branches build. Needs CLOUDFLARE_BUILDS_TOKEN
                                      (a local() key) for the pipeline part; in CI, sync is the deploy alone (--ci forces it)
+  instances [--account id]           list the voidbase instances on the Cloudflare account the token reaches
+  destroy <name> [--yes]             delete an instance and everything it owns: the Worker, its database, its bucket,
+                                     its queue and its custom domains. Irreversible; asks first unless --yes
   token                              print the Cloudflare dashboard link that creates VOIDBASE_DEPLOY_CF_API_KEY
   secrets [list] [--dir pb_secrets]  what pb_secrets/main.ts declares (secret / server / public), which have a value in
   secrets push [--name worker]       secrets.json (git-ignored) or a default, which secrets the Worker has; push stores the
@@ -122,6 +125,39 @@ switch (cmd) {
       console.log(`  ${i.name.padEnd(30)} ${i.access.padEnd(7)} ${where.padEnd(18)}${worker}${i.description ? `  ${i.description}` : ""}`);
     }
     if (state.undeclared.length) console.log(`  in secrets.json but not declared (never deployed): ${state.undeclared.join(", ")}`);
+    break;
+  }
+  case "instances": {
+    // What is on the account, without a project: an instance is a Worker voidbase tagged as one when it deployed.
+    const { deployTarget } = await import("../src/node/deploy-cf");
+    const { listVoidbaseWorkers } = await import("../src/cloud/rest");
+    // an explicit name keeps the declared-target guard out of the way: this command deploys nothing
+    const { api, account } = await deployTarget({ account: flags.account, name: "voidbase", log: () => undefined });
+    const found = await listVoidbaseWorkers(api, account.id);
+    if (!found.length) { console.log(`no voidbase instances on account ${account.name} (${account.id})`); break; }
+    console.log(`${found.length} instance(s) on ${account.name}:`);
+    for (const w of found.sort((a, b) => a.name.localeCompare(b.name)))
+      console.log(`  ${w.name.padEnd(32)} ${w.release ? `release ${w.release}` : ""}${w.modified_on ? `  updated ${w.modified_on.slice(0, 10)}` : ""}`);
+    break;
+  }
+  case "destroy": {
+    const name = sub;
+    if (!name) { console.error("usage: voidbase destroy <name> [--yes]"); process.exit(1); }
+    const { deployTarget } = await import("../src/node/deploy-cf");
+    const { destroyInstance, instanceResources } = await import("../src/cloud/rest");
+    const { api, account } = await deployTarget({ account: flags.account, name, log: () => undefined });
+    const res = instanceResources(name);
+    console.log(`This deletes, on account ${account.name}:\n  the Worker ${name}\n  the database ${res.db}\n  the bucket ${res.bucket} and everything in it\n  the queue ${res.queue}\n  every custom domain pointing at it\nThere is no undo, and no backup is taken.`);
+    // a destructive command says what it will do and waits, unless the caller has already decided
+    if (!("yes" in flags)) {
+      if (!process.stdin.isTTY) { console.error("\nrefusing to delete without a confirmation: rerun with --yes"); process.exit(1); }
+      process.stdout.write(`\nType the instance name to confirm: `);
+      const typed = (await new Promise<string>((r) => { process.stdin.once("data", (d: Buffer) => r(d.toString().trim())); })).trim();
+      if (typed !== name) { console.error(`"${typed}" is not "${name}": nothing deleted`); process.exit(1); }
+    }
+    const out = await destroyInstance(api, { account: account.id, name, log: (l) => console.log(`  ${l}`) });
+    console.log(`${out.deleted.length} deleted, ${out.skipped.length} not there${out.errors.length ? `, ${out.errors.length} failed` : ""}`);
+    if (out.errors.length) { for (const e of out.errors) console.error(`  ${e}`); process.exit(1); }
     break;
   }
   case "token": { const { tokenHelp } = await import("../src/node/deploy-cf"); console.log(tokenHelp()); break; }

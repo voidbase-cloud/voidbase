@@ -3,6 +3,18 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.5.0](https://github.com/voidbase-cloud/voidbase/compare/v0.4.1...v0.5.0) (2026-09-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deploy:** defineSecrets({ KEY: string() }) is an error; write server(string()).
+
+### Features
+
+* **deploy:** a local tier for the tooling's own values ([41ea2a3](https://github.com/voidbase-cloud/voidbase/commit/41ea2a3fe25533cfb8e079b664c6aca0373f6a7d))
+* **deploy:** every configuration key states who may read it ([8cb8092](https://github.com/voidbase-cloud/voidbase/commit/8cb809200cdb905371db81cda6ee713215241682))
+
 ## [0.4.1](https://github.com/voidbase-cloud/voidbase/compare/v0.4.0...v0.4.1) (2026-09-07)
 
 

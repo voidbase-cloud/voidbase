@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.4.0](https://github.com/voidbase-cloud/voidbase/compare/v0.3.0...v0.4.0) (2026-09-07)
+
+
+### Features
+
+* **deploy:** one configuration declaration with Void's validators, tiered secret / server / public ([e5ee202](https://github.com/voidbase-cloud/voidbase/commit/e5ee20261520fbfba8e90d80ff4f7aa07bf6bc78))
+
 ## [0.3.0](https://github.com/voidbase-cloud/voidbase/compare/v0.2.2...v0.3.0) (2026-09-07)
 
 

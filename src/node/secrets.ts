@@ -44,11 +44,14 @@ export interface SecretsDeclaration {
  * The names, tiers and descriptions a declaration file declares, without evaluating it:
  *
  *     export default defineSecrets({
- *       SMTP_PASSWORD: string().secret(),                       -> secret
- *       ADMIN_EMAILS: describe(string().default(""), "who..."), -> server, described
- *       API_URL: url().optional().public(),                     -> public
- *       OTHER: secret(zodSchema, "..."),                        -> secret, described
+ *       SMTP_PASSWORD: secret(string(), "..."),                 -> secret, described
+ *       ADMIN_EMAILS: server(string().default("")),             -> server
+ *       API_URL: browser(url().optional()),                     -> public
+ *       TOKEN: local(string()),                                 -> local
+ *       LEGACY: string().secret(),                              -> secret (Void's marker counts as the tier)
  *     })
+ *
+ * A key without a tier is an error here as it is at definition: the file's maintainer states who may read what.
  */
 export function parseSecretsDeclaration(code: string, file = "pb_secrets/main.ts"): SecretsDeclaration {
   const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
@@ -56,31 +59,31 @@ export function parseSecretsDeclaration(code: string, file = "pb_secrets/main.ts
   const literal = (n: ts.Node | undefined) => (n && ts.isStringLiteralLike(n) ? n.text : null);
   const calleeName = (c: ts.CallExpression) => (ts.isIdentifier(c.expression) ? c.expression.text : ts.isPropertyAccessExpression(c.expression) ? c.expression.name.text : "");
   // the tier and description of one value expression: wrappers first, then Void's .secret()/.public() chain
-  const classify = (expr: ts.Expression): { access: Access; description: string | null } => {
+  const classify = (expr: ts.Expression): { access: Access | null; description: string | null } => {
     let description: string | null = null; let tier: Access | null = null;
     let node: ts.Expression = expr;
     while (ts.isCallExpression(node)) {
       const fn = calleeName(node);
-      if (fn === "describe") { description ??= literal(node.arguments[1]); node = node.arguments[0] ?? node; if (node === expr) break; continue; }
-      if (fn === "secret" || fn === "server" || fn === "pub" || fn === "public" || fn === "local") {
-        if (ts.isIdentifier(node.expression)) { tier ??= fn === "pub" ? "public" : (fn as Access); description ??= literal(node.arguments[1]); node = node.arguments[0] ?? node; if (!node || node === expr) break; continue; }
-        tier ??= fn === "secret" ? "secret" : "public"; // Void's .secret() / .public() on a validator chain
+      if ((fn === "secret" || fn === "server" || fn === "browser" || fn === "local") && ts.isIdentifier(node.expression)) {
+        tier ??= fn === "browser" ? "public" : (fn as Access); description ??= literal(node.arguments[1]); node = node.arguments[0] ?? node; if (!node || node === expr) break; continue;
       }
+      if ((fn === "secret" || fn === "public") && ts.isPropertyAccessExpression(node.expression)) tier ??= fn === "secret" ? "secret" : "public"; // Void's .secret() / .public()
       node = ts.isPropertyAccessExpression(node.expression) ? node.expression.expression : node.expression;
       if (!ts.isCallExpression(node)) break;
     }
-    return { access: tier ?? "server", description };
+    return { access: tier, description };
   };
   const add = (name: string | null, expr: ts.Expression | undefined) => {
     if (!name) return;
     if (!NAME.test(name)) throw new Error(`voidbase: ${file}: "${name}" is not a configuration name (UPPER_CASE, letters, digits and underscores, like an environment variable)`);
-    const c = expr ? classify(expr) : { access: "server" as Access, description: null };
+    const c = expr ? classify(expr) : { access: null, description: null };
+    if (!c.access) throw new Error(`voidbase: ${file}: ${name} has no tier. Every key says who may read it: secret(...), server(...), browser(...) or local(...)`);
     if (!names.includes(name)) names.push(name);
     access[name] = c.access; if (c.description) descriptions[name] = c.description;
   };
   let found = false;
   const visit = (node: ts.Node) => {
-    if (ts.isCallExpression(node) && calleeName(node) === "defineSecrets") {
+    if (ts.isCallExpression(node) && calleeName(node) === "defineSecrets" && !ts.isPropertyAccessExpression(node.expression)) {
       found = true;
       const arg = node.arguments[0];
       if (!arg || !ts.isObjectLiteralExpression(arg)) throw new Error(`voidbase: ${file}: defineSecrets() takes an object literal: { NAME: string().secret(), ... }`);
@@ -156,7 +159,7 @@ export async function secretsState(dir = SECRETS_DIR): Promise<SecretsState> {
   const loaded = await loadDefinition(dir);
   const values = readSecretsValues(dir);
   if (!loaded && values && Object.keys(values).length) {
-    throw new Error(`voidbase: ${join(resolve(dir), VALUES_FILE)} holds ${Object.keys(values).length} value(s) but nothing declares them. Name them in ${join(dir, "main.ts")}:\n  export default defineSecrets({ ${Object.keys(values).map((k) => `${k}: string().secret()`).join(", ")} })`);
+    throw new Error(`voidbase: ${join(resolve(dir), VALUES_FILE)} holds ${Object.keys(values).length} value(s) but nothing declares them. Name them in ${join(dir, "main.ts")}:\n  export default defineSecrets({ ${Object.keys(values).map((k) => `${k}: secret(string())`).join(", ")} })`);
   }
   const names = loaded?.definition.names ?? [];
   const have = new Set(Object.keys(values ?? {}));
@@ -223,16 +226,17 @@ export function declarationScaffold(pkg = "@voidbase-cloud/voidbase"): string {
 // the Worker's secrets and vars once deployed. Read by \`voidbase serve\` and \`voidbase deploy\`; in hooks,
 // $os.getenv("NAME"); in TypeScript, \`await definition.read(env)\` gives the typed values.
 //
-//   .secret()   the Worker's encrypted secrets, never listed, never in a build (\`voidbase secrets push\` stores them)
-//   (plain)     server configuration: a plain Worker var, hooks and routes only
-//   .public()   a Worker var the browser may know too: a client build inlines it as import.meta.env.NAME
+// Every key says who may read it, and the maintainer of this file answers for that:
+//   secret()    the Worker's encrypted secrets, never listed, never in a build (\`voidbase secrets push\` stores them)
+//   server()    server configuration: a plain Worker var, hooks and routes only
+//   browser()   a Worker var the browser may know too: a client build inlines it as import.meta.env.NAME
 //   local()     the tooling's own (the deploy token, the deploy target): read here or in CI, never deployed
-import { defineSecrets, describe, local, string, number } from "${pkg}/secrets";
+import { defineSecrets, secret, server, browser, local, string, number } from "${pkg}/secrets";
 
 export default defineSecrets({
-  // SMTP_PASSWORD: describe(string().secret(), "the mail provider's SMTP password"),
-  // MAX_UPLOAD_MB: number().default(10),
-  // PUBLIC_SITE_URL: string().optional().public(),
+  // SMTP_PASSWORD: secret(string(), "the mail provider's SMTP password"),
+  // MAX_UPLOAD_MB: server(number().default(10)),
+  // PUBLIC_SITE_URL: browser(string().optional()),
   // VOIDBASE_DEPLOY_CF_API_KEY: local(string().optional(), "the deploy token (voidbase token prints the link)"),
 });
 `;

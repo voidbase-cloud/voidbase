@@ -2,34 +2,35 @@ import { describe as group, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { defineSecrets, describe, local, number, pub, secret, string, url } from "../../src/env/define";
+import { browser, defineSecrets, local, number, secret, server, string, url } from "../../src/env/define";
 import { loadSecrets, parseSecretsDeclaration, readSecretsValues, secretsState } from "../../src/node/secrets";
 import { generateSecretsDeclaration } from "../../src/adapter/codegen";
 
 const dir = () => mkdtempSync(join(tmpdir(), "vb-secrets-"));
 const DEFINE = resolve(import.meta.dir, "../../src/env/define.ts");
-const declaration = `import { defineSecrets, describe, string, number, url } from ${JSON.stringify(DEFINE)};
+const declaration = `import { defineSecrets, secret, server, browser, string, number, url } from ${JSON.stringify(DEFINE)};
 export default defineSecrets({
-  SMTP_PASSWORD: describe(string().secret(), "the SMTP password"),
-  MAX_USERS: number().default(5),
-  ADMIN_EMAILS: string().default(""),
-  SITE_URL: url().optional().public(),
-  REQUIRED_PLAIN: string(),
+  SMTP_PASSWORD: secret(string(), "the SMTP password"),
+  MAX_USERS: server(number().default(5)),
+  ADMIN_EMAILS: server(string().default("")),
+  SITE_URL: browser(url().optional()),
+  REQUIRED_PLAIN: server(string()),
 });
 `;
 
 group("pb_secrets: the declaration", () => {
-  test("tiers come from Void's .secret()/.public() or the wrappers; a bare validator is server configuration", () => {
-    const d = defineSecrets({ A: string().secret(), B: string(), C: url().public(), D: secret(string(), "d"), E: pub(number()), F: local(string(), "the deploy token") });
+  test("every key states its tier: the audience wrappers, or Void's .secret()/.public() markers; a bare validator is refused", () => {
+    const d = defineSecrets({ A: string().secret(), B: server(string()), C: url().public(), D: secret(string(), "d"), E: browser(number()), F: local(string(), "the deploy token") });
     expect(d.names).toEqual(["A", "B", "C", "D", "E", "F"]);
     expect(d.of("secret")).toEqual(["A", "D"]);
     expect(d.of("server")).toEqual(["B"]);
     expect(d.of("public")).toEqual(["C", "E"]);
     expect(d.of("local")).toEqual(["F"]);
     expect(d.entries.D.description).toBe("d");
+    expect(() => defineSecrets({ BARE: string() })).toThrow(/BARE has no tier/);
   });
   test("values are parsed through the validators: defaults filled in, numbers coerced, bad and missing values named without their values", async () => {
-    const d = defineSecrets({ N: number().default(5), U: url(), S: string().secret(), O: string().optional() });
+    const d = defineSecrets({ N: server(number().default(5)), U: server(url()), S: string().secret(), O: server(string().optional()) });
     const r = await d.evaluate({ U: "not a url", N: "7" });
     expect(r.values.N).toBe(7);
     expect(r.stored).toEqual({ N: "7" });
@@ -40,13 +41,13 @@ group("pb_secrets: the declaration", () => {
     await expect(d.read({})).rejects.toThrow(/U: missing.*S: missing|S: missing.*U: missing/);
   });
   test("a lookup function is a source too, and a tier filter reads only what that tier may see", async () => {
-    const d = defineSecrets({ S: string().secret(), P: string().public() });
+    const d = defineSecrets({ S: secret(string()), P: browser(string()) });
     const env: Record<string, string> = { S: "hidden", P: "shown" };
     expect(await d.read((n) => env[n], ["public"])).toEqual({ P: "shown" } as never);
     expect((await d.info()).map((i) => `${i.name}:${i.access}:${i.optional}`)).toEqual(["S:secret:false", "P:public:false"]);
   });
   test("a name that is not an environment-variable name, or a value that is no validator, fails at definition", () => {
-    expect(() => defineSecrets({ "smtp-password": string() })).toThrow(/"smtp-password" is not a configuration name/);
+    expect(() => defineSecrets({ "smtp-password": secret(string()) })).toThrow(/"smtp-password" is not a configuration name/);
     expect(() => defineSecrets({ A: "nope" as never })).toThrow(/A needs a validator/);
   });
   test("read statically for the build: names, tiers and descriptions, without running the file", () => {
@@ -54,7 +55,8 @@ group("pb_secrets: the declaration", () => {
     expect(d.names).toEqual(["SMTP_PASSWORD", "MAX_USERS", "ADMIN_EMAILS", "SITE_URL", "REQUIRED_PLAIN"]);
     expect(d.access).toEqual({ SMTP_PASSWORD: "secret", MAX_USERS: "server", ADMIN_EMAILS: "server", SITE_URL: "public", REQUIRED_PLAIN: "server" });
     expect(d.descriptions).toEqual({ SMTP_PASSWORD: "the SMTP password" });
-    expect(parseSecretsDeclaration(`export default defineSecrets({ A: secret(z.string(), "a"), B: pub(z.string()), C: server(z.string()), D: local(string()) })`).access).toEqual({ A: "secret", B: "public", C: "server", D: "local" });
+    expect(parseSecretsDeclaration(`export default defineSecrets({ A: secret(z.string(), "a"), B: browser(z.string()), C: server(z.string()), D: local(string()), E: string().secret(), F: url().optional().public() })`).access).toEqual({ A: "secret", B: "public", C: "server", D: "local", E: "secret", F: "public" });
+    expect(() => parseSecretsDeclaration(`export default defineSecrets({ BARE: string() })`, "vb_secrets/main.ts")).toThrow(/BARE has no tier/);
     expect(() => parseSecretsDeclaration(`export default {}`, "x.ts")).toThrow(/does not call defineSecrets/);
     expect(generateSecretsDeclaration(d)).toContain('export { default } from "../../vb_secrets/main";');
   });

@@ -106,7 +106,8 @@ permissions pre-selected; with that variable set, `voidbase deploy` provisions D
 inside the package (`node_modules/voidbase/.cloud/<name>`), stores the superuser and what `pb_secrets/` declares
 as the Worker's secrets and vars, and uploads the Worker. Your directory stays `pb_hooks` + `pb_migrations` +
 `pb_secrets` + `pb_data`, like a PocketBase folder: `pb_secrets/main.ts` declares the configuration with Void's
-validators (secret, server or public), the git-ignored `pb_secrets/secrets.json` holds the local values, and CI
+validators, every key wrapped in who may read it (`secret`, `server`, `browser`, `local`), the git-ignored
+`pb_secrets/secrets.json` holds the local values, and CI
 deploys with nothing but the deploy token once `voidbase secrets push` has stored the secrets. See
 [docs/deploy.md](docs/deploy.md).
 

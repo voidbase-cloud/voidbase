@@ -237,7 +237,7 @@ export function scanVoidApp(opts: ScanOptions = {}): VoidManifest {
     secretsDir: isDir(join(root, SECRETS_DIR)) ? SECRETS_DIR : undefined,
   };
 
-  // vb_secrets/: main.ts declares the configuration (`export default defineSecrets({ NAME: string().secret(), ... })`),
+  // vb_secrets/: main.ts declares the configuration (`export default defineSecrets({ NAME: secret(string()), ... })`),
   // read here without running it (names and tiers; the validators run where values are parsed); secrets.json
   // beside it is the git-ignored local values file. Values that nothing declares are a build error: they would
   // silently never reach the Worker.
@@ -245,7 +245,7 @@ export function scanVoidApp(opts: ScanOptions = {}): VoidManifest {
   if (extras.secretsDir) {
     const decl = DECLARATION_FILES.map((f) => join(root, SECRETS_DIR, f)).find((f) => existsSync(f));
     const values = readSecretsValues(join(root, SECRETS_DIR));
-    if (!decl && values && Object.keys(values).length) throw new Error(`voidbase: ${SECRETS_DIR}/${VALUES_FILE} holds ${Object.keys(values).join(", ")} but ${SECRETS_DIR}/main.ts does not exist to declare them:\n  export default defineSecrets({ ${Object.keys(values).map((k) => `${k}: string().secret()`).join(", ")} })`);
+    if (!decl && values && Object.keys(values).length) throw new Error(`voidbase: ${SECRETS_DIR}/${VALUES_FILE} holds ${Object.keys(values).join(", ")} but ${SECRETS_DIR}/main.ts does not exist to declare them:\n  export default defineSecrets({ ${Object.keys(values).map((k) => `${k}: secret(string())`).join(", ")} })`);
     if (decl) {
       secrets = parseSecretsDeclaration(readFileSync(decl, "utf8"), relative(root, decl));
       const undeclared = Object.keys(values ?? {}).filter((k) => !secrets!.names.includes(k));

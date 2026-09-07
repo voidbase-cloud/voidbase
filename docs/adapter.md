@@ -48,7 +48,7 @@ The project root is Void's, with three additions, all optional and all named for
 | --- | --- |
 | `vb_hooks/` | PocketBase's hooks, one per file, registered once when the app mounts |
 | `vb_migrations/` | PocketBase JS migrations, copied into the generated `pb_migrations/` beside the ones generated from `db/migrations` |
-| `vb_secrets/` | `main.ts` declares the app's configuration with `defineSecrets` and Void's validators, tiered secret / server / public; `secrets.json` (git-ignored) holds the local values |
+| `vb_secrets/` | `main.ts` declares the app's configuration with `defineSecrets` and Void's validators, every key wrapped in its audience (`secret`, `server`, `browser`, `local`); `secrets.json` (git-ignored) holds the local values |
 
 They sit at the project root beside Void's own `db/`, which `vb_migrations/` is the counterpart of. Everything else
 is Void's, and means what Void means by it: `routes/`, `middleware/`, `crons/` and `queues/` are the server code,
@@ -151,19 +151,20 @@ process, so a registration made then is held and replayed, or dropped with the p
 
 ### Configuration and secrets
 
-The app's configuration is declared in `vb_secrets/main.ts`, with the validators a Void `env.ts` uses, and valued in
+The app's configuration is declared in `vb_secrets/main.ts`, with the validators a Void `env.ts` uses, every key
+wrapped in the audience that may read it (a key without one fails the build), and valued in
 `vb_secrets/secrets.json`, which stays out of git (add it to `.gitignore`; the generated app's own `.gitignore`
 already lists its copy):
 
 ```ts
 // vb_secrets/main.ts
-import { defineSecrets, describe, local, string, number, url } from "@voidbase-cloud/voidbase/secrets";
+import { defineSecrets, secret, server, browser, local, string, number, url } from "@voidbase-cloud/voidbase/secrets";
 
 export default defineSecrets({
-  SMTP_PASSWORD: describe(string().secret(), "the mail provider's SMTP password"),   // the Worker's secrets
-  MAX_INSTANCES: number().default(5),                                                 // a Worker var
-  PUBLIC_API_URL: url().optional().public(),                                          // a var the browser gets too
-  VOIDBASE_DEPLOY_CF_API_KEY: local(string(), "the deploy token"),                   // the tooling's, never deployed
+  SMTP_PASSWORD: secret(string(), "the mail provider's SMTP password"),   // the Worker's secrets
+  MAX_INSTANCES: server(number().default(5)),                              // a Worker var
+  PUBLIC_API_URL: browser(url().optional()),                               // a var the browser gets too
+  VOIDBASE_DEPLOY_CF_API_KEY: local(string(), "the deploy token"),        // the tooling's, never deployed
 });
 ```
 

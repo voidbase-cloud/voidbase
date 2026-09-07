@@ -107,17 +107,18 @@ account. Cloudflare still requires the account to have a workers.dev subdomain b
 ### Configuration and secrets: `pb_secrets/`
 
 The app's configuration is declared once, in code, with Void's validators, and valued in each deploy's environment
-(twelve-factor III): locally a git-ignored file, on Cloudflare the Worker's own secrets and vars.
+(twelve-factor III): locally a git-ignored file, on Cloudflare the Worker's own secrets and vars. Every key states
+who may read it, and the maintainer of the file answers for that: a key without a tier is refused.
 
 ```ts
 // pb_secrets/main.ts                                   committed
-import { defineSecrets, describe, local, string, number, url } from "@voidbase-cloud/voidbase/secrets";
+import { defineSecrets, secret, server, browser, local, string, number, url } from "@voidbase-cloud/voidbase/secrets";
 
 export default defineSecrets({
-  SMTP_PASSWORD: describe(string().secret(), "the mail provider's password"),
-  ADMIN_EMAILS: string().default(""),
-  MAX_UPLOAD_MB: number().default(10),
-  PUBLIC_SITE_URL: url().optional().public(),
+  SMTP_PASSWORD: secret(string(), "the mail provider's password"),
+  ADMIN_EMAILS: server(string().default("")),
+  MAX_UPLOAD_MB: server(number().default(10)),
+  PUBLIC_SITE_URL: browser(url().optional()),
   VOIDBASE_DEPLOY_CF_API_KEY: local(string(), "the deploy token"),
   VOIDBASE_DEPLOY_NAME: local(string().default("my-app")),
 });
@@ -131,18 +132,18 @@ With the deploy token and target declared as `local`, there is no `.env` file le
 tooling needs is either declared with a default or valued in `secrets.json` (this machine) and the build's
 environment (CI).
 
-Every key has an access tier, which decides where its value lives and who can read it:
+The tier is the audience, and it decides where the value lives:
 
-| tier | declared as | lives in | readable by |
-| --- | --- | --- | --- |
-| secret | `string().secret()` (or `secret(schema)`) | the Worker's encrypted secrets | hooks and routes; never listed, never in a build |
-| server | a bare validator | the Worker's plain vars | hooks and routes; never in a client build |
-| public | `.public()` (or `pub(schema)`) | the Worker's vars and the client build (`import.meta.env.KEY`) | everyone, the browser included |
-| local | `local(schema)` | `secrets.json` on this machine, the build's environment in CI | voidbase's own tooling: the deploy token, the deploy target; never on the Worker, never in a build |
+| tier | lives in | readable by |
+| --- | --- | --- |
+| `secret(...)` | the Worker's encrypted secrets | hooks and routes; never listed, never in a build |
+| `server(...)` | the Worker's plain vars | hooks and routes; never in a client build |
+| `browser(...)` | the Worker's vars and the client build (`import.meta.env.KEY`) | everyone, the browser included |
+| `local(...)` | `secrets.json` on this machine, the build's environment in CI | voidbase's own tooling: the deploy token, the deploy target; never on the Worker, never in a build |
 
 The validators are the ones a Void project's `env.ts` uses (`string()`, `number()`, `boolean()`, `url()`,
-`email()`, `oneOf()`, `json()`, each with `.optional()` and `.default()`), and any Standard Schema validator works
-inside `secret()` / `server()` / `pub()`. A value is parsed through its validator wherever it is read, so a default is
+`email()`, `oneOf()`, `json()`, each with `.optional()` and `.default()`); their `.secret()` and `.public()` markers
+count as the tier too. Any Standard Schema validator works inside the wrappers. A value is parsed through its validator wherever it is read, so a default is
 filled in, a number is a number, and a bad or missing value stops the process with the key's name, never its value.
 In hooks, `$os.getenv("NAME")` (the stored string); in TypeScript, `await definition.read((n) => $os.getenv(n))`
 gives the typed values.

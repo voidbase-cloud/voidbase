@@ -2,26 +2,28 @@
 // (twelve-factor III: config in the environment, declared in code, never grouped by environment):
 //
 //   // pb_secrets/main.ts (a Void app: vb_secrets/main.ts)
-//   import { defineSecrets, string, number, url, describe } from "@voidbase-cloud/voidbase/secrets";
+//   import { defineSecrets, secret, server, browser, local, string, number, url } from "@voidbase-cloud/voidbase/secrets";
 //
 //   export default defineSecrets({
-//     SMTP_PASSWORD: string().secret(),
-//     ADMIN_EMAILS: describe(string().default(""), "who may open the admin pages"),
-//     MAX_INSTANCES: number().default(5),
-//     PUBLIC_API_URL: url().optional().public(),
+//     SMTP_PASSWORD: secret(string(), "the mail provider's password"),
+//     ADMIN_EMAILS: server(string().default(""), "who may open the admin pages"),
+//     MAX_INSTANCES: server(number().default(5)),
+//     PUBLIC_API_URL: browser(url().optional(), "where the browser reaches the API"),
+//     VOIDBASE_DEPLOY_CF_API_KEY: local(string(), "the deploy token"),
 //   });
 //
-// Every key has an access tier, which decides where its value lives and who can read it:
+// Every key states who may read it, and the maintainer of this file answers for that: a key without a tier is
+// refused at definition and at build. The tier decides where the value lives:
 //
-//   .secret()   the Worker's encrypted secrets; read by hooks and routes; never listed, never in a build
-//   (plain)     server configuration: the Worker's plain vars; read by hooks and routes; never in a client build
-//   .public()   the Worker's plain vars *and* the client build (`import.meta.env.KEY`): what the browser may know
+//   secret()    the Worker's encrypted secrets; read by hooks and routes; never listed, never in a build
+//   server()    server configuration: the Worker's plain vars; read by hooks and routes; never in a client build
+//   browser()   the Worker's plain vars *and* the client build (`import.meta.env.KEY`): what the browser may know
 //   local()     the tooling's own: the deploy token, the deploy target; read by voidbase on this machine or in CI,
 //               never stored on the Worker, never in a build
 //
 // The validators are Void's own (`string()`, `number()`, `boolean()`, `url()`, `email()`, `oneOf()`, `json()`,
-// each with `.optional()`, `.default()`, `.secret()`, `.public()`), the same ones a Void project's env.ts uses, so
-// one vocabulary serves both. Any Standard Schema validator works too (wrap it in `secret()` / `pub()` to tier it).
+// each with `.optional()` and `.default()`), the same ones a Void project's env.ts uses, so one vocabulary serves
+// both; Void's `.secret()` and `.public()` markers are accepted as the tier too. Any Standard Schema validator works.
 //
 // Values come from the deploy's environment: locally `secrets.json` (git-ignored) beside the declaration, then the
 // shell; on Cloudflare the Worker's secrets and vars. `voidbase serve`, `voidbase deploy` and the adapter's build
@@ -50,7 +52,7 @@ export type Access = "secret" | "server" | "public" | "local";
 
 export interface Entry<S extends StandardSchema = StandardSchema> {
   schema: S;
-  /** the tier; without one, Void's `.secret()` / `.public()` marker on the validator decides, else `server` */
+  /** the tier; without one, Void's `.secret()` / `.public()` marker on the validator must say it */
   access?: Access;
   description?: string;
 }
@@ -67,15 +69,13 @@ type Marked<S extends StandardSchema> = Entry<S> & { [ENTRY]: true };
 const entry = <S extends StandardSchema>(e: Entry<S>): Marked<S> => ({ ...e, [ENTRY]: true });
 const isEntry = (v: unknown): v is Marked<StandardSchema> => !!v && typeof v === "object" && ENTRY in (v as object);
 
-/** Attaches a description to a validator: shown by `voidbase secrets` and in the deploy's messages. */
-export function describe<S extends StandardSchema>(schema: S, description: string): Marked<S> { return entry({ schema, description }); }
-/** Tiers any Standard Schema validator as a secret (Void's own validators can say `.secret()` instead). */
+/** Read by hooks and routes only: one of the Worker's encrypted secrets, never listed, never in a build. */
 export function secret<S extends StandardSchema>(schema: S, description?: string): Marked<S> { return entry({ schema, access: "secret", description }); }
-/** Tiers any Standard Schema validator as server configuration: a plain Worker var, never in a client build. */
+/** Read by hooks and routes only: a plain Worker var, never in a client build. */
 export function server<S extends StandardSchema>(schema: S, description?: string): Marked<S> { return entry({ schema, access: "server", description }); }
-/** Tiers any Standard Schema validator as public: a Worker var the browser may also know (`.public()` on Void's). */
-export function pub<S extends StandardSchema>(schema: S, description?: string): Marked<S> { return entry({ schema, access: "public", description }); }
-/** The tooling's own values (the deploy token, the deploy target): read by voidbase here or in CI, never deployed. */
+/** Read by everyone, the browser included: a Worker var the client build inlines as `import.meta.env.KEY`. */
+export function browser<S extends StandardSchema>(schema: S, description?: string): Marked<S> { return entry({ schema, access: "public", description }); }
+/** Read by voidbase's own tooling here or in CI (the deploy token, the deploy target): never deployed. */
 export function local<S extends StandardSchema>(schema: S, description?: string): Marked<S> { return entry({ schema, access: "local", description }); }
 
 export type Spec = Record<string, StandardSchema | Entry>;
@@ -129,7 +129,9 @@ export class Definition<T extends Spec> {
       if (!NAME.test(name)) throw new Error(`voidbase: "${name}" is not a configuration name (UPPER_CASE, letters, digits and underscores, like an environment variable)`);
       const e: Entry = isEntry(v) ? { schema: v.schema, access: v.access, description: v.description } : { schema: v as StandardSchema };
       if (!e.schema || typeof e.schema !== "object" || !("~standard" in e.schema)) throw new Error(`voidbase: ${name} needs a validator (string(), number(), url(), ... from @voidbase-cloud/voidbase/secrets, or any Standard Schema)`);
-      (entries as Record<string, unknown>)[name] = { schema: e.schema, access: e.access ?? markerOf(e.schema) ?? "server", description: e.description };
+      const access = e.access ?? markerOf(e.schema);
+      if (!access) throw new Error(`voidbase: ${name} has no tier. Every key says who may read it: secret(...), server(...), browser(...) or local(...)`);
+      (entries as Record<string, unknown>)[name] = { schema: e.schema, access, description: e.description };
     }
     this.entries = entries;
   }

@@ -320,7 +320,9 @@ export function makeOs(files: Record<string, string>, hooksDir: string) {
 export function routerAdd(method: string, path: string, handler: HookFn, ...middlewares: HookMiddleware[]) {
   routes.push({ method: method.toUpperCase() === "ANY" ? "ALL" : method.toUpperCase(), path: toHonoPath(path), handler, middlewares });
 }
-export function routerUse(..._middlewares: HookMiddleware[]) { /* global hook middleware: milestone six */ }
+/** Global middleware, PocketBase's `routerUse`: runs on every request, before the route that answers it. */
+export const globalMiddlewares: HookMiddleware[] = [];
+export function routerUse(...middlewares: HookMiddleware[]) { globalMiddlewares.push(...middlewares); }
 export function cronAdd(id: string, expr: string, fn: () => unknown) { crons.set(id, { expr, fn }); }
 export function cronRemove(id: string) { crons.delete(id); }
 

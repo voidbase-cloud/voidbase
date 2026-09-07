@@ -9,7 +9,7 @@ import type { AppEnv } from "../types";
 import { CollectionRef, HookRecord } from "./record";
 import {
   $apis, $app, $dbx, $filesystem, $http, $security, BadRequestError, ForbiddenError, InternalServerError, MailerMessage, NotFoundError,
-  RecordUpsertFormFactory, RequestEvent, UnauthorizedError, ValidationError, authToHookRecord, cronAdd, cronRemove, hookStore,
+  RecordUpsertFormFactory, RequestEvent, UnauthorizedError, ValidationError, authToHookRecord, cronAdd, cronRemove, globalMiddlewares, hookStore,
   crons, eventHooks, makeOs, onEvent, routerAdd, routerUse, routes, type HookMiddleware,
 } from "./runtime";
 import { ApiError } from "../errors";
@@ -139,6 +139,27 @@ export function mountHookRoutes(app: Hono<AppEnv>) {
     }
     return c.notFound();
   });
+}
+
+/** PocketBase's routerUse middleware, around every request voidbase serves (its own endpoints included). */
+export function globalHookMiddleware(): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    if (!globalMiddlewares.length) return next();
+    const ev = new RequestEvent(c, authToHookRecord(c.get("auth")));
+    let i = 0, reachedRoute = false;
+    const step = async (): Promise<unknown> => {
+      const mw = globalMiddlewares[i++];
+      if (!mw) { reachedRoute = true; await next(); return undefined; }
+      return (typeof mw === "function" ? mw : mw.func)(ev);
+    };
+    ev.next = step;
+    const result = await step();
+    if (result instanceof Response) return result;
+    if (ev.written) return ev.written;
+    // a middleware that stopped the chain without answering: an empty 204, as a hook route in the same state gets
+    if (!reachedRoute) return c.body(null, 204);
+    return undefined;
+  };
 }
 
 // Per-request state for $app and friends.

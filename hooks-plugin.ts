@@ -32,14 +32,14 @@ export const HOOK_GLOBALS = [
   "ApiError", "NotFoundError", "BadRequestError", "ForbiddenError", "UnauthorizedError", "InternalServerError", "ValidationError",
   "__hooks", "require", "module", "exports", "console", "toString", "sleep", "arrayOf", "unmarshal",
 ];
-const EVENT_HOOKS = ["Bootstrap", "Serve", "Terminate", "BackupCreate", "BackupRestore",
+export const EVENT_HOOKS = ["Bootstrap", "Serve", "Terminate", "BackupCreate", "BackupRestore",
   "ModelValidate", "ModelCreate", "ModelCreateExecute", "ModelAfterCreateSuccess", "ModelAfterCreateError", "ModelUpdate", "ModelUpdateExecute", "ModelAfterUpdateSuccess", "ModelAfterUpdateError", "ModelDelete", "ModelDeleteExecute", "ModelAfterDeleteSuccess", "ModelAfterDeleteError",
   "RecordEnrich", "RecordValidate", "RecordCreate", "RecordCreateExecute", "RecordAfterCreateSuccess", "RecordAfterCreateError", "RecordUpdate", "RecordUpdateExecute", "RecordAfterUpdateSuccess", "RecordAfterUpdateError", "RecordDelete", "RecordDeleteExecute", "RecordAfterDeleteSuccess", "RecordAfterDeleteError",
   "CollectionValidate", "CollectionCreate", "CollectionCreateExecute", "CollectionAfterCreateSuccess", "CollectionAfterCreateError", "CollectionUpdate", "CollectionUpdateExecute", "CollectionAfterUpdateSuccess", "CollectionAfterUpdateError", "CollectionDelete", "CollectionDeleteExecute", "CollectionAfterDeleteSuccess", "CollectionAfterDeleteError",
   "MailerSend", "MailerRecordAuthAlertSend", "MailerRecordPasswordResetSend", "MailerRecordVerificationSend", "MailerRecordEmailChangeSend", "MailerRecordOTPSend",
   "RealtimeConnectRequest", "RealtimeMessageSend", "RealtimeSubscribeRequest",
   "SettingsListRequest", "SettingsUpdateRequest", "SettingsReload", "FileDownloadRequest", "FileTokenRequest",
-  "RecordAuthRequest", "RecordAuthWithPasswordRequest", "RecordAuthRefreshRequest", "RecordRequestPasswordResetRequest", "RecordConfirmPasswordResetRequest", "RecordRequestVerificationRequest", "RecordConfirmVerificationRequest", "RecordRequestEmailChangeRequest", "RecordConfirmEmailChangeRequest", "RecordRequestOTPRequest", "RecordAuthWithOTPRequest",
+  "RecordAuthRequest", "RecordAuthWithPasswordRequest", "RecordAuthWithOAuth2Request", "RecordAuthRefreshRequest", "RecordRequestPasswordResetRequest", "RecordConfirmPasswordResetRequest", "RecordRequestVerificationRequest", "RecordConfirmVerificationRequest", "RecordRequestEmailChangeRequest", "RecordConfirmEmailChangeRequest", "RecordRequestOTPRequest", "RecordAuthWithOTPRequest",
   "RecordsListRequest", "RecordViewRequest", "RecordCreateRequest", "RecordUpdateRequest", "RecordDeleteRequest",
   "CollectionsListRequest", "CollectionViewRequest", "CollectionCreateRequest", "CollectionUpdateRequest", "CollectionDeleteRequest", "CollectionsImportRequest", "BatchRequest",
 ].map((n) => "on" + n);

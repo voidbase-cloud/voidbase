@@ -7,7 +7,7 @@ import type { Field } from "./collections/fields";
 import { createRecord, deleteRecord, listRecords, updateRecord, viewRecord, type ListQuery, type RecordContext } from "./records/service";
 import { fromColumn, toColumn } from "./records/values";
 import { expandRecords } from "./records/expand";
-import { hookGlobals, hookMiddleware, loadHooks, mountHookRoutes } from "./hooks";
+import { globalHookMiddleware, hookGlobals, hookMiddleware, loadHooks, mountHookRoutes } from "./hooks";
 import { requestHook, requestHookResult, trigger } from "./hooks/runtime";
 import { logger } from "#platform/log";
 import { env as voidEnv } from "#platform/env";
@@ -79,6 +79,8 @@ app.use("*", requestLogger());
 app.use("*", bodyLimitMiddleware());
 app.use("*", rateLimitMiddleware());
 app.use("*", hookMiddleware() as never);
+// PocketBase's routerUse: the app's own global middleware, around every request (see src/adapter for Void's middleware/)
+app.use("*", globalHookMiddleware() as never);
 
 app.onError((err, c) => {
   if (err instanceof ApiError) return err.response();

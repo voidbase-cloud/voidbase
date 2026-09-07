@@ -82,3 +82,42 @@ cronAdd("hookjob", "*/5 * * * *", () => {
 routerAdd("GET", "/api/hooktest/boom", () => {
   throw new Error("boom");
 });
+
+// $app.importCollections / truncateCollection / record.setPassword: PocketBase's own app API, used by an app that
+// keeps a schema of its own (demo.voidbase.cloud restores itself with exactly this route's three calls)
+routerAdd("POST", "/api/hooktest/import", (e) => {
+  $app.importCollections([{
+    id: "pbc_hooktest_seed", name: "hook_seed", type: "base", system: false, listRule: "", viewRule: "",
+    fields: [
+      { autogeneratePattern: "[a-z0-9]{15}", hidden: false, id: "text3208210256", max: 15, min: 15, name: "id", pattern: "^[a-z0-9]+$", presentable: false, primaryKey: true, required: true, system: true, type: "text" },
+      { autogeneratePattern: "", hidden: false, id: "text_hook_seed_title", max: 0, min: 0, name: "title", pattern: "", presentable: true, primaryKey: false, required: true, system: false, type: "text" },
+    ],
+    indexes: [],
+  }, {
+    id: "pbc_hooktest_users", name: "hook_users", type: "auth", system: false,
+    listRule: "", viewRule: "", createRule: "", updateRule: "id = @request.auth.id", deleteRule: null,
+    fields: [
+      { autogeneratePattern: "[a-z0-9]{15}", hidden: false, id: "text3208210256", max: 15, min: 15, name: "id", pattern: "^[a-z0-9]+$", presentable: false, primaryKey: true, required: true, system: true, type: "text" },
+      { cost: 0, hidden: true, id: "password901924565", max: 0, min: 8, name: "password", pattern: "", presentable: false, required: true, system: true, type: "password" },
+      { autogeneratePattern: "[a-zA-Z0-9]{50}", hidden: true, id: "text2504183744", max: 60, min: 30, name: "tokenKey", pattern: "", presentable: false, primaryKey: false, required: true, system: true, type: "text" },
+      { exceptDomains: null, hidden: false, id: "email3885137012", name: "email", onlyDomains: null, presentable: false, required: true, system: true, type: "email" },
+      { hidden: false, id: "bool1547992806", name: "emailVisibility", presentable: false, required: false, system: true, type: "bool" },
+      { hidden: false, id: "bool256245529", name: "verified", presentable: false, required: false, system: true, type: "bool" },
+    ],
+    indexes: [
+      "CREATE UNIQUE INDEX `idx_tokenKey_pbc_hooktest_users` ON `hook_users` (`tokenKey`)",
+      "CREATE UNIQUE INDEX `idx_email_pbc_hooktest_users` ON `hook_users` (`email`) WHERE `email` != ''",
+    ],
+  }], false);
+  const coll = $app.findCollectionByNameOrId("hook_seed");
+  $app.save(new Record(coll, { title: "first" }));
+  const before = $app.countRecords("hook_seed");
+  $app.truncateCollection(coll);
+  const after = $app.countRecords("hook_seed");
+  // an auth record created the way a PocketBase hook creates one: setPassword, no form confirmation
+  const users = $app.findCollectionByNameOrId("hook_users");
+  const user = new Record(users, { email: "hooked@example.com" });
+  user.setPassword("hook-made-this");
+  $app.save(user);
+  return e.json(200, { before, after, user: user.id });
+});

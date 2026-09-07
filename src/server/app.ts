@@ -580,6 +580,20 @@ installServices({
     try { await deletePrefix(ctx.storage, `${existing.id}/`); } catch (err) { console.error("voidbase: file cleanup failed", err); }
     await refreshStoreCollections(store, ctx.db);
   },
+  importCollections: async (items, deleteMissing) => {
+    const store = hookStore.getStore()!;
+    const ctx = await store.ctx();
+    await importCollections(ctx.db, items, deleteMissing);
+    await refreshStoreCollections(store, ctx.db);
+  },
+  truncateCollection: async (ref) => {
+    const store = hookStore.getStore()!;
+    const ctx = await store.ctx();
+    const existing = ctx.collections.get(ref.id) ?? ctx.collections.get(ref.name);
+    if (!existing) throw new Error(`sql: no rows in result set (collection "${ref.id || ref.name}")`);
+    await truncateCollection(ctx.db, existing);
+    try { await deletePrefix(ctx.storage, `${existing.id}/`); } catch (err) { console.error("voidbase: file cleanup failed", err); }
+  },
   // $app.newMailClient().send(): synchronous like PocketBase's mailer, errors surface to the hook
   sendMail: async (msg) => { const ctx = await hookStore.getStore()!.ctx(); await sendMail(ctx.db, { from: msg.from, to: msg.to, cc: msg.cc, bcc: msg.bcc, subject: msg.subject, html: msg.html, text: msg.text, headers: msg.headers }, { inline: true }); },
 });

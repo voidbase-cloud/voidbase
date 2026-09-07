@@ -585,7 +585,9 @@ export async function saveHookRecord(ctx: RecordContext, rec: HookRecord): Promi
   const body: Record<string, unknown> = {};
   for (const f of c.fields as Field[]) {
     if (f.type === "autodate") continue;
-    if (f.type === "password") { const v = rec.values[f.name]; if (v && !String(v).startsWith("$2")) body[f.name] = v; continue; }
+    // a plain password set by a hook (record.setPassword) is the model's, not a form's: PocketBase's app.Save asks
+    // for no confirmation, so the confirmation the API form requires is mirrored here
+    if (f.type === "password") { const v = rec.values[f.name]; if (v && !String(v).startsWith("$2")) { body[f.name] = v; body[`${f.name}Confirm`] = v; } continue; }
     if (f.type === "file") { body[f.name] = [...((rec.values[f.name] as string[] | string | undefined) ? ([] as string[]).concat(rec.values[f.name] as string[]) : []).filter((n) => !(rec.uploads[f.name] ?? []).some((u) => u.name === n)), ...(rec.uploads[f.name] ?? [])]; continue; }
     body[f.name] = rec.values[f.name];
   }

@@ -123,6 +123,8 @@ export class HookRecord {
     if (f.type === "password") { this.values[name] = value == null ? "" : String(value); return; }
     this.values[name] = normalizeInput(f, value);
   }
+  /** PocketBase's record.setPassword: the value is hashed on save, like a password field set through the API */
+  setPassword(value: string) { this.set("password", value); return this; }
   getString(name: string) { const v = this.values[name]; return v == null ? "" : Array.isArray(v) ? String(v[0] ?? "") : typeof v === "object" ? JSON.stringify(v) : String(v); }
   getBool(name: string) { return !!this.values[name]; }
   getInt(name: string) { return Math.trunc(Number(this.values[name]) || 0); }

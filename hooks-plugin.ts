@@ -20,7 +20,7 @@ const ASYNC_PROPS = new Set([
   "findRecordById", "findRecordsByFilter", "findFirstRecordByFilter", "findFirstRecordByData", "findAllRecords", "countRecords",
   "findAuthRecordByEmail", "findAuthRecordByToken", "expandRecord", "expandRecords",
   "fileFromURL", "fileFromBytes", "fileFromPath", "bindBody", "requestInfo",
-  "importCollections",
+  "importCollections", "importCollectionsByMarshaledJSON", "truncateCollection",
   "queueJob", // $jobs.queueJob hands work to the jobs queue
 ]);
 

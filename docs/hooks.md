@@ -54,6 +54,30 @@ Request events expose the PocketBase `RequestEvent` surface: `e.auth`, `e.reques
 `e.pathParam(name)`, `e.bindBody(obj)`, `e.json(status, data)`, `e.string`, `e.html`, `e.noContent`,
 `e.redirect`, `e.next()`.
 
+
+### The app's own schema
+
+`$app` carries PocketBase's schema methods, which an app that ships its own collections uses at runtime:
+
+| call | what it does |
+| --- | --- |
+| `$app.importCollections(list, deleteMissing)` | create or update every collection in the list; with `deleteMissing` the ones it does not name are dropped |
+| `$app.importCollectionsByMarshaledJSON(json, deleteMissing)` | the same, from a JSON string |
+| `$app.truncateCollection(collection)` | delete every record of a collection (and its files); a view has none to delete |
+| `record.setPassword(value)` | set an auth record's password; `$app.save()` then asks for no confirmation, as PocketBase's `app.Save` does |
+
+Together they are enough for an app to restore itself:
+
+```js
+// pb_hooks/reset.pb.js
+const data = require(`${__hooks}/data.js`);
+cronAdd("reset", "0 * * * *", () => {
+  $app.importCollections(data.COLLECTIONS, true);        // whatever was added is gone
+  for (const c of data.NAMES) $app.truncateCollection($app.findCollectionByNameOrId(c));
+  data.seed();                                            // records, users, whatever the app ships with
+});
+```
+
 ## Globals
 
 | Global | Supported members |

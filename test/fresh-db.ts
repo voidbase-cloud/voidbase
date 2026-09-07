@@ -95,6 +95,14 @@ try {
   await Bun.sleep(1500);
   const cronMarkers = (await fetch(`${base}/api/collections/ks_mig/records?filter=${encodeURIComponent("title = 'cron-ran'")}`).then((r) => r.json())) as { totalItems: number };
   check("POST /api/crons/:id runs the hook job", ran.status === 204 && cronMarkers.totalItems === 1, `${ran.status} ${JSON.stringify(cronMarkers).slice(0, 100)}`);
+  {
+    // $app.importCollections, $app.truncateCollection and record.setPassword from a hook (PocketBase's app API)
+    const r = await fetch(`${base}/api/hooktest/import`, { method: "POST" });
+    const body = (await r.json()) as { before?: number; after?: number; user?: string };
+    check("a hook imports a collection, seeds it and truncates it through $app", r.status === 200 && body.before === 1 && body.after === 0, `${r.status} ${JSON.stringify(body)}`);
+    const login = await fetch(`${base}/api/collections/hook_users/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: "hooked@example.com", password: "hook-made-this" }) });
+    check("an auth record a hook created with setPassword signs in, without a form confirmation", login.status === 200, `${login.status} ${(await login.text()).slice(0, 120)}`);
+  }
   const boom = await fetch(`${base}/api/hooktest/boom`);
   check("hook route exception -> generic 500", boom.status === 500 && ((await boom.json()) as { message: string }).message === "Something went wrong while processing your request.", String(boom.status));
   const api404 = await fetch(`${base}/api/nope`, { headers: { accept: "text/html,*/*;q=0.8" } });

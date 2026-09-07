@@ -129,6 +129,8 @@ export class RequestEvent {
 export interface AppServices {
   saveCollection(ref: CollectionRef): Promise<CollectionRef>;
   deleteCollection(ref: CollectionRef): Promise<void>;
+  importCollections(items: Record<string, unknown>[], deleteMissing: boolean): Promise<void>;
+  truncateCollection(ref: CollectionRef): Promise<void>;
   saveRecord: (rec: HookRecord) => Promise<HookRecord>;
   deleteRecord: (rec: HookRecord) => Promise<void>;
   findRecordById: (collection: string, id: string) => Promise<HookRecord | null>;
@@ -164,6 +166,12 @@ export interface AppApi {
   save(model: HookRecord | CollectionRef): Promise<HookRecord | CollectionRef>;
   saveNoValidate(model: HookRecord | CollectionRef): Promise<HookRecord | CollectionRef>;
   delete(model: HookRecord | CollectionRef): Promise<void>;
+  /** PocketBase's app.importCollections: create or update every collection in the list, optionally deleting the rest */
+  importCollections(toImport: Record<string, unknown>[], deleteMissing?: boolean): Promise<void>;
+  /** PocketBase's app.importCollectionsByMarshaledJSON: the same, from a JSON string */
+  importCollectionsByMarshaledJSON(raw: string, deleteMissing?: boolean): Promise<void>;
+  /** PocketBase's app.truncateCollection: delete every record of a collection (not a view) */
+  truncateCollection(collection: string | CollectionRef): Promise<void>;
   settings(): Settings;
   newMailClient(): { send: (msg: MailerMessage) => Promise<void> };
   logger(): Console;
@@ -208,6 +216,9 @@ export const $app: AppApi = {
   },
   expandRecord: (record: HookRecord, expands: string[]) => svc().expandRecords([record], expands),
   expandRecords: (records: HookRecord[], expands: string[]) => svc().expandRecords(records, expands),
+  importCollections: (toImport: Record<string, unknown>[], deleteMissing = false) => svc().importCollections(toImport, deleteMissing),
+  importCollectionsByMarshaledJSON: (raw: string, deleteMissing = false) => svc().importCollections(JSON.parse(raw) as Record<string, unknown>[], deleteMissing),
+  truncateCollection: (collection: string | CollectionRef) => svc().truncateCollection(typeof collection === "string" ? $app.findCollectionByNameOrId(collection) : collection),
   save: (model: HookRecord | CollectionRef) => (model instanceof CollectionRef ? svc().saveCollection(model) : svc().saveRecord(model)),
   saveNoValidate: (model: HookRecord | CollectionRef) => (model instanceof CollectionRef ? svc().saveCollection(model) : svc().saveRecord(model)),
   delete: (model: HookRecord | CollectionRef) => (model instanceof CollectionRef ? svc().deleteCollection(model) : svc().deleteRecord(model)),

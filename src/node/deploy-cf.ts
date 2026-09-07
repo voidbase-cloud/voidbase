@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseRedirects, writeCloudProject, type RedirectEntry } from "./cloud-init";
 import { loadEnv } from "./serve";
+import { loadSecrets, SECRETS_DIR, workerSecretNames } from "./secrets";
 import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findZone, rateLimitNamespace, resolveAccount, workersSubdomain } from "../cloud/rest";
 
 const API = (process.env.CLOUDFLARE_API_BASE ?? "https://api.cloudflare.com/client/v4").replace(/\/$/, "");
@@ -73,14 +74,26 @@ export function loadEnvFiles(files = [".env", ".env.local", "../.env", "../.env.
   return loaded;
 }
 
-export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ name: string; account: string; url: string | null; wranglerConfig: string; project: string }> {
+/** The environment, the token, the account and the worker name a deploy (or `voidbase secrets`) targets. */
+export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" | "log"> = {}): Promise<{ api: CfApi; token: string; account: { id: string; name: string }; name: string; secretsDir: string; secrets: ReturnType<typeof loadSecrets> }> {
   const log = opts.log ?? ((l: string) => console.log(l));
   loadEnv(); const fromFiles = loadEnvFiles(); if (fromFiles.length) log(`from .env: ${fromFiles.join(", ")}`);
+  // pb_secrets/: the declared names, and on a dev machine their values, which count as environment from here on
+  // (VOIDBASE_SUPERUSER_*, VOIDBASE_ENCRYPTION_KEY and the rest may live in secrets.json instead of .env)
+  const secretsDir = resolve(process.env.VOIDBASE_SECRETS_DIR || SECRETS_DIR);
+  const secrets = loadSecrets(secretsDir);
+  if (secrets.state.declaration) log(`${secretsDir}: ${secrets.state.declaration.names.length} secret(s) declared, ${secrets.state.provided.length} valued here${secrets.undeclared.length ? `; in secrets.json but not declared (not deployed): ${secrets.undeclared.join(", ")}` : ""}`);
   const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || ""; // empty means unset
   if (!token) { log(`${TOKEN_ENV} is not set.\n\n${tokenHelp()}`); throw new Error(`${TOKEN_ENV} missing`); }
   const name = slug(opts.name || process.env.VOIDBASE_DEPLOY_NAME || projectName());
   const api = new CfApi(token, API);
   const account = await resolveAccount(api, opts.account || process.env.VOIDBASE_DEPLOY_CF_ACCOUNT_ID || undefined).catch((e: Error) => { throw new Error(`${e.message} (is it ${TOKEN_ENV} with Account Settings read?)`); });
+  return { api, token, account, name, secretsDir, secrets };
+}
+
+export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ name: string; account: string; url: string | null; wranglerConfig: string; project: string }> {
+  const log = opts.log ?? ((l: string) => console.log(l));
+  const { api, token, account, name, secretsDir, secrets: pbSecrets } = await deployTarget(opts);
   log(`account ${account.name} (${account.id}), worker "${name}"`);
   const db = await ensureD1(api, account.id, `${name}-db`); log(`D1 ${name}-db ${db.created ? "created" : "exists"} (${db.uuid})`);
   const bucket = await ensureR2(api, account.id, `${name}-storage`); log(`R2 ${name}-storage ${bucket.created ? "created" : "exists"}`);
@@ -154,14 +167,34 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const saved = existsSync(credFile) ? (JSON.parse(readFileSync(credFile, "utf8")) as { email: string; password: string }) : null;
   const placeholder = !password || password === "changeme123"; // the local dev default never goes live
   if (placeholder && saved && (!email || email === saved.email)) { email = saved.email; password = saved.password; }
-  if (!email) email = "admin@example.com";
-  if (!password || password === "changeme123") { password = randomPassword(); log(`generated a superuser password for ${email} (saved in ${credFile}; change it after the first login)`); }
-  writeFileSync(credFile, JSON.stringify({ email, password }, null, 2) + "\n", { mode: 0o600 });
+  // what the Worker already holds: a checkout with no credentials of its own (CI) must not replace the superuser
+  // the Worker has with a generated one that only this checkout would know
+  const onWorker = await workerSecretNames(api, account.id, name);
+  const keepSuperuser = placeholder && !saved && onWorker.includes("VOIDBASE_SUPERUSER_EMAIL") && onWorker.includes("VOIDBASE_SUPERUSER_PASSWORD");
+  if (keepSuperuser) log("superuser: no credentials in this checkout, the Worker keeps the ones it has");
+  else {
+    if (!email) email = "admin@example.com";
+    if (!password || password === "changeme123") { password = randomPassword(); log(`generated a superuser password for ${email} (saved in ${credFile}; change it after the first login)`); }
+    writeFileSync(credFile, JSON.stringify({ email, password }, null, 2) + "\n", { mode: 0o600 });
+  }
+
+  // the Worker's secrets: the superuser, VOIDBASE_DEPLOY_SECRETS=X,Y from the environment, and every declared
+  // pb_secrets/ name with a local value. A declared name with no value here must already be on the Worker.
+  const declared = pbSecrets.state.declaration?.names ?? [];
+  const secretMap = new Map<string, string>(keepSuperuser ? [] : [["VOIDBASE_SUPERUSER_EMAIL", email], ["VOIDBASE_SUPERUSER_PASSWORD", password]]);
+  for (const k of extraSecrets) if (process.env[k]) secretMap.set(k, process.env[k]!);
+  for (const k of declared) { const v = pbSecrets.state.values?.[k]; if (v !== undefined) secretMap.set(k, v); }
+  const missingSecrets = declared.filter((k) => !secretMap.has(k) && !onWorker.includes(k));
+  if (missingSecrets.length) {
+    const msg = `${missingSecrets.length} declared secret(s) have no value in ${secretsDir}/secrets.json and are not on the Worker "${name}" yet: ${missingSecrets.join(", ")}. Push them once from a machine that has them: voidbase secrets push --name ${name}`;
+    if (opts.dryRun) log(`secrets: ${msg}`); else throw new Error(msg);
+  } else if (declared.length) log(`secrets: ${declared.length} declared${onWorker.length ? `, ${declared.filter((k) => !secretMap.has(k)).length} already on the Worker` : ""}`);
+  const secrets = [...secretMap.entries()];
 
   const url = domain ? `https://${domain}` : await workersSubdomain(api, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null));
   if (domain) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")} (workers.dev off): attached through the Workers Custom Domains API after the upload (Cloudflare adds the DNS record and certificate)`);
   log(`bindings: D1, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
-  if (opts.dryRun) { log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put 2 secrets and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig, project: cloud }; }
+  if (opts.dryRun) { log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put ${secrets.length} secrets (${secrets.map(([k]) => k).join(", ")}) and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig, project: cloud }; }
 
   // the toolchain comes with the voidbase package (void, and wrangler through void)
   const voidDir = resolve(Bun.resolveSync("void/package.json", PKG), "..");
@@ -169,7 +202,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   // values also exported in the shell are stripped from baked vars by the Cloudflare backend, so keep the vars file clean instead
   // the generated project has no node_modules of its own: `void deploy` shells out to `vite build`, so the package's toolchain goes on PATH
   const binDirs = [resolve(PKG, "node_modules/.bin"), resolve(voidDir, "..", ".bin")].filter((d, i, a) => a.indexOf(d) === i);
-  const env: Record<string, string | undefined> = { ...process.env, PATH: `${binDirs.join(":")}:${process.env.PATH ?? ""}`, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: account.id, VOIDBASE_SUPERUSER_EMAIL: email, VOIDBASE_SUPERUSER_PASSWORD: password };
+  const env: Record<string, string | undefined> = { ...process.env, PATH: `${binDirs.join(":")}:${process.env.PATH ?? ""}`, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: account.id, ...(keepSuperuser ? {} : { VOIDBASE_SUPERUSER_EMAIL: email, VOIDBASE_SUPERUSER_PASSWORD: password }) };
   for (const k of Object.keys(baked)) delete env[k];
   const sh = async (cmd: string[], input?: string) => { const p = Bun.spawn(cmd, { cwd: cloud, env: env as Record<string, string>, stdin: input === undefined ? "inherit" : new TextEncoder().encode(input), stdout: "inherit", stderr: "inherit" }); const code = await p.exited; if (code !== 0) throw new Error(`${cmd.join(" ")} exited with ${code}`); };
   mkdirSync(`${cloud}/public`, { recursive: true });
@@ -178,7 +211,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     env.VOIDBASE_APP_DIR = resolve(publicDir); await sh(["bun", resolve(PKG, "scripts/sync-app.ts"), "--dest", `${cloud}/public`], undefined); log(`static site ${resolve(publicDir)} served at / (the panel stays at /_/)`);
     if (pathRedirects.length) writeFileSync(`${cloud}/public/_redirects`, pathRedirects.map((r) => `${r.path} ${r.to} ${r.status}`).join("\n") + "\n");
   }
-  const secrets: [string, string][] = [["VOIDBASE_SUPERUSER_EMAIL", email], ["VOIDBASE_SUPERUSER_PASSWORD", password], ...extraSecrets.filter((k) => process.env[k]).map((k): [string, string] => [k, process.env[k]!])];
+  if (secrets.length) log(`secrets: storing ${secrets.map(([k]) => k).join(", ")} on the Worker`);
   for (const [k, v] of secrets) await sh(["bun", wrangler, "secret", "put", k, "--name", name], v + "\n");
   await sh([voidBin, "deploy", "--backend", "cloudflare"]);
   for (const host of domains) {
@@ -188,7 +221,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   if (hostRedirects.length) await applyZoneRedirects(api, account.id, name, hostRedirects, log);
   if (url) {
     const ok = await fetch(`${url}/api/health`).then((r) => r.status).catch(() => 0);
-    log(`\nlive: ${url}  (health ${ok || "not reachable yet"})\n├─ REST API:  ${url}/api/\n└─ Dashboard: ${url}/_/   sign in as ${email} (password in ${credFile})`);
+    log(`\nlive: ${url}  (health ${ok || "not reachable yet"})\n├─ REST API:  ${url}/api/\n└─ Dashboard: ${url}/_/   sign in as ${keepSuperuser ? "the superuser the Worker already had" : `${email} (password in ${credFile})`}`);
   } else log("deployed; workers.dev subdomain not enabled on this account, add a route or enable it in the dashboard (or VOIDBASE_DEPLOY_DOMAIN=<host> / --domain)");
   return { name, account: account.id, url, wranglerConfig, project: cloud };
 }

@@ -70,7 +70,8 @@ What it does, in order: resolves the account through the token, creates `<name>-
 (`node_modules/voidbase/.cloud/<name>`, nothing appears in your tree) with a `wrangler.jsonc` carrying the real
 ids and, when the directory has a `main.ts` exporting `register(app)`, composes it into the Worker; stores the
 superuser as worker secrets (from `VOIDBASE_SUPERUSER_*` / `PB_SUPERUSER_*`, or a generated
-password saved in `pb_data/.superuser-credentials`; the local dev default `changeme123` never goes live), syncs
+password saved in `pb_data/.superuser-credentials`; the local dev default `changeme123` never goes live) together
+with the secrets `pb_secrets/` declares (below), syncs
 the admin panel and your frontend build into that project, and runs `void deploy --backend cloudflare`,
 which builds, applies the D1 migrations and uploads the Worker with its cron trigger. It ends with the
 `https://<name>.<your-subdomain>.workers.dev` URL and a health check. Re-running is idempotent: existing resources
@@ -102,6 +103,34 @@ account. Cloudflare still requires the account to have a workers.dev subdomain b
 | `LOGS_ANALYTICS` (Workers Analytics Engine) | one data point per request (method, path, status, auth collection, error, execution time) at any log level, queryable in the dashboard and the SQL API at $0.25 per million points, while the panel's log keeps writing D1 rows from `VOIDBASE_LOG_MIN_LEVEL` up. The account has to enable Analytics Engine once, at https://dash.cloudflare.com/?to=/:account/workers/analytics-engine, or the upload fails with code 10089 | opt-in: `--analytics` / `VOIDBASE_DEPLOY_ANALYTICS=1` |
 | `HUB` (Durable Object `VoidbaseHub`, SQLite-backed, in this Worker) | the realtime hub: every SSE connection holds one hibernatable socket to it, writes publish to it, so events arrive in tens of milliseconds instead of the D1 poll's second, and idle apps cost nothing (the object sleeps). Free plan included | `--no-hub` / `VOIDBASE_DEPLOY_HUB=0` keeps the D1 poll |
 | Smart Placement | the Worker runs next to its D1 database | always on |
+
+### Secrets: `pb_secrets/`
+
+The app's own secrets (an SMTP password, OAuth client secrets, `VOIDBASE_ENCRYPTION_KEY`) have a directory, in
+PocketBase's naming:
+
+```
+pb_secrets/main.pb.js      secrets({ SMTP_PASSWORD: "the mail provider's password", ... })   committed
+pb_secrets/secrets.json    { "SMTP_PASSWORD": "..." }                                       git-ignored
+```
+
+`main.pb.js` names the secrets and is read, never run (`voidbase init` writes an empty one and the `.gitignore`
+lines). `secrets.json` holds the values on your machine. `voidbase serve` loads them into the environment, so
+`$os.getenv("SMTP_PASSWORD")` and the app's own code see the same names locally as on Cloudflare. `voidbase deploy`
+stores every declared value as the Worker's secrets (encrypted, per Worker: two instances never share one) next to
+the superuser, and refuses to deploy while a declared secret has neither a local value nor one already on the
+Worker. That is what makes CI simple: a checkout without `secrets.json` deploys with nothing but the deploy token,
+because the values were pushed once from a machine that has them:
+
+```bash
+voidbase secrets              # each declared name: local value or not, on the Worker or not
+voidbase secrets push         # store the local values on the Worker without redeploying
+```
+
+A value in `secrets.json` that `main.pb.js` does not declare is never deployed (the list says so). `VOIDBASE_DEPLOY_SECRETS=A,B`
+still stores environment variables as secrets for a deploy driven purely by the shell. Cloudflare's account-level
+Secrets Store is deliberately not used: one store is shared by every Worker of the account, and its bindings are
+read asynchronously, which `$os.getenv` is not.
 
 ### Every instance is isolated
 

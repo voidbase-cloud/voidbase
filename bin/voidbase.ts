@@ -18,11 +18,11 @@ const flags: Record<string, string> = {}; const positional: string[] = [];
 for (let i = 0; i < argv.length; i++) { const a = argv[i]!; if (a.startsWith("--")) { const [k, v] = a.slice(2).split("="); flags[k!] = v ?? (argv[i + 1] && !argv[i + 1]!.startsWith("--") ? argv[++i]! : "1"); } else positional.push(a); }
 const [cmd, sub, ...rest] = positional;
 const url = (flags.url ?? process.env.VOIDBASE_URL ?? "http://127.0.0.1:8090").replace(/\/$/, "");
-const serveOpts = () => ({ http: flags.http, dir: flags.dir, hooksDir: flags.hooksDir, migrationsDir: flags.migrationsDir, publicDir: flags.publicDir });
+const serveOpts = () => ({ http: flags.http, dir: flags.dir, hooksDir: flags.hooksDir, migrationsDir: flags.migrationsDir, secretsDir: flags.secretsDir, publicDir: flags.publicDir });
 const admin = () => { const [email, password] = (flags.admin ?? `${process.env.VOIDBASE_SUPERUSER_EMAIL ?? "admin@example.com"}:${process.env.VOIDBASE_SUPERUSER_PASSWORD ?? ""}`).split(":") as [string, string]; return { email, password }; };
 const HELP = `voidbase - PocketBase-compatible backend: a single Bun process locally, Cloudflare Workers via Void in production
 
-  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--publicDir pb_public] [--dev] [--entry main.ts]
+  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--secretsDir pb_secrets] [--publicDir pb_public] [--dev] [--entry main.ts]
                                      run the server like "pocketbase serve" (--dev restarts when hooks or migrations change;
                                      --entry runs your own main.ts, the counterpart of a custom PocketBase build)
   superuser upsert <email> <password>  create or update a superuser: on the local data directory (--dir) or on a running
@@ -33,7 +33,7 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      (main.ts, package.json, pb_hooks, pb_migrations, pb_public) with the project's
                                      routes/middleware/crons/queues and whatever src/voidbase/ adds. vite build does
                                      this too through the voidbaseAdapter() plugin; this is the same pass without Vite.
-  init [dir]                         scaffold .env, pb_hooks/, pb_migrations/ in a fresh checkout and sync the panel
+  init [dir]                         scaffold .env, pb_hooks/, pb_migrations/, pb_secrets/ in a fresh checkout and sync the panel
   dev [--port 5180]                  start the Void dev server (vp dev)
   build | preview [--port 5181]      production build / run the built Worker locally (vp build / vp preview)
   deploy [--name worker] [--account id] [--domain example.com,api.example.com] [--public-dir pb_public] [--dry-run] [--no-queue] [--no-hub] [--no-cron]
@@ -43,6 +43,8 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      stores the superuser as worker secrets and runs void deploy --backend cloudflare
   deploy --void                      deploy to the Void platform instead (void auth login first)
   token                              print the Cloudflare dashboard link that creates VOIDBASE_DEPLOY_CF_API_KEY
+  secrets [list] [--dir pb_secrets]  the secrets pb_secrets/main.pb.js declares: which have a value in secrets.json (git-ignored)
+  secrets push [--name worker]       and which are on the Worker; push stores the local values as the Worker's secrets
   update [--dir pb_data] [--backup]  prebuilt executable only: fetch the latest GitHub release for this platform, verify
                                      its checksum and replace the executable (--backup zips pb_data first)
   version                            print the version
@@ -83,6 +85,31 @@ switch (cmd) {
     await update({ currentVersion: await currentVersion(), dataDir: resolve(flags.dir ?? "pb_data"), backup: !!flags.backup });
     break;
   }
+  case "secrets": {
+    // pb_secrets/ (src/node/secrets.ts): what is declared, what has a value here, what the Worker has; push the values
+    const { secretsState, putWorkerSecrets, workerSecretNames, SECRETS_DIR } = await import("../src/node/secrets");
+    const { deployTarget } = await import("../src/node/deploy-cf");
+    const dir = resolve(flags.dir ?? process.env.VOIDBASE_SECRETS_DIR ?? SECRETS_DIR);
+    const state = secretsState(dir);
+    if (!state.declaration) { console.log(`${dir}/main.pb.js does not exist: no secrets declared (voidbase init writes one)`); break; }
+    if (sub === "push") {
+      const { api, account, name } = await deployTarget({ name: flags.name, account: flags.account, log: () => undefined });
+      const values: Record<string, string> = {}; for (const k of state.provided) values[k] = state.values![k]!;
+      if (!Object.keys(values).length) { console.log(`nothing to push: none of ${state.declaration.names.join(", ")} has a value in ${dir}/secrets.json`); break; }
+      const before = await workerSecretNames(api, account.id, name);
+      const done = await putWorkerSecrets(api, account.id, name, values).catch((e: Error) => { throw new Error(`${e.message}\n  (the Worker "${name}" must exist: voidbase deploy creates it and stores the secrets itself)`); });
+      console.log(`pushed ${done.length} secret(s) to worker "${name}" (account ${account.name}): ${done.map((k) => `${k}${before.includes(k) ? " (replaced)" : ""}`).join(", ")}`);
+      if (state.unprovided.length) console.log(`no local value, left as they are: ${state.unprovided.join(", ")}`);
+      break;
+    }
+    // list (default): a row per declared name
+    let onWorker: string[] | null = null; let worker = "";
+    try { const t = await deployTarget({ name: flags.name, account: flags.account, log: () => undefined }); worker = t.name; onWorker = await workerSecretNames(t.api, t.account.id, t.name); } catch { /* no token here: local view only */ }
+    console.log(`${dir}: ${state.declaration.names.length} declared${state.values ? `, ${state.provided.length} valued in secrets.json` : ", no secrets.json"}${onWorker ? `, worker "${worker}" has ${onWorker.filter((k) => state.declaration!.names.includes(k)).length} of them` : " (set VOIDBASE_DEPLOY_CF_API_KEY to compare with the Worker)"}`);
+    for (const k of state.declaration.names) console.log(`  ${k.padEnd(32)} ${state.provided.includes(k) ? "local value" : "no local value"}${onWorker ? `  ${onWorker.includes(k) ? "on the worker" : "NOT on the worker"}` : ""}${state.declaration.descriptions[k] ? `  ${state.declaration.descriptions[k]}` : ""}`);
+    if (state.undeclared.length) console.log(`  in secrets.json but not declared (never deployed): ${state.undeclared.join(", ")}`);
+    break;
+  }
   case "token": { const { tokenHelp } = await import("../src/node/deploy-cf"); console.log(tokenHelp()); break; }
   case "bundle": {
     const { buildRelease, pushRelease } = await import("../src/node/bundle");
@@ -120,7 +147,7 @@ switch (cmd) {
     for (const u of manifest.unsupported) console.warn(`not carried over: ${u.what} — ${u.why}`);
     for (const c of manifest.collisions) console.warn(`shadowed by voidbase's own API, the app route never runs: ${c}`);
     console.log(`${manifest.mode === "static" ? "static" : "server"} app at ${root}`);
-    console.log(`  ${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)`);
+    console.log(`  ${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.hooks.length} hook(s), ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)${manifest.secrets ? `, ${manifest.secrets.names.length} secret(s)` : ""}`);
     console.log(`  wrote ${written.join(", ") || "nothing"}${copied ? `, ${copied} entr(ies) into ${flags["public-dir"] ?? ".voidbase/pb_public"}` : ""}`);
     console.log("  run it:    bun .voidbase/main.ts --http 127.0.0.1:8090");
     console.log("  deploy it: cd .voidbase && voidbase deploy");
@@ -128,10 +155,17 @@ switch (cmd) {
   }
   case "init": {
     const dir = resolve(sub ?? ".");
-    mkdirSync(`${dir}/pb_hooks`, { recursive: true }); mkdirSync(`${dir}/pb_migrations`, { recursive: true });
+    mkdirSync(`${dir}/pb_hooks`, { recursive: true }); mkdirSync(`${dir}/pb_migrations`, { recursive: true }); mkdirSync(`${dir}/pb_secrets`, { recursive: true });
+    { // pb_secrets/main.pb.js declares the secrets; secrets.json holds their values and never enters git
+      const { declarationScaffold } = await import("../src/node/secrets");
+      if (!existsSync(`${dir}/pb_secrets/main.pb.js`)) writeFileSync(`${dir}/pb_secrets/main.pb.js`, declarationScaffold());
+      const gi = `${dir}/.gitignore`; const have = existsSync(gi) ? await Bun.file(gi).text() : "";
+      const lines = ["pb_data/", "pb_secrets/secrets.json"].filter((l) => !have.split("\n").some((x) => x.trim() === l || x.trim() === l.replace(/\/$/, "")));
+      if (lines.length) writeFileSync(gi, `${have}${have && !have.endsWith("\n") ? "\n" : ""}${lines.join("\n")}\n`);
+    }
     if (!existsSync(`${dir}/.env`)) { cpSync(`${ROOT}/.env.example`, `${dir}/.env`); console.log("wrote .env from .env.example (set VOIDBASE_SUPERUSER_EMAIL/PASSWORD)"); }
     if (!existsSync(`${dir}/pb_hooks/main.pb.js`)) writeFileSync(`${dir}/pb_hooks/main.pb.js`, `/// <reference path="../pb_data/types.d.ts" />\nrouterAdd("GET", "/api/hello", (e) => e.json(200, { hello: "voidbase" }));\n`);
-    console.log("pb_hooks/ and pb_migrations/ ready");
+    console.log("pb_hooks/, pb_migrations/ and pb_secrets/ ready (.gitignore covers pb_data/ and pb_secrets/secrets.json)");
     await run("bun", ["scripts/sync-panel.ts"]).catch(() => undefined);
     console.log("\nnext: bun install && ./node_modules/.bin/void db migrate && voidbase dev");
     break;

@@ -103,8 +103,11 @@ provider variables.
 
 `voidbase token` prints a Cloudflare dashboard link that creates `VOIDBASE_DEPLOY_CF_API_KEY` with the right
 permissions pre-selected; with that variable set, `voidbase deploy` provisions D1 and R2, generates the Void project
-inside the package (`node_modules/voidbase/.cloud/<name>`), stores the superuser as secrets and uploads the Worker.
-Your directory stays `pb_hooks` + `pb_migrations` + `pb_data`, like a PocketBase folder. See [docs/deploy.md](docs/deploy.md).
+inside the package (`node_modules/voidbase/.cloud/<name>`), stores the superuser and the secrets `pb_secrets/`
+declares as the Worker's secrets, and uploads the Worker. Your directory stays `pb_hooks` + `pb_migrations` +
+`pb_secrets` + `pb_data`, like a PocketBase folder: `pb_secrets/main.pb.js` names the secrets, the git-ignored
+`pb_secrets/secrets.json` holds them, and CI deploys with nothing but the deploy token once `voidbase secrets push`
+has stored them. See [docs/deploy.md](docs/deploy.md).
 
 ## Continuous integration
 

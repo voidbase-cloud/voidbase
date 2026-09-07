@@ -9,7 +9,7 @@ const port = Number(process.argv[2] ?? 5197); const TOKEN = "cf-test-token"; con
 // release endpoints (scripts/cf-builds.ts setup, scripts/gh-release.ts) are served too, unauthenticated, under /repos.
 const USER_TOKEN = "cf-test-user-token"; const GH_REPO = { id: 1359087906, name: "voidbase", owner: { id: 325612581, login: "voidbase-cloud" }, default_branch: "master" };
 const UPLOAD_JWT = "upload-jwt", COMPLETION_JWT = "completion-jwt";
-interface Script { tag: string; metadata: Record<string, unknown>; modules: string[]; schedules: string[]; subdomain: boolean; assets: string[]; migrationTag: string | null; created_on: string; modified_on: string }
+interface Script { tag: string; metadata: Record<string, unknown>; modules: string[]; schedules: string[]; subdomain: boolean; assets: string[]; migrationTag: string | null; created_on: string; modified_on: string; secrets?: string[] }
 interface Trigger { trigger_uuid: string; external_script_id: string; repo_connection_uuid: string; build_token_uuid: string; trigger_name: string; [k: string]: unknown }
 interface Build { build_uuid: string; status: string; build_outcome?: string; created_on: string; trigger: { trigger_uuid: string; external_script_id: string }; build_trigger_metadata: { branch?: string; commit_hash?: string }; build_trigger_source: string }
 interface GhRelease { id: number; tag_name: string; html_url: string; body: string; upload_url: string; assets: { id: number; name: string; size: number }[] }
@@ -105,7 +105,7 @@ Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, 
   // ---- workers
   if (p === `${A}/workers/subdomain`) return ok({ subdomain: "testsub" });
   if (p === `${A}/workers/scripts` && req.method === "GET") return ok([...scripts.entries()].map(([id, s]) => ({ id, tag: s.tag, tags: (s.metadata.tags as string[]) ?? [], created_on: s.created_on, modified_on: s.modified_on })));
-  { const m = p.match(new RegExp(`^${A}/workers/scripts/([^/]+)(?:/(settings|assets-upload-session|schedules|subdomain))?$`));
+  { const m = p.match(new RegExp(`^${A}/workers/scripts/([^/]+)(?:/(settings|assets-upload-session|schedules|subdomain|secrets))?$`));
     if (m) { const name = m[1]!; const sub = m[2]; const s = scripts.get(name);
       if (!sub && req.method === "PUT") {
         const form = await req.formData(); const meta = form.get("metadata"); if (!meta || typeof meta === "string") return err(400, 10021, "metadata part missing");
@@ -120,6 +120,9 @@ Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, 
       }
       if (!sub && req.method === "DELETE") { if (!s) return err(404, 10007, "workers.api.error.script_not_found"); if ([...consumers.values()].some((l) => l.some((c) => c.script_name === name))) return err(403, 10064, "Cannot delete this Worker as it is a consumer for a Queue. Remove it from the Queue"); scripts.delete(name); return ok(null); }
       if (!sub && req.method === "GET") return s ? new Response("// script body", { headers: { "content-type": "application/javascript" } }) : err(404, 10007, "script not found");
+      // the Worker's secrets (what `wrangler secret put` / `voidbase secrets push` call): names only, never values
+      if (sub === "secrets" && req.method === "GET") return s ? ok((s.secrets ?? []).map((name) => ({ name, type: "secret_text" }))) : err(404, 10007, "workers.api.error.script_not_found");
+      if (sub === "secrets" && req.method === "PUT") { if (!s) return err(404, 10007, "workers.api.error.script_not_found"); const b = (await req.json()) as { name: string; text: string }; if (!b.name || typeof b.text !== "string") return err(400, 10021, "name and text required"); s.secrets = [...new Set([...(s.secrets ?? []), b.name])]; return ok({ name: b.name, type: "secret_text" }); }
       if (sub === "settings" && req.method === "GET") return s ? ok({ migration_tag: s.migrationTag, bindings: s.metadata.bindings, tags: s.metadata.tags }) : err(404, 10007, "script not found");
       if (sub === "assets-upload-session" && req.method === "POST") { const { manifest } = (await req.json()) as { manifest: Record<string, { hash: string; size: number }> }; const hashes = Object.values(manifest).map((e) => e.hash); const missing = hashes.filter((h) => !uploadedHashes.has(h)); if (!missing.length) return ok({ jwt: COMPLETION_JWT, buckets: [] }); pendingSessions.set(name, new Set(missing)); const buckets: string[][] = []; for (let i = 0; i < missing.length; i += 3) buckets.push(missing.slice(i, i + 3)); return ok({ jwt: UPLOAD_JWT, buckets }); }
       if (sub === "schedules" && req.method === "PUT") { if (!s) return err(404, 10007, "script not found"); s.schedules = ((await req.json()) as { cron: string }[]).map((c) => c.cron); return ok({ schedules: s.schedules.map((cron) => ({ cron })) }); }

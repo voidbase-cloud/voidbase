@@ -303,7 +303,9 @@ export const $security = {
 
 export function makeOs(files: Record<string, string>, hooksDir: string) {
   return {
-    getenv: (name: string) => { const v = store()?.env[name]; return v == null ? "" : String(v); },
+    // the bindings first (a Worker's vars and secrets), then the process environment (Bun; a Worker has none
+    // without nodejs_compat), which is what PocketBase's $os.getenv reads
+    getenv: (name: string) => { const v = store()?.env[name]; if (v != null) return String(v); const p = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.[name]; return p == null ? "" : String(p); },
     readFile: (path: string) => {
       const rel = path.startsWith(hooksDir) ? path.slice(hooksDir.length).replace(/^\/+/, "") : path;
       const text = files[rel];

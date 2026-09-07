@@ -7,6 +7,8 @@ import { join, resolve } from "node:path";
 const MOCK = "http://127.0.0.1:5197"; const BIN = resolve(import.meta.dir, "../bin/voidbase.ts"); const PKG = resolve(import.meta.dir, ".."); const PROJECT = `${PKG}/.cloud/shopdemo-backend`;
 let pass = 0, fail = 0; const check = (l: string, ok: boolean, d = "") => { ok ? pass++ : fail++; console.log(`${ok ? "PASS" : "FAIL"}  ${l}${ok ? "" : "  " + d}`); };
 const root = mkdtempSync(join(tmpdir(), "vb-deploy-")); const dir = `${root}/shopdemo/vb`; mkdirSync(`${dir}/pb_hooks`, { recursive: true }); mkdirSync(`${dir}/pb_migrations`);
+// pb_secrets/: two declared, one valued locally; the other must already be on the Worker, which a dry run only reports
+mkdirSync(`${dir}/pb_secrets`); writeFileSync(`${dir}/pb_secrets/main.pb.js`, `secrets({ SMTP_PASSWORD: "the SMTP password", WEBHOOK_TOKEN: "" });\n`); writeFileSync(`${dir}/pb_secrets/secrets.json`, JSON.stringify({ SMTP_PASSWORD: "smtp-secret" }));
 mkdirSync(`${root}/shopdemo/sk/build`, { recursive: true }); writeFileSync(`${root}/shopdemo/sk/build/index.html`, "<title>app</title>"); // a frontend build next door
 writeFileSync(`${dir}/package.json`, JSON.stringify({ name: "vb", private: true, dependencies: { "@voidbase-cloud/voidbase": "link:@voidbase-cloud/voidbase" } }));
 writeFileSync(`${dir}/main.ts`, `export function register(app: { router: unknown; hooks: Record<string, (...a: unknown[]) => unknown> }) { app.hooks.routerAdd!("GET", "/api/ts-hello", (e: { json: (s: number, d: unknown) => unknown }) => e.json(200, { message: "hi" })); }\n`);
@@ -26,13 +28,18 @@ try {
   check("hooks and migrations point at the consumer's directories, the worker name and account are baked, AUDITLOG only when set", readFileSync(`${PROJECT}/vite.config.ts`, "utf8").includes(`${realpathSync(dir)}/pb_hooks`) && /^VOIDBASE_WORKER_NAME=shopdemo-backend\nVOIDBASE_ACCOUNT_ID=acc123(\nAUDITLOG=.*)?$/.test(readFileSync(`${PROJECT}/.env`, "utf8").trim()), `hooks ok=${readFileSync(`${PROJECT}/vite.config.ts`, "utf8").includes(`${realpathSync(dir)}/pb_hooks`)} env=${JSON.stringify(readFileSync(`${PROJECT}/.env`, "utf8"))} dir=${dir} real=${realpathSync(dir)}`);
   check("worker name derives from the parent directory (vb -> <parent>-backend)", !!parsed && parsed.name === "shopdemo-backend", parsed?.name ?? "");
   check("dry run stops before secrets and deploying, reports the workers.dev url", first.out.includes("dry run") && first.out.includes(".testsub.workers.dev"), first.out.slice(-200));
+  check("pb_secrets: the valued declaration joins the Worker's secrets, the unvalued one is reported with the push command", /put 3 secrets \(VOIDBASE_SUPERUSER_EMAIL, VOIDBASE_SUPERUSER_PASSWORD, SMTP_PASSWORD\)/.test(first.out) && /1 declared secret\(s\) have no value .*WEBHOOK_TOKEN.*voidbase secrets push --name shopdemo-backend/.test(first.out) && !first.out.includes("smtp-secret"), first.out.slice(-400));
+  const list = run(["secrets"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+  check("voidbase secrets: a row per declared name, local value and Worker presence", list.code === 0 && /2 declared, 1 valued in secrets\.json, worker "shopdemo-backend" has 0 of them/.test(list.out) && /SMTP_PASSWORD\s+local value\s+NOT on the worker\s+the SMTP password/.test(list.out) && /WEBHOOK_TOKEN\s+no local value/.test(list.out), list.out.slice(0, 400));
+  const push = run(["secrets", "push"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+  check("voidbase secrets push before the first deploy: the Worker does not exist yet, and it says so", push.code === 1 && /must exist/.test(push.out), push.out.slice(-300));
   const creds = JSON.parse(readFileSync(`${dir}/pb_data/.superuser-credentials`, "utf8")) as { email: string; password: string };
   check("superuser credentials generated once, kept in pb_data", creds.email === "admin@example.com" && creds.password.length === 20, JSON.stringify(creds));
   const second = run(["deploy", "--dry-run", "--analytics"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
   const creds2 = JSON.parse(readFileSync(`${dir}/pb_data/.superuser-credentials`, "utf8")) as { password: string };
   check("second run is idempotent: resources exist, same ids, same password", second.code === 0 && /D1 .* exists/.test(second.out) && /R2 .* exists/.test(second.out) && readFileSync(`${PROJECT}/wrangler.jsonc`, "utf8") === cfg && creds2.password === creds.password, second.out.slice(0, 200));
   const calls = (await fetch(`${MOCK}/__calls`).then((r) => r.json())) as string[];
-  check("only the expected API calls were made", calls.every((c) => /^GET \/accounts|d1\/database|r2\/buckets|queues|workers\/subdomain/.test(c)) && calls.filter((c) => c.startsWith("POST")).length === 3, calls.join(", "));
+  check("only the expected API calls were made", calls.every((c) => /^GET \/accounts|d1\/database|r2\/buckets|queues|workers\/subdomain|workers\/scripts\/[^/]+\/secrets/.test(c)) && calls.filter((c) => c.startsWith("POST")).length === 3, calls.join(", "));
   const named = run(["deploy", "--dry-run", "--name", "My Shop API", "--account", "acc123"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", PB_SUPERUSER_EMAIL: "owner@example.com", PB_SUPERUSER_PASSWORD: "s3cret-from-env" });
   const named2 = JSON.parse(readFileSync(`${PKG}/.cloud/my-shop-api/wrangler.jsonc`, "utf8").replace(/^\/\/.*\n/, "")) as { name: string };
   const noBuild = run(["deploy", "--dry-run", "--public-dir", "../sk/missing"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });

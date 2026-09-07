@@ -9,7 +9,9 @@ import { assetsFetcher } from "./assets";
 import { ensurePanelDir } from "./panel";
 import { embedded } from "./embedded";
 
-export interface ServeOptions { http?: string; dir?: string; hooksDir?: string; migrationsDir?: string; publicDir?: string; quiet?: boolean }
+export interface ServeOptions { http?: string; dir?: string; hooksDir?: string; migrationsDir?: string;
+  /** pb_secrets/: the declaration and the git-ignored values (VOIDBASE_SECRETS_DIR) */
+  secretsDir?: string; publicDir?: string; quiet?: boolean }
 const PKG = resolve(import.meta.dir, "../..");
 
 // system tables: the same SQL migrations Void applies on Cloudflare
@@ -37,6 +39,8 @@ export function applySystemMigrations(db: ReturnType<typeof openDatabase>, migra
 // Bun loads ./.env itself; a project that keeps its environment one level up (the SvelteKit starter) gets that too.
 // PB_* names from the PocketBase starter convention are accepted as aliases of the VOIDBASE_* ones.
 const ENV_ALIASES: Record<string, string> = { PB_SUPERUSER_EMAIL: "VOIDBASE_SUPERUSER_EMAIL", PB_SUPERUSER_PASSWORD: "VOIDBASE_SUPERUSER_PASSWORD", PB_USER_EMAIL: "VOIDBASE_USER_EMAIL", PB_USER_PASSWORD: "VOIDBASE_USER_PASSWORD", PB_ENCRYPTION_KEY: "VOIDBASE_ENCRYPTION_KEY" };
+import { loadSecrets } from "./secrets";
+
 export function loadEnv(files = [".env", ".env.local", "../.env", "../.env.local"]): void {
   for (const f of files) {
     if (!existsSync(f)) continue;
@@ -55,6 +59,12 @@ export async function openLocal(opts: ServeOptions) {
   mkdirSync(dir, { recursive: true });
   process.env.VOIDBASE_HOOKS_DIR = resolve(opts.hooksDir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks");
   process.env.VOIDBASE_MIGRATIONS_DIR = resolve(opts.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations");
+  // pb_secrets/secrets.json (git-ignored) into the environment, so $os.getenv and the app see the same names as on
+  // Cloudflare, where the deploy stored them as the Worker's secrets (src/node/secrets.ts)
+  process.env.VOIDBASE_SECRETS_DIR = resolve(opts.secretsDir ?? process.env.VOIDBASE_SECRETS_DIR ?? "pb_secrets");
+  const secrets = loadSecrets(process.env.VOIDBASE_SECRETS_DIR);
+  if (secrets.missing.length && !opts.quiet) console.warn(`voidbase: ${secrets.missing.length} declared secret(s) have no value here (${process.env.VOIDBASE_SECRETS_DIR}/secrets.json): ${secrets.missing.join(", ")}`);
+  if (secrets.undeclared.length && !opts.quiet) console.warn(`voidbase: ${process.env.VOIDBASE_SECRETS_DIR}/secrets.json holds ${secrets.undeclared.join(", ")}, which main.pb.js does not declare; a deploy stores only declared secrets`);
   // pb_data/types.d.ts for editor support in pb_hooks (PocketBase's JSVM typings); a standalone executable carries
   // the typings and the system migrations itself (src/node/embedded.ts)
   const emb = await embedded();

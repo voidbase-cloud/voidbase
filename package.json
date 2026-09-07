@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/voidbase",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "PocketBase-compatible backend on Cloudflare Workers (D1, R2, Queues, Durable Objects) via Void, or a single Bun process",
   "license": "MIT",
   "repository": {

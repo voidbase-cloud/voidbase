@@ -182,6 +182,12 @@ by apps. `test/deploy-cf.ts` asserts the naming.
 `voidbase deploy` is one machine deploying. `voidbase sync` is the whole loop: it deploys (creating what does not
 exist, updating what does), then connects the project's GitHub repository to Cloudflare Workers Builds, so that
 from then on a push to the production branch deploys from Cloudflare and every other branch is built and checked.
+
+It knows the two layouts by their directories' names. The **pb layout** is PocketBase's structure: `pb_hooks/`,
+`pb_migrations/`, `pb_secrets/`, `pb_public/`, `pb_data/`; `voidbase init` makes one, and it deploys in place. The
+**vb layout** is a Void app with the adapter: `routes/`, `vb_hooks/`, `vb_secrets/`, `vb_migrations/` at the root
+(voidbase-site is one); `sync` builds it and deploys from the pb layout the build generates in `.voidbase/`. The
+`vb_` directories are the `pb_` ones raised to the adapter's level, and every `vb_` becomes its `pb_` in the build.
 A brand-new project is four steps:
 
 1. Create a Cloudflare account and a GitHub account (a Cloudflare account alone runs the instance).

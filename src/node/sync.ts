@@ -9,9 +9,16 @@
 //      a machine that has CLOUDFLARE_BUILDS_TOKEN (a local() key in pb_secrets), never inside a build: in CI, `sync`
 //      is just the deploy.
 //
-// A brand-new project therefore is: fork voidbase-site (or `voidbase init`), push it to GitHub, fill in
-// pb_secrets/secrets.json, run `voidbase sync`. The first run says which dashboard step the API cannot do (install
-// the GitHub App for the repository and connect it, which also creates the build token); the second run finishes.
+// Two layouts, named the way their directories are:
+//
+//   pb   PocketBase's structure: pb_hooks/, pb_migrations/, pb_secrets/, pb_public/, pb_data/. Deployed in place.
+//        (`voidbase init` makes one; voidbase-site's generated .voidbase/ is one.)
+//   vb   a Void app with the adapter: routes/, vb_hooks/, vb_secrets/, vb_migrations/ at the root. Built first, and
+//        deployed from the pb layout the build generates in .voidbase/. (voidbase-site itself is one.)
+//
+// A brand-new project therefore is: fork voidbase-site (vb) or `voidbase init` (pb), push it to GitHub, fill in
+// the secrets.json, run `voidbase sync`. The first run says which dashboard step the API cannot do (install the
+// GitHub App for the repository and connect it, which also creates the build token); the second run finishes.
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { CfApi, resolveAccount } from "../cloud/rest";
@@ -51,9 +58,10 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   const log = opts.log ?? ((l: string) => console.log(l));
   const root = resolve(opts.dir ?? ".");
   const inCI = !!process.env.CI;
-  // a Void app deploys from the app the adapter generates; a PocketBase-shaped directory deploys in place
-  const voidApp = !existsSync(join(root, "pb_hooks")) && (existsSync(join(root, "vb_secrets")) || existsSync(join(root, ".voidbase")) || existsSync(join(root, "vite.config.ts")) || existsSync(join(root, "vite.config.mts")));
+  // vb: a Void app, deployed from the pb layout the adapter generates; pb: PocketBase's structure, deployed in place
+  const voidApp = !existsSync(join(root, "pb_hooks")) && (existsSync(join(root, "vb_secrets")) || existsSync(join(root, "vb_hooks")) || existsSync(join(root, ".voidbase")) || existsSync(join(root, "vite.config.ts")) || existsSync(join(root, "vite.config.mts")));
   const pbDir = voidApp ? join(root, ".voidbase") : root;
+  log(voidApp ? `vb layout: a Void app at ${root}; it deploys from the pb layout its build generates at .voidbase/` : `pb layout: PocketBase's structure at ${root}, deployed in place`);
   const pkg = existsSync(join(root, "package.json")) ? (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { scripts?: Record<string, string> }) : {};
   const hasScript = (s: string) => !!pkg.scripts?.[s];
 

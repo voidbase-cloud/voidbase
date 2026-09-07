@@ -20,6 +20,7 @@ import { findAuthRecordByToken, isSuperuser } from "../auth";
 import { enrich, fetchRecord, recordMatchesRule, type RecordContext } from "../records/service";
 import { rowToValues } from "../records/values";
 import { trigger } from "../hooks/runtime";
+import { PRESENCE_TOPIC } from "./presence";
 import type { AppEnv, Row } from "../types";
 import { controlClient, hubActive, openHubSocket, sendFilter, type ChangeEvent, type HubMessage } from "./hub-client";
 
@@ -45,6 +46,7 @@ export function parseSubscription(raw: string): Subscription | null {
   const [topicPart, optionsPart] = raw.split("?options=");
   const topic = topicPart ?? "";
   if (topic.startsWith("@")) return { topic: raw, collection: topic, recordId: null, query: {}, headers: {} }; // @oauth2 and friends: messages, not records
+  if (topic === PRESENCE_TOPIC) return { topic: raw, collection: PRESENCE_TOPIC, recordId: null, query: {}, headers: {} }; // who is here now, not a collection
   const m = /^([^/]+)\/(.+)$/.exec(topic);
   if (!m) return null;
   let query: Record<string, string> = {}, headers: Record<string, string> = {};
@@ -200,6 +202,10 @@ async function dispatch(env: AppEnv["Bindings"], cl: Client, ch: Change, collect
       cl.subs = cl.subs.filter((s) => s.topic !== ch.collection);
       await stmt(db, "UPDATE `_realtime_clients` SET subscriptions = ?, updated = ? WHERE id = ?", [JSON.stringify(cl.subs.map((s) => s.topic)), nowString(), cl.id]).run();
     }
+    return;
+  }
+  if (ch.collection === PRESENCE_TOPIC) { // the roster, fanned out by the hub: no collection to read, no rule to apply
+    if (cl.subs.some((s) => s.topic === PRESENCE_TOPIC)) await cl.send(PRESENCE_TOPIC, ch.data ? (JSON.parse(ch.data) as unknown) : {});
     return;
   }
   const matching = cl.subs.filter((s) => (s.collection === ch.collection || collections.get(s.collection)?.name === ch.collection) && (s.recordId === null || s.recordId === ch.recordId));

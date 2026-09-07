@@ -214,7 +214,8 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; h
   // hubEntry: the module exporting VoidbaseHub (src/server/hub.ts). Void generates the Worker entry (.void/entry.ts)
   // and exports only its own classes, so the instance's Durable Object class is appended to that entry at bundle time;
   // wrangler.jsonc declares the binding (HUB) and the new_sqlite_classes migration.
-  const hubEntry = options.hubEntry ? resolve(options.hubEntry) : "";
+  // a path is resolved here; a bare specifier (a visible project imports the package by name) is left to Vite
+  const hubEntry = options.hubEntry ? (/^[./]/.test(options.hubEntry) || /^[A-Za-z]:[\\/]/.test(options.hubEntry) ? resolve(options.hubEntry) : options.hubEntry) : "";
   const here = resolve(fileURLToPath(new URL(".", import.meta.url)));
   let clientOut = "";
   return {

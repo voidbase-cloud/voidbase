@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseRedirects, writeCloudProject, type RedirectEntry } from "./cloud-init";
+import { pathToFileURL } from "node:url";
 import { loadEnv } from "./serve";
 import { loadSecrets, SECRETS_DIR, workerSecretNames, type LoadedSecrets } from "./secrets";
 import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findZone, rateLimitNamespace, resolveAccount, workersSubdomain } from "../cloud/rest";
@@ -228,7 +229,10 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   // values also exported in the shell are stripped from baked vars by the Cloudflare backend, so keep the vars file clean instead
   // the generated project has no node_modules of its own: `void deploy` shells out to `vite build`, so the package's toolchain goes on PATH
   const binDirs = [resolve(PKG, "node_modules/.bin"), resolve(voidDir, "..", ".bin")].filter((d, i, a) => a.indexOf(d) === i);
-  const env: Record<string, string | undefined> = { ...process.env, PATH: `${binDirs.join(":")}:${process.env.PATH ?? ""}`, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: account.id, ...(keepSuperuser ? {} : { VOIDBASE_SUPERUSER_EMAIL: email, VOIDBASE_SUPERUSER_PASSWORD: password }) };
+  // Void runs project code with Node (its env probe, the Vite config, drizzle-kit): an installed voidbase is
+  // TypeScript under node_modules, which Node will not strip on its own, so Node gets this package's loader
+  const loader = `--import ${pathToFileURL(resolve(PKG, "src/node/ts-loader.mjs")).href}`;
+  const env: Record<string, string | undefined> = { ...process.env, NODE_OPTIONS: [process.env.NODE_OPTIONS, loader].filter(Boolean).join(" "), PATH: `${binDirs.join(":")}:${process.env.PATH ?? ""}`, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: account.id, ...(keepSuperuser ? {} : { VOIDBASE_SUPERUSER_EMAIL: email, VOIDBASE_SUPERUSER_PASSWORD: password }) };
   for (const k of Object.keys(baked)) delete env[k];
   const sh = async (cmd: string[], input?: string) => { const p = Bun.spawn(cmd, { cwd: cloud, env: env as Record<string, string>, stdin: input === undefined ? "inherit" : new TextEncoder().encode(input), stdout: "inherit", stderr: "inherit" }); const code = await p.exited; if (code !== 0) throw new Error(`${cmd.join(" ")} exited with ${code}`); };
   mkdirSync(`${cloud}/public`, { recursive: true });

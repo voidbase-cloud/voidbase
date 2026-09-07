@@ -77,11 +77,12 @@ export function loadEnvFiles(files = [".env", ".env.local", "../.env", "../.env.
 /** The environment, the token, the account and the worker name a deploy (or `voidbase secrets`) targets. */
 export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" | "log"> = {}): Promise<{ api: CfApi; token: string; account: { id: string; name: string }; name: string; secretsDir: string; secrets: ReturnType<typeof loadSecrets> }> {
   const log = opts.log ?? ((l: string) => console.log(l));
-  loadEnv(); const fromFiles = loadEnvFiles(); if (fromFiles.length) log(`from .env: ${fromFiles.join(", ")}`);
-  // pb_secrets/: the declared names, and on a dev machine their values, which count as environment from here on
-  // (VOIDBASE_SUPERUSER_*, VOIDBASE_ENCRYPTION_KEY and the rest may live in secrets.json instead of .env)
+  // pb_secrets/ first: the declared names, and on a dev machine their values, which count as environment from here
+  // on. The shell outranks secrets.json, and secrets.json outranks the .env files, so a dev placeholder in .env
+  // (VOIDBASE_SUPERUSER_PASSWORD=changeme123) never shadows the real value kept beside the declaration.
   const secretsDir = resolve(process.env.VOIDBASE_SECRETS_DIR || SECRETS_DIR);
   const secrets = loadSecrets(secretsDir);
+  loadEnv(); const fromFiles = loadEnvFiles(); if (fromFiles.length) log(`from .env: ${fromFiles.join(", ")}`);
   if (secrets.state.declaration) log(`${secretsDir}: ${secrets.state.declaration.names.length} secret(s) declared, ${secrets.state.provided.length} valued here${secrets.undeclared.length ? `; in secrets.json but not declared (not deployed): ${secrets.undeclared.join(", ")}` : ""}`);
   const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || ""; // empty means unset
   if (!token) { log(`${TOKEN_ENV} is not set.\n\n${tokenHelp()}`); throw new Error(`${TOKEN_ENV} missing`); }
@@ -188,7 +189,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   if (missingSecrets.length) {
     const msg = `${missingSecrets.length} declared secret(s) have no value in ${secretsDir}/secrets.json and are not on the Worker "${name}" yet: ${missingSecrets.join(", ")}. Push them once from a machine that has them: voidbase secrets push --name ${name}`;
     if (opts.dryRun) log(`secrets: ${msg}`); else throw new Error(msg);
-  } else if (declared.length) log(`secrets: ${declared.length} declared${onWorker.length ? `, ${declared.filter((k) => !secretMap.has(k)).length} already on the Worker` : ""}`);
+  } else if (declared.length) log(`secrets: ${declared.length} declared, ${declared.filter((k) => onWorker.includes(k)).length} already on the Worker, ${declared.filter((k) => secretMap.has(k)).length} stored from here`);
   const secrets = [...secretMap.entries()];
 
   const url = domain ? `https://${domain}` : await workersSubdomain(api, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null));

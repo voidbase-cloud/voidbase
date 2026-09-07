@@ -54,15 +54,16 @@ export function loadEnv(files = [".env", ".env.local", "../.env", "../.env.local
 }
 
 export async function openLocal(opts: ServeOptions) {
+  // pb_secrets/secrets.json (git-ignored) into the environment before the .env files, so $os.getenv and the app see
+  // the same names as on Cloudflare, where the deploy stored them as the Worker's secrets (src/node/secrets.ts):
+  // the shell outranks secrets.json, which outranks a dev placeholder in .env
+  process.env.VOIDBASE_SECRETS_DIR = resolve(opts.secretsDir ?? process.env.VOIDBASE_SECRETS_DIR ?? "pb_secrets");
+  const secrets = loadSecrets(process.env.VOIDBASE_SECRETS_DIR);
   loadEnv();
   const dir = resolve(opts.dir ?? "pb_data");
   mkdirSync(dir, { recursive: true });
   process.env.VOIDBASE_HOOKS_DIR = resolve(opts.hooksDir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks");
   process.env.VOIDBASE_MIGRATIONS_DIR = resolve(opts.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations");
-  // pb_secrets/secrets.json (git-ignored) into the environment, so $os.getenv and the app see the same names as on
-  // Cloudflare, where the deploy stored them as the Worker's secrets (src/node/secrets.ts)
-  process.env.VOIDBASE_SECRETS_DIR = resolve(opts.secretsDir ?? process.env.VOIDBASE_SECRETS_DIR ?? "pb_secrets");
-  const secrets = loadSecrets(process.env.VOIDBASE_SECRETS_DIR);
   if (secrets.missing.length && !opts.quiet) console.warn(`voidbase: ${secrets.missing.length} declared secret(s) have no value here (${process.env.VOIDBASE_SECRETS_DIR}/secrets.json): ${secrets.missing.join(", ")}`);
   if (secrets.undeclared.length && !opts.quiet) console.warn(`voidbase: ${process.env.VOIDBASE_SECRETS_DIR}/secrets.json holds ${secrets.undeclared.join(", ")}, which main.pb.js does not declare; a deploy stores only declared secrets`);
   // pb_data/types.d.ts for editor support in pb_hooks (PocketBase's JSVM typings); a standalone executable carries

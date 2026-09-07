@@ -115,7 +115,8 @@ pb_secrets/secrets.json    { "SMTP_PASSWORD": "..." }                           
 ```
 
 `main.pb.js` names the secrets and is read, never run (`voidbase init` writes an empty one and the `.gitignore`
-lines). `secrets.json` holds the values on your machine. `voidbase serve` loads them into the environment, so
+lines). `secrets.json` holds the values on your machine; the shell outranks it, and it outranks the `.env` files,
+so a dev placeholder such as `VOIDBASE_SUPERUSER_PASSWORD=changeme123` never shadows it. `voidbase serve` loads them into the environment, so
 `$os.getenv("SMTP_PASSWORD")` and the app's own code see the same names locally as on Cloudflare. `voidbase deploy`
 stores every declared value as the Worker's secrets (encrypted, per Worker: two instances never share one) next to
 the superuser, and refuses to deploy while a declared secret has neither a local value nor one already on the

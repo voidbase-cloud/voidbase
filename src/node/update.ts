@@ -28,8 +28,32 @@ export function compareVersions(a: string, b: string): number {
   for (let i = 0; i < Math.max(x.nums.length, y.nums.length); i++) { const d = (x.nums[i] ?? 0) - (y.nums[i] ?? 0); if (d) return d < 0 ? -1 : 1; }
   if (x.pre === y.pre) return 0;
   if (!x.pre) return 1; if (!y.pre) return -1;
-  return x.pre < y.pre ? -1 : 1;
+  return comparePre(x.pre, y.pre);
 }
+
+/**
+ * Prerelease tags, by semver's rules rather than as strings.
+ *
+ * Comparing them as text says beta.2 is newer than beta.10, because "2" sorts after "1". That is wrong the moment a
+ * tenth beta exists, and it is wrong in the direction that matters: whichever of them is picked as the newest is
+ * what every install is offered.
+ */
+function comparePre(a: string, b: string): number {
+  const left = a.split("."), right = b.split(".");
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    const l = left[i], r = right[i];
+    // a shorter set of identifiers is the lower precedence, when everything before it is equal
+    if (l === undefined) return -1;
+    if (r === undefined) return 1;
+    const ln = /^\d+$/.test(l), rn = /^\d+$/.test(r);
+    if (ln && rn) { const d = Number(l) - Number(r); if (d) return d < 0 ? -1 : 1; continue; }
+    // numeric identifiers always rank below alphanumeric ones
+    if (ln !== rn) return ln ? -1 : 1;
+    if (l !== r) return l < r ? -1 : 1;
+  }
+  return 0;
+}
+
 // goreleaser's checksums.txt: "<sha256>  <file>" per line
 export function parseChecksums(text: string): Map<string, string> {
   const out = new Map<string, string>();

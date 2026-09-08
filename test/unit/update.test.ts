@@ -25,6 +25,23 @@ test("version comparison handles v prefixes, missing parts and pre-releases", ()
   expect(compareVersions("1.0.0", "1.0.0-rc.1")).toBe(1);
 });
 
+test("prerelease tags compare by semver's rules, not as text", () => {
+  // the one that matters: comparing as strings makes beta.2 newer than beta.10, and whichever is called newest is
+  // what every install gets offered
+  expect(compareVersions("0.9.0-beta.2", "0.9.0-beta.10")).toBe(-1);
+  expect(compareVersions("0.9.0-beta.10", "0.9.0-beta.2")).toBe(1);
+  // fewer identifiers ranks lower when everything before them is equal
+  expect(compareVersions("0.9.0-beta", "0.9.0-beta.1")).toBe(-1);
+  expect(compareVersions("0.9.0-beta.1", "0.9.0-beta.1")).toBe(0);
+  expect(compareVersions("0.9.0-alpha", "0.9.0-beta")).toBe(-1);
+  expect(compareVersions("1.0.0-rc.1", "1.0.0-rc.2")).toBe(-1);
+  // a numeric identifier ranks below an alphanumeric one
+  expect(compareVersions("0.9.0-beta.1", "0.9.0-beta.1a")).toBe(-1);
+  // and a prerelease is still older than the release it leads to
+  expect(compareVersions("0.9.0-beta.1", "0.9.0")).toBe(-1);
+  expect(compareVersions("0.8.0", "0.9.0-beta")).toBe(-1);
+});
+
 test("checksums.txt parses goreleaser's format", async () => {
   const sum = await sha256(new TextEncoder().encode("hello"));
   expect(sum).toBe("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");

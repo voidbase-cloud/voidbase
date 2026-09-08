@@ -37,6 +37,8 @@ export interface DeployOptions { cron?: boolean; domain?: string; name?: string;
   publicDir?: string; dryRun?: boolean; regenerate?: boolean; superuserEmail?: string; superuserPassword?: string; log?: (line: string) => void;
   queue?: boolean;      // jobs queue for mail and automatic backups (default on; skipped when the token cannot create queues)
   analytics?: boolean;  // Analytics Engine dataset with one data point per request (opt-in: --analytics or VOIDBASE_DEPLOY_ANALYTICS=1; the account must have Analytics Engine enabled)
+  /** Workers Observability: invocation logs kept for the dashboard. On unless VOIDBASE_DEPLOY_OBSERVABILITY=0. */
+  observability?: boolean;
   rateLimit?: string;   // exact per-location ceiling per IP as "<requests>/<10|60>", default "300/10" (PocketBase's /api/ rule); "0" disables
   hub?: boolean;        // realtime hub Durable Object in this Worker (default on; VOIDBASE_DEPLOY_HUB=0 keeps the D1 poll)
 }
@@ -117,6 +119,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const hub = opts.hub ?? !off(process.env.VOIDBASE_DEPLOY_HUB);
   // Workers Free allows 5 cron triggers per account; without the trigger PocketBase's maintenance runs lazily in requests
   const cron = opts.cron ?? !off(process.env.VOIDBASE_DEPLOY_CRON);
+  const observability = opts.observability ?? !off(process.env.VOIDBASE_DEPLOY_OBSERVABILITY);
   // a custom domain on a zone of the account (wrangler attaches it: DNS record + certificate); workers.dev is then off
   // several hostnames may be listed (comma separated); the first is the Worker's URL, all are attached
   const domains = String(opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN || "").split(",").map((d) => d.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase()).filter(Boolean);
@@ -153,6 +156,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), entry, queue, hub });
   if (!queue) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/queues`, { recursive: true, force: true }); }
   if (!cron) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/crons`, { recursive: true, force: true }); log("cron trigger disabled (VOIDBASE_DEPLOY_CRON=0 / --no-cron): maintenance runs lazily in requests"); }
+    log(observability ? "observability: invocation logs kept for the dashboard" : "observability off (VOIDBASE_DEPLOY_OBSERVABILITY=0)");
   // Smart Placement runs the Worker next to its D1 database: PocketBase-shaped requests are several dependent queries.
   // The rate-limit binding is an exact per-location ceiling per IP on top of the settings' rules (which count per
   // isolate); the Analytics Engine dataset takes one data point per request at any log level.
@@ -163,6 +167,9 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     r2_buckets: [{ binding: "STORAGE", bucket_name: `${name}-storage` }],
     ...(rateLimit ? { ratelimits: [{ name: "RATE_LIMITER", namespace_id: rateLimitNamespace(name), simple: { limit: rateLimit.limit, period: rateLimit.period } }] } : {}),
     ...(analytics ? { analytics_engine_datasets: [{ binding: "LOGS_ANALYTICS", dataset: `${name.replace(/-/g, "_")}_requests` }] } : {}),
+      // Workers Observability: the platform keeps invocation logs for the dashboard without the code doing anything.
+      // Traces stay off, because they are the expensive half and nothing here reads them yet.
+      ...(observability ? { observability: { logs: { enabled: true, invocation_logs: true } } } : {}),
     // the realtime hub: a SQLite-backed Durable Object class exported from this Worker (free plan included), one per instance
     ...(hub ? { durable_objects: { bindings: [{ name: "HUB", class_name: "VoidbaseHub" }] }, migrations: [{ tag: "voidbase-hub-v1", new_sqlite_classes: ["VoidbaseHub"] }] } : {}),
   }, null, 2) + "\n";

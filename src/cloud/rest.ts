@@ -284,9 +284,43 @@ export async function destroyInstance(cf: CfApi, o: { account: string; name: str
 
 // ---- inspection --------------------------------------------------------------------------------------------
 export interface WorkerInfo { name: string; tags: string[]; created_on?: string; modified_on?: string; release: string | null }
+/**
+ * The voidbase instances on an account.
+ *
+ * Two ways of recognising one, because only one of them was ever available. An instance provisioned by the control
+ * plane carries a `voidbase` tag, set in the upload metadata. An instance from `voidbase deploy` does not: that path
+ * uploads through wrangler, whose metadata is not ours to add to, and a plain Worker's tags cannot be set afterwards.
+ * So anything untagged is identified by what it is made of instead, which is the pair of bindings every voidbase
+ * instance has and nothing else on the account does.
+ */
 export async function listVoidbaseWorkers(cf: CfApi, account: string): Promise<WorkerInfo[]> {
   const r = await cf.json<{ id: string; tags?: string[]; created_on?: string; modified_on?: string }[]>("GET", `/accounts/${account}/workers/scripts`);
-  return (r.result ?? []).filter((s) => (s.tags ?? []).includes("voidbase")).map((s) => ({ name: s.id, tags: s.tags ?? [], created_on: s.created_on, modified_on: s.modified_on, release: (s.tags ?? []).find((t) => t.startsWith("voidbase-release:"))?.slice("voidbase-release:".length) ?? null }));
+  const scripts = r.result ?? [];
+  const shape = (s: (typeof scripts)[number]): WorkerInfo => ({
+    name: s.id,
+    tags: s.tags ?? [],
+    created_on: s.created_on,
+    modified_on: s.modified_on,
+    release: (s.tags ?? []).find((t) => t.startsWith("voidbase-release:"))?.slice("voidbase-release:".length) ?? null,
+  });
+  const out: WorkerInfo[] = [];
+  for (const s of scripts) {
+    if ((s.tags ?? []).includes("voidbase")) { out.push(shape(s)); continue; }
+    if (await looksLikeVoidbase(cf, account, s.id)) out.push(shape(s));
+  }
+  return out;
+}
+
+/** A voidbase instance binds its database as DB and its storage as STORAGE. A Worker with both is one. */
+async function looksLikeVoidbase(cf: CfApi, account: string, name: string): Promise<boolean> {
+  try {
+    const r = await cf.json<{ bindings?: { type?: string; name?: string }[] }>("GET", `/accounts/${account}/workers/scripts/${name}/settings`);
+    const bindings = r.result?.bindings ?? [];
+    const has = (type: string, binding: string) => bindings.some((b) => b.type === type && b.name === binding);
+    return has("d1", "DB") && has("r2_bucket", "STORAGE");
+  } catch {
+    return false; // a script we cannot read the settings of is not one we can claim
+  }
 }
 export async function workerExists(cf: CfApi, account: string, name: string): Promise<boolean> {
   const r = await cf.raw("GET", `/accounts/${account}/workers/scripts/${name}/settings`); await r.text();

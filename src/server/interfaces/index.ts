@@ -11,7 +11,8 @@
 // Who may define one is the governance question the roadmap flags as unresolved. For now: we do, here, and a
 // community plugin consumes an interface rather than inventing one. When that stops being enough, this file is
 // where the answer goes.
-import type { AuthRecord, Bindings, Row } from "../types";
+import type { MiddlewareHandler } from "hono";
+import type { AppEnv, AuthRecord, Bindings, Row } from "../types";
 import type { Field } from "../collections/fields";
 
 /**
@@ -70,6 +71,21 @@ export interface Realtime {
   for(env: Bindings): RealtimeClient;
 }
 
+/**
+ * The limits every request meets before a route sees it: PocketBase's body limit and its rate limit rules.
+ *
+ * Middleware runs in the order it was registered and the kernel loads after the routes are mounted, so the provider
+ * does not mount anything. It hands over the two handlers and app.ts keeps their place in the chain with a slot
+ * that asks for them at request time. No provider means no limits, which is what an instance stripped to the
+ * loader is supposed to mean, and also how a different limiter takes this one's place.
+ */
+export interface Hardening {
+  /** refuses a body over the limit with 413 before anything reads it */
+  bodyLimit: MiddlewareHandler<AppEnv>;
+  /** PocketBase's rate limit rules per client, 429 when one is exceeded */
+  rateLimit: MiddlewareHandler<AppEnv>;
+}
+
 /** Sending mail. The core sends it; which service carries it is a plugin's business. */
 export interface Mail {
   send(m: { to: string; subject: string; html: string; text?: string }): Promise<void>;
@@ -80,10 +96,11 @@ export interface Interfaces {
   "auth@1": Auth;
   "payments@1": Payments;
   "realtime@1": Realtime;
+  "hardening@1": Hardening;
   "mail@1": Mail;
 }
 
 export type Known = keyof Interfaces;
 
 /** the list, for the loader to check a manifest against something rather than accepting any string */
-export const KNOWN: Known[] = ["auth@1", "payments@1", "realtime@1", "mail@1"];
+export const KNOWN: Known[] = ["auth@1", "payments@1", "realtime@1", "hardening@1", "mail@1"];

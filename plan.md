@@ -122,12 +122,16 @@ the next phase is argued from.
 3. **The interface list has to be closed.** An unknown interface in a manifest is a typo, and a typo is a plugin
    that never loads for a reason nobody can see. `src/server/interfaces/index.ts` is the list, and a name outside
    it is refused at install.
-4. **Hardening is not a leaf.** The plan listed it next after backups as "leaf-shaped". It is middleware —
-   `app.use("*", bodyLimitMiddleware())` and `rateLimitMiddleware()` at the top of `app.ts` — and Hono composes
-   handlers in registration order, so middleware registered after a route does not run before it. The kernel loads
-   at the end of `app.ts`, after every route. Moving hardening behind the kernel therefore means moving the kernel
-   *before* the routes, which is a reordering of the whole module and interleaves kernel-mounted middleware with
-   hand-mounted routes. Do it as its own step, with the full CI run, and not bundled into a leaf extraction.
+4. **Hardening is not a leaf, and middleware is its own shape.** The plan listed it after backups as "leaf-shaped".
+   It is middleware, `app.use("*")` for the body limit and the rate limit at the top of `app.ts`, and Hono composes
+   handlers in registration order: middleware registered after a route never runs before it. The kernel loads at
+   the end of `app.ts`, after every route, so a plugin cannot `use("*")` for itself. Loading the kernel before the
+   routes instead would take plugin *routes* out from under `globalHookMiddleware`, the app's own `routerUse`
+   middleware, which has to wrap every request. So middleware moves out as an interface rather than a mount: the
+   plugin provides `hardening@1`, two handlers, and `app.ts` holds their place in the chain with a slot that asks
+   the provider at request time, the same way the per-request middleware asks `realtime@1` for its client. No
+   provider, no limits, which is the "gutted" semantics; another limiter is another provider. The general form, a
+   kernel-owned middleware chain in load order, waits until the built-in middleware itself moves out.
 
 5. **Realtime is not two plugins.** The plan said hub fanout and the change feed become two providers of
    `realtime@1` chosen by composition. Nobody *installs* one of those: the hub is a deployment detail, not a user's
@@ -227,10 +231,16 @@ In this order, because it runs from proven to hardest.
 
 1. **Backups.** **Done**, with a manifest (`official`, `voidbase: "*"`) and the full conformance suite passing
    through the kernel. It is the right first one: two dependents (`crons`, `app.ts`) and it provides nothing.
-2. **Hardening** — not a leaf (finding 4): it is pre-route middleware, so this step is really "load the kernel
-   before the routes", done on its own with the full CI. Then **domains**, then **email**, which are leaf-shaped.
-   Domains and email are also the pair that gives the marketplace its first real story, since email depends on the
-   domain plugin having run.
+2. **Hardening.** **Done**, as the plugin providing `hardening@1` (finding 4): `src/server/plugins/hardening.ts`
+   serves the body limit and the rate limit, `app.ts` keeps their place in the chain with a per-request slot, and
+   `test/unit/hardening-plugin.test.ts` measures both halves, 413 with the plugin and pass-through without it. The
+   IP helpers (`realIP`, `ipInList`) stay in `src/server/hardening.ts`: backups, files and auth use them, and they
+   are request identity rather than a limit. Gated by the full CI like realtime.
+   **Domains** and **email** are not extractions and not leaf-shaped, which an earlier version of this line claimed.
+   The roadmap is explicit: attaching a hostname is an account-level action taken around a deploy rather than during
+   a request, so domains want a deploy-time plugin surface that does not exist yet, and email is its pair (the
+   `send_email` binding is the deploy's to declare; the instance half is a `mail@1` provider, the realtime shape
+   again, a factory over the request's bindings). They move to Phase 5b as new work, with that surface first.
 3. **Realtime.** **Done**, as *one* plugin providing `realtime@1` (finding 5; the two-provider shape is for choices
    a person makes, and nobody installs the hub). The interface is a factory over the request's bindings,
    `Realtime.for(env): RealtimeClient`, because on Workers the HUB binding arrives per request and not per isolate;
@@ -271,6 +281,16 @@ once Phase 2 lands, but three of them earn priority for what they prove rather t
 **Then, in any order:** preview environments (the roadmap notes it exercises every part of the loader, so it is a
 good late integration test rather than an early one), Workers AI and Think, rich text, SEO, a progressive web app
 and its service worker, translations, and the shop the other plugins plug into.
+
+**Domains and email** belong here too, and share a prerequisite: a deploy-time plugin surface. A plugin today runs
+inside an instance; attaching a hostname, waiting for its certificate and redirecting the rest to the canonical one
+happen around a deploy, on the account, and so do onboarding a domain to Cloudflare Email Service and declaring the
+Worker's `send_email` binding. The roadmap already names that surface as the general thing (backups want to
+schedule, previews want to create and destroy instances). So the order is the surface first, domains as its first
+plugin, then email as the pair whose instance half provides `mail@1`. Its consumer is `deliverMail` in
+`src/server/mail/index.ts`, the one transport step under the templates, hooks and queue, and it already runs with the
+bindings (the queue consumer hands them over), so `Mail.for(env).send(...)` reaches a provider from outside a request
+the way realtime does. Check Email Service's availability on the account before promising the second.
 
 **One thing to check before starting any of them:** several want panel UI — the AI chat in the admin panel, rich
 text editing where it renders, the shop. They are blocked on decision 0.2 exactly as the format is. If 0.2 lands on
@@ -322,12 +342,12 @@ Correcting the page is part of the phase that makes it true, not a follow-up.
 
 ```
 0.1 collection ownership ─┐
-0.2 panel UI decision     ├─→ 1 kernel ─→ 2 interfaces ─┬─→ 5a backups ─→ hardening/domains/email
+0.2 panel UI decision     ├─→ 1 kernel ─→ 2 interfaces ─┬─→ 5a backups ─→ hardening
 0.3 auth contract         │                  │          │        │
 0.4 loader failures ──────┘                  │          │        └─→ 6 lockfile + CLI ─→ 7 marketplace
                                              │          │
                                              │          └─→ 5b payments ─→ openapi/mcp ─→ enterprise backup
-                                             │                                  └─→ the other nine
+                                             │                                  └─→ the other nine; domains and email once a deploy-time surface exists
                                              └─→ 4 tiers
                                                     │
                      5a realtime, one plugin ──┤   (needs a full ci run beside it)

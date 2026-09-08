@@ -138,6 +138,7 @@ builds; see [docs/ci.md](docs/ci.md).
 - [docs/differences.md](docs/differences.md): what the platform changes (D1 batches, per-isolate limits, polling realtime, backups format).
 - [docs/hooks.md](docs/hooks.md): `pb_hooks` and `pb_migrations` on Workers, supported events and globals.
 - [docs/migrating.md](docs/migrating.md): moving an existing PocketBase app.
+- [docs/plugins.md](docs/plugins.md): the plugin kernel: manifests, interfaces, the three plugins that exist, `/api/plugins`, and what is not built.
 - [docs/platform.md](docs/platform.md): how to run cheap and fast on Cloudflare (assets off the Worker, log writes, change feed, crons, placement, queues, rate limits, the realtime hub) and the per-app Durable Object design for going beyond the account limits.
 - [COMPAT.md](COMPAT.md): verified upstream versions and endpoint matrix.
 

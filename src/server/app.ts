@@ -27,10 +27,11 @@ import { mountCronsApi } from "./crons";
 import { createKernel, load, using, whatLoaded } from "./kernel";
 import { backups as backupsPlugin } from "./plugins/backups";
 import { realtime as realtimePlugin } from "./plugins/realtime";
-import type { Realtime } from "./interfaces";
+import { hardening as hardeningPlugin } from "./plugins/hardening";
+import type { Hardening, Realtime } from "./interfaces";
 import { VERSION } from "./version";
 import { mountSqlApi } from "./sql";
-import { bodyLimitMiddleware, rateLimitMiddleware, realIPWith } from "./hardening";
+import { realIPWith } from "./hardening";
 import { backupActive } from "./backups";
 import { maintenanceIfDue } from "./crons";
 import { attachJobs } from "./jobs";
@@ -88,8 +89,12 @@ app.use("*", async (c, next) => {
   await next();
 });
 app.use("*", requestLogger());
-app.use("*", bodyLimitMiddleware());
-app.use("*", rateLimitMiddleware());
+// The limits, from whichever plugin provides hardening@1. Middleware runs in registration order, so this is their
+// place in the chain, and the kernel loads after the routes; so the slot asks the provider at request time, the way
+// the realtime client above does. No provider, no limits.
+const limits = () => using<Hardening | undefined>(kernel, "hardening@1");
+app.use("*", (c, next) => limits()?.bodyLimit(c, next) ?? next());
+app.use("*", (c, next) => limits()?.rateLimit(c, next) ?? next());
 app.use("*", hookMiddleware() as never);
 // PocketBase's routerUse: the app's own global middleware, around every request (see src/adapter for Void's middleware/)
 app.use("*", globalHookMiddleware() as never);
@@ -527,7 +532,7 @@ mountCronsApi(app);
 // app serves anything. cordis applies a plugin on a later tick, which is why this awaits: top level await in an
 // ES module is the only place both facts can be true at once.
 export const kernel = createKernel(app);
-await load(kernel, [realtimePlugin, backupsPlugin], VERSION);
+await load(kernel, [realtimePlugin, hardeningPlugin, backupsPlugin], VERSION);
 
 // What this instance is running, which is the question a bare instance has to be able to answer about itself. For
 // the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface.

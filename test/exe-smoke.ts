@@ -14,9 +14,11 @@ const STARTER = resolve(process.env.STARTER_VB_DIR ?? resolve(PKG, "../voidbase-
 let pass = 0, fail = 0; const check = (l: string, ok: boolean, d = "") => { ok ? pass++ : fail++; console.log(`${ok ? "PASS" : "FAIL"}  ${l}${ok ? "" : "  " + d}`); };
 const freePort = () => { const s = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() }); const p = s.port; s.stop(true); return p; };
 const tmp = mkdtempSync(join(tmpdir(), "vb-exe-")); const home = `${tmp}/home`; mkdirSync(home);
+// the archive name carries the package version, which is a prerelease while voidbase is in public beta:
+// voidbase_0.9.0-beta.1_linux_amd64.zip, not voidbase_0.9.0_linux_amd64.zip
 const built = await buildExecutables({ targets: ["host"], out: `${tmp}/release`, log: () => undefined });
 const T = TARGETS[hostTarget()]!; const exe = `${tmp}/${T.exe}`; copyFileSync(`${PKG}/dist/exe/${hostTarget()}/${T.exe}`, exe); chmodSync(exe, 0o755);
-check("release archive and checksums built for the host", built.archives.length === 1 && /^voidbase_\d+\.\d+\.\d+_/.test(built.archives[0]!.file) && readFileSync(`${tmp}/release/checksums.txt`, "utf8").includes(built.archives[0]!.file), JSON.stringify(built.archives));
+check("release archive and checksums built for the host", built.archives.length === 1 && /^voidbase_\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?_/.test(built.archives[0]!.file) && readFileSync(`${tmp}/release/checksums.txt`, "utf8").includes(built.archives[0]!.file), JSON.stringify(built.archives));
 const run = (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawnSync([exe, ...args], { cwd: tmp, env: { ...process.env, HOME: home, XDG_CACHE_HOME: `${home}/.cache`, ...env }, stdout: "pipe", stderr: "pipe" }); return { code: p.exitCode, out: new TextDecoder().decode(p.stdout) + new TextDecoder().decode(p.stderr) }; };
 // the update talks to the mock server running in this process: spawn without blocking the event loop
 const runAsync = async (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawn([exe, ...args], { cwd: tmp, env: { ...process.env, HOME: home, XDG_CACHE_HOME: `${home}/.cache`, ...env }, stdout: "pipe", stderr: "pipe" }); const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]); return { code, out: out + err }; };

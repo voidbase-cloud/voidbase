@@ -82,9 +82,16 @@ export function maintenanceIfDue(env: AppEnv["Bindings"], waitUntil: (p: Promise
   if (now - lastMaintenance < 3600_000) return;
   lastMaintenance = now;
   waitUntil((async () => {
+    // a cancelled run should be retried by the next request rather than wait out the hour it already claimed
+    let done = false;
+    try {
     const settings = await loadSettings(env.DB);
     const since = new Date(now - 3600_000);
     for (const job of allJobs(settings.backups.cron)) if (!hookCrons.has(job.id) && dueWithin(job.expr, since, new Date(now))) await runJob(env, job);
+      done = true;
+    } finally {
+      if (!done) lastMaintenance = 0;
+    }
   })());
 }
 

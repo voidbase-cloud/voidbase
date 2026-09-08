@@ -75,7 +75,12 @@ app.use("*", async (c, next) => {
   // onBootstrap/onServe handlers may use $app (find/save records and collections) like PocketBase's, so they run inside a hook store
   if (!served) { served = true; await withHookStore(c.env.DB, c.env, async () => { await trigger("onBootstrap", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined); await trigger("onServe", { app: undefined as unknown, router: app, next: async () => undefined as unknown }, null, async () => undefined); }); }
   c.set("auth", await loadAuth(c));
-  try { maintenanceIfDue(c.env, (p) => c.executionCtx.waitUntil(p)); } catch { /* no execution context */ }
+    // Not on the realtime stream: its invocation lives as long as the connection, and waitUntil work is cancelled
+    // when that closes, so maintenance attached to it is dropped after having claimed the hour's slot. Let a short
+    // request carry it instead.
+    if (!c.req.path.startsWith("/api/realtime")) {
+      try { maintenanceIfDue(c.env, (p) => c.executionCtx.waitUntil(p)); } catch { /* no execution context */ }
+    }
   await next();
 });
 app.use("*", requestLogger());

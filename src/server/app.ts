@@ -524,8 +524,12 @@ mountCronsApi(app);
 export const kernel = createKernel(app);
 await load(kernel, [backupsPlugin], VERSION);
 
-// what this instance is running, which is the question a bare instance has to be able to answer about itself
-app.get("/api/plugins", (c) => c.json(whatLoaded(kernel)));
+// What this instance is running, which is the question a bare instance has to be able to answer about itself. For
+// the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface.
+app.get("/api/plugins", (c) => {
+  requireSuperuser(c);
+  return c.json(whatLoaded(kernel));
+});
 mountSqlApi(app);
 
 // --- pb_hooks runtime ------------------------------------------------------

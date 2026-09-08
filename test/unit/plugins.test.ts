@@ -181,15 +181,20 @@ describe("the kernel refuses a graph it cannot load", () => {
 });
 
 describe("the tier that is not optional", () => {
-  test("an instance with no auth provider says so rather than pretending it is lean", () => {
-    const { missingCore, problems } = resolve([plugin({ name: "backups" })], "0.9.0");
+  // the core list is empty while auth is still built in, so these pass the list they are testing against
+  test("an instance with no provider for a core interface says so rather than pretending it is lean", () => {
+    const { missingCore, problems } = resolve([plugin({ name: "backups" })], "0.9.0", ["auth@1"]);
     expect(problems).toEqual([]);
     expect(missingCore).toEqual(["auth@1"]);
   });
 
   test("and stops saying so once something provides it", () => {
-    const { missingCore } = resolve([plugin({ name: "better-auth", tier: "core", provides: ["auth@1"] })], "0.9.0");
+    const { missingCore } = resolve([plugin({ name: "better-auth", tier: "core", provides: ["auth@1"] })], "0.9.0", ["auth@1"]);
     expect(missingCore).toEqual([]);
+  });
+
+  test("nothing is core yet, because nothing has left the core: no instance warns today", () => {
+    expect(resolve([plugin({ name: "backups" })], "0.9.0").missingCore).toEqual([]);
   });
 
   test("removing a core plugin is possible, which is the entire point of moving auth out", () => {

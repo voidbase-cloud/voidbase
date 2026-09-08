@@ -18,8 +18,14 @@ import { KNOWN } from "../interfaces";
 import type { InterfaceName, Plugin } from "./manifest";
 import { checkManifest } from "./manifest";
 
-/** the interfaces an instance is not usable without, whoever provides them */
-export const CORE: InterfaceName[] = ["auth@1"];
+/**
+ * The interfaces an instance is not usable without, whoever provides them.
+ *
+ * Empty until something actually leaves the core. Auth is the first candidate and it is still built in, so listing
+ * `auth@1` here would make every instance warn that it is running without auth while auth is running fine. An
+ * interface joins this list in the same commit that removes its built-in implementation, and not before.
+ */
+export const CORE: InterfaceName[] = [];
 
 export interface Resolution {
   /** load order: everything a plugin requires comes before it */
@@ -37,7 +43,7 @@ export function migrationOrder(order: Plugin[]): string[] {
   return order.map((p) => p.manifest.name);
 }
 
-export function resolve(plugins: Plugin[], voidbaseVersion: string): Resolution {
+export function resolve(plugins: Plugin[], voidbaseVersion: string, core: InterfaceName[] = CORE): Resolution {
   const problems: string[] = [];
   const providers = new Map<InterfaceName, string>();
   const byName = new Map<string, Plugin>();
@@ -107,7 +113,7 @@ export function resolve(plugins: Plugin[], voidbaseVersion: string): Resolution 
   // A core plugin is the tier that exists because the instance is not usable without it, so an instance missing
   // one is not lean, it is broken. That is a warning to say out loud rather than a refusal, because removing one
   // has to be possible: replacing auth is the entire point of moving it out.
-  const missingCore = CORE.filter((i) => !providers.has(i));
+  const missingCore = core.filter((i) => !providers.has(i));
 
   const { order, cycles } = sort(plugins, providers, owners);
   for (const c of cycles) problems.push(`these plugins depend on each other in a circle, which cannot be loaded: ${c.join(" -> ")}`);

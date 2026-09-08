@@ -31,6 +31,10 @@ export type HookEvent = { next(): Promise<unknown> } & Record<string, unknown>;
 type Bindings = Record<string, unknown>;
 
 type ErrorClass = new (message?: string, data?: unknown) => Error;
+// ApiError is the one that carries its own status, so it does not have the shape the rest of them share:
+// `new ApiError(502, "...")`. Typing it as an ErrorClass made the correct call a type error and the call that
+// satisfied the type set status to a string.
+type ApiErrorClass = new (status?: number, message?: string, data?: unknown) => Error;
 /* eslint-disable @typescript-eslint/no-explicit-any -- PocketBase events are many shapes; the hook API is loose by nature */
 type EventRegistrar = (fn: (e: any) => unknown, ...tags: string[]) => void;
 
@@ -64,7 +68,7 @@ export type PocketBaseApi = {
     onJob(type: "queue", fn: (env: Bindings, job: { queue: string; body: unknown }) => Promise<void>): void;
   };
   Record: new (collection: CollectionRef, data?: Record<string, unknown>) => HookRecord;
-  ApiError: ErrorClass;
+  ApiError: ApiErrorClass;
   BadRequestError: ErrorClass;
   UnauthorizedError: ErrorClass;
   ForbiddenError: ErrorClass;

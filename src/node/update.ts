@@ -1,9 +1,16 @@
-// `voidbase update`: PocketBase's `pocketbase update` for the prebuilt executable. The latest GitHub release, the
+// `voidbase update`: one command for every shape voidbase comes in.
+//
+// The prebuilt executable replaces itself, which is PocketBase's `pocketbase update`: the latest GitHub release, the
 // asset for this platform (voidbase_<version>_<os>_<arch>.zip), its sha256 against checksums.txt, then the running
 // executable replaced in place (the old one kept as `.old` until the end), optionally a pb_data backup first.
-import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+//
+// An npm install is a package instead, so the second half of this file answers the same question against the
+// registry and installs over the top: globally for the CLI, or as the dependency of a project that deploys it. The
+// point of putting both here is that the caller does not have to know which one they have.
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { unzipSync } from "fflate";
+import { home } from "./local";
 
 export const REPO = "voidbase-cloud/voidbase";
 export const EXECUTABLE = "voidbase";
@@ -88,4 +95,143 @@ async function fetchOk(url: string): Promise<Response> {
   const res = await fetch(url, { headers: { "user-agent": "voidbase-update" }, redirect: "follow" });
   if (!res.ok) throw new Error(`download failed: HTTP ${res.status} for ${url}`);
   return res;
+}
+
+// ---- Updating an install that is not the prebuilt executable ---------------------------------------------------
+//
+// The binary replaces itself (above). Every other shape is a package: installed globally, or a dependency of a
+// project that deploys it. Those need a different question answered ("what is the newest published version") and a
+// different action ("install it"), but the same command, because someone who wants a newer voidbase should not have
+// to know which of the four shapes they are standing in.
+
+export const PACKAGE = "@voidbase-cloud/voidbase";
+
+/** How this copy of voidbase is installed, which decides what updating it means. */
+export type Shape = "executable" | "global" | "project" | "checkout";
+export type Manager = "bun" | "npm" | "pnpm" | "yarn";
+
+export interface Install {
+  shape: Shape;
+  /** the package.json an update would edit, for the project shape */
+  manifest: string | null;
+  /** what that manifest currently asks for, e.g. "^0.8.0" */
+  range: string | null;
+  manager: Manager;
+}
+
+const LOCKFILES: [string, Manager][] = [["bun.lock", "bun"], ["bun.lockb", "bun"], ["pnpm-lock.yaml", "pnpm"], ["yarn.lock", "yarn"], ["package-lock.json", "npm"]];
+
+/** The package manager a directory is managed by, read from its lockfile. Bun is the default because we ship for it. */
+export function managerFor(dir: string): Manager {
+  for (const [file, manager] of LOCKFILES) if (existsSync(join(dir, file))) return manager;
+  return "bun";
+}
+
+/** The nearest package.json above `from` that depends on voidbase, which is what "a project" means here. */
+export function findManifest(from: string): string | null {
+  let at = resolve(from);
+  for (;;) {
+    const p = join(at, "package.json");
+    if (existsSync(p)) {
+      try {
+        const pkg = JSON.parse(readFileSync(p, "utf8")) as { name?: string; dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+        if (pkg.name !== PACKAGE && (pkg.dependencies?.[PACKAGE] ?? pkg.devDependencies?.[PACKAGE])) return p;
+      } catch { /* an unreadable package.json is not a project we can update */ }
+    }
+    const up = resolve(at, "..");
+    if (up === at) return null;
+    at = up;
+  }
+}
+
+/**
+ * Which shape this is. The question is answered from where the caller is standing rather than from where the package
+ * lives, because "update voidbase" inside a project means the project's dependency even when a global copy is what
+ * put the command on the PATH.
+ */
+export function detectInstall(o: { executable: boolean; cwd?: string; packageRoot: string }): Install {
+  if (o.executable) return { shape: "executable", manifest: null, range: null, manager: "bun" };
+  const manifest = findManifest(o.cwd ?? process.cwd());
+  if (manifest) {
+    const pkg = JSON.parse(readFileSync(manifest, "utf8")) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    const range = pkg.dependencies?.[PACKAGE] ?? pkg.devDependencies?.[PACKAGE] ?? null;
+    return { shape: "project", manifest, range, manager: managerFor(resolve(manifest, "..")) };
+  }
+  // the repository itself: the package root is not inside a node_modules, so there is nothing to install over it
+  const inModules = /[\\/]node_modules[\\/]/.test(o.packageRoot);
+  if (!inModules) return { shape: "checkout", manifest: null, range: null, manager: managerFor(o.packageRoot) };
+  return { shape: "global", manifest: null, range: null, manager: /[\\/]\.bun[\\/]/.test(o.packageRoot) ? "bun" : "npm" };
+}
+
+/**
+ * The version a project is actually on: what is installed in its node_modules, or failing that the floor of the
+ * range it declares. Without this, `update --check` inside a project would report the version of whichever CLI
+ * happened to run it, which is the one number nobody is asking about.
+ */
+export function installedVersion(i: Install): string | null {
+  if (!i.manifest) return null;
+  const dir = resolve(i.manifest, "..");
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, "node_modules", ...PACKAGE.split("/"), "package.json"), "utf8")) as { version?: string };
+    if (pkg.version) return pkg.version;
+  } catch { /* not installed here: fall back to what the manifest asks for */ }
+  const floor = (i.range ?? "").replace(/^[\^~>=<\s]*/, "").trim();
+  return /^\d+\.\d+/.test(floor) ? floor : null;
+}
+
+/** The newest version on the registry. Separate from the GitHub release because the npm package is published first. */
+export async function latestPublished(registry = process.env.VOIDBASE_REGISTRY || "https://registry.npmjs.org"): Promise<string> {
+  const res = await fetch(`${registry.replace(/\/$/, "")}/${PACKAGE}/latest`, { headers: { accept: "application/json", "user-agent": "voidbase-update" }, signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`asking ${registry} for the latest ${PACKAGE}: HTTP ${res.status}`);
+  const body = (await res.json()) as { version?: string };
+  if (!body.version) throw new Error(`${registry} returned no version for ${PACKAGE}`);
+  return body.version;
+}
+
+/**
+ * The argv that installs `version` for this shape. Printed by --dry-run, so it has to be the real thing.
+ *
+ * A project that pinned an exact version stays pinned and one that wrote a caret keeps its caret: updating is not
+ * the moment to change a policy somebody chose on purpose.
+ */
+export function updateCommand(i: Install, version: string): string[] {
+  const prefix = /^[\^~]/.exec(i.range ?? "")?.[0] ?? "";
+  const spec = `${PACKAGE}@${prefix}${version}`;
+  if (i.shape === "global")
+    return i.manager === "npm" ? ["npm", "install", "-g", spec] : i.manager === "pnpm" ? ["pnpm", "add", "-g", spec] : i.manager === "yarn" ? ["yarn", "global", "add", spec] : ["bun", "add", "-g", spec];
+  return i.manager === "npm" ? ["npm", "install", spec] : i.manager === "pnpm" ? ["pnpm", "add", spec] : i.manager === "yarn" ? ["yarn", "add", spec] : ["bun", "add", spec];
+}
+
+// ---- The notice ------------------------------------------------------------------------------------------------
+//
+// Knowing a release exists is most of the problem: nobody runs `update` for a version they have not heard of. So any
+// command mentions it once a day, from a cached answer, and never waits on the network to do it.
+
+interface Cache { checked: string; latest: string }
+const cachePath = (): string => join(home(), "update-check.json");
+
+/** Reads the cached answer if it is fresh enough to use. */
+export function cachedLatest(maxAgeMs = 24 * 60 * 60 * 1000, now = Date.now()): string | null {
+  try {
+    const c = JSON.parse(readFileSync(cachePath(), "utf8")) as Cache;
+    return now - Date.parse(c.checked) < maxAgeMs ? c.latest : null;
+  } catch { return null; }
+}
+
+export function writeCache(latest: string, now = new Date()): void {
+  try { mkdirSync(home(), { recursive: true }); writeFileSync(cachePath(), `${JSON.stringify({ checked: now.toISOString(), latest } satisfies Cache)}\n`); } catch { /* a cache that cannot be written just means checking again tomorrow */ }
+}
+
+/** Whether to say anything at all: never in CI, never when told not to, never when the output is not a terminal. */
+export function noticeWanted(env: Record<string, string | undefined> = process.env, tty = !!process.stdout.isTTY): boolean {
+  if (env.VOIDBASE_NO_UPDATE_CHECK === "1" || env.NO_UPDATE_NOTIFIER === "1") return false;
+  if (env.CI || env.VOIDBASE_CI_INNER) return false;
+  return tty;
+}
+
+/** The one line a command prints when a newer version exists, or null. Uses the cache; refreshes it in the background. */
+export function noticeFor(current: string, latest: string | null, i: Install): string | null {
+  if (!latest || compareVersions(current, latest) >= 0) return null;
+  const how = i.shape === "checkout" ? "git pull" : "voidbase update";
+  return `\nvoidbase ${latest} is out (you have ${current}). Run \`${how}\`.`;
 }

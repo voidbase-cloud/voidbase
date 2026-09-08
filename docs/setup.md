@@ -117,7 +117,12 @@ reachable from other machines; put a TLS terminator in front of it before you do
 Everything the instance owns lives in `pb_data/` next to the executable: the SQLite database, the uploaded files and
 the generated hook typings. Copy that directory and you have copied the instance. `./voidbase update` fetches the
 newest release for your platform, checks it against the published checksum and replaces the executable in place;
-`--backup` zips `pb_data` first.
+`--backup` zips `pb_data` first, and `--check` reports without changing anything.
+
+`voidbase update` is the same command whichever way voidbase is installed. It looks at where you are standing: a
+project whose `package.json` depends on voidbase is updated as a dependency, a global install reinstalls itself, and
+the executable replaces itself as above. Updating a project changes what your next deploy will carry, not what is
+serving right now.
 
 To add server-side behaviour, put JavaScript in `pb_hooks/` beside the executable. The
 [directories section](#what-the-directories-are) below explains each one, and they mean the same thing here.

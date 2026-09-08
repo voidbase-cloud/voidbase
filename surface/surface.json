@@ -2481,7 +2481,7 @@
         },
         {
           "id": "prod.cli",
-          "title": "CLI: init, import, superuser upsert, dev, deploy wrappers",
+          "title": "CLI: init, import, superuser upsert, update, dev, deploy wrappers",
           "surface": "voidbase bin",
           "oracles": [
             "prod"
@@ -2489,7 +2489,7 @@
           "hours": 4,
           "status": "done",
           "milestone": "m6",
-          "notes": "bin/voidbase.ts (package.json bin): init (scaffold .env, pb_hooks, pb_migrations, panel sync), dev/build/preview/deploy wrappers over vp/void, superuser upsert|list, import, export, panel sync --brand, app sync, seed-user; remote commands via --url/--admin. Exercised against the dev server (upsert create+update, list, import, export)."
+          "notes": "bin/voidbase.ts (package.json bin): init (scaffold .env, pb_hooks, pb_migrations, panel sync), dev/build/preview/deploy wrappers over vp/void, superuser upsert|list, import, export, panel sync --brand, app sync, seed-user; remote commands via --url/--admin. Exercised against the dev server (upsert create+update, list, import, export). `update` is one command over four install shapes and works out which it is in from where the caller stands: the prebuilt executable replaces itself from a GitHub release after checking the published sha256, a global npm install reinstalls, a project's dependency is bumped and installed keeping the caret or pin it already had, and a checkout is told to use git. --check changes nothing and exits 1 when behind and 2 when it could not find out, which is what a pipeline reads; every other command mentions a new release once a day from a cache under VOIDBASE_HOME, never in CI or off a terminal (VOIDBASE_NO_UPDATE_CHECK=1)."
         },
         {
           "id": "prod.serve",
@@ -2565,7 +2565,7 @@
           "status": "done",
           "milestone": "m6",
           "verify": "The same three words are the whole build configuration for every project, and each one does the right thing in a Cloudflare build, on a branch and on a laptop without being told which it is",
-          "notes": "Cloudflare Workers Builds calls three commands, and every voidbase project answers with the same three words (root directory /). scripts/environment.ts reads what this run is as granular controls rather than a named environment, which is twelve-factor III: WORKERS_CI / WORKERS_CI_BUILD_UUID say a Cloudflare build is running this, WORKERS_CI_BRANCH which branch, PRODUCTION_BRANCH (default master) which branch is production, WRANGLER_CI_OVERRIDE_NAME which Worker that build may deploy; every answer defaults to what is right on a laptop, and every run prints what it read. A deploy off the production branch says there is nothing to do rather than taking production's place. voidbase-ci: build runs the CI suite for automation and a plain Vite build for a person, deploy publishes the status page, version uploads it as a version. voidbase.cloud: build builds the site and typechecks it, deploy deploys the instance, version reads back the configuration the branch would deploy with. The site's build runs Vite under `timeout` (BUILD_TIMEOUT 150s, BUILD_ATTEMPTS 2), which signals the whole process group because Void's prerender step occasionally spins in a grandchild after the client bundle is written; before the deadline it prints the process tree, so a hang leaves evidence instead of costing the full twenty minutes Cloudflare allows. `voidbase sync` writes these three into the triggers it creates whenever the project has the scripts, so the CLI and the dashboard agree."
+          "notes": "Cloudflare Workers Builds calls three commands, and every voidbase project answers with the same three words (root directory /). scripts/environment.ts reads what this run is as granular controls rather than a named environment, which is twelve-factor III: WORKERS_CI / WORKERS_CI_BUILD_UUID say a Cloudflare build is running this, WORKERS_CI_BRANCH which branch, PRODUCTION_BRANCH (default master) which branch is production, WRANGLER_CI_OVERRIDE_NAME which Worker that build may deploy; every answer defaults to what is right on a laptop, and every run prints what it read. A deploy off the production branch says there is nothing to do rather than taking production's place. voidbase-ci: build runs the CI suite for automation and a plain Vite build for a person, deploy publishes the status page, version uploads it as a version. voidbase.cloud: build builds the site and typechecks it, deploy deploys the instance, version reads back the configuration the branch would deploy with. None of the verbs supervises what it runs -- no deadline, no retry, no watchdog -- so a hung or failed build is Cloudflare's (or Actions') to time out and retry. `voidbase sync` writes these three into the triggers it creates whenever the project has the scripts, so the CLI and the dashboard agree."
         }
       ]
     },

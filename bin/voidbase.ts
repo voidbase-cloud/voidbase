@@ -61,8 +61,12 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   secrets [list] [--dir pb_secrets]  what pb_secrets/main.ts declares (secret / server / public), which have a value in
   secrets push [--name worker]       secrets.json (git-ignored) or a default, which secrets the Worker has; push stores the
                                      local secrets on the Worker (vars are set by every deploy)
-  update [--dir pb_data] [--backup]  prebuilt executable only: fetch the latest GitHub release for this platform, verify
-                                     its checksum and replace the executable (--backup zips pb_data first)
+  update [--check] [--to 0.9.0] [--dry-run] [--dir pb_data] [--backup]
+                                     bring voidbase up to the newest release, whichever way it is installed: the
+                                     prebuilt executable verifies a checksum and replaces itself (--backup zips
+                                     pb_data first), a global install reinstalls, a project's dependency is bumped
+                                     and installed. --check changes nothing and exits 1 when behind, 2 when it
+                                     could not find out, which is what a pipeline reads
   version                            print the version
   bundle [--out dir] [--version v]   build the generic Worker + panel as a release directory (default .cloud/releases/<v>)
          [--push http://vb --token t]  and optionally push it into a voidbase control plane (POST /api/vbcloud/releases)
@@ -96,9 +100,50 @@ switch (cmd) {
   case undefined: case "help": case "--help": console.log(HELP); break;
   case "version": case "--version": console.log(await currentVersion()); break;
   case "update": {
-    if (!isExecutable()) { console.error("voidbase update replaces the prebuilt executable; this is a checkout or an npm install: update the package instead (bun update @voidbase-cloud/voidbase)."); process.exit(1); }
-    const { update } = await import("../src/node/update");
-    await update({ currentVersion: await currentVersion(), dataDir: resolve(flags.dir ?? "pb_data"), backup: !!flags.backup });
+    // One command, four shapes. The executable replaces itself from a GitHub release; everything else is a package
+    // and comes from the registry. --check answers without changing anything, and its exit code is what a pipeline
+    // reads: 0 up to date, 1 behind, 2 could not tell.
+    const U = await import("../src/node/update");
+    const install = U.detectInstall({ executable: isExecutable(), packageRoot: ROOT });
+    // in a project the number that matters is the project's, not whichever CLI happens to be running
+    const current = (install.shape === "project" ? U.installedVersion(install) : null) ?? (await currentVersion());
+    const check = "check" in flags;
+
+    let latest: string;
+    try {
+      latest = flags.to ?? (install.shape === "executable" ? (await U.fetchLatestRelease()).tag.replace(/^v/, "") : await U.latestPublished());
+    } catch (err) {
+      console.error(`could not find out what the latest version is: ${err instanceof Error ? err.message : err}`);
+      process.exit(check ? 2 : 1);
+    }
+    U.writeCache(latest);
+
+    const behind = U.compareVersions(current, latest) < 0;
+    const where = install.shape === "project" ? `${install.manifest} (${install.range ?? "no range"})` : install.shape;
+    if (check) {
+      console.log(`voidbase ${current}, latest ${latest}: ${behind ? "behind" : "up to date"}  [${where}]`);
+      process.exit(behind ? 1 : 0);
+    }
+    if (!behind && !flags.to) { console.log(`voidbase ${current} is already the latest.  [${where}]`); break; }
+
+    if (install.shape === "checkout") {
+      console.error(`this is a voidbase checkout, not an install: update it with git.\n  you have ${current}, the registry has ${latest}`);
+      process.exit(1);
+    }
+    if (install.shape === "executable") {
+      const { update } = await import("../src/node/update");
+      await update({ currentVersion: current, dataDir: resolve(flags.dir ?? "pb_data"), backup: !!flags.backup });
+      break;
+    }
+
+    const argv = U.updateCommand(install, latest);
+    if ("dry-run" in flags) { console.log(argv.join(" ")); break; }
+    console.log(`voidbase ${current} -> ${latest}\n  ${argv.join(" ")}`);
+    const p = Bun.spawn(argv, { cwd: install.manifest ? resolve(install.manifest, "..") : process.cwd(), stdio: ["inherit", "inherit", "inherit"] });
+    const code = await p.exited;
+    if (code !== 0) { console.error(`\n${argv[0]} exited ${code}: nothing was changed by voidbase itself`); process.exit(code); }
+    console.log(`\nvoidbase ${latest} installed.`);
+    if (install.shape === "project") console.log("Your instance keeps running the version you last deployed. Deploy to put this one live:\n  voidbase deploy        (or push, if the repository deploys itself)");
     break;
   }
   case "secrets": {
@@ -368,4 +413,23 @@ switch (cmd) {
   case "app": await run("bun", ["scripts/sync-app.ts", "--dest", resolve(flags.dest ?? "public")], { VOIDBASE_APP_DIR: resolve(flags.src ?? process.env.VOIDBASE_APP_DIR ?? "../sk/build") }); break;
   case "seed-user": await run("bash", ["scripts/seed-app-user.sh", url], { REFERENCE_USER_EMAIL: sub ?? "user@example.com", REFERENCE_USER_PASSWORD: rest[0] ?? "changeme123" }); break;
   default: console.error(`unknown command "${cmd}"\n\n${HELP}`); process.exit(1);
+}
+
+// Nobody updates to a version they have not heard of, so any command mentions one once a day. Cached under
+// VOIDBASE_HOME, skipped in CI and when the output is not a terminal, and it never delays a command by more than the
+// timeout below. `update` says it itself, so it is left out.
+if (cmd !== "update" && cmd !== "version" && cmd !== "--version") {
+  const U = await import("../src/node/update");
+  if (U.noticeWanted()) {
+    let latest = U.cachedLatest();
+    if (!latest) {
+      latest = await Promise.race([
+        U.latestPublished().catch(() => null),
+        new Promise<null>((r) => setTimeout(() => r(null), 1500)),
+      ]);
+      if (latest) U.writeCache(latest);
+    }
+    const line = U.noticeFor(await currentVersion(), latest, U.detectInstall({ executable: isExecutable(), packageRoot: ROOT }));
+    if (line) console.log(line);
+  }
 }

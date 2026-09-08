@@ -30,14 +30,22 @@ bun add @voidbase-cloud/voidbase        # the package: library, CLI (`voidbase`)
 bunx @voidbase-cloud/voidbase serve     # or run the CLI without installing
 voidbase local new blog                 # a named instance on this machine, with its own port and superuser
 voidbase local ls                       # what you have locally; `voidbase instances` does the same for Cloudflare
+voidbase update                         # move to the newest release, whichever way voidbase is installed
 ```
 
 Or, like PocketBase, a single prebuilt executable from the
 [releases](https://github.com/voidbase-cloud/voidbase/releases): `voidbase_<version>_<os>_<arch>.zip` for Linux,
 macOS and Windows (amd64 and arm64; musl builds for Alpine), with the admin panel, the system migrations and the hooks
-typings inside, so `./voidbase serve` needs nothing else. `./voidbase update` fetches the latest release for the
-platform, verifies its checksum and replaces the executable (`--backup` zips `pb_data` first). The Cloudflare
-toolchain (`deploy`, `bundle`, `dev`) stays with the npm package.
+typings inside, so `./voidbase serve` needs nothing else. The Cloudflare toolchain (`deploy`, `bundle`, `dev`)
+stays with the npm package.
+
+`voidbase update` is the same command in every one of those shapes and works out which one it is in. The prebuilt
+executable fetches the latest release for its platform, checks it against the published checksum and replaces itself
+(`--backup` zips `pb_data` first). A global npm install reinstalls itself. Inside a project, the dependency is bumped
+and installed, keeping the caret or the pin the project already had, and you are reminded that the live instance
+changes when you deploy rather than when you install. `voidbase update --check` changes nothing and exits 1 when
+there is a newer version and 2 when it could not find out, which is what a pipeline reads. Every other command
+mentions a new release once a day; `VOIDBASE_NO_UPDATE_CHECK=1` turns that off.
 
 Commits follow Conventional Commits (enforced by husky and CI); release-please turns them into a release PR,
 and merging it publishes to npm and GitHub Packages and attaches the executables, with the compiled notes; see

@@ -122,7 +122,14 @@ the next phase is argued from.
 3. **The interface list has to be closed.** An unknown interface in a manifest is a typo, and a typo is a plugin
    that never loads for a reason nobody can see. `src/server/interfaces/index.ts` is the list, and a name outside
    it is refused at install.
-4. **Realtime is not two plugins.** The plan said hub fanout and the change feed become two providers of
+4. **Hardening is not a leaf.** The plan listed it next after backups as "leaf-shaped". It is middleware —
+   `app.use("*", bodyLimitMiddleware())` and `rateLimitMiddleware()` at the top of `app.ts` — and Hono composes
+   handlers in registration order, so middleware registered after a route does not run before it. The kernel loads
+   at the end of `app.ts`, after every route. Moving hardening behind the kernel therefore means moving the kernel
+   *before* the routes, which is a reordering of the whole module and interleaves kernel-mounted middleware with
+   hand-mounted routes. Do it as its own step, with the full CI run, and not bundled into a leaf extraction.
+
+5. **Realtime is not two plugins.** The plan said hub fanout and the change feed become two providers of
    `realtime@1` chosen by composition. Nobody *installs* one of those: the hub is a deployment detail, not a user's
    choice. The two-provider pattern is right for payments, where a person picks Stripe or Polar, and wrong here.
    Realtime is one plugin whose implementation follows the binding, and if that selection should happen at build
@@ -220,13 +227,18 @@ In this order, because it runs from proven to hardest.
 
 1. **Backups.** **Done**, with a manifest (`official`, `voidbase: "*"`) and the full conformance suite passing
    through the kernel. It is the right first one: two dependents (`crons`, `app.ts`) and it provides nothing.
-2. **Hardening**, then **domains**, then **email**. All leaf-shaped like backups. Domains and email are also the
-   pair that gives the marketplace its first real story, since email depends on the domain plugin having run.
-3. **Realtime**, as *one* plugin providing `realtime@1` whose implementation follows the HUB binding (finding 4;
-   the two-provider shape is for choices a person makes, and nobody installs the hub). Still the first real test of
-   the interface mechanism against the write path: 17 call sites across `records/service.ts`, `realtime/index.ts`,
-   `oauth2/index.ts` and `app.ts`. It is covered only by the integration suite (`test/sdk-suite.ts`,
-   `starter-smoke.ts`), so it is not to be started without a full `bun run ci` alongside it.
+2. **Hardening** — not a leaf (finding 4): it is pre-route middleware, so this step is really "load the kernel
+   before the routes", done on its own with the full CI. Then **domains**, then **email**, which are leaf-shaped.
+   Domains and email are also the pair that gives the marketplace its first real story, since email depends on the
+   domain plugin having run.
+3. **Realtime.** **Done**, as *one* plugin providing `realtime@1` (finding 5; the two-provider shape is for choices
+   a person makes, and nobody installs the hub). The interface is a factory over the request's bindings,
+   `Realtime.for(env): RealtimeClient`, because on Workers the HUB binding arrives per request and not per isolate;
+   the per-request middleware puts the client on the context (`c.get("realtime")`) and `RecordContext` carries it
+   to the write path, so `records/service.ts`, `realtime/index.ts`, `oauth2/index.ts` and `hooks/migrations.ts` no
+   longer import the hub module. Without a HUB binding the client is a `NoHub` whose `active()` is false, which is
+   what the dev server and the standalone executable run. Passed the full `bun run ci` (56 suites, the realtime
+   suite and the starter's hub delivery test among them) before it was committed.
 4. **Auth**, last, and only if 0.3 resolved cleanly. It is the first core plugin and the one that proves the tier
    exists, but it is also the one whose schema the rule compiler embeds.
 

@@ -11,7 +11,7 @@
 // Who may define one is the governance question the roadmap flags as unresolved. For now: we do, here, and a
 // community plugin consumes an interface rather than inventing one. When that stops being enough, this file is
 // where the answer goes.
-import type { AuthRecord, Row } from "../types";
+import type { AuthRecord, Bindings, Row } from "../types";
 import type { Field } from "../collections/fields";
 
 /**
@@ -51,15 +51,23 @@ export interface Payments {
 /**
  * Fanning a change out to whoever is watching.
  *
- * Two implementations, chosen by whether the instance has a hub binding: the durable object, or the D1 change feed
- * and its poll loop. This is the interface that proves the pattern replacing cordis's missing optional dependency,
- * because "use the hub if it is there" is not a declaration cordis has. Two plugins provide `realtime@1` and
- * composition picks; nothing downstream branches.
+ * Bindings arrive with the request, not at module scope, so this is a factory over them rather than a service that
+ * holds one: `for(env)` returns the client for this request. The client answers `active()` — is there a hub — and
+ * every caller that asks and hears no falls back to the D1 change feed and its poll loop, which is the caller's own
+ * code rather than a second implementation of this interface. Nobody installs a hub; it is a deployment detail, so
+ * this is one plugin whose client follows the binding, not two plugins chosen by composition.
  */
-export interface Realtime {
-  publish(changes: { collection: string; recordId: string; action: "create" | "update" | "delete" | "message"; data?: Row | null }[]): Promise<void>;
+export interface RealtimeClient {
   /** whether a change has somewhere to go, which decides if the write path records one at all */
   active(): boolean;
+  publish(changes: { collection: string; recordId: string; action: "create" | "update" | "delete" | "message"; data?: Row | null }[]): Promise<void>;
+  presence(op: string, member: unknown, o: { max: number; ttlMs: number }): Promise<{ members: unknown[]; holdsSlot: boolean } | null>;
+  publishToClient(clientId: string, event: string, data: unknown): Promise<boolean>;
+  controlClient(clientId: string, subscriptions: string[], token: string): Promise<void>;
+  openSocket(clientId: string): Promise<WebSocket>;
+}
+export interface Realtime {
+  for(env: Bindings): RealtimeClient;
 }
 
 /** Sending mail. The core sends it; which service carries it is a plugin's business. */

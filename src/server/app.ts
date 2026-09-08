@@ -9,7 +9,6 @@ import { fromColumn, toColumn } from "./records/values";
 import { expandRecords } from "./records/expand";
 import { globalHookMiddleware, hookGlobals, hookMiddleware, loadHooks, mountHookRoutes } from "./hooks";
 import { requestHook, requestHookResult, trigger } from "./hooks/runtime";
-import { hubActive, hubPresence } from "./realtime/hub-client";
 import { PRESENCE_TOPIC, presenceEnabled, presenceMax, presenceTtlMs } from "./realtime/presence";
 import { logger } from "#platform/log";
 import { env as voidEnv } from "#platform/env";
@@ -25,15 +24,16 @@ import { mountFilesApi, protectedAccess } from "./files-api";
 import { BATCH_CONTEXT_HEADER, batchContextToken, mountBatch } from "./batch";
 import { mountLogsApi, requestLogger } from "./logs";
 import { mountCronsApi } from "./crons";
-import { createKernel, load, whatLoaded } from "./kernel";
+import { createKernel, load, using, whatLoaded } from "./kernel";
 import { backups as backupsPlugin } from "./plugins/backups";
+import { realtime as realtimePlugin } from "./plugins/realtime";
+import type { Realtime } from "./interfaces";
 import { VERSION } from "./version";
 import { mountSqlApi } from "./sql";
 import { bodyLimitMiddleware, rateLimitMiddleware, realIPWith } from "./hardening";
 import { backupActive } from "./backups";
 import { maintenanceIfDue } from "./crons";
 import { attachJobs } from "./jobs";
-import { attachHub } from "./realtime/hub-client";
 import { sendMail } from "./mail";
 import { s3Bucket } from "./storage/s3";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
@@ -73,7 +73,9 @@ app.use("*", async (c, next) => {
   const s3 = (await loadSettings(c.env.DB)).s3;
   if (s3.enabled) c.env = { ...c.env, STORAGE: s3Bucket(s3) };
   attachJobs(c.env);
-  attachHub(c.env);
+  // the realtime client for this request's bindings, from the plugin that provides realtime@1; the kernel below is
+  // a const declared at the end of this module, which is fine here because this runs per request, long after it
+  c.set("realtime", using<Realtime>(kernel, "realtime@1").for(c.env));
   // onBootstrap/onServe handlers may use $app (find/save records and collections) like PocketBase's, so they run inside a hook store
   if (!served) { served = true; await withHookStore(c.env.DB, c.env, async () => { await trigger("onBootstrap", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined); await trigger("onServe", { app: undefined as unknown, router: app, next: async () => undefined as unknown }, null, async () => undefined); }); }
   c.set("auth", await loadAuth(c));
@@ -288,6 +290,7 @@ async function recordContext(c: Context<AppEnv>): Promise<RecordContext> {
     superuser: isSuperuser(auth),
     request: { auth: auth ? { collection: auth.collection, row: auth.row } : null, method: c.req.method, query, headers, body: {}, context: c.req.header(BATCH_CONTEXT_HEADER) === batchContextToken() ? "batch" : "default" },
     collections: await loadCollections(c.env.DB),
+    realtime: c.get("realtime"),
     waitUntil: (p) => { try { c.executionCtx.waitUntil(p); } catch { void p; } },
     hookEvent: (record, collection) => Object.assign(new RequestEvent(c, authToHookRecord(auth)), { record, collection: new CollectionRef(collection) }),
   };
@@ -364,17 +367,19 @@ app.delete("/api/collections/:collection/records/:id", async (c) => {
 // roster lives in the hub, never in the database, and only the members holding a slot may beat, so the write path
 // is bounded by VOIDBASE_PRESENCE_MAX however many people are watching.
 app.get("/api/presence", async (c) => {
-  if (!presenceEnabled() || !hubActive()) return c.json({ enabled: false, max: 0, members: [] });
-  const r = await hubPresence("beat", { id: "" }, { max: presenceMax(), ttlMs: presenceTtlMs() });
+  const realtime = c.get("realtime");
+  if (!presenceEnabled() || !realtime.active()) return c.json({ enabled: false, max: 0, members: [] });
+  const r = await realtime.presence("beat", { id: "" }, { max: presenceMax(), ttlMs: presenceTtlMs() });
   return c.json({ enabled: true, max: presenceMax(), ttl: Math.round(presenceTtlMs() / 1000), topic: PRESENCE_TOPIC, members: r?.members ?? [] });
 });
 app.post("/api/presence", async (c) => {
-  if (!presenceEnabled() || !hubActive()) return c.json({ enabled: false, max: 0, members: [], holdsSlot: false });
+  const realtime = c.get("realtime");
+  if (!presenceEnabled() || !realtime.active()) return c.json({ enabled: false, max: 0, members: [], holdsSlot: false });
   let body: Record<string, unknown> = {};
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { body = {}; }
   const op = String(body.op ?? "beat");
   if (!["join", "beat", "leave"].includes(op)) throw badRequest("op must be join, beat or leave.");
-  const r = await hubPresence(op, body, { max: presenceMax(), ttlMs: presenceTtlMs() });
+  const r = await realtime.presence(op, body, { max: presenceMax(), ttlMs: presenceTtlMs() });
   return c.json({ enabled: true, max: presenceMax(), topic: PRESENCE_TOPIC, members: r?.members ?? [], holdsSlot: !!r?.holdsSlot });
 });
 
@@ -522,7 +527,7 @@ mountCronsApi(app);
 // app serves anything. cordis applies a plugin on a later tick, which is why this awaits: top level await in an
 // ES module is the only place both facts can be true at once.
 export const kernel = createKernel(app);
-await load(kernel, [backupsPlugin], VERSION);
+await load(kernel, [realtimePlugin, backupsPlugin], VERSION);
 
 // What this instance is running, which is the question a bare instance has to be able to answer about itself. For
 // the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface.

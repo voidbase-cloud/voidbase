@@ -11,7 +11,8 @@ import { hashPassword, verifyPassword } from "../password";
 import type { AuthRecord, Row } from "../types";
 import { expandRecords } from "./expand";
 import { deleteAllRecordFiles, deleteFiles, normalizeFilename, putUpload, sniffMime } from "./files";
-import { hubActive, publishChanges, type ChangeEvent } from "../realtime/hub-client";
+import type { ChangeEvent } from "../realtime/hub-client";
+import type { RealtimeClient } from "../interfaces";
 import { recordToJSON } from "./json";
 import { parseFields, pick } from "./picker";
 import { autogenerate, normalizeInput, rowToValues, toColumn, uniqueStrings, validateValues, type FieldError, type RecordErrors, type Upload } from "./values";
@@ -28,7 +29,9 @@ export interface RecordContext {
   collections: Map<string, Collection>;
   // present when called from an HTTP route: builds the JSVM RequestEvent for *Request hooks
   hookEvent?: (record: HookRecord, collection: Collection) => RequestEvent;
-  // realtime: changes waiting to be published to the hub once their batch has committed, and the request's waitUntil
+  // realtime: the client for this request's bindings, the changes waiting to be published once their batch has
+  // committed, and the request's waitUntil
+  realtime: RealtimeClient;
   changes?: ChangeEvent[];
   waitUntil?: (p: Promise<unknown>) => void;
 }
@@ -303,13 +306,13 @@ function authFormErrors(c: Collection, p: Prepared, original: Record<string, unk
 // With the hub the change is published after its batch commits (flushChanges); without it a `_changes` row goes into
 // the batch itself, written only while a realtime client exists so idle apps and imports pay no feed rows.
 function feed(ctx: RecordContext, c: Collection, action: "create" | "update" | "delete", row: Row): D1PreparedStatement[] {
-  if (hubActive()) { (ctx.changes ??= []).push({ collection: c.name, recordId: String(row.id), action, data: action === "delete" ? row : undefined }); return []; }
+  if (ctx.realtime.active()) { (ctx.changes ??= []).push({ collection: c.name, recordId: String(row.id), action, data: action === "delete" ? row : undefined }); return []; }
   return [stmt(ctx.db, "INSERT INTO `_changes` (collection, recordId, action, data, created) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM `_realtime_clients`)", [c.name, String(row.id), action, JSON.stringify(row), nowString()])];
 }
 function flushChanges(ctx: RecordContext): void {
   const pending = ctx.changes; if (!pending?.length) return;
   ctx.changes = [];
-  const p = publishChanges(pending);
+  const p = ctx.realtime.publish(pending);
   if (ctx.waitUntil) ctx.waitUntil(p); else void p;
 }
 function valuesToRow(c: Collection, values: Record<string, unknown>): Row {

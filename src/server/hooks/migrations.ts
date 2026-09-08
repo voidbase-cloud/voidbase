@@ -10,6 +10,7 @@ import { loadSettings } from "../settings";
 import type { RecordContext } from "../records/service";
 import type { AppEnv } from "../types";
 import { hookStore } from "./runtime";
+import { realtimeFor } from "../realtime/hub-client";
 
 export type MigrationFn = (app: Record<string, unknown>) => unknown;
 
@@ -20,6 +21,8 @@ export async function withHookStore<T>(db: D1Database, bindings: AppEnv["Binding
     db, storage: bindings?.STORAGE as R2Bucket, auth: null, superuser: true,
     request: { auth: null, method: "GET", query: {}, headers: {}, body: {}, context: "default" },
     collections: await loadCollections(db),
+    // outside a request there may be no bindings at all (the Bun runtime); then there is no hub and the feed is used
+    realtime: realtimeFor((bindings ?? {}) as AppEnv["Bindings"]),
   });
   const store = { c: undefined as never, ctx, collections, settings: await loadSettings(db), env: (bindings ?? {}) as Record<string, unknown> };
   return hookStore.run(store, () => fn());

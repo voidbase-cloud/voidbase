@@ -13,7 +13,6 @@ import { hashPassword } from "../password";
 import { createRecord, type RecordContext } from "../records/service";
 import type { AppEnv, Row } from "../types";
 import { fetchProviderUser, PROVIDER_DEFAULTS, type AuthUser, type Token } from "./providers";
-import { hubActive, publishToClient } from "../realtime/hub-client";
 
 export interface ProviderConfig { name: string; clientId: string; clientSecret?: string; authURL?: string; tokenURL?: string; userInfoURL?: string; displayName?: string; pkce?: boolean | null; extra?: Record<string, unknown> }
 interface OAuth2Options { enabled?: boolean; providers?: ProviderConfig[]; mappedFields?: { id?: string; name?: string; username?: string; avatarURL?: string } }
@@ -188,7 +187,8 @@ export function mountOAuth2Redirect(app: Hono<AppEnv>) {
     const payload: Record<string, unknown> = { state: data.state, code: data.code };
     if (data.error) payload.error = data.error;
     // the stream drops its @oauth2 subscription itself once it has delivered the message
-    if (hubActive()) await publishToClient(data.state, "@oauth2", payload);
+    const realtime = c.get("realtime");
+    if (realtime.active()) await realtime.publishToClient(data.state, "@oauth2", payload);
     else await stmt(c.env.DB, "INSERT INTO `_changes` (collection, recordId, action, data, created) VALUES ('@oauth2', ?, 'message', ?, ?)", [data.state, JSON.stringify(payload), nowString()]).run();
     if (data.error || !data.code) return c.redirect(FAILURE, status);
     return c.redirect(SUCCESS, status);

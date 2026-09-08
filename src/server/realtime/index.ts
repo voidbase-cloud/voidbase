@@ -22,7 +22,7 @@ import { rowToValues } from "../records/values";
 import { trigger } from "../hooks/runtime";
 import { PRESENCE_TOPIC } from "./presence";
 import type { AppEnv, Row } from "../types";
-import { controlClient, hubActive, openHubSocket, sendFilter, type ChangeEvent, type HubMessage } from "./hub-client";
+import { realtimeFor, sendFilter, type ChangeEvent, type HubMessage } from "./hub-client";
 
 interface Subscription { topic: string; collection: string; recordId: string | null; query: Record<string, string>; headers: Record<string, string> }
 interface Change { id: number; collection: string; recordId: string; action: string; data: string | null }
@@ -69,7 +69,8 @@ export async function connect(c: Context<AppEnv>): Promise<Response> {
   const token = c.req.header("Authorization")?.replace(/^bearer /i, "") ?? "";
   const now = nowString();
   await stmt(env.DB, "INSERT INTO `_realtime_clients` (id, subscriptions, token, created, updated) VALUES (?, '[]', ?, ?, ?)", [clientId, token, now, now]).run();
-  const useHub = hubActive();
+  const realtime = c.get("realtime");
+  const useHub = realtime.active();
   const max = useHub ? null : await one<{ m: number | null }>(env.DB, "SELECT MAX(id) AS m FROM `_changes`");
   const cursor = max?.m ?? 0;
   return eventStream(
@@ -83,7 +84,7 @@ export async function connect(c: Context<AppEnv>): Promise<Response> {
       if (useHub) {
         // the socket belongs to this request, like the stream it feeds; if the hub is unreachable the stream ends
         // and the SDK reconnects, since writers publish there instead of writing feed rows
-        try { hubSocket = await openHubSocket(clientId); client.hub = hubSocket; } catch (err) { console.error("voidbase: realtime hub unreachable", err); stream.close(); return; }
+        try { hubSocket = await realtime.openSocket(clientId); client.hub = hubSocket; } catch (err) { console.error("voidbase: realtime hub unreachable", err); stream.close(); return; }
         hubSocket.addEventListener("message", (e) => { void onHubMessage(env, client, String(e.data)).catch((err) => { if (!client.closed) console.error("voidbase: realtime hub message failed", err); }); });
         hubSocket.addEventListener("close", () => { if (!client.closed) stream.close(); });
         hubSocket.addEventListener("error", () => { if (!client.closed) stream.close(); });
@@ -160,7 +161,7 @@ export async function setSubscriptions(c: Context<AppEnv>, pre?: { clientId?: st
   await stmt(c.env.DB, "UPDATE `_realtime_clients` SET subscriptions = ?, token = ?, updated = ? WHERE id = ?", [JSON.stringify(subs), token, nowString(), clientId]).run();
   const local = clients.get(clientId);
   if (local) { applySubscriptions(local, subs, token); if (local.hub) await announceFilter(c.env, local); }
-  else if (hubActive()) await controlClient(clientId, subs, token); // the stream lives in another isolate
+  else { const realtime = c.get("realtime"); if (realtime.active()) await realtime.controlClient(clientId, subs, token); } // the stream lives in another isolate
   return c.body(null, 204);
 }
 
@@ -224,6 +225,7 @@ async function deliver(db: D1Database, bindings: AppEnv["Bindings"], cl: Client,
     db, storage: bindings.STORAGE, auth, superuser: isSuperuser(auth),
     request: { auth: auth ? { collection: auth.collection, row: auth.row } : null, method: "GET", query: sub.query, headers: sub.headers, body: {}, context: "realtime" },
     collections,
+    realtime: realtimeFor(bindings),
   };
   const rule = sub.recordId === null ? collection.listRule : collection.viewRule;
   let row: Row | null = null;

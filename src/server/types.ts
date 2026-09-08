@@ -20,6 +20,8 @@ export interface Bindings {
 
 export interface Variables {
   auth: AuthRecord | null;
+  /** the realtime client for this request's bindings, from the realtime plugin (realtime@1) */
+  realtime: import("./interfaces").RealtimeClient;
 }
 
 export type AppEnv = { Bindings: Bindings; Variables: Variables };

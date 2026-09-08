@@ -3,6 +3,31 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.4](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.3...v0.9.0-beta.4) (2026-09-08)
+
+
+### Features
+
+* **plugin:** interfaces, the core tier, and a guard against the core taking them back ([aefa429](https://github.com/voidbase-cloud/voidbase/commit/aefa429a7b1fbafbf20a4bf5b5fafbcf0bd240a9))
+* **plugin:** the loader, and the four failures cordis does not catch ([9ee8996](https://github.com/voidbase-cloud/voidbase/commit/9ee89961e48ac0653d99a08ec30087f1944ac59c))
+* **plugin:** the request limits as the hardening plugin providing hardening@1 ([f159aca](https://github.com/voidbase-cloud/voidbase/commit/f159aca059cc335bd5a42604b6ddb0a158c54b8f))
+* **realtime:** the hub as a request-carried client provided as realtime@1 ([e3dfcfa](https://github.com/voidbase-cloud/voidbase/commit/e3dfcfaf8c2a358358e68b17b6319dc28ee553aa))
+
+
+### Bug Fixes
+
+* **plugin:** stop warning every instance that it has no auth ([ca09e2e](https://github.com/voidbase-cloud/voidbase/commit/ca09e2e2cb666ad197f388f95e8eff163d330eb1))
+
+
+### Documentation
+
+* **plugin:** the plan says what was built, and the disposal claim is a test ([9ed66e8](https://github.com/voidbase-cloud/voidbase/commit/9ed66e810ed8db8f77e8f10a7cb51ffbedc62538))
+
+
+### Refactoring
+
+* **plugin:** drop the binding phase, and record what building it changed ([83e9c6e](https://github.com/voidbase-cloud/voidbase/commit/83e9c6e4b7c58d409891cca8918811471392befb))
+
 ## [0.9.0-beta.3](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.2...v0.9.0-beta.3) (2026-09-08)
 
 

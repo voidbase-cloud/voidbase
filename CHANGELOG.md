@@ -3,6 +3,19 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta](https://github.com/voidbase-cloud/voidbase/compare/v0.8.0...v0.9.0-beta) (2026-09-08)
+
+
+### Features
+
+* **cli:** voidbase update works whichever way voidbase is installed ([a832922](https://github.com/voidbase-cloud/voidbase/commit/a832922c5ca47f2b745251d893733d9ef3bd5849))
+
+
+### Bug Fixes
+
+* **cli:** let the executable answer for itself when it is already current ([150fa49](https://github.com/voidbase-cloud/voidbase/commit/150fa4942df55c3d5757e90bd688e95d05696d01))
+* **cli:** offer a prerelease, which is what GitHub's latest release deliberately hides ([72e5f7d](https://github.com/voidbase-cloud/voidbase/commit/72e5f7d482c304c5f39e6979124af4ed7e2de7d3))
+
 ## [0.8.0](https://github.com/voidbase-cloud/voidbase/compare/v0.7.0...v0.8.0) (2026-09-08)
 
 

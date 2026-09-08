@@ -126,15 +126,16 @@
   },
   "dependencies": {
     "@cf-wasm/photon": "^0.4.0",
+    "@cloudflare/workers-types": "^4.20250903.0",
     "@simplewebauthn/server": "^14.0.1",
     "bcryptjs": "^3.0.2",
+    "cordis": "4.0.0-rc.9",
     "fflate": "^0.8.3",
     "hono": "^4.11.9",
     "typescript": "^5.9.3",
-    "void": "^0.10.13",
     "vite": "^8.0.10",
     "vite-plus": "^0.1.21",
-    "@cloudflare/workers-types": "^4.20250903.0"
+    "void": "^0.10.13"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.2",

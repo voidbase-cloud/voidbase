@@ -81,10 +81,12 @@ the GitHub release as a pre-release. Going stable is deleting those three keys a
 Two consequences are worth knowing, because both of them decide whether an existing install ever hears about a
 release:
 
-- **npm.** `npm publish` is called without `--tag`, so a beta becomes the `latest` dist-tag like any other version.
-  That is deliberate: while the beta is what we are asking people to run, a fresh `bun i -g` and `voidbase update`
-  should both land on it. Publishing under a `beta` tag instead would leave everyone on the last stable version
-  without saying so.
+- **npm.** npm refuses to publish a prerelease unless `--tag` is explicit, because the default would quietly move
+  `latest` onto it. `scripts/release.sh` passes `--tag latest` anyway, deliberately: while the beta is what we are
+  asking people to run, a fresh `bun i -g` and `voidbase update` should both land on it, and publishing under a
+  `beta` tag alone would leave everyone on the last stable version without saying so. After a prerelease publishes,
+  `beta` is added as a second dist-tag, so `@beta` works for anyone who would rather pin the channel. Going stable
+  needs no change here: a version with no prerelease part takes `latest` the same way.
 - **GitHub.** `/repos/.../releases/latest` deliberately excludes anything marked as a pre-release, so the prebuilt
   executable's update path does not use it. `fetchLatestRelease` (`src/node/update.ts`) reads the releases list and
   takes the highest version, drafts excluded, and falls back to `/releases/latest` only when the list cannot be

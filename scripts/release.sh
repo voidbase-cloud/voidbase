@@ -66,12 +66,19 @@ publish_npm() {
   if [ -n "$DRY" ] && [ "$on_npm" = 1 ]; then echo "npm publish: $PKG@$VERSION is already published, the dry run skips the publish commands"; return 0; fi
   local npmrc; npmrc=$(mktemp); printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$npmrc"
   local provenance=""; [ "$BACKEND" = github ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && provenance="--provenance"
-  echo "npm publish: provenance ${provenance:-off (only GitHub Actions can mint the OIDC token)}, dry run ${DRY:-no}"
-  NPM_CONFIG_USERCONFIG="$npmrc" npm publish "$tarball" --access public $provenance ${DRY:+--dry-run} || { rm -f "$npmrc"; return 1; }
+  # npm refuses to publish a prerelease unless --tag is explicit, because the default would quietly move `latest`
+  # onto it. Here that is exactly the intent: while voidbase is in public beta the beta is what we are asking people
+  # to run, so a fresh install and `voidbase update` both land on it. The channel tag is added afterwards, so
+  # `@beta` also works for anyone who would rather pin to the channel than to the newest thing.
+  echo "npm publish: tag latest, provenance ${provenance:-off (only GitHub Actions can mint the OIDC token)}, dry run ${DRY:-no}"
+  NPM_CONFIG_USERCONFIG="$npmrc" npm publish "$tarball" --access public --tag latest $provenance ${DRY:+--dry-run} || { rm -f "$npmrc"; return 1; }
+  case "$VERSION" in
+    *-*) if [ -z "$DRY" ]; then NPM_CONFIG_USERCONFIG="$npmrc" npm dist-tag add "$PKG@$VERSION" beta || echo "dist-tag beta failed (latest is the tag of record; continuing)"; fi ;;
+  esac
   rm -f "$npmrc"
   if [ -n "${GH_PACKAGES_TOKEN:-}" ]; then
     npmrc=$(mktemp); printf '@voidbase-cloud:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$GH_PACKAGES_TOKEN" > "$npmrc"
-    NPM_CONFIG_USERCONFIG="$npmrc" npm publish "$tarball" --registry=https://npm.pkg.github.com ${DRY:+--dry-run} || echo "GitHub Packages publish failed (npm is the registry of record; continuing)"
+    NPM_CONFIG_USERCONFIG="$npmrc" npm publish "$tarball" --registry=https://npm.pkg.github.com --tag latest ${DRY:+--dry-run} || echo "GitHub Packages publish failed (npm is the registry of record; continuing)"
     rm -f "$npmrc"
   else echo "GitHub Packages: skipped (no GH_PACKAGES_TOKEN)"; fi
   if [ -z "$DRY" ]; then bun scripts/gh-release.ts upload "$TAG" "$tarball" || return 1; fi

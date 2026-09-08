@@ -28,6 +28,8 @@ if (import.meta.main) { const app = await voidbase(parseServeArgs()); register(a
 ```bash
 bun add @voidbase-cloud/voidbase        # the package: library, CLI (`voidbase`) and the Cloudflare project generator
 bunx @voidbase-cloud/voidbase serve     # or run the CLI without installing
+voidbase local new blog                 # a named instance on this machine, with its own port and superuser
+voidbase local ls                       # what you have locally; `voidbase instances` does the same for Cloudflare
 ```
 
 Or, like PocketBase, a single prebuilt executable from the

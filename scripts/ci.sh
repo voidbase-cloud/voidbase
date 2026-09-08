@@ -142,6 +142,8 @@ adapter() { bun test/adapter.ts; }   # a Void app converted into a voidbase app,
 fresh_db() { bun test/fresh-db.ts 5181; }
 mail_http() { bun test/mail-http.ts 5184; }
 exe_smoke() { STARTER_VB_DIR="$STARTER_DIR/pb" bun test/exe-smoke.ts; }
+# instances on this machine: its own VOIDBASE_HOME so a build never touches a developer's registry
+local_instances() { bun test/local.ts; }
 starter() {  # the unmodified starter frontend against voidbase
   STARTER_SK_DIR="$STARTER_DIR/sk" ./scripts/starter.sh start 5174 "$VB"
   bun test/starter-smoke.ts http://127.0.0.1:5174 "$LOGS/starter.png"
@@ -185,6 +187,7 @@ maybe adapter adapter
 maybe fresh-db fresh_db
 maybe mail-http mail_http
 maybe exe-smoke exe_smoke
+maybe local local_instances
 maybe starter starter
 release_work || exit 1
 run cache-save cache_save

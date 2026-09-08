@@ -130,6 +130,22 @@ This is the path if you want the instance in a repository, and probably on Cloud
 bun i -g @voidbase-cloud/voidbase
 ```
 
+### Instances on this machine
+
+The npm package does the same job as the standalone executable, and remembers what you have made, so a second
+instance does not mean finding where you put the first.
+
+```bash
+voidbase local new blog      # a directory, a port and a superuser, under ~/.voidbase/instances
+voidbase local ls            # what you have, which port each is on, and which are running
+voidbase local start blog    # run it
+voidbase local rm blog       # forget it; --purge deletes the directory and its database too
+```
+
+Nothing there touches Cloudflare. `--dir` puts an instance where you want it, `--port` picks the port, and
+`--email` with `--password` chooses the superuser instead of having one generated. Each instance keeps the port it
+was given, so two never collide.
+
 ### A project on your machine
 
 ```bash
@@ -137,6 +153,8 @@ mkdir my-backend && cd my-backend
 voidbase init          # writes pb_hooks/, pb_migrations/, pb_secrets/, .env and a .gitignore
 voidbase serve         # http://127.0.0.1:8090, panel at /_/
 ```
+
+A local instance and a project are the same shape, so moving between them is moving a directory.
 
 `voidbase init` leaves a working hook in `pb_hooks/main.pb.js` so `GET /api/hello` answers, and a commented
 declaration in `pb_secrets/main.ts` to fill in. Make a superuser the same way as above, with

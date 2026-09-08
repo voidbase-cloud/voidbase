@@ -34,6 +34,7 @@ export const KEY_META: Record<string, KeyMeta> = {
   // while it passes locally), so it waits for a normal run and its own fix rather than failing every hot build
   "step:mail-http": { kind: "step", hot: "deferred", test: "test/mail-http.ts", seconds: 13 },
   "step:exe-smoke": { kind: "step", hot: "candidate", test: "test/exe-smoke.ts", seconds: 11 },
+  "step:local": { kind: "step", hot: "candidate", test: "test/local.ts", seconds: 12 },
   "step:starter": { kind: "step", hot: "deferred", test: "test/starter-smoke.ts", seconds: 28 },
   "step:adapter": { kind: "step", hot: "candidate", test: "test/adapter.ts", seconds: 20 },
 };
@@ -57,7 +58,7 @@ export const SCOPE_KEYS: Record<string, string[]> = {
   hooks: ["step:fresh-db"], plugin: ["step:fresh-db"], migrations: ["step:fresh-db", "suite:collections"],
   settings: ["suite:settings"], logs: ["suite:logs-crons"], crons: ["suite:logs-crons"], backups: ["suite:backups"],
   hardening: ["suite:hardening", "suite:security"], deploy: ["step:deploy-cf"], cloud: ["suite:cloud-rest"], bundle: ["suite:cloud-rest"],
-  cli: ["step:exe-smoke"], adapter: ["step:adapter"], serve: ["bun:records", "bun:collections", "bun:auth-flows"], panel: ["suite:panel-smoke"], starter: ["step:starter"],
+  cli: ["step:exe-smoke", "step:local"], adapter: ["step:adapter"], serve: ["bun:records", "bun:collections", "bun:auth-flows"], panel: ["suite:panel-smoke"], starter: ["step:starter"],
 };
 
 // ---- the decision: what runs, given current hashes and the last green run's verified hashes
@@ -174,6 +175,7 @@ export function keyFiles(t: Tree): Record<string, Set<string>> {
   out["step:fresh-db"] = union(t.closure(["test/fresh-db.ts"], "bun"), SERVER, t.under("test/fixtures"), common);
   out["step:mail-http"] = union(t.closure(["test/mail-http.ts"], "bun"), SERVER, common);
   out["step:exe-smoke"] = union(t.closure(["test/exe-smoke.ts"], "bun"), CLI, ["scripts/build-exe.ts"], common);
+  out["step:local"] = union(t.closure(["test/local.ts"], "bun"), CLI, common);
   out["step:starter"] = union(t.closure(["test/starter-smoke.ts"], "bun"), SERVER, common, harnessSuites, harnessBrowser);
   // the fixture is a whole Void app the test converts, so every file under it counts, not just what a closure reaches
   out["step:adapter"] = union(t.closure(["test/adapter.ts"], "bun"), SERVER, t.under("src/adapter"), t.under("test/fixtures/void-app"), ["hooks-plugin.ts"], common);
@@ -266,7 +268,7 @@ if (import.meta.main) {
   if (signals.changed.length) console.log(`  changed: ${signals.changed.length} files (${signals.changed.slice(0, 6).join(", ")}${signals.changed.length > 6 ? ", ..." : ""})`);
   if (signals.scopes.length || signals.tests.length) console.log(`  commits: scopes ${signals.scopes.join(", ") || "none"}; Tests: ${signals.tests.join(", ") || "none"}`);
   console.log(`  release: ${signals.releaseMerge ? "release merge" : signals.releasable ? "releasable commits, the release PR is refreshed" : "nothing releasable"}${signals.dryRun ? "; dry run requested" : ""}`);
-  console.log(`  steps: ${["oracles", "typecheck", "unit", "browser", "boot", "reference", "suites", "suites-bun", "deploy-cf", "adapter", "fresh-db", "mail-http", "exe-smoke", "starter"].map((s) => `${s}${decisions[`step:${s}`]!.run ? "" : "(skip)"}`).join(" ")}`);
+  console.log(`  steps: ${["oracles", "typecheck", "unit", "browser", "boot", "reference", "suites", "suites-bun", "deploy-cf", "adapter", "fresh-db", "mail-http", "exe-smoke", "local", "starter"].map((s) => `${s}${decisions[`step:${s}`]!.run ? "" : "(skip)"}`).join(" ")}`);
   console.log(`  suites: ${selected(decisions, "suite:").join(" ") || "none"}`);
   console.log(`  bun: ${selected(decisions, "bun:").join(" ") || "none"}`);
 }

@@ -47,6 +47,13 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      .voidbase/), then connect the GitHub repository to Cloudflare Workers Builds so a
                                      push to the branch deploys and other branches build. Needs CLOUDFLARE_BUILDS_TOKEN
                                      (a local() key) for the pipeline part; in CI, sync is the deploy alone (--ci forces it)
+  local new <name> [--dir path] [--port n] [--email a@b] [--password p]
+                                     create an instance on this machine: a directory, a port and a superuser. The
+                                     npm answer to downloading the executable, and it never touches Cloudflare
+  local ls                           the instances on this machine, with their ports and whether they are running
+  local start [name]                 run one (the first, if no name is given)
+  local rm <name> [--purge] [--yes]  forget one; --purge deletes its directory and database too
+
   instances [--account id]           list the voidbase instances on the Cloudflare account the token reaches
   destroy <name> [--yes]             delete an instance and everything it owns: the Worker, its database, its bucket,
                                      its queue and its custom domains. Irreversible; asks first unless --yes
@@ -127,6 +134,90 @@ switch (cmd) {
     if (state.undeclared.length) console.log(`  in secrets.json but not declared (never deployed): ${state.undeclared.join(", ")}`);
     break;
   }
+  case "local": {
+    // Instances on this machine. Nothing here talks to Cloudflare: an instance is a directory and a row in
+    // ~/.voidbase/instances.json, which is what makes this the npm answer to downloading the executable.
+    const L = await import("../src/node/local");
+    const action = sub ?? "ls";
+
+    if (action === "ls" || action === "list") {
+      const list = L.readRegistry();
+      if (!list.length) { console.log(`no local instances yet (voidbase local new <name>)\nregistry: ${L.registryPath()}`); break; }
+      console.log(`${list.length} local instance(s), from ${L.registryPath()}:`);
+      for (const i of list) {
+        const running = await L.isRunning(i.port);
+        console.log(`  ${i.name.padEnd(20)} :${String(i.port).padEnd(6)} ${running ? "running" : "stopped"}  ${L.human(L.sizeOf(i.dir)).padStart(8)}  ${i.dir}`);
+      }
+      break;
+    }
+
+    if (action === "new") {
+      const name = rest[0];
+      if (!name) { console.error("usage: voidbase local new <name> [--dir path] [--port n]"); process.exit(1); }
+      const bad = L.checkName(name);
+      if (bad) { console.error(bad); process.exit(1); }
+      if (L.find(name)) { console.error(`"${name}" already exists: voidbase local ls`); process.exit(1); }
+      const dir = resolve(flags.dir ?? L.defaultDir(name));
+      const port = flags.port ? Number(flags.port) : await L.freePort();
+      if (flags.port && (await L.inUse(port))) { console.error(`port ${port} is already in use`); process.exit(1); }
+
+      const { scaffold, writeSecretsDeclaration } = L;
+      const { declarationScaffold } = await import("../src/node/secrets");
+      mkdirSync(dir, { recursive: true });
+      const wrote = scaffold(dir, { version: await currentVersion(), root: ROOT, minimal: true });
+      if (writeSecretsDeclaration(dir, declarationScaffold())) wrote.push("pb_secrets/main.ts");
+      L.register({ name, dir, port, created: new Date().toISOString() });
+
+      // a superuser, so the panel is usable the moment it starts
+      const [email, password] = [flags.email ?? "admin@example.com", flags.password ?? Math.random().toString(36).slice(2, 12) + "A1"];
+      const { openLocal } = await import("../src/node/serve");
+      const { ensureBootstrapped, upsertSuperuser } = await import("../src/server/bootstrap");
+      const { env, sqlite } = await openLocal({ ...serveOpts(), dir: `${dir}/pb_data` });
+      await ensureBootstrapped(env.DB);
+      await upsertSuperuser(env.DB, email, password);
+      sqlite.close();
+
+      console.log(`created "${name}" in ${dir}${wrote.length ? ` (${wrote.join(", ")})` : ""}`);
+      console.log(`superuser ${email} / ${password}`);
+      console.log(`\nnext: voidbase local start ${name}   (the API on ${port}, the panel at http://127.0.0.1:${port}/_/)`);
+      break;
+    }
+
+    if (action === "start" || action === "run") {
+      const name = rest[0];
+      const i = name ? L.find(name) : L.readRegistry()[0];
+      if (!i) { console.error(name ? `no local instance called "${name}"` : "no local instances yet (voidbase local new <name>)"); process.exit(1); }
+      if (await L.isRunning(i.port)) { console.error(`"${i.name}" is already running on ${i.port}`); process.exit(1); }
+      const { serve } = await import("../src/node/serve");
+      process.chdir(i.dir);
+      await serve({ ...serveOpts(), http: flags.http ?? `127.0.0.1:${i.port}` });
+      break;
+    }
+
+    if (action === "rm" || action === "remove") {
+      const name = rest[0];
+      if (!name) { console.error("usage: voidbase local rm <name> [--purge]"); process.exit(1); }
+      const i = L.find(name);
+      if (!i) { console.error(`no local instance called "${name}"`); process.exit(1); }
+      const purging = "purge" in flags;
+      if (purging) {
+        console.log(`This deletes ${i.dir} and everything in it, including the database. There is no undo.`);
+        if (!("yes" in flags)) {
+          if (!process.stdin.isTTY) { console.error("refusing to delete data without a confirmation: rerun with --yes"); process.exit(1); }
+          process.stdout.write(`Type the name to confirm: `);
+          const typed = (await new Promise<string>((r) => { process.stdin.once("data", (d: Buffer) => r(d.toString())); })).trim();
+          if (typed !== name) { console.error(`"${typed}" is not "${name}": nothing deleted`); process.exit(1); }
+        }
+        L.purge(i.dir);
+      }
+      L.unregister(name);
+      console.log(purging ? `removed "${name}" and deleted ${i.dir}` : `removed "${name}" from the registry; ${i.dir} is still there`);
+      break;
+    }
+
+    console.error("usage: voidbase local new|ls|start|rm");
+    process.exit(1);
+  }
   case "instances": {
     // What is on the account, without a project: an instance is a Worker voidbase tagged as one when it deployed.
     const { deployTarget } = await import("../src/node/deploy-cf");
@@ -205,35 +296,18 @@ switch (cmd) {
   }
   case "init": {
     const dir = resolve(sub ?? ".");
-    mkdirSync(`${dir}/pb_hooks`, { recursive: true }); mkdirSync(`${dir}/pb_migrations`, { recursive: true }); mkdirSync(`${dir}/pb_secrets`, { recursive: true });
-    { // pb_secrets/main.pb.js declares the secrets; secrets.json holds their values and never enters git
-      const { declarationScaffold } = await import("../src/node/secrets");
-      if (!existsSync(`${dir}/pb_secrets/main.ts`)) writeFileSync(`${dir}/pb_secrets/main.ts`, declarationScaffold());
-      const gi = `${dir}/.gitignore`; const have = existsSync(gi) ? await Bun.file(gi).text() : "";
-      const lines = ["pb_data/", "pb_secrets/secrets.json", ".cloud/"].filter((l) => !have.split("\n").some((x) => x.trim() === l || x.trim() === l.replace(/\/$/, "")));
-      if (lines.length) writeFileSync(gi, `${have}${have && !have.endsWith("\n") ? "\n" : ""}${lines.join("\n")}\n`);
-    }
-    if (!existsSync(`${dir}/.env`)) { cpSync(`${ROOT}/.env.example`, `${dir}/.env`); console.log("wrote .env from .env.example (set VOIDBASE_SUPERUSER_EMAIL/PASSWORD)"); }
-    if (!existsSync(`${dir}/pb_hooks/main.pb.js`)) writeFileSync(`${dir}/pb_hooks/main.pb.js`, `/// <reference path="../pb_data/types.d.ts" />\nrouterAdd("GET", "/api/hello", (e) => e.json(200, { hello: "voidbase" }));\n`);
-    // A package.json, because a project that deploys from CI needs one: it is what pins the version production runs,
-    // what makes `bunx voidbase` resolve locally rather than looking for a package that is not on npm, and what tells
-    // a build machine to install anything at all. The verbs match every other voidbase project's.
-    if (!existsSync(`${dir}/package.json`)) {
-      const pkg = {
-        name: dir.split("/").filter(Boolean).at(-1) ?? "voidbase-app",
-        private: true,
-        type: "module",
-        scripts: { dev: "voidbase serve --dev", start: "voidbase serve", deploy: "voidbase deploy", version: "voidbase secrets" },
-        dependencies: { "@voidbase-cloud/voidbase": `^${await currentVersion()}` },
-      };
-      writeFileSync(`${dir}/package.json`, `${JSON.stringify(pkg, null, 2)}\n`);
-      console.log(`wrote package.json (@voidbase-cloud/voidbase ^${await currentVersion()}; bun install to use bun run dev)`);
-    }
-    console.log("pb_hooks/, pb_migrations/ and pb_secrets/ ready (.gitignore covers pb_data/, pb_secrets/secrets.json and .cloud/)");
+    const { scaffold, writeSecretsDeclaration } = await import("../src/node/local");
+    const { declarationScaffold } = await import("../src/node/secrets");
+    const version = await currentVersion();
+    const wrote = scaffold(dir, { version, root: ROOT });
+    if (writeSecretsDeclaration(dir, declarationScaffold())) wrote.push("pb_secrets/main.ts");
+    console.log(`pb_hooks/, pb_migrations/ and pb_secrets/ ready${wrote.length ? ` (wrote ${wrote.join(", ")})` : ""}`);
+    console.log(".gitignore covers pb_data/, pb_secrets/secrets.json and .cloud/");
     await run("bun", ["scripts/sync-panel.ts"]).catch(() => undefined);
     console.log("\nnext: voidbase serve   (the API on 8090, the admin panel at /_/), or bun install && bun run dev");
     break;
   }
+
   case "dev": await run("./node_modules/.bin/vp", ["dev", "--port", flags.port ?? "5180", "--host", flags.host ?? "127.0.0.1"]); break;
   case "build": await run("./node_modules/.bin/vp", ["build"]); break;
   case "preview": await run("./node_modules/.bin/vp", ["preview", "--port", flags.port ?? "5181", "--host", flags.host ?? "127.0.0.1"]); break;

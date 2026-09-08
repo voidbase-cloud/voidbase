@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.1](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta...v0.9.0-beta.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **release:** publish a prerelease with an explicit tag, which npm requires ([e1e0260](https://github.com/voidbase-cloud/voidbase/commit/e1e026029a855e2e992f783a6393dcee1269a9e9))
+
 ## [0.9.0-beta](https://github.com/voidbase-cloud/voidbase/compare/v0.8.0...v0.9.0-beta) (2026-09-08)
 
 

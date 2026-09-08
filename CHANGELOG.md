@@ -3,6 +3,27 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.2](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-08)
+
+
+### Features
+
+* **cli:** voidbase init --template starts from somebody's published project ([5a5ce94](https://github.com/voidbase-cloud/voidbase/commit/5a5ce941141edc8cce765f697454238470dc3308))
+* **cloud:** provisioning can upgrade an instance that already exists ([62c4002](https://github.com/voidbase-cloud/voidbase/commit/62c4002881b46fdbecdf2acbfead68eee9b32286))
+* **deploy:** keep Workers invocation logs, so an instance can be looked at ([883866f](https://github.com/voidbase-cloud/voidbase/commit/883866f30aa3f77de34deb0fa111967392893669))
+
+
+### Bug Fixes
+
+* **cli:** compare prerelease tags by semver's rules, not as text ([b51a0ea](https://github.com/voidbase-cloud/voidbase/commit/b51a0ea293ad1553c1df842ecd04f897b670c98a))
+* **cloud:** find instances by what they are made of, not by a tag deploy cannot set ([1c2a8c0](https://github.com/voidbase-cloud/voidbase/commit/1c2a8c034e849248c415eca7ac878a0dc099a460))
+* **test:** the release archive name carries a prerelease version now ([59ed05b](https://github.com/voidbase-cloud/voidbase/commit/59ed05b29cfdf4d4e3fc5b013d9ebf72482cf0a1))
+
+
+### Refactoring
+
+* **ci:** simplify build supervision logic in deployment notes ([70a6624](https://github.com/voidbase-cloud/voidbase/commit/70a66245b6cd96fdaf9110cc597c4be3c0219e9f))
+
 ## [0.9.0-beta.1](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta...v0.9.0-beta.1) (2026-09-08)
 
 

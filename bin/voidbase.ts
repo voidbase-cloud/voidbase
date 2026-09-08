@@ -108,32 +108,41 @@ switch (cmd) {
     // in a project the number that matters is the project's, not whichever CLI happens to be running
     const current = (install.shape === "project" ? U.installedVersion(install) : null) ?? (await currentVersion());
     const check = "check" in flags;
-
-    let latest: string;
-    try {
-      latest = flags.to ?? (install.shape === "executable" ? (await U.fetchLatestRelease()).tag.replace(/^v/, "") : await U.latestPublished());
-    } catch (err) {
-      console.error(`could not find out what the latest version is: ${err instanceof Error ? err.message : err}`);
-      process.exit(check ? 2 : 1);
-    }
-    U.writeCache(latest);
-
-    const behind = U.compareVersions(current, latest) < 0;
     const where = install.shape === "project" ? `${install.manifest} (${install.range ?? "no range"})` : install.shape;
+    const findLatest = async () =>
+      flags.to ?? (install.shape === "executable" ? (await U.fetchLatestRelease()).tag.replace(/^v/, "") : await U.latestPublished());
+
     if (check) {
+      let latest: string;
+      try { latest = await findLatest(); } catch (err) {
+        console.error(`could not find out what the latest version is: ${err instanceof Error ? err.message : err}`);
+        process.exit(2);
+      }
+      U.writeCache(latest);
+      const behind = U.compareVersions(current, latest) < 0;
       console.log(`voidbase ${current}, latest ${latest}: ${behind ? "behind" : "up to date"}  [${where}]`);
       process.exit(behind ? 1 : 0);
     }
+
+    // the executable answers for itself, in PocketBase's words, including when there is nothing to do
+    if (install.shape === "executable") {
+      const { update } = await import("../src/node/update");
+      await update({ currentVersion: current, dataDir: resolve(flags.dir ?? "pb_data"), backup: !!flags.backup });
+      break;
+    }
+
+    let latest: string;
+    try { latest = await findLatest(); } catch (err) {
+      console.error(`could not find out what the latest version is: ${err instanceof Error ? err.message : err}`);
+      process.exit(1);
+    }
+    U.writeCache(latest);
+    const behind = U.compareVersions(current, latest) < 0;
     if (!behind && !flags.to) { console.log(`voidbase ${current} is already the latest.  [${where}]`); break; }
 
     if (install.shape === "checkout") {
       console.error(`this is a voidbase checkout, not an install: update it with git.\n  you have ${current}, the registry has ${latest}`);
       process.exit(1);
-    }
-    if (install.shape === "executable") {
-      const { update } = await import("../src/node/update");
-      await update({ currentVersion: current, dataDir: resolve(flags.dir ?? "pb_data"), backup: !!flags.backup });
-      break;
     }
 
     const argv = U.updateCommand(install, latest);

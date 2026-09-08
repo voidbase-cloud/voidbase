@@ -14,8 +14,12 @@
 // So the graph is checked here, whole, before a single plugin is handed over. Everything wrong with it is reported
 // at once rather than one throw at a time, because an install that fails four times in a row teaches you four
 // things slowly.
+import { KNOWN } from "../interfaces";
 import type { InterfaceName, Plugin } from "./manifest";
 import { checkManifest } from "./manifest";
+
+/** the interfaces an instance is not usable without, whoever provides them */
+export const CORE: InterfaceName[] = ["auth@1"];
 
 export interface Resolution {
   /** load order: everything a plugin requires comes before it */
@@ -24,6 +28,8 @@ export interface Resolution {
   providers: Map<InterfaceName, string>;
   /** what is wrong, in the order a person would want to read it */
   problems: string[];
+  /** core interfaces nothing provides: not a refusal, but the instance has to say so */
+  missingCore: InterfaceName[];
 }
 
 /** the migration order the manifest promises: after everything this plugin requires, and stable among equals */
@@ -41,6 +47,16 @@ export function resolve(plugins: Plugin[], voidbaseVersion: string): Resolution 
     const seen = byName.get(p.manifest.name);
     if (seen) problems.push(`two plugins are called "${p.manifest.name}"; a name is how an instance refers to one, so it has to be unique`);
     byName.set(p.manifest.name, p);
+  }
+
+  // an interface nobody defines is a typo, and a typo in a manifest is a plugin that never loads for a reason
+  // nobody can see. src/server/interfaces is the list; a name outside it is refused rather than resolved to
+  // nothing.
+  const known = new Set<string>(KNOWN);
+  for (const p of plugins) {
+    for (const i of [...(p.manifest.provides ?? []), ...(p.manifest.requires ?? [])]) {
+      if (!known.has(i)) problems.push(`${p.manifest.name} names the interface "${i}", which this voidbase does not define`);
+    }
   }
 
   // a plugin that does not fit this voidbase is refused now, rather than found out by a request
@@ -88,10 +104,15 @@ export function resolve(plugins: Plugin[], voidbaseVersion: string): Resolution 
     }
   }
 
+  // A core plugin is the tier that exists because the instance is not usable without it, so an instance missing
+  // one is not lean, it is broken. That is a warning to say out loud rather than a refusal, because removing one
+  // has to be possible: replacing auth is the entire point of moving it out.
+  const missingCore = CORE.filter((i) => !providers.has(i));
+
   const { order, cycles } = sort(plugins, providers, owners);
   for (const c of cycles) problems.push(`these plugins depend on each other in a circle, which cannot be loaded: ${c.join(" -> ")}`);
 
-  return { order, providers, problems };
+  return { order, providers, problems, missingCore };
 }
 
 /**

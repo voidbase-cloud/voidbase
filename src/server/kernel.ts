@@ -52,10 +52,16 @@ export interface Loaded {
   providers: Record<string, string>;
   /** the tiers a name belongs to, so an instance can say what it is missing */
   tiers: Record<string, string>;
+  /**
+   * Core interfaces nothing provides. An instance can be run without one, because replacing auth is the entire
+   * point of moving it out, but it is not a lean instance and it should not have to be guessed at from a 404.
+   */
+  missingCore: string[];
 }
 
 const loaded = new WeakMap<Kernel, Loaded>();
-export const whatLoaded = (kernel: Kernel): Loaded => loaded.get(kernel) ?? { names: [], providers: {}, tiers: {} };
+export const whatLoaded = (kernel: Kernel): Loaded =>
+  loaded.get(kernel) ?? { names: [], providers: {}, tiers: {}, missingCore: [] };
 
 /**
  * Fill an interface this plugin declared it provides. The name is the one in the manifest, version and all.
@@ -81,7 +87,7 @@ export function using<T>(ctx: Kernel, iface: string): T {
  * times in a row teaches you four things slowly.
  */
 export async function load(kernel: Kernel, plugins: Plugin[], voidbaseVersion: string): Promise<Loaded> {
-  const { order, providers, problems } = resolve(plugins, voidbaseVersion);
+  const { order, providers, problems, missingCore } = resolve(plugins, voidbaseVersion);
   if (problems.length) {
     throw new Error(`voidbase: these plugins cannot be loaded together:\n  - ${problems.join("\n  - ")}`);
   }
@@ -101,9 +107,13 @@ export async function load(kernel: Kernel, plugins: Plugin[], voidbaseVersion: s
     names: order.map((p) => p.manifest.name),
     providers: Object.fromEntries([...providers].map(([i, n]) => [i, n])),
     tiers: Object.fromEntries(order.map((p) => [p.manifest.name, p.manifest.tier])),
+    missingCore,
   };
   loaded.set(kernel, result);
   logger.info("voidbase: plugins loaded", { plugins: result.names });
+  if (missingCore.length) {
+    logger.warn("voidbase: no plugin provides a core interface; the instance is running without it", { missing: missingCore });
+  }
   return result;
 }
 

@@ -52,10 +52,16 @@ describe("the four failures the loader owns", () => {
 
   test("a cycle is refused, and the circle is printed", () => {
     const problems = problemsOf([
-      plugin({ name: "a", provides: ["ay@1"], requires: ["bee@1"] }),
-      plugin({ name: "b", provides: ["bee@1"], requires: ["ay@1"] }),
+      plugin({ name: "a", provides: ["auth@1"], requires: ["mail@1"] }),
+      plugin({ name: "b", provides: ["mail@1"], requires: ["auth@1"] }),
     ]);
     expect(problems.join()).toContain("depend on each other in a circle");
+    expect(problems.join()).toContain("a -> b -> a");
+  });
+
+  test("an interface this voidbase does not define is a typo, and is refused", () => {
+    const problems = problemsOf([plugin({ name: "x", requires: ["payjments@1" as never] })]);
+    expect(problems.join()).toContain('names the interface "payjments@1", which this voidbase does not define');
   });
 
   test("a plugin that does not fit this voidbase is refused at install", () => {
@@ -171,5 +177,25 @@ describe("the kernel refuses a graph it cannot load", () => {
     expect(result.providers["payments@1"]).toBe("stripe");
     expect(result.tiers.stripe).toBe("official");
     expect(whatLoaded(kernel).names).toEqual(["stripe", "checkout"]);
+  });
+});
+
+describe("the tier that is not optional", () => {
+  test("an instance with no auth provider says so rather than pretending it is lean", () => {
+    const { missingCore, problems } = resolve([plugin({ name: "backups" })], "0.9.0");
+    expect(problems).toEqual([]);
+    expect(missingCore).toEqual(["auth@1"]);
+  });
+
+  test("and stops saying so once something provides it", () => {
+    const { missingCore } = resolve([plugin({ name: "better-auth", tier: "core", provides: ["auth@1"] })], "0.9.0");
+    expect(missingCore).toEqual([]);
+  });
+
+  test("removing a core plugin is possible, which is the entire point of moving auth out", () => {
+    // not a refusal: the graph loads, and the instance reports what it is missing
+    const { problems, order } = resolve([plugin({ name: "backups" })], "0.9.0");
+    expect(problems).toEqual([]);
+    expect(order.map((p) => p.manifest.name)).toEqual(["backups"]);
   });
 });

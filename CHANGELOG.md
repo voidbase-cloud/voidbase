@@ -3,6 +3,25 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.8.0](https://github.com/voidbase-cloud/voidbase/compare/v0.7.0...v0.8.0) (2026-09-08)
+
+
+### Features
+
+* **cli:** list and delete instances without a project ([2ee40bb](https://github.com/voidbase-cloud/voidbase/commit/2ee40bb0d45b97df5b967833f5beeb8a12f2c1c6))
+* **cli:** named instances on this machine, not only on Cloudflare ([f0d3f6f](https://github.com/voidbase-cloud/voidbase/commit/f0d3f6fa5023ccdd7772b3ce2a48236033b2a96e))
+
+
+### Bug Fixes
+
+* **cli:** a scaffolded project can deploy itself from a build machine ([c1cf2df](https://github.com/voidbase-cloud/voidbase/commit/c1cf2df018e531e24f1a94b406a9386fa2d56d96))
+
+
+### Documentation
+
+* **ci:** record which build events are declined and why ([a8aa34f](https://github.com/voidbase-cloud/voidbase/commit/a8aa34f96ac71e566284519bef58633793761da5))
+* setup guides, from an empty machine to a running instance ([4268c00](https://github.com/voidbase-cloud/voidbase/commit/4268c00a96a7243a48514156cecd5b95abac28b6))
+
 ## [0.7.0](https://github.com/voidbase-cloud/voidbase/compare/v0.6.2...v0.7.0) (2026-09-07)
 
 

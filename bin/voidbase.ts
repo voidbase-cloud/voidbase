@@ -33,7 +33,10 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      (main.ts, package.json, pb_hooks, pb_migrations, pb_public) with the project's
                                      routes/middleware/crons/queues and whatever src/voidbase/ adds. vite build does
                                      this too through the voidbaseAdapter() plugin; this is the same pass without Vite.
-  init [dir]                         scaffold .env, pb_hooks/, pb_migrations/, pb_secrets/ in a fresh checkout and sync the panel
+  init [dir] [--template owner/name] [--ref branch] [--registry url]
+                                     scaffold .env, pb_hooks/, pb_migrations/, pb_secrets/ in a fresh checkout and sync
+                                     the panel; --template writes somebody's published project into the directory
+                                     instead (owner/name, a GitHub URL, or a name listed in the marketplace)
   dev [--port 5180]                  start the Void dev server (vp dev)
   build | preview [--port 5181]      production build / run the built Worker locally (vp build / vp preview)
   deploy [--name worker] [--account id] [--domain example.com,api.example.com] [--public-dir pb_public] [--dry-run] [--no-queue] [--no-hub] [--no-cron]
@@ -350,6 +353,15 @@ switch (cmd) {
   }
   case "init": {
     const dir = resolve(sub ?? ".");
+    // --template starts from somebody's working project instead of an empty directory. It writes the whole thing,
+    // so the scaffold below is skipped: a template that needed scaffolding on top would not be much of a template.
+    if (flags.template) {
+      const { fetchTemplate } = await import("../src/node/template");
+      const r = await fetchTemplate(flags.template, dir, { ref: flags.ref, registry: flags.registry, log: (l) => console.log(l) });
+      console.log(`${r.files} files from ${r.repository} at ${r.ref} into ${dir}`);
+      console.log(`\nnext: cd ${sub ?? "."} && bun install, then read its README`);
+      break;
+    }
     const { scaffold, writeSecretsDeclaration } = await import("../src/node/local");
     const { declarationScaffold } = await import("../src/node/secrets");
     const version = await currentVersion();

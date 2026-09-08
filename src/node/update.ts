@@ -39,11 +39,28 @@ export function parseChecksums(text: string): Map<string, string> {
 export async function sha256(bytes: Uint8Array): Promise<string> { return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource))].map((b) => b.toString(16).padStart(2, "0")).join(""); }
 
 export interface Release { tag: string; body: string; assets: { name: string; url: string }[] }
+interface GhRelease { tag_name: string; body?: string; draft?: boolean; assets?: { name: string; browser_download_url: string }[] }
+const shapeRelease = (r: GhRelease): Release => ({ tag: r.tag_name, body: r.body ?? "", assets: (r.assets ?? []).map((a) => ({ name: a.name, url: a.browser_download_url })) });
+
+/**
+ * The newest release, prereleases included.
+ *
+ * GitHub's /releases/latest deliberately hides anything marked as a prerelease, and while voidbase is in beta the
+ * prerelease is the thing we are asking people to run, so the list decides and /releases/latest is only the
+ * fallback for when the list cannot be read. Drafts are never offered: they are not published.
+ */
 export async function fetchLatestRelease(api = process.env.VOIDBASE_UPDATE_API || "https://api.github.com"): Promise<Release> {
-  const res = await fetch(`${api.replace(/\/$/, "")}/repos/${REPO}/releases/latest`, { headers: { accept: "application/vnd.github+json", "user-agent": "voidbase-update" } });
+  const base = api.replace(/\/$/, "");
+  const headers = { accept: "application/vnd.github+json", "user-agent": "voidbase-update" };
+  const listed = await fetch(`${base}/repos/${REPO}/releases?per_page=20`, { headers }).catch(() => null);
+  if (listed?.ok) {
+    const rows = ((await listed.json().catch(() => [])) as GhRelease[]).filter((r) => r && !r.draft && typeof r.tag_name === "string");
+    const best = rows.sort((a, b) => compareVersions(a.tag_name, b.tag_name)).at(-1);
+    if (best) return shapeRelease(best);
+  }
+  const res = await fetch(`${base}/repos/${REPO}/releases/latest`, { headers });
   if (!res.ok) throw new Error(`fetching the latest release: HTTP ${res.status}`);
-  const r = (await res.json()) as { tag_name: string; body?: string; assets?: { name: string; browser_download_url: string }[] };
-  return { tag: r.tag_name, body: r.body ?? "", assets: (r.assets ?? []).map((a) => ({ name: a.name, url: a.browser_download_url })) };
+  return shapeRelease((await res.json()) as GhRelease);
 }
 
 export interface UpdateOptions { currentVersion: string; dataDir: string; backup?: boolean; api?: string; execPath?: string; log?: (line: string) => void }

@@ -72,6 +72,24 @@ Releases); it is a setting, not something a workflow can turn on.
 `.release-please-manifest.json` holds the released version (0.1.0 was cut by hand and its notes written by hand;
 everything after it is compiled). `release-please-config.json` maps commit types to changelog sections.
 
+## The public beta
+
+While voidbase is in public beta the versions carry the label: `"versioning": "prerelease"` with
+`"prerelease-type": "beta"` turns the next bump into `0.9.0-beta` rather than `0.9.0`, and `"prerelease": true` marks
+the GitHub release as a pre-release. Going stable is deleting those three keys and nothing else.
+
+Two consequences are worth knowing, because both of them decide whether an existing install ever hears about a
+release:
+
+- **npm.** `npm publish` is called without `--tag`, so a beta becomes the `latest` dist-tag like any other version.
+  That is deliberate: while the beta is what we are asking people to run, a fresh `bun i -g` and `voidbase update`
+  should both land on it. Publishing under a `beta` tag instead would leave everyone on the last stable version
+  without saying so.
+- **GitHub.** `/repos/.../releases/latest` deliberately excludes anything marked as a pre-release, so the prebuilt
+  executable's update path does not use it. `fetchLatestRelease` (`src/node/update.ts`) reads the releases list and
+  takes the highest version, drafts excluded, and falls back to `/releases/latest` only when the list cannot be
+  read. `test/exe-smoke.ts` covers exactly this: a beta that `/releases/latest` hides is still offered.
+
 ## Rehearsals and manual paths
 
 - A dry run: a commit on master whose message carries a `Release: dry-run` trailer makes the build rehearse the

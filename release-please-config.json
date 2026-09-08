@@ -3,6 +3,7 @@
   "release-type": "node",
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": false,
+  "versioning": "prerelease",
   "prerelease": true,
   "prerelease-type": "beta",
   "include-component-in-tag": false,

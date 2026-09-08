@@ -204,3 +204,32 @@ describe("the tier that is not optional", () => {
     expect(order.map((p) => p.manifest.name)).toEqual(["backups"]);
   });
 });
+
+describe("what happens when a provider goes away", () => {
+  // The property the whole system rests on, measured rather than assumed: cordis marks a fiber's state, and that is
+  // the observable. An `on("dispose")` hook is not, which is how an earlier version of this claim was wrong.
+  const tick = () => new Promise((r) => setTimeout(r, 40));
+  const state = (fiber: unknown) => (fiber as { state: number }).state;
+  const dispose = (fiber: unknown) => (fiber as { dispose(): Promise<void> }).dispose();
+
+  test("removing a provider unloads what required it, and a replacement reloads it, untouched", async () => {
+    const kernel = createKernel(new Hono() as never);
+    let applied = 0;
+    const stripe = kernel.plugin({ name: "stripe", apply: (ctx) => { serve(ctx as never, "payments@1", { who: "stripe" }); } });
+    await stripe;
+    const checkout = kernel.plugin({ name: "checkout", inject: ["payments@1"], apply: () => { applied++; } });
+    await checkout;
+    expect(applied).toBe(1);
+    expect(state(checkout)).toBe(2); // active
+
+    await dispose(stripe); await tick();
+    expect(state(checkout)).toBe(0); // waiting: its interface is gone, so it was torn down
+    expect(using(kernel, "payments@1")).toBeUndefined();
+
+    kernel.plugin({ name: "polar", apply: (ctx) => { serve(ctx as never, "payments@1", { who: "polar" }); } });
+    await tick();
+    expect(applied).toBe(2); // re-applied against the new provider, without checkout changing
+    expect(state(checkout)).toBe(2);
+    expect(using<{ who: string }>(kernel, "payments@1").who).toBe("polar");
+  });
+});

@@ -4,9 +4,9 @@ What it would take to build what `voidbase-site/pages/docs/roadmap.tsx` and
 `voidbase-site/src/components/PluginsSoon.tsx` describe. Those two files are the specification; this one is the
 route to them, in the order the decisions have to be made rather than the order the page lists them.
 
-Everything marked **measured** was run against this codebase on 8 September 2026. The spike that produced those
-numbers is currently uncommitted in this working tree: `src/server/kernel.ts`, `src/server/plugins/`,
-`src/server/realtime/hub.ts`, `scripts/kernel-bench.ts`, and the kernel block at the end of `src/server/app.ts`.
+Everything marked **measured** was run against this codebase on 8 September 2026. The work lives on the `plugins`
+branch: `src/server/kernel.ts`, `src/server/plugins/`, `src/server/interfaces/`, `scripts/kernel-bench.ts`, the
+kernel block at the end of `src/server/app.ts`, and `test/unit/plugins.test.ts` and `kernel-invariant.test.ts`.
 
 ---
 
@@ -23,7 +23,9 @@ Findings that constrain the design, each with the thing that proved it.
 | Two providers of one interface: first wins, second discarded, **no error** | **measured** |
 | A dependency cycle deadlocks silently, **no error** | **measured** |
 | Hono's default SmartRouter refuses routes after its first match | **measured**; TrieRouter and LinearRouter allow it, RegExpRouter does not |
-| Top-level await in `app.ts` survives the Worker bundle | **measured**: `bun run build` clean, 57/57 tests pass |
+| Top-level await and the JSON version import survive both builds | **measured**: Worker bundle clean; the standalone executable builds and passes its end-to-end smoke test |
+| Backups arrives through the kernel and still meets PocketBase's contract | **measured**: 17/17 backups conformance cases against a live dev server, restore round trip included |
+| A dependent is torn down when its provider goes, and re-applied when a replacement arrives | **measured**: fiber state 2 → 0 → 2, apply count 1 → 2; `test/unit/plugins.test.ts` |
 | Bindings arrive per request, not at module scope | `src/server/app.ts:74`, `attachHub(c.env)` in the request middleware |
 | The standalone binary compiles a hooks directory at startup and imports it | `src/platform/node/hooks.ts` |
 | On Workers hooks are a build-time virtual module: no filesystem, no eval | `src/platform/workers/hooks.ts` |
@@ -109,7 +111,9 @@ the next phase is argued from.
 
 1. **A plugin provides its own interface; the kernel cannot open a slot for it.** cordis refuses an assignment to a
    service owned by another fiber. This is better than the plan assumed: a service registered by the plugin's own
-   fiber is disposed with that fiber, which is the propagation the whole system rests on, and it comes free.
+   fiber is removed with that fiber, and every plugin that required it drops back to waiting and is re-applied when
+   a replacement provider arrives. Measured, not inferred — and an earlier version of this claim was wrong about
+   *how* to observe it: cordis's `on("dispose")` is not the signal, the fiber's `state` is.
 2. **There is no second phase for binding-backed services.** The plan called for one, it was written, and it had no
    callers. voidbase already threads a `RecordContext` carrying db, storage, auth and collections through the write
    path — a container by another name — so a binding-backed thing needs to be *reachable from the request*, not
@@ -128,23 +132,26 @@ the next phase is argued from.
 
 ## Phase 1 — The kernel — **done**
 
-Built on the `plugins` branch: `src/server/kernel.ts`, `src/server/plugins/manifest.ts`,
-`src/server/plugins/resolve.ts`, and the version baked from package.json so the loader knows what it is running
-against. 83 unit tests, Worker build clean.
+`src/server/kernel.ts` (`createKernel`, `load`, `serve`, `using`, `whatLoaded`), `src/server/plugins/manifest.ts`,
+`src/server/plugins/resolve.ts`, and `src/server/version.ts` baking the version from package.json so the loader
+knows what it is running against.
 
-**Build:**
+**What was built:**
 
-- `src/server/kernel.ts` — the cordis context, `use()`, `ready()`. Exists in the spike.
-- **Two-phase composition, because of the two constraints together.** Routes must be mounted before the first
-  request (SmartRouter), and bindings do not exist at module scope (Workers). So:
-  - *Mount phase*, module scope, under top-level await: plugins register routes, hooks and cron handlers. Handlers
-    read `c.env` when they run, which is what every existing handler already does.
-  - *Service phase*, first request, memoised per isolate: services that wrap a binding are created then.
-  - A plugin therefore cannot decide *whether* to mount based on a binding. It mounts and answers 501 at call time.
-- `PluginManifest` type: name, version, provides, requires, voidbase range, collections, extends, tier.
-- The four checks from 0.4, run over the manifest graph **before** anything reaches cordis.
+- One composition phase, not two. Everything mounts at module scope under a top-level await, because Hono's default
+  router refuses routes after its first match and cordis applies a plugin on a later tick. The planned second phase
+  for binding-backed services was written, had no callers, and was removed (finding 2 above): a binding travels on
+  the request, which voidbase's `RecordContext` already does.
+- `PluginManifest`: name, version, tier, voidbase range, provides, requires, collections, extends.
+- The four checks from 0.4, over the whole graph, before anything reaches cordis. Nothing is applied if anything is
+  wrong, and everything wrong is reported at once.
+- A plugin provides its interface with `serve(ctx, "payments@1", impl)` from inside its own `apply`, and reads one it
+  required with `using(ctx, "payments@1")`.
+- `/api/plugins`, superuser only, says what an instance is running and which core interfaces nothing provides.
 
-**Verify:** `bun test` green, `bun run build` clean, `scripts/kernel-bench.ts` under 2ms for the real plugin count.
+**Verified:** 84 unit tests; Worker bundle clean; standalone executable builds and passes its smoke test end to end
+(top-level await and the JSON import both survive `bun build --compile`); backups conformance 17/17 against a live
+dev server with the routes arriving through the kernel.
 
 **Risk:** `cordis@4.0.0-rc.9` says in its own README that the API "may change without notice". Everything hangs off
 it. Either pin exactly and accept the upgrade work, or wrap it behind `kernel.ts` so the surface we depend on is
@@ -154,25 +161,18 @@ ours — the spike already does the latter, and it should stay that way.
 
 ## Phase 2 — Interfaces — **done**
 
-`src/server/interfaces/index.ts` holds them, versioned in the name. Auth is defined with three parts rather than
-one, per 0.3. The realtime entry is there but nothing provides it yet; see finding 4 above.
+`src/server/interfaces/index.ts` holds them, versioned in the name (`auth@1`, `payments@1`, `realtime@1`,
+`mail@1`), and the list is closed: a manifest naming an interface outside it is refused at install. Auth is defined
+with three parts rather than one, per 0.3. Nothing provides any of them yet; the registry exists so the first
+provider has a contract to meet rather than a contract to invent.
 
-**Build:**
+Who may define one is the governance question the roadmap flags as unresolved. For now we do, here, and a community
+plugin consumes rather than defines. That needs saying on the page.
 
-- Interfaces are versioned names: `auth@1`, `payments@1`. A provider declares `provides: ["payments@1"]`, a
-  consumer `requires: ["payments@1"]`. The version is part of the service name in cordis, so a major bump is a
-  different service and nothing silently half-matches.
-- An interface registry in this repo: `src/server/interfaces/` holding the TypeScript type for each, versioned.
-  Who may define one is a governance question the roadmap flags as unresolved — for now, we do, and community
-  plugins consume rather than define. Say so on the page.
-- The fallback pattern replaces optional injection. Hub fanout and the D1 change feed are not one plugin with a
-  branch; they are two plugins providing `realtime@1`, and composition picks by whether the binding exists.
-  **This is a rewrite of the realtime path, not a move**: `if (hubActive())` in `records/service.ts` and
-  `realtime/index.ts` becomes a fork.
-
-**Verify:** a test that installs two providers and asserts the install is refused; one that removes a provider and
-asserts every dependent unloaded; one that swaps providers and asserts the dependent's behaviour changed without
-the dependent changing.
+**Verified, each as a test:** two providers of one interface are refused at install and both are named; a missing
+provider names the interface and who wanted it; removing a provider drops its dependents to waiting and a
+replacement re-applies them without the dependents changing; swapping Stripe for Polar leaves `checkout`'s load
+position and behaviour unchanged.
 
 ---
 
@@ -195,12 +195,17 @@ and redeploy — minutes, and a deployment event rather than a toggle.
 
 ---
 
-## Phase 4 — Tiers, and a bare instance — **done**
+## Phase 4 — Tiers, and a bare instance — **partly done**
 
-- Three tiers as the roadmap describes, as a manifest field: `core`, `official`, `community`.
-- Core plugins are installed and enabled by default and ship in the bundle.
-- Removing a core plugin is possible and deliberate: a confirmation, and the instance reports what it is missing
-  from a `/api/health` field the panel can show.
+- Three tiers as a manifest field: `core`, `official`, `community`. **Done.**
+- The `CORE` list of interfaces an instance is not usable without is **empty until something actually leaves the
+  core**. Listing `auth@1` before auth had moved out made every instance warn that it was running without auth
+  while auth was running fine — caught before release. An interface joins the list in the commit that removes its
+  built-in implementation, not before.
+- An instance missing a core interface is not refused; it reports the gap on `/api/plugins` (superuser) and warns
+  once in the log. **Done.** The "confirmation" the roadmap wants belongs to the CLI in Phase 6, and surfacing it on
+  `/api/health` for the panel is open — `/api/health` is public, and an inventory of what is missing is a map of
+  the attack surface, so that needs deciding rather than doing.
 - **The "completely gutted" instance is an invariant, not a shipping mode.** Enforce it with a test — the loader
   imports nothing but the kernel and the manifest, every route is mounted by a plugin — and never ship it as a
   configuration. An instance with no auth answers 404 to everything the SDK and panel know how to ask; that is a
@@ -213,12 +218,15 @@ and redeploy — minutes, and a deployment event rather than a toggle.
 
 In this order, because it runs from proven to hardest.
 
-1. **Backups.** Done in the spike, twenty lines. It is the right first one: two dependents (`crons`, `app.ts`) and
-   it provides nothing.
+1. **Backups.** **Done**, with a manifest (`official`, `voidbase: "*"`) and the full conformance suite passing
+   through the kernel. It is the right first one: two dependents (`crons`, `app.ts`) and it provides nothing.
 2. **Hardening**, then **domains**, then **email**. All leaf-shaped like backups. Domains and email are also the
    pair that gives the marketplace its first real story, since email depends on the domain plugin having run.
-3. **Realtime**, as the two-providers fork from Phase 2. First real test of the interface mechanism against
-   existing code.
+3. **Realtime**, as *one* plugin providing `realtime@1` whose implementation follows the HUB binding (finding 4;
+   the two-provider shape is for choices a person makes, and nobody installs the hub). Still the first real test of
+   the interface mechanism against the write path: 17 call sites across `records/service.ts`, `realtime/index.ts`,
+   `oauth2/index.ts` and `app.ts`. It is covered only by the integration suite (`test/sdk-suite.ts`,
+   `starter-smoke.ts`), so it is not to be started without a full `bun run ci` alongside it.
 4. **Auth**, last, and only if 0.3 resolved cleanly. It is the first core plugin and the one that proves the tier
    exists, but it is also the one whose schema the rule compiler embeds.
 
@@ -282,12 +290,17 @@ format, a stable registry API, and the integrity hash. Everything else is the ma
 
 ## What to correct on the site when this lands
 
-Both files are currently promises, and three of them are wrong:
+Both files are promises, and some are now wrong in each direction:
 
+- `PluginsSoon.tsx` says "There is no manifest format, no loader, and nothing to install." After this release the
+  first two exist inside voidbase; the third is still true, and it is the one a reader cares about. Rephrase to say
+  the loader exists and nothing is installable yet, rather than leave a sentence that is half false.
 - `PluginsSoon.tsx`: panel screens (0.2), standalone/npm being packaged-only (Phase 3), and cloud installs being a
   button rather than a redeploy (Phase 3).
-- `roadmap.tsx`: the interfaces item promises that ambiguity and cycles are refused — true only once we build the
-  checks cordis does not have (0.4). The auth item's contract is too narrow (0.3).
+- `roadmap.tsx`: the interfaces item promises that ambiguity and cycles are refused. That is **now true**; the
+  item can stop being a plan. The auth item's contract is too narrow (0.3).
+- The acknowledgments page lists runtime dependencies "taken from the package's NOTICE file". NOTICE now lists
+  cordis, cosmokit and @standard-schema/spec (all MIT); the page should too.
 
 Correcting the page is part of the phase that makes it true, not a follow-up.
 
@@ -305,7 +318,7 @@ Correcting the page is part of the phase that makes it true, not a follow-up.
                                              │                                  └─→ the other nine
                                              └─→ 4 tiers
                                                     │
-                                 5a realtime fork ──┤
+                     5a realtime, one plugin ──┤   (needs a full ci run beside it)
                                  5a auth ───────────┘  (only if 0.3 resolved)
 ```
 

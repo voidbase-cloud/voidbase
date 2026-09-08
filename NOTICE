@@ -4,5 +4,5 @@ The admin panel served at /_/ is PocketBase's own unmodified UI build (ui/dist),
 `bun scripts/sync-panel.ts`; it stays under PocketBase's MIT license. voidbase is not affiliated with or endorsed
 by the PocketBase project.
 
-Runtime dependencies: hono (MIT), fflate (MIT), @cf-wasm/photon (Apache-2.0, Photon by Silvia O'Dwyer),
+Runtime dependencies: hono (MIT), cordis (MIT), cosmokit (MIT), @standard-schema/spec (MIT), fflate (MIT), @cf-wasm/photon (Apache-2.0, Photon by Silvia O'Dwyer),
 @simplewebauthn/server (MIT), bcryptjs (MIT). Built and deployed with Void (https://void.cloud).

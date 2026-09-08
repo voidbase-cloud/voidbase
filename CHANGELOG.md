@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.3](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.2...v0.9.0-beta.3) (2026-09-08)
+
+
+### Bug Fixes
+
+* **crons:** maintenance stopped riding the realtime stream, where it was being cancelled ([ab90dce](https://github.com/voidbase-cloud/voidbase/commit/ab90dceb052c7dabfc2bfd908c61d505c944f4c2))
+
 ## [0.9.0-beta.2](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.1...v0.9.0-beta.2) (2026-09-08)
 
 

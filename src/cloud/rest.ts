@@ -119,7 +119,14 @@ const moduleMime = (t: ReleaseModule["type"]) => ({ esm: "application/javascript
 // ---- provisioning ----------------------------------------------------------------------------------------
 export interface ProvisionOptions {
   account: string; name: string; release: ReleaseSource;
-  superuser: { email: string; password: string };
+  /**
+   * Omitted when upgrading an instance that already exists, because the superuser password is shown once at
+   * creation and kept nowhere. Cloudflare preserves a secret across an upload that does not mention it, and
+   * `inheritSecrets` says that on purpose rather than relying on it.
+   */
+  superuser?: { email: string; password: string };
+  /** secret names to carry over from the deployed script instead of supplying values for */
+  inheritSecrets?: string[];
   /** plain-text worker vars and secrets (VOIDBASE_* knobs, the hooks' AUDITLOG, ...) */
   vars?: Record<string, string>; secrets?: Record<string, string>;
   queue?: boolean; hub?: boolean; cron?: boolean; rateLimit?: { limit: number; period: 10 | 60 } | null; smartPlacement?: boolean;
@@ -170,8 +177,13 @@ export async function provisionInstance(cf: CfApi, o: ProvisionOptions): Promise
   if (o.hub !== false) for (const d of m.durableObjects) bindings.push({ type: "durable_object_namespace", name: d.binding, class_name: d.className });
   if (o.rateLimit) bindings.push({ type: "ratelimit", name: "RATE_LIMITER", namespace_id: rateLimitNamespace(o.name), simple: { limit: o.rateLimit.limit, period: o.rateLimit.period } });
   for (const [k, v] of Object.entries(o.vars ?? {})) bindings.push({ type: "plain_text", name: k, text: v });
-  const secrets = { VOIDBASE_SUPERUSER_EMAIL: o.superuser.email, VOIDBASE_SUPERUSER_PASSWORD: o.superuser.password, ...(o.secrets ?? {}) };
+  const secrets = {
+    ...(o.superuser ? { VOIDBASE_SUPERUSER_EMAIL: o.superuser.email, VOIDBASE_SUPERUSER_PASSWORD: o.superuser.password } : {}),
+    ...(o.secrets ?? {}),
+  };
   for (const [k, v] of Object.entries(secrets)) bindings.push({ type: "secret_text", name: k, text: v });
+  // what the deployed script already holds and this upload is not resupplying: an upgrade keeps the superuser it has
+  for (const name of o.inheritSecrets ?? []) if (!(name in secrets)) bindings.push({ type: "inherit", name });
   const metadata: Record<string, unknown> = {
     main_module: m.mainModule, compatibility_date: m.compatibilityDate, compatibility_flags: m.compatibilityFlags, bindings,
     ...(o.smartPlacement === false ? {} : { placement: { mode: "smart" } }),

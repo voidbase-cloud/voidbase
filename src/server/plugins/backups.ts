@@ -1,18 +1,24 @@
-// Backups as a plugin: the leaf half of the kernel experiment.
+// Backups, as a plugin. The first feature to leave the core, because almost nothing depends on it.
 //
-// The feature is unchanged and still lives in ../backups.ts. What changes is how it arrives. Today app.ts imports
-// `mountBackupsApi` and calls it, so the routes exist because a line in app.ts says so and app.ts is the only place
-// that knows backups exist. Here the plugin mounts itself onto the app the kernel handed it, and app.ts says only
-// that backups are among the plugins this instance runs.
+// The feature itself is unchanged and still lives in ../backups.ts. What changes is how it arrives: app.ts used to
+// import `mountBackupsApi` and call it, so the routes existed because a line in app.ts said so and app.ts was the
+// only place that knew backups existed. Now it mounts itself onto the app the kernel handed it, and app.ts says
+// only that backups are among the plugins this instance runs.
 //
-// Backups is the right leaf to try first because almost nothing depends on it: crons calls autoBackup, app.ts
-// mounts the routes, and that is all. Its own imports point the other way, into auth, collections, db, hooks, jobs,
-// settings and storage, which is what makes it a plugin rather than a service: it consumes and provides nothing.
+// It owns no collections and provides no interface: it reads whatever is there. That is what makes it the right
+// first one, and also what makes it a poor test of the parts of the loader that matter most.
 import { mountBackupsApi } from "../backups";
 import type { Kernel } from "../kernel";
+import type { Plugin } from "./manifest";
 
-export const name = "backups";
-
-export function apply(ctx: Kernel) {
-  mountBackupsApi(ctx.app);
-}
+export const backups: Plugin = {
+  manifest: {
+    name: "backups",
+    version: "0.1.0",
+    tier: "official",
+    voidbase: "*",
+  },
+  apply(ctx: Kernel) {
+    mountBackupsApi(ctx.app);
+  },
+};

@@ -25,9 +25,9 @@ import { mountFilesApi, protectedAccess } from "./files-api";
 import { BATCH_CONTEXT_HEADER, batchContextToken, mountBatch } from "./batch";
 import { mountLogsApi, requestLogger } from "./logs";
 import { mountCronsApi } from "./crons";
-import { createKernel, ready, use } from "./kernel";
-import * as backupsPlugin from "./plugins/backups";
-import * as realtimePlugin from "./plugins/realtime";
+import { attachBindings, createKernel, load, whatLoaded } from "./kernel";
+import { backups as backupsPlugin } from "./plugins/backups";
+import { VERSION } from "./version";
 import { mountSqlApi } from "./sql";
 import { bodyLimitMiddleware, rateLimitMiddleware, realIPWith } from "./hardening";
 import { backupActive } from "./backups";
@@ -521,10 +521,11 @@ mountCronsApi(app);
 // first time it matches and refuses routes afterwards, so anything a plugin mounts has to be in place before the
 // app serves anything. cordis applies a plugin on a later tick, which is why this awaits: top level await in an
 // ES module is the only place both facts can be true at once.
-const kernel = createKernel(app);
-use(kernel, backupsPlugin);
-use(kernel, realtimePlugin);
-await ready(kernel);
+export const kernel = createKernel(app);
+await load(kernel, [backupsPlugin], VERSION);
+
+// what this instance is running, which is the question a bare instance has to be able to answer about itself
+app.get("/api/plugins", (c) => c.json(whatLoaded(kernel)));
 mountSqlApi(app);
 
 // --- pb_hooks runtime ------------------------------------------------------

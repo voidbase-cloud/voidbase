@@ -107,12 +107,10 @@ pull request publishes while hot mode is on, because in hot mode the master buil
 published to npm. With hot mode off the release build still runs, since that is where a release's executables are
 built. So a push to master is one build, a pull request is two (its branch and the merge), and a release is one.
 
-A build that never finishes costs the same as one that fails, only twenty minutes later, so voidbase.cloud's `build`
-gives its Vite build a deadline (`BUILD_TIMEOUT`, 150 seconds) and tries once more (`BUILD_ATTEMPTS`). It runs under
-`timeout`, which signals the whole process group: Void's prerender step occasionally spins in a grandchild after the
-client bundle is written, and killing only the child we can see would leave that one running against the retry.
-Before the deadline the verb prints the process tree, so a hang leaves evidence in the build log rather than
-silence.
+None of the three verbs supervises the commands it runs: no deadline, no retry, no watchdog. A build that hangs or
+fails is the build platform's to cut short and to run again -- Cloudflare has a twenty minute limit and a retry
+button, GitHub Actions has the same -- and keeping that logic out of the scripts is what makes them read as a build
+path rather than a supervisor.
 
 ## What is kept between runs
 

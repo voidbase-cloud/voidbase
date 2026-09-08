@@ -31,7 +31,7 @@
 import { Context } from "cordis";
 import type { Hono } from "hono";
 import { logger } from "#platform/log";
-import type { AppEnv, Bindings } from "./types";
+import type { AppEnv } from "./types";
 import type { Plugin } from "./plugins/manifest";
 import { resolve } from "./plugins/resolve";
 
@@ -117,25 +117,13 @@ export async function load(kernel: Kernel, plugins: Plugin[], voidbaseVersion: s
   return result;
 }
 
-// ---- services that wrap a binding ------------------------------------------------------------------------------
-// Built on the first request, because that is when a binding exists, and kept for the isolate. voidbase already
-// assumes bindings are stable per isolate: app.ts re-attaches the hub and the jobs queue on every request from
-// c.env, which is the same assumption written less visibly.
-
-type ServiceFactory = (kernel: Kernel, env: Bindings) => void;
-const factories = new WeakMap<Kernel, ServiceFactory[]>();
-const built = new WeakSet<Kernel>();
-
-/** register something that needs a binding; it is created when the first request brings one */
-export function withBindings(kernel: Kernel, factory: ServiceFactory): void {
-  const list = factories.get(kernel) ?? [];
-  list.push(factory);
-  factories.set(kernel, list);
-}
-
-/** called once per isolate, by the first request through the app */
-export function attachBindings(kernel: Kernel, env: Bindings): void {
-  if (built.has(kernel)) return;
-  built.add(kernel);
-  for (const factory of factories.get(kernel) ?? []) factory(kernel, env);
-}
+// Nothing here builds services out of bindings, and the first attempt at it is why.
+//
+// The plan called for a second phase: bindings arrive with the request, so a service wrapping one would be created
+// on the first request and kept for the isolate. It was written, and then it had no callers, because the thing it
+// was for turned out to be solved already. voidbase threads a RecordContext through the write path carrying db,
+// storage, auth and collections — a container by another name — and anything a request needs can travel on it or
+// on the Hono context beside c.env.
+//
+// So a binding-backed service does not need a phase of its own. It needs to be reachable from the request, which
+// is a smaller idea. The kernel composes what is fixed at deploy: routes, hooks, and the interfaces plugins fill.

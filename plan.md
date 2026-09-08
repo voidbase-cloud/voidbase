@@ -102,9 +102,35 @@ cordis provides none of these; they are ours to build on top of it.
 
 ---
 
-## Phase 1 — The kernel
+## What building it changed
 
-The smallest thing everything else hangs from. The spike already contains a working version of most of it.
+Four things the code said that the plan did not. Recorded here rather than quietly fixed, because the plan is what
+the next phase is argued from.
+
+1. **A plugin provides its own interface; the kernel cannot open a slot for it.** cordis refuses an assignment to a
+   service owned by another fiber. This is better than the plan assumed: a service registered by the plugin's own
+   fiber is disposed with that fiber, which is the propagation the whole system rests on, and it comes free.
+2. **There is no second phase for binding-backed services.** The plan called for one, it was written, and it had no
+   callers. voidbase already threads a `RecordContext` carrying db, storage, auth and collections through the write
+   path — a container by another name — so a binding-backed thing needs to be *reachable from the request*, not
+   built in a phase of its own. The kernel composes what is fixed at deploy; the request carries what arrives with
+   it.
+3. **The interface list has to be closed.** An unknown interface in a manifest is a typo, and a typo is a plugin
+   that never loads for a reason nobody can see. `src/server/interfaces/index.ts` is the list, and a name outside
+   it is refused at install.
+4. **Realtime is not two plugins.** The plan said hub fanout and the change feed become two providers of
+   `realtime@1` chosen by composition. Nobody *installs* one of those: the hub is a deployment detail, not a user's
+   choice. The two-provider pattern is right for payments, where a person picks Stripe or Polar, and wrong here.
+   Realtime is one plugin whose implementation follows the binding, and if that selection should happen at build
+   time it belongs with the adapter in Phase 6, not with the loader.
+
+---
+
+## Phase 1 — The kernel — **done**
+
+Built on the `plugins` branch: `src/server/kernel.ts`, `src/server/plugins/manifest.ts`,
+`src/server/plugins/resolve.ts`, and the version baked from package.json so the loader knows what it is running
+against. 83 unit tests, Worker build clean.
 
 **Build:**
 
@@ -126,9 +152,10 @@ ours — the spike already does the latter, and it should stay that way.
 
 ---
 
-## Phase 2 — Interfaces
+## Phase 2 — Interfaces — **done**
 
-The highest-consequence item on the roadmap, and the one cordis mostly solves.
+`src/server/interfaces/index.ts` holds them, versioned in the name. Auth is defined with three parts rather than
+one, per 0.3. The realtime entry is there but nothing provides it yet; see finding 4 above.
 
 **Build:**
 
@@ -168,7 +195,7 @@ and redeploy — minutes, and a deployment event rather than a toggle.
 
 ---
 
-## Phase 4 — Tiers, and a bare instance
+## Phase 4 — Tiers, and a bare instance — **done**
 
 - Three tiers as the roadmap describes, as a manifest field: `core`, `official`, `community`.
 - Core plugins are installed and enabled by default and ship in the bundle.

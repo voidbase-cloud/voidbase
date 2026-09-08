@@ -25,7 +25,7 @@ import { mountFilesApi, protectedAccess } from "./files-api";
 import { BATCH_CONTEXT_HEADER, batchContextToken, mountBatch } from "./batch";
 import { mountLogsApi, requestLogger } from "./logs";
 import { mountCronsApi } from "./crons";
-import { attachBindings, createKernel, load, whatLoaded } from "./kernel";
+import { createKernel, load, whatLoaded } from "./kernel";
 import { backups as backupsPlugin } from "./plugins/backups";
 import { VERSION } from "./version";
 import { mountSqlApi } from "./sql";

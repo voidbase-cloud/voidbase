@@ -27,7 +27,9 @@ try {
   await step("generate traffic", async (s) => { await s.api("GET", `/api/collections/posts/records?perPage=1&${marker}=1`, undefined, { "user-agent": "logtest-agent", referer: "http://logtest.example/" }); await s.api("GET", `/api/collections/nope-${marker}/records`); await s.api("GET", "/api/health", undefined, s.h); await Bun.sleep(6000) /* PocketBase flushes its log writer in batches */; return { ok: true }; });
   await step("request log rows (shape and data keys)", async (s) => {
     const r = await s.api("GET", `/api/logs?filter=${encodeURIComponent(`data.url ~ "${marker}"`)}&sort=created`, undefined, s.h);
-    const items = (r.json?.items as Record<string, unknown>[]) ?? [];
+    // the two requests land in the same millisecond, and equal `created` values order differently on each server
+    // (PocketBase by rowid, voidbase by id), so the rows are compared in message order rather than arrival order
+    const items = ((r.json?.items as Record<string, unknown>[]) ?? []).slice().sort((a, b) => String(a.message).localeCompare(String(b.message)));
     return { status: r.status, total: r.json?.totalItems, keys: Object.keys(r.json ?? {}).sort(), items: items.map((it) => { const d = it.data as Record<string, unknown>; return { itemKeys: Object.keys(it), dataKeys: Object.keys(d).sort(), level: it.level, message: String(it.message).replace(marker, "M"), type: d.type, method: d.method, status: d.status, auth: d.auth, error: d.error, hasDetails: "details" in d, userAgent: d.userAgent, referer: d.referer, execTimeIsNumber: typeof d.execTime === "number", hasUserIP: typeof d.userIP === "string" }; }) };
   });
   await step("filter by status and level", async (s) => { const r = await s.api("GET", `/api/logs?filter=${encodeURIComponent(`data.status = 404 && level = 8 && data.url ~ "${marker}"`)}`, undefined, s.h); return { status: r.status, total: r.json?.totalItems }; });

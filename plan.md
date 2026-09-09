@@ -360,11 +360,14 @@ Order of work:
    build). `app.ts` loads shipped minus disabled minus shadowed, plus installed; `/api/plugins` reports origins.
    `test/unit/installed.test.ts` measures all of it against the fixture marketplace, including a bundle importing the
    kernel entry point.
-4. The three official plugins re-listed through the pipeline (bundle, audit, hash), and installed into the demo from
-   the official marketplace to prove the loop; then one of them installed from a second, throwaway marketplace to
-   prove there is no lock-in.
-5. The site's plugins page, `PluginsSoon`, the marketplace README and SUBMISSION corrected as each step makes them
-   true, not after.
+4. **Done** (2026-09-09): the three official plugins are releases on the marketplace; the demo (voidbase 0.9.0-beta.7)
+   installed `backups` from it, which takes the place of the shipped one, and `echo` from a throwaway marketplace
+   made of static files on GitHub (`voidbase-cloud/voidbase-throwaway-marketplace`, served by raw.githubusercontent.com).
+   Live on demo.voidbase.cloud: `/api/echo` answers, `/api/plugins` reports both origins, backups still works. The
+   same files served locally with `voidbase serve` load through the Bun path. Not wired yet: stack apps (the
+   adapter does not carry pb_plugins into the generated app) and cloud instances (no dashboard install).
+5. **Done** with each step: the site's plugins page and `PluginsSoon`, the marketplace README, SUBMISSION, form and
+   cards, and the plugin packages' READMEs say what exists and what does not.
 
 ---
 

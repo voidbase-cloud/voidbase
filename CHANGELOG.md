@@ -3,6 +3,19 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.8](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.7...v0.9.0-beta.8) (2026-09-09)
+
+
+### Features
+
+* **adapter:** a stack app's installed plugins ride into the generated app ([cf79d6a](https://github.com/voidbase-cloud/voidbase/commit/cf79d6afc5b90a8b2238e46f6a9566d9a3a340ab))
+* **cloud:** a release can carry a project's plugins, and a builder makes them for cloud instances ([a0801ea](https://github.com/voidbase-cloud/voidbase/commit/a0801ea2272fb4c0cf4dc31ee1678e626540144c))
+
+
+### Documentation
+
+* **plugin:** the loop is closed: installed from two marketplaces, live on the demo ([ebbbf02](https://github.com/voidbase-cloud/voidbase/commit/ebbbf0241cf3fc71ff84b4a70fad5ec788e8ddc7))
+
 ## [0.9.0-beta.7](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.6...v0.9.0-beta.7) (2026-09-09)
 
 

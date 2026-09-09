@@ -184,6 +184,18 @@ anything reads `c.env`, `$os.getenv` or the env schema. The deploy token needs "
 account's Secrets Store Deployer role; the free plan holds 100 secrets per store. Instances a control plane
 provisions keep their own secrets: the knob is a deploy's, not the platform's.
 
+### Feature flags, from Cloudflare Flagship
+
+A boolean knob declared as `flag(boolean().default(false), "...")` in `pb_secrets/main.ts` is a feature flag: the
+deploy makes sure the account has a Flagship app named after the Worker, creates every declared flag in it with
+its default (an existing flag is left as the dashboard has it, so a change there wins without a deploy), binds the
+app to the Worker as `FLAGS`, and bakes the defaults as vars (`VOIDBASE_FLAGS`). On every request, once who is
+asking is known, voidbase evaluates the declared flags with a targeting key (the signed-in record, else the client's
+address, so a percentage rollout is sticky per person) and writes the answers onto the request's env as strings,
+so `c.env.KEY`, `$os.getenv(KEY)` and every reader of a boolean knob see the flag's value without knowing it is
+one. Where Flagship is not reachable (Bun, or a deploy token without "Flagship: Write") the baked defaults answer
+and the deploy says so. Booleans only, until variants are wanted.
+
 ### Presence: live cursors without a database
 
 An instance can tell every connected client who is here now and where their cursor is, with no row written:

@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import { loadEnv } from "./serve";
 import { deleteWorkerSecrets, loadSecrets, putStoreSecrets, readSecretsValues, SECRETS_DIR, STORE_KNOB, storeBindings, storeSecretName, storeSecrets, workerSecretNames, type LoadedSecrets, putWorkerSecrets } from "./secrets";
 import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
+import { ensureFlags, ensureFlagshipApp, FLAGS_BINDING, FLAGS_VAR } from "./flagship";
 
 const API = (process.env.CLOUDFLARE_API_BASE ?? "https://api.cloudflare.com/client/v4").replace(/\/$/, "");
 export const TOKEN_ENV = "VOIDBASE_DEPLOY_CF_API_KEY";
@@ -87,7 +88,7 @@ export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" 
   const secrets = await loadSecrets(secretsDir);
   if (secrets.invalid.length) throw new Error(`${secretsDir}: ${secrets.invalid.map((i) => `${i.name}: ${i.message}`).join(", ")}`);
   loadEnv(); const fromFiles = loadEnvFiles(); if (fromFiles.length) log(`from .env: ${fromFiles.join(", ")}`);
-  if (secrets.state.definition) { const d = secrets.state.definition; log(`${secretsDir}: ${d.names.length} declared (${d.of("secret").length} secret, ${d.of("server").length} server, ${d.of("public").length} public${d.of("local").length ? `, ${d.of("local").length} local` : ""}), ${secrets.state.provided.length} valued here${secrets.undeclared.length ? `; in secrets.json but not declared (not deployed): ${secrets.undeclared.join(", ")}` : ""}`); }
+  if (secrets.state.definition) { const d = secrets.state.definition; log(`${secretsDir}: ${d.names.length} declared (${d.of("secret").length} secret, ${d.of("server").length} server, ${d.of("public").length} public${d.of("flag").length ? `, ${d.of("flag").length} flag` : ""}${d.of("local").length ? `, ${d.of("local").length} local` : ""}), ${secrets.state.provided.length} valued here${secrets.undeclared.length ? `; in secrets.json but not declared (not deployed): ${secrets.undeclared.join(", ")}` : ""}`); }
   const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || ""; // empty means unset
   if (!token) { log(`${TOKEN_ENV} is not set.\n\n${tokenHelp()}`); throw new Error(`${TOKEN_ENV} missing`); }
   const name = slug(opts.name || process.env.VOIDBASE_DEPLOY_NAME || projectName());
@@ -183,7 +184,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   for (const k of ["AUDITLOG", ...extraVars]) if (process.env[k]) baked[k] = process.env[k]!;
   // the declared server and public values, parsed (defaults filled in): a var is the code's to set on every deploy
   const definition = pbSecrets.state.definition;
-  const plainKeys = definition ? definition.of("server", "public") : [];
+  const plainKeys = definition ? definition.of("server", "public", "flag") : [];
   for (const k of plainKeys) { const v = pbSecrets.evaluation?.stored[k]; if (v !== undefined) baked[k] = v; }
   const missingVars = pbSecrets.missing.filter((k) => plainKeys.includes(k));
   if (missingVars.length) {
@@ -191,6 +192,23 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     if (opts.dryRun) log(`vars: ${msg}`); else throw new Error(msg);
   }
   if (plainKeys.length) log(`vars: ${plainKeys.filter((k) => baked[k] !== undefined).join(", ") || "none"}${definition!.of("public").length ? ` (public: ${definition!.of("public").join(", ")})` : ""}`);
+  // the declared flags: Flagship holds them (the deploy creates the app and the missing flags, binds it), and
+  // their defaults are baked as vars for a Worker whose Flagship is out of reach (src/node/flagship.ts)
+  const flagKeys = definition ? definition.of("flag") : [];
+  if (flagKeys.length) {
+    const infos = await definition!.info();
+    const flagDefs = flagKeys.map((k) => { const i = infos.find((x) => x.name === k); return { key: k, description: i?.description, fallback: (baked[k] ?? i?.fallback ?? "false") === "true" }; });
+    baked[FLAGS_VAR] = JSON.stringify(Object.fromEntries(flagDefs.map((f) => [f.key, f.fallback])));
+    try {
+      const app = await ensureFlagshipApp(api, account.id, name, opts.dryRun);
+      const created = await ensureFlags(api, account.id, app.id, flagDefs, opts.dryRun);
+      if (app.id) workerConfig.flagship = [{ binding: FLAGS_BINDING, app_id: app.id }];
+      writeWorkerConfig();
+      log(`flags: ${flagKeys.join(", ")} in the Flagship app "${name}" (${app.created ? (opts.dryRun ? "would be created" : "created") : app.id}); ${created.length ? `${opts.dryRun ? "would create" : "created"} ${created.join(", ")}` : "all present"}; bound as ${FLAGS_BINDING}, defaults baked as ${FLAGS_VAR}`);
+    } catch (err) {
+      log(`flags: ${flagKeys.join(", ")} keep their defaults: ${err instanceof Error ? err.message.split("\n")[0] : err} (Flagship needs "Flagship: Write" on the deploy token)`);
+    }
+  }
   writeFileSync(`${cloud}/.env`, Object.entries(baked).map(([k, v]) => `${k}=${v}\n`).join(""));
   log(`project: ${cloud}`);
 

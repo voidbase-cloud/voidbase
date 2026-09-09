@@ -89,12 +89,13 @@ export function rosterAfter(current: PresenceMember[], op: PresenceOp, input: Pr
 /** What a client is told: the roster without the bookkeeping. */
 export const publicMembers = (members: PresenceMember[]) => members.map((m) => ({ id: m.id, name: m.name, color: m.color, x: m.x, y: m.y }));
 
-const flag = (name: string, fallback: string): string => {
-  try { return String((runtimeEnv as Record<string, unknown>)[name] ?? process.env?.[name] ?? fallback); } catch { return fallback; }
+const flag = (name: string, fallback: string, env?: object): string => {
+  try { return String((env as Record<string, unknown> | undefined)?.[name] ?? (runtimeEnv as Record<string, unknown>)[name] ?? process.env?.[name] ?? fallback); } catch { return fallback; }
 };
 
 /** Presence is off unless the instance asks for it: it is an anonymous, public fanout. */
-export const presenceEnabled = (): boolean => ["1", "true", "on", "yes"].includes(flag("VOIDBASE_PRESENCE", "0").trim().toLowerCase());
+/** the request's env first, since VOIDBASE_PRESENCE may be a feature flag evaluated for this request (flags.ts) */
+export const presenceEnabled = (env?: object): boolean => ["1", "true", "on", "yes"].includes(flag("VOIDBASE_PRESENCE", "0", env).trim().toLowerCase());
 /** How many hold a slot at once (the page's "last three"). */
 export const presenceMax = (): number => Math.min(12, Math.max(1, Number(flag("VOIDBASE_PRESENCE_MAX", "3")) || 3));
 /** How long a slot survives without a beat. */

@@ -48,7 +48,7 @@ export interface StandardSchema<Output = unknown> {
 type StandardResult<Output> = { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<{ readonly message: string }> };
 export type OutputOf<S> = S extends StandardSchema<infer O> ? O : never;
 
-export type Access = "secret" | "server" | "public" | "local";
+export type Access = "secret" | "server" | "public" | "local" | "flag";
 
 export interface Entry<S extends StandardSchema = StandardSchema> {
   schema: S;
@@ -77,6 +77,11 @@ export function server<S extends StandardSchema>(schema: S, description?: string
 export function browser<S extends StandardSchema>(schema: S, description?: string): Marked<S> { return entry({ schema, access: "public", description }); }
 /** Read by voidbase's own tooling here or in CI (the deploy token, the deploy target): never deployed. */
 export function local<S extends StandardSchema>(schema: S, description?: string): Marked<S> { return entry({ schema, access: "local", description }); }
+/**
+ * A feature flag: a boolean the app reads at request time from Cloudflare Flagship (the deploy creates the flag
+ * with this default and binds the app), or this default where Flagship is not reachable. Booleans only, for now.
+ */
+export function flag<S extends StandardSchema>(schema: S, description?: string): Marked<S> { return entry({ schema, access: "flag", description }); }
 
 export type Spec = Record<string, StandardSchema | Entry>;
 type SchemaOf<E> = E extends Entry<infer S> ? S : E extends StandardSchema ? E : never;
@@ -130,7 +135,13 @@ export class Definition<T extends Spec> {
       const e: Entry = isEntry(v) ? { schema: v.schema, access: v.access, description: v.description } : { schema: v as StandardSchema };
       if (!e.schema || typeof e.schema !== "object" || !("~standard" in e.schema)) throw new Error(`voidbase: ${name} needs a validator (string(), number(), url(), ... from @voidbase-cloud/voidbase/secrets, or any Standard Schema)`);
       const access = e.access ?? markerOf(e.schema);
-      if (!access) throw new Error(`voidbase: ${name} has no tier. Every key says who may read it: secret(...), server(...), browser(...) or local(...)`);
+      if (!access) throw new Error(`voidbase: ${name} has no tier. Every key says who may read it: secret(...), server(...), browser(...), flag(...) or local(...)`);
+      if (access === "flag") {
+        // only a boolean validator turns the strings "true" and "false" into the booleans they name
+        const on = e.schema["~standard"].validate("true"), off = e.schema["~standard"].validate("false");
+        const isBool = (r: unknown) => !(r instanceof Promise) && !(r as { issues?: unknown }).issues && typeof (r as { value?: unknown }).value === "boolean";
+        if (!isBool(on) || !isBool(off)) throw new Error(`voidbase: ${name} is a flag, and a flag is a boolean (boolean(), boolean().default(false)); other types wait for Flagship's variants`);
+      }
       (entries as Record<string, unknown>)[name] = { schema: e.schema, access, description: e.description };
     }
     this.entries = entries;

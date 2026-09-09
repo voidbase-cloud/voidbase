@@ -64,7 +64,7 @@ export function parseSecretsDeclaration(code: string, file = "pb_secrets/main.ts
     let node: ts.Expression = expr;
     while (ts.isCallExpression(node)) {
       const fn = calleeName(node);
-      if ((fn === "secret" || fn === "server" || fn === "browser" || fn === "local") && ts.isIdentifier(node.expression)) {
+      if ((fn === "secret" || fn === "server" || fn === "browser" || fn === "local" || fn === "flag") && ts.isIdentifier(node.expression)) {
         tier ??= fn === "browser" ? "public" : (fn as Access); description ??= literal(node.arguments[1]); node = node.arguments[0] ?? node; if (!node || node === expr) break; continue;
       }
       if ((fn === "secret" || fn === "public") && ts.isPropertyAccessExpression(node.expression)) tier ??= fn === "secret" ? "secret" : "public"; // Void's .secret() / .public()
@@ -77,7 +77,7 @@ export function parseSecretsDeclaration(code: string, file = "pb_secrets/main.ts
     if (!name) return;
     if (!NAME.test(name)) throw new Error(`voidbase: ${file}: "${name}" is not a configuration name (UPPER_CASE, letters, digits and underscores, like an environment variable)`);
     const c = expr ? classify(expr) : { access: null, description: null };
-    if (!c.access) throw new Error(`voidbase: ${file}: ${name} has no tier. Every key says who may read it: secret(...), server(...), browser(...) or local(...)`);
+    if (!c.access) throw new Error(`voidbase: ${file}: ${name} has no tier. Every key says who may read it: secret(...), server(...), browser(...), flag(...) or local(...)`);
     if (!names.includes(name)) names.push(name);
     access[name] = c.access; if (c.description) descriptions[name] = c.description;
   };

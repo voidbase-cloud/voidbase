@@ -53,6 +53,7 @@ import { createCollection, deleteCollection, importCollections, inferViewFields,
 import { loadSettings, publicSettings } from "./settings";
 import type { AppEnv, Row, Bindings } from "./types";
 import { resolveSecretBindings } from "./secrets-store";
+import { withFlags } from "./flags";
 
 export const app = new Hono<AppEnv>();
 let served = false; // onBootstrap / onServe fire once per isolate, on the first request
@@ -85,6 +86,8 @@ app.use("*", async (c, next) => {
   if (!served) { served = true; await withHookStore(c.env.DB, c.env, async () => { await trigger("onBootstrap", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined); await trigger("onServe", { app: undefined as unknown, router: app, next: async () => undefined as unknown }, null, async () => undefined); }); }
   // who is asking, from whoever provides auth@1 (the auth plugin, unless the project replaced it): nobody without one
   c.set("auth", await authenticate(c.req.raw, c.env));
+  // the declared feature flags, evaluated for whoever this is (flags.ts): from here on env carries their values
+  c.env = await withFlags(c.env, String(c.get("auth")?.row.id ?? c.req.header("cf-connecting-ip") ?? ""));
     // Not on the realtime stream: its invocation lives as long as the connection, and waitUntil work is cancelled
     // when that closes, so maintenance attached to it is dropped after having claimed the hour's slot. Let a short
     // request carry it instead.
@@ -360,13 +363,13 @@ app.delete("/api/collections/:collection/records/:id", async (c) => {
 // is bounded by VOIDBASE_PRESENCE_MAX however many people are watching.
 app.get("/api/presence", async (c) => {
   const realtime = c.get("realtime");
-  if (!presenceEnabled() || !realtime.active()) return c.json({ enabled: false, max: 0, members: [] });
+  if (!presenceEnabled(c.env) || !realtime.active()) return c.json({ enabled: false, max: 0, members: [] });
   const r = await realtime.presence("beat", { id: "" }, { max: presenceMax(), ttlMs: presenceTtlMs() });
   return c.json({ enabled: true, max: presenceMax(), ttl: Math.round(presenceTtlMs() / 1000), topic: PRESENCE_TOPIC, members: r?.members ?? [] });
 });
 app.post("/api/presence", async (c) => {
   const realtime = c.get("realtime");
-  if (!presenceEnabled() || !realtime.active()) return c.json({ enabled: false, max: 0, members: [], holdsSlot: false });
+  if (!presenceEnabled(c.env) || !realtime.active()) return c.json({ enabled: false, max: 0, members: [], holdsSlot: false });
   let body: Record<string, unknown> = {};
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { body = {}; }
   const op = String(body.op ?? "beat");

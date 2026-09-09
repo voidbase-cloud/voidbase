@@ -24,7 +24,8 @@ const ok = (result: unknown, extra: Record<string, unknown> = {}, status = 200) 
 const err = (status: number, code: number, message: string) => Response.json({ success: false, errors: [{ code, message }], messages: [], result: null }, { status });
 const reset = () => { calls.length = 0; connections.clear(); triggers.clear(); builds.clear(); buildEnv.clear(); seedGh(); domains.clear(); d1.clear(); d1Migrations.clear(); d1Queries.clear(); r2.clear(); queues.clear(); consumers.clear(); scripts.clear(); uploadedHashes.clear(); pendingSessions.clear(); };
 const storeSecrets = new Map<string, { id: string; name: string; value: string; scopes: string[] }[]>();
-const state = () => ({ storeSecrets: Object.fromEntries([...storeSecrets].map(([k, v]) => [k, v.map(({ id, name, scopes }) => ({ id, name, scopes }))])), connections: [...connections.values()], triggers: [...triggers.values()], builds: [...builds.values()], buildEnv: Object.fromEntries(buildEnv), ghReleases: [...ghReleases.values()], domains: [...domains.values()], d1: [...d1.entries()], d1Migrations: Object.fromEntries(d1Migrations), d1Queries: Object.fromEntries(d1Queries), r2: Object.fromEntries([...r2.entries()].map(([k, v]) => [k, [...v]])), queues: [...queues.entries()], consumers: Object.fromEntries(consumers), scripts: Object.fromEntries(scripts), uploadedHashes: [...uploadedHashes] });
+const flagshipApps = new Map<string, { id: string; name: string; flags: Record<string, unknown>[] }>();
+const state = () => ({ flagship: [...flagshipApps.values()], storeSecrets: Object.fromEntries([...storeSecrets].map(([k, v]) => [k, v.map(({ id, name, scopes }) => ({ id, name, scopes }))])), connections: [...connections.values()], triggers: [...triggers.values()], builds: [...builds.values()], buildEnv: Object.fromEntries(buildEnv), ghReleases: [...ghReleases.values()], domains: [...domains.values()], d1: [...d1.entries()], d1Migrations: Object.fromEntries(d1Migrations), d1Queries: Object.fromEntries(d1Queries), r2: Object.fromEntries([...r2.entries()].map(([k, v]) => [k, [...v]])), queues: [...queues.entries()], consumers: Object.fromEntries(consumers), scripts: Object.fromEntries(scripts), uploadedHashes: [...uploadedHashes] });
 Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, async fetch(req) {
   const url = new URL(req.url); const p = url.pathname; const A = `/accounts/${ACCOUNT}`;
   if (p === "/__calls") { if (req.method === "DELETE") { reset(); return new Response(null, { status: 204 }); } return Response.json(calls); }
@@ -106,6 +107,16 @@ Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, 
   // ---- workers
   if (p === `${A}/workers/subdomain`) return ok({ subdomain: "testsub" });
   if (p === `${A}/workers/scripts` && req.method === "GET") return ok([...scripts.entries()].map(([id, s]) => ({ id, tag: s.tag, tags: (s.metadata.tags as string[]) ?? [], created_on: s.created_on, modified_on: s.modified_on })));
+  // Flagship: apps by name, flags by key (what `voidbase deploy` creates for the declared flags)
+  { const m = p.match(new RegExp(`^${A}/flagship/apps(?:/([^/]+)(?:/flags(?:/([^/]+))?)?)?$`));
+    if (m) { const appId = m[1]; const flagKey = m[2];
+      if (!appId && req.method === "GET") return ok([...flagshipApps.values()].map(({ id, name }) => ({ id, name })), { result_info: { cursor: null } });
+      if (!appId && req.method === "POST") { const b = (await req.json()) as { name: string }; if (!b.name) return err(400, 10021, "name is required"); const app = { id: crypto.randomUUID().replace(/-/g, ""), name: b.name, flags: [] }; flagshipApps.set(app.id, app); return ok({ id: app.id, name: app.name }); }
+      const app = appId ? flagshipApps.get(appId) : undefined; if (appId && !app) return err(404, 10021, "app not found");
+      if (app && !flagKey && !p.endsWith("/flags") && req.method === "GET") return ok({ id: app.id, name: app.name });
+      if (app && p.endsWith("/flags") && req.method === "GET") return ok(app.flags.map((f) => ({ key: f.key, enabled: f.enabled, default_variation: f.default_variation })), { result_info: { cursor: null } });
+      if (app && p.endsWith("/flags") && req.method === "POST") { const b = (await req.json()) as Record<string, unknown>; if (!b.key || !b.variations || !b.default_variation) return err(400, 10021, "key, variations and default_variation are required"); if (app.flags.some((f) => f.key === b.key)) return err(409, 10021, `flag ${b.key} already exists`); app.flags.push(b); return ok({ key: b.key }); }
+    } }
   // the account's Secrets Store: names, values kept only to be replaced, never returned
   { const m = p.match(new RegExp(`^${A}/secrets_store/stores/([^/]+)/secrets(?:/([^/]+))?$`));
     if (m) { const list = storeSecrets.get(m[1]!) ?? (storeSecrets.set(m[1]!, []), storeSecrets.get(m[1]!)!); const id = m[2];

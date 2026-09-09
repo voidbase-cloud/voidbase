@@ -3,6 +3,18 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.7](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.6...v0.9.0-beta.7) (2026-09-09)
+
+
+### Features
+
+* **plugin:** install plugins from any marketplace, verified, beside the ones that ship ([e11b918](https://github.com/voidbase-cloud/voidbase/commit/e11b91832f33aaca45535f30e92708dade94746b))
+
+
+### Documentation
+
+* **plugin:** the marketplace pipeline is built and serving, and the plan says how it differs ([e7e9e87](https://github.com/voidbase-cloud/voidbase/commit/e7e9e8741fdb301e0636b6f2bcf2a5376fa902ca))
+
 ## [0.9.0-beta.6](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.5...v0.9.0-beta.6) (2026-09-09)
 
 

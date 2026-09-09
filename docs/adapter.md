@@ -196,6 +196,7 @@ secrets` commands: `docs/deploy.md`.
 | `vb_secrets/main.ts` + `secrets.json` | `.voidbase/pb_secrets/main.ts` (a re-export) + `secrets.json` | secrets to the Worker's secrets, the rest to its vars, `public` keys into the client build (see below) |
 | `crons/*.ts` | `cronAdd(<file name>, cron, handler)`; the literal `cron` export also becomes a cron trigger of the Worker at deploy | listed by `GET /api/crons`, runnable with `POST /api/crons/<name>` |
 | `queues/*.ts` | a voidbase job per message | `void/queues` and `c.env.QUEUE_<NAME>` produce; the consumer runs on the jobs queue, or inline where there is none |
+| `workflows/*.ts` | one ES module each under `.voidbase/workflows/`, its default export a class extending `WorkflowEntrypoint`; the deploy exports it from the Worker and binds it as `WORKFLOW_<NAME>` | `env.WORKFLOW_<NAME>.create({ id, params })` starts a durable, multi-step run; a step opens the app with `withApp(env, fn)` from `@voidbase-cloud/voidbase/workflows` |
 | `db/schema.ts` + `void/db` | Drizzle over voidbase's D1 | the same database PocketBase's collections live in |
 | `db/migrations/*.sql` | `.voidbase/pb_migrations/<name>.void.js` | applied and recorded like any other migration, on both runtimes |
 

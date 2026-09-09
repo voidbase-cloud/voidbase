@@ -184,6 +184,17 @@ anything reads `c.env`, `$os.getenv` or the env schema. The deploy token needs "
 account's Secrets Store Deployer role; the free plan holds 100 secrets per store. Instances a control plane
 provisions keep their own secrets: the knob is a deploy's, not the platform's.
 
+### Workflows: durable, multi-step work
+
+A `workflows/<name>.ts` module in a Void app (or a `workflows/<name>.js` beside a pb layout, its first line
+`// voidbase:workflow <ClassName>`) whose default export extends `WorkflowEntrypoint` from `cloudflare:workers` is a
+Cloudflare Workflow: the deploy exports the class from the Worker and binds it as `WORKFLOW_<NAME>`, and
+`env.WORKFLOW_<NAME>.create({ id, params })` starts a run whose steps retry, sleep and wait for events without a
+cron polling for them (`step.waitForEvent`; `instance.sendEvent` from a route). A step opens the app with
+`withApp(env, fn)` from `@voidbase-cloud/voidbase/workflows`, so `pb.$app` works inside it the way it does in a
+cron. voidbase.cloud's instance builds run this way: a workflow starts the builder's build, waits for it to report,
+and fails the build with a reason when it never does.
+
 ### Feature flags, from Cloudflare Flagship
 
 A boolean knob declared as `flag(boolean().default(false), "...")` in `pb_secrets/main.ts` is a feature flag: the

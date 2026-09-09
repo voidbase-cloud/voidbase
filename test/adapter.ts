@@ -29,6 +29,9 @@ const procs: ReturnType<typeof Bun.spawn>[] = [];
 try {
   // ---- the scan: Void's file conventions ------------------------------------------------------------------------
   const dev = scanVoidApp({ root: WORK, dev: true });
+  // a workflow: bundled as one ES module beside the app, its class named on the first line for the deploy to export
+  mkdirSync(`${WORK}/workflows`, { recursive: true });
+  writeFileSync(`${WORK}/workflows/nightly-report.ts`, 'import { WorkflowEntrypoint } from "cloudflare:workers";\nimport { withApp } from "@voidbase-cloud/voidbase/workflows";\nimport { pb } from "@voidbase-cloud/voidbase/adapter";\nexport default class NightlyReport extends WorkflowEntrypoint<{ DB: D1Database }> {\n  async run(_event: unknown, step: { do<T>(name: string, fn: () => Promise<T>): Promise<T> }) {\n    return step.do("count", () => withApp(this.env as never, async () => (await pb.$app.findRecordsByFilter("posts", "", "", 100, 0)).length));\n  }\n}\n');
   const m = scanVoidApp({ root: WORK, dev: false });
   const urls = m.routes.map((r) => r.url);
   check("routes discovered from the file tree, index and (groups) collapsed", urls.includes("/api/hello") && urls.includes("/api/echo"), urls.join(" "));
@@ -94,6 +97,8 @@ try {
   check("vb_secrets/ becomes pb_secrets/: the declaration re-exported where voidbase deploy looks, the values beside it, git-ignored", /export \{ default \} from "\.\.\/\.\.\/vb_secrets\/main";/.test(readFileSync(`${WORK}/.voidbase/pb_secrets/main.ts`, "utf8")) && existsSync(`${WORK}/.voidbase/pb_secrets/secrets.json`) && /^pb_secrets\/secrets\.json$/m.test(readFileSync(`${WORK}/.voidbase/.gitignore`, "utf8")), readdirSync(`${WORK}/.voidbase`).join(" "));
   check("vb_migrations/ is copied in as the generated app's pb_migrations", existsSync(`${WORK}/.voidbase/pb_migrations/1800000001_marker.js`), readdirSync(`${WORK}/.voidbase/pb_migrations`).join(" "));
   check("pb_plugins/ and voidbase.lock are carried into the generated app as they are", existsSync(`${WORK}/.voidbase/pb_plugins/carried/bundle.js`) && readFileSync(`${WORK}/.voidbase/voidbase.lock`, "utf8") === readFileSync(`${WORK}/voidbase.lock`, "utf8"), readdirSync(`${WORK}/.voidbase`).join(" "));
+  const wf = existsSync(`${WORK}/.voidbase/workflows/nightly-report.js`) ? readFileSync(`${WORK}/.voidbase/workflows/nightly-report.js`, "utf8") : "";
+  check("a workflow is bundled as one ES module naming its class, with voidbase's entry points and cloudflare:workers left as imports", wf.startsWith("// voidbase:workflow NightlyReport") && /from\s+"cloudflare:workers"/.test(wf) && /from\s+"@voidbase-cloud\/voidbase\/workflows"/.test(wf) && /export\s*\{[^}]*default/.test(wf) && m.workflows[0]?.className === "NightlyReport", wf.slice(0, 300));
   const migration = readFileSync(`${WORK}/.voidbase/pb_migrations/0001_outbox.void.js`, "utf8");
   check("a Drizzle migration becomes a PocketBase migration, split on its statement markers", /CREATE TABLE/.test(migration) && /CREATE INDEX/.test(migration) && (migration.match(/execSQL/g) ?? []).length === 2, migration.slice(0, 160));
   check("the static build lands in .voidbase/pb_public, with a 404 shell for the asset layer", existsSync(`${WORK}/.voidbase/pb_public/index.html`) && existsSync(`${WORK}/.voidbase/pb_public/robots.txt`) && existsSync(`${WORK}/.voidbase/pb_public/404.html`), readdirSync(`${WORK}/.voidbase/pb_public`).join(" "));

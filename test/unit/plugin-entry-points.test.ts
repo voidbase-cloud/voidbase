@@ -20,6 +20,7 @@ const expected: Record<string, string[]> = {
   "./plugins/realtime": ["realtime"],
   "./plugins/hardening": ["hardening"],
   "./plugins/collections": ["ensureCollections"],
+  "./workflows": ["withApp"],
   "./registry": ["fetchIndex", "problemsWithIndex", "integrityOf", "download"],
 };
 

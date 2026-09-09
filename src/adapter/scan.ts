@@ -26,6 +26,10 @@ export interface VoidRoute {
 export interface VoidModule { file: string; name: string }
 /** A `crons/` file: its `cron` export, a string literal, becomes one of the Worker's cron triggers at build time. */
 export interface VoidCron extends VoidModule { expr: string }
+/** A `workflows/` file: its default export is a class extending WorkflowEntrypoint, exported from the Worker under `className` and bound as a Cloudflare Workflow. */
+export interface VoidWorkflow extends VoidModule { className: string }
+/** the class name a workflow module is exported under: instance-build -> InstanceBuild */
+export const workflowClassName = (name: string) => name.split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w[0]!.toUpperCase() + w.slice(1)).join("") || "Workflow";
 /** A `vb_hooks/` file: one PocketBase hook, registered once. `hook` is `routerUse` or an `on*` event name. */
 export interface VoidHook extends VoidModule { hook: string }
 export interface VoidQueue extends VoidModule {
@@ -72,6 +76,8 @@ export interface VoidManifest {
   hooks: VoidHook[];
   crons: VoidCron[];
   queues: VoidQueue[];
+  /** workflows/: Cloudflare Workflows, one class per file, bundled beside the app and exported from the Worker */
+  workflows: VoidWorkflow[];
   migrations: VoidMigration[];
   /** vb_secrets/main.ts: the configuration the app declares, names and tiers only (values are never part of the manifest) */
   secrets: SecretsDeclaration | null;
@@ -221,6 +227,7 @@ export function scanVoidApp(opts: ScanOptions = {}): VoidManifest {
   // be written into a deploy
   const crons: VoidCron[] = modules("crons").map((c) => ({ ...c, expr: cronExprOf(readFileSync(join(root, c.file), "utf8"), c.file) }));
   const queues: VoidQueue[] = modules("queues").map((q) => ({ ...q, binding: `QUEUE_${q.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}` }));
+  const workflows: VoidWorkflow[] = modules("workflows").map((w) => ({ ...w, className: workflowClassName(w.name) }));
 
   const migrationsDir = join(root, "db", "migrations");
   const migrations: VoidMigration[] = isDir(migrationsDir)
@@ -261,7 +268,7 @@ export function scanVoidApp(opts: ScanOptions = {}): VoidManifest {
   const collisions = routes.filter((r) => RESERVED_PREFIXES.some((p) => r.url === p || r.url.startsWith(p + "/"))).map((r) => r.url);
   // "static" means nothing has to run: no Void server code and no voidbase extensions of the app's own
   const mode = routes.length || middleware.length || hooks.length || crons.length || queues.length ? "server" : "static";
-  return { root, mode, routes, middleware, hooks, crons, queues, migrations, secrets, extras, unsupported, collisions };
+  return { root, mode, routes, middleware, hooks, crons, queues, workflows, migrations, secrets, extras, unsupported, collisions };
 }
 
 /** literal segments beat params beat wildcards, longer paths beat shorter (the hook router scores the same way) */
@@ -273,7 +280,7 @@ function score(path: string): number {
 /** cheap source grep for a bare-specifier import, used only to report what the adapter cannot carry */
 function grepImports(root: string, specifier: string): boolean {
   const needle = new RegExp(`from\\s+["']${specifier.replace("/", "\\/")}["']`);
-  for (const dir of ["routes", "middleware", "crons", "queues", "src", "db"]) {
+  for (const dir of ["routes", "middleware", "crons", "queues", "workflows", "src", "db"]) {
     for (const file of walk(join(root, dir))) {
       if (needle.test(readFileSync(join(root, dir, file), "utf8"))) return true;
     }

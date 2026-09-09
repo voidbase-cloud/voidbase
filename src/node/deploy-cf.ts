@@ -3,7 +3,7 @@
 // writes the Void project (cloud/) with a wrangler.jsonc carrying the real ids plus the rate-limit and Analytics
 // Engine bindings, stores the superuser credentials as worker secrets and runs `void deploy --backend cloudflare`,
 // which builds, applies the D1 migrations and uploads the Worker.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseRedirects, writeCloudProject, type RedirectEntry } from "./cloud-init";
 import { pathToFileURL } from "node:url";
@@ -154,7 +154,17 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const mode: "package" | "internal" = opts.dir || installed ? "package" : "internal";
   const entry = ["main.ts", "main.js"].map((f) => resolve(consumer, f)).find((f) => existsSync(f) && /export\s+(async\s+)?function\s+register\b|export\s*\{[^}]*\bregister\b/.test(readFileSync(f, "utf8")));
   if (entry) log(`composing ${entry} (register) into the Worker`);
-  writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), pluginsDir: resolve(consumer, process.env.VOIDBASE_PLUGINS_DIR || "pb_plugins"), entry, queue, hub });
+  // workflows/: the adapter's bundles (src/adapter/bundle.ts bundleWorkflow), each exported from the Worker under the
+  // class the first line names and bound as WORKFLOW_<NAME>; a project may also write one by hand
+  const workflowsDir = resolve(consumer, process.env.VOIDBASE_WORKFLOWS_DIR || "workflows");
+  const workflows = existsSync(workflowsDir) ? readdirSync(workflowsDir).filter((f) => f.endsWith(".js")).sort().map((f) => {
+    const head = readFileSync(resolve(workflowsDir, f), "utf8").split("\n")[0] ?? "";
+    const className = /^\/\/ voidbase:workflow (\w+)/.exec(head)?.[1] ?? "";
+    if (!className) throw new Error(`voidbase: ${workflowsDir}/${f} does not name its class on its first line (// voidbase:workflow <ClassName>): the adapter writes that, and a hand-written one has to`);
+    const stem = f.replace(/\.js$/, "");
+    return { file: resolve(workflowsDir, f), className, stem, binding: `WORKFLOW_${stem.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`, workflowName: `${name}-${stem}` };
+  }) : [];
+  writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), pluginsDir: resolve(consumer, process.env.VOIDBASE_PLUGINS_DIR || "pb_plugins"), entry, queue, hub , workflows: workflows.map((w) => ({ file: w.file, className: w.className })) });
   if (!queue) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/queues`, { recursive: true, force: true }); }
   if (!cron) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/crons`, { recursive: true, force: true }); log("cron trigger disabled (VOIDBASE_DEPLOY_CRON=0 / --no-cron): maintenance runs lazily in requests"); }
     log(observability ? "observability: invocation logs kept for the dashboard" : "observability off (VOIDBASE_DEPLOY_OBSERVABILITY=0)");
@@ -173,6 +183,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
       ...(observability ? { observability: { logs: { enabled: true, invocation_logs: true } } } : {}),
     // the realtime hub: a SQLite-backed Durable Object class exported from this Worker (free plan included), one per instance
     ...(hub ? { durable_objects: { bindings: [{ name: "HUB", class_name: "VoidbaseHub" }] }, migrations: [{ tag: "voidbase-hub-v1", new_sqlite_classes: ["VoidbaseHub"] }] } : {}),
+    ...(workflows.length ? { workflows: workflows.map((w) => ({ name: w.workflowName, binding: w.binding, class_name: w.className })) } : {}),
   };
   const writeWorkerConfig = () => writeFileSync(`${cloud}/wrangler.jsonc`, `// written by voidbase deploy; ids are real resources on account ${account.id}\n${JSON.stringify(workerConfig, null, 2)}\n`);
   writeWorkerConfig();
@@ -271,6 +282,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
 
   const url = domain ? `https://${domain}` : await workersSubdomain(api, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null));
   if (domain) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")} (workers.dev off): attached through the Workers Custom Domains API after the upload (Cloudflare adds the DNS record and certificate)`);
+  if (workflows.length) log(`workflows: ${workflows.map((w) => `${w.stem} (${w.className}) bound as ${w.binding}`).join(", ")}`);
   log(`bindings: D1, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
   if (opts.dryRun) { log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put ${secrets.length} secrets (${secrets.map(([k]) => k).join(", ")}) and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud }; }
 

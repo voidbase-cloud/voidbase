@@ -213,7 +213,7 @@ export function writeNotFoundShells(dir: string): string[] {
   return written;
 }
 
-export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; pluginsDir?: string; hubEntry?: string } = {}): Plugin {
+export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; pluginsDir?: string; hubEntry?: string; workflows?: { file: string; className: string }[] } = {}): Plugin {
   const dir = resolve(options.dir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks");
   const migrationsDir = resolve(options.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations");
   const pluginsDir = resolve(options.pluginsDir ?? process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins");
@@ -236,15 +236,22 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; p
     // 404 for them, which Void's entry only swaps for the HTML page on browser navigations).
     closeBundle() { writeNotFoundShells(clientOut); },
     transform(code, id) {
-      if (hubEntry && id.replace(/\\/g, "/").endsWith("/.void/entry.ts")) return { code: `${code}\nexport { VoidbaseHub } from ${JSON.stringify(hubEntry)};\n`, map: null };
+      if (id.replace(/\\/g, "/").endsWith("/.void/entry.ts")) {
+        // the instance's Durable Object class, and the project's Workflow classes, exported from Void's entry
+        const extra = [
+          ...(hubEntry ? [`export { VoidbaseHub } from ${JSON.stringify(hubEntry)};`] : []),
+          ...(options.workflows ?? []).map((w) => `export { default as ${w.className} } from ${JSON.stringify(resolve(w.file))};`),
+        ];
+        if (extra.length) return { code: `${code}\n${extra.join("\n")}\n`, map: null };
+      }
       return null;
     },
     async resolveId(id, importer) {
       if (id === VIRTUAL) return RESOLVED;
       if (id === VIRTUAL_MIGRATIONS) return RESOLVED_MIGRATIONS;
       if (id === VIRTUAL_PLUGINS) return RESOLVED_PLUGINS;
-      // an installed bundle's bare imports mean this package's own modules (src/node/installed.ts providedImport)
-      if (importer && importer.replace(/\\/g, "/").includes("/pb_plugins/")) {
+      // an installed bundle's, or a bundled workflow's, bare imports mean this package's own modules (src/node/installed.ts providedImport)
+      if (importer && /\/(pb_plugins|workflows)\//.test(importer.replace(/\\/g, "/"))) {
         const provided = providedImport(id, here, pkg.exports as Record<string, string>);
         if (provided && "file" in provided) return provided.file;
         if (provided && "from" in provided) return (await this.resolve(id, provided.from, { skipSelf: true }))?.id ?? null;

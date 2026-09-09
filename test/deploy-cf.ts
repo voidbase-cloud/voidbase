@@ -21,6 +21,8 @@ try {
   check("voidbase token prints the same link", help.code === 0 && help.out.includes("%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22"), help.out.slice(0, 200));
   const bad = run(["deploy", "--dry-run"], { VOIDBASE_DEPLOY_CF_API_KEY: "wrong" });
   check("wrong token: clear error", bad.code === 1 && /cannot list accounts/.test(bad.out), bad.out.slice(0, 200));
+  // a bundled workflow beside the project: the deploy exports its class and binds it
+  mkdirSync(`${dir}/workflows`, { recursive: true }); writeFileSync(`${dir}/workflows/nightly-report.js`, "// voidbase:workflow NightlyReport\nexport default class NightlyReport {}\n");
   const first = run(["deploy", "--dry-run", "--public-dir", "../sk/build", "--analytics"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
   const cfg = existsSync(`${PROJECT}/wrangler.jsonc`) ? readFileSync(`${PROJECT}/wrangler.jsonc`, "utf8") : "";
   const parsed = cfg ? JSON.parse(cfg.replace(/^\/\/.*\n/, "")) as { name: string; account_id: string; d1_databases: { database_id: string; database_name: string }[]; r2_buckets: { bucket_name: string }[] } : null;
@@ -36,6 +38,7 @@ try {
   check("voidbase secrets push before the first deploy: the Worker does not exist yet, and it says so", push.code === 1 && /must exist/.test(push.out), push.out.slice(-300));
   // the account's Secrets Store: a deploy told which store stores the declared secrets there, binds them by name and retires the Worker's own
   const stored = run(["deploy", "--dry-run", "--analytics"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_SECRETS_STORE: "store-1" });
+  check("a workflow beside the project is bound: the plan names it, and the config carries the workflows binding", /workflows: nightly-report \(NightlyReport\) bound as WORKFLOW_NIGHTLY_REPORT/.test(first.out) && /"workflows": \[\s*\{\s*"name": "shopdemo-backend-nightly-report",\s*"binding": "WORKFLOW_NIGHTLY_REPORT",\s*"class_name": "NightlyReport"/.test(readFileSync(`${PROJECT}/wrangler.jsonc`, "utf8")), first.out.split("\n").filter((l) => /workflows/.test(l)).join(" | "));
   check("a declared flag: the dry run names the Flagship app it would create, the flag, the binding and the baked defaults", /flags: NEW_CHECKOUT in the Flagship app "shopdemo-backend" \(would be created\); would create NEW_CHECKOUT; bound as FLAGS, defaults baked as VOIDBASE_FLAGS/.test(first.out), first.out.split("\n").filter((l) => /flags:/.test(l)).join(" | "));
   check("with VOIDBASE_SECRETS_STORE the dry run says what it would store and bind, and what it would retire from the Worker", stored.code === 0 && /secrets store store-1: would store [^;]*VOIDBASE_SUPERUSER_EMAIL/.test(stored.out) && /bound by name: [^\n]*VOIDBASE_SUPERUSER_PASSWORD/.test(stored.out) && !/storing .* on the Worker/.test(stored.out), stored.out.split("\n").filter((l) => /secrets/.test(l)).join(" | ").slice(0, 400));
   const pushStore = run(["secrets", "push"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_SECRETS_STORE: "store-1" });

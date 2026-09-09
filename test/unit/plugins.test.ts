@@ -234,3 +234,12 @@ describe("what happens when a provider goes away", () => {
     expect(using<{ who: string }>(kernel, "payments@1").who).toBe("polar");
   });
 });
+
+describe("a workflow's class name", () => {
+  test("is the file's name in PascalCase", async () => {
+    const { workflowClassName } = await import("../../src/adapter/scan");
+    expect(workflowClassName("instance-build")).toBe("InstanceBuild");
+    expect(workflowClassName("nightly_report.v2")).toBe("NightlyReportV2");
+    expect(workflowClassName("")).toBe("Workflow");
+  });
+});

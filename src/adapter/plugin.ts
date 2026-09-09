@@ -12,7 +12,7 @@
 // generated main.ts into its own Worker on deploy, so the app's server code is bundled there instead.
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { bundleHookApp } from "./bundle";
+import { bundleHookApp, bundleWorkflow } from "./bundle";
 import { generateHookWrapper, hasServerCode, writeVoidbaseApp, type GenerateOptions } from "./codegen";
 import { scanVoidApp, SECRETS_DIR, type VoidManifest } from "./scan";
 import { loadDefinition, readSecretsValues } from "../node/secrets";
@@ -48,6 +48,14 @@ export async function adapt(root: string, opts: AdapterOptions & { clientDir?: s
     bundleBytes = bytes;
   }
 
+  // workflows/: one ES module each, exported from the Worker by the deploy (src/adapter/bundle.ts bundleWorkflow)
+  if (manifest.workflows.length) {
+    const dir = join(root, ".voidbase", "workflows"); mkdirSync(dir, { recursive: true });
+    for (const w of manifest.workflows) {
+      const { code, bytes } = await bundleWorkflow(join(root, w.file), root, w.className);
+      writeFileSync(join(dir, `${w.name}.js`), code); written.push(`.voidbase/workflows/${w.name}.js`); bundleBytes += bytes;
+    }
+  }
   const publicDir = resolve(root, opts.publicDir ?? ".voidbase/pb_public");
   const client = opts.clientDir ? resolve(root, opts.clientDir) : firstExisting([join(root, "dist", "client"), join(root, "public")]);
   const copied = client ? syncPublic(client, publicDir) : 0;

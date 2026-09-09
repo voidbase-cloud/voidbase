@@ -170,6 +170,20 @@ says so). `VOIDBASE_DEPLOY_VARS=A,B` and `VOIDBASE_DEPLOY_SECRETS=X,Y` still bak
 for a deploy driven purely by the shell. Cloudflare's account-level Secrets Store is deliberately not used: one store
 is shared by every Worker of the account, and its bindings are read asynchronously, which `$os.getenv` is not.
 
+### The account's Secrets Store instead of the Worker's own secrets
+
+A Worker's own secrets are stored once per Worker and seen by nothing else. Cloudflare's Secrets Store is the
+account's: one place, role-based access, and a secret a Worker binds by name. Tell the deploy which store to use,
+with `VOIDBASE_SECRETS_STORE=<store id>` in the environment (a build's variables) or in `pb_secrets/secrets.json`,
+and it stores every declared `secret()` value there under `<worker>__<KEY>` (scoped to Workers), binds each as a
+`secrets_store_secrets` binding of the same key, and retires the Worker's own secrets of those names, since a
+binding name is one thing or the other. `voidbase secrets push` stores into it the same way, and `voidbase secrets`
+says which names the store holds. Nothing in the app changes: a store binding's value is behind an async `get()`,
+and voidbase resolves every such binding once per isolate, on its first request, cron tick or queue batch, before
+anything reads `c.env`, `$os.getenv` or the env schema. The deploy token needs "Secrets Store: Write" and the
+account's Secrets Store Deployer role; the free plan holds 100 secrets per store. Instances a control plane
+provisions keep their own secrets: the knob is a deploy's, not the platform's.
+
 ### Presence: live cursors without a database
 
 An instance can tell every connected client who is here now and where their cursor is, with no row written:

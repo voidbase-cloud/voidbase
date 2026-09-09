@@ -241,3 +241,57 @@ export default defineSecrets({
 });
 `;
 }
+
+// ---- Cloudflare Secrets Store: the account's store instead of the Worker's own secrets (VOIDBASE_SECRETS_STORE)
+//
+// A Worker's own secrets are its own: stored once per Worker, invisible to the rest of the account. The Secrets
+// Store is the account's: one place, role-based access, a secret bound to a Worker by name and reusable by another.
+// When the store's id is given (the environment, or VOIDBASE_SECRETS_STORE in secrets.json), a deploy writes the
+// declared secrets there under `<worker>__<KEY>`, binds them as `secrets_store_secrets`, and retires the Worker's
+// own secrets of those names, since a binding name is one thing or the other. The Worker reads them as before:
+// src/server/secrets-store.ts resolves each binding's get() once per isolate.
+export const STORE_KNOB = "VOIDBASE_SECRETS_STORE";
+/** the store's name for a Worker's secret: the Worker's name and the key, so one store serves every Worker of the account */
+export const storeSecretName = (worker: string, key: string) => `${worker.replace(/[^A-Za-z0-9_]/g, "_")}__${key}`;
+export type StoreBinding = { binding: string; store_id: string; secret_name: string };
+export const storeBindings = (store: string, worker: string, keys: string[]): StoreBinding[] => keys.map((k) => ({ binding: k, store_id: store, secret_name: storeSecretName(worker, k) }));
+
+const storeGuide = (e: unknown): never => {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/10000|403|Authentication error|not authorized|permission/i.test(msg)) throw new Error(`${msg}\n  The Secrets Store needs the deploy token to carry "Secrets Store: Write" (account) and the account's Secrets Store Deployer role for binding; add them to the token and try again.`);
+  throw e;
+};
+
+/** the secrets a store holds, by name: name -> id */
+export async function storeSecrets(api: CfApi, account: string, store: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (let page = 1; page < 50; page++) {
+    const r = await api.json<{ id: string; name: string }[]>("GET", `/accounts/${account}/secrets_store/stores/${store}/secrets?per_page=100&page=${page}`).catch(storeGuide);
+    for (const x of r.result ?? []) out.set(x.name, x.id);
+    const info = (r as { result_info?: { total_pages?: number } }).result_info;
+    if (!info?.total_pages || page >= info.total_pages) break;
+  }
+  return out;
+}
+
+/** create or replace the Worker's secrets in the store, scoped to Workers; returns what was created and what was replaced */
+export async function putStoreSecrets(api: CfApi, account: string, store: string, worker: string, secrets: Record<string, string>): Promise<{ created: string[]; updated: string[] }> {
+  const have = await storeSecrets(api, account, store);
+  const created: string[] = [], updated: string[] = [];
+  const fresh = Object.entries(secrets).filter(([k]) => !have.has(storeSecretName(worker, k)));
+  if (fresh.length) {
+    await api.json("POST", `/accounts/${account}/secrets_store/stores/${store}/secrets`, fresh.map(([k, value]) => ({ name: storeSecretName(worker, k), value, scopes: ["workers"], comment: `voidbase: ${worker} ${k}` }))).catch(storeGuide);
+    created.push(...fresh.map(([k]) => k));
+  }
+  for (const [k, value] of Object.entries(secrets)) {
+    const id = have.get(storeSecretName(worker, k)); if (!id) continue;
+    await api.json("PATCH", `/accounts/${account}/secrets_store/stores/${store}/secrets/${id}`, { value, scopes: ["workers"] }).catch(storeGuide);
+    updated.push(k);
+  }
+  return { created, updated };
+}
+
+/** retire the Worker's own secrets of these names (the store holds them now); a name the Worker lacks is fine */
+export async function deleteWorkerSecrets(api: CfApi, account: string, worker: string, names: string[]): Promise<void> {
+  for (const n of names) await api.json("DELETE", `/accounts/${account}/workers/scripts/${encodeURIComponent(worker)}/secrets/${encodeURIComponent(n)}`, undefined, [10007, 10056]);
+}

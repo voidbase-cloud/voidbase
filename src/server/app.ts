@@ -52,6 +52,7 @@ import { randomIdSuffix, randomString } from "./ids";
 import { createCollection, deleteCollection, importCollections, inferViewFields, truncateCollection, updateCollection } from "./collections/service";
 import { loadSettings, publicSettings } from "./settings";
 import type { AppEnv, Row, Bindings } from "./types";
+import { resolveSecretBindings } from "./secrets-store";
 
 export const app = new Hono<AppEnv>();
 let served = false; // onBootstrap / onServe fire once per isolate, on the first request
@@ -68,6 +69,8 @@ app.use("*", async (c, next) => {
 });
 
 app.use("*", async (c, next) => {
+  // secrets from the account's Secrets Store become strings on env before anything reads them (secrets-store.ts)
+  await resolveSecretBindings(c.env as unknown as Record<string, unknown>);
   await ensureBootstrapped(c.env.DB, (db) => applyPendingMigrations(db, hookGlobals(), c.env));
   // then what the plugins asked to do once with the bindings: creating the collections they own (kernel onBootstrap)
   await runBootstraps(kernel, c.env);

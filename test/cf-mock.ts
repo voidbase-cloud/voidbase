@@ -23,7 +23,8 @@ seedGh(); const zones = [{ id: "zone123", name: "example.com" }]; const domains 
 const ok = (result: unknown, extra: Record<string, unknown> = {}, status = 200) => Response.json({ success: true, errors: [], messages: [], result, ...extra }, { status });
 const err = (status: number, code: number, message: string) => Response.json({ success: false, errors: [{ code, message }], messages: [], result: null }, { status });
 const reset = () => { calls.length = 0; connections.clear(); triggers.clear(); builds.clear(); buildEnv.clear(); seedGh(); domains.clear(); d1.clear(); d1Migrations.clear(); d1Queries.clear(); r2.clear(); queues.clear(); consumers.clear(); scripts.clear(); uploadedHashes.clear(); pendingSessions.clear(); };
-const state = () => ({ connections: [...connections.values()], triggers: [...triggers.values()], builds: [...builds.values()], buildEnv: Object.fromEntries(buildEnv), ghReleases: [...ghReleases.values()], domains: [...domains.values()], d1: [...d1.entries()], d1Migrations: Object.fromEntries(d1Migrations), d1Queries: Object.fromEntries(d1Queries), r2: Object.fromEntries([...r2.entries()].map(([k, v]) => [k, [...v]])), queues: [...queues.entries()], consumers: Object.fromEntries(consumers), scripts: Object.fromEntries(scripts), uploadedHashes: [...uploadedHashes] });
+const storeSecrets = new Map<string, { id: string; name: string; value: string; scopes: string[] }[]>();
+const state = () => ({ storeSecrets: Object.fromEntries([...storeSecrets].map(([k, v]) => [k, v.map(({ id, name, scopes }) => ({ id, name, scopes }))])), connections: [...connections.values()], triggers: [...triggers.values()], builds: [...builds.values()], buildEnv: Object.fromEntries(buildEnv), ghReleases: [...ghReleases.values()], domains: [...domains.values()], d1: [...d1.entries()], d1Migrations: Object.fromEntries(d1Migrations), d1Queries: Object.fromEntries(d1Queries), r2: Object.fromEntries([...r2.entries()].map(([k, v]) => [k, [...v]])), queues: [...queues.entries()], consumers: Object.fromEntries(consumers), scripts: Object.fromEntries(scripts), uploadedHashes: [...uploadedHashes] });
 Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, async fetch(req) {
   const url = new URL(req.url); const p = url.pathname; const A = `/accounts/${ACCOUNT}`;
   if (p === "/__calls") { if (req.method === "DELETE") { reset(); return new Response(null, { status: 204 }); } return Response.json(calls); }
@@ -105,6 +106,16 @@ Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, 
   // ---- workers
   if (p === `${A}/workers/subdomain`) return ok({ subdomain: "testsub" });
   if (p === `${A}/workers/scripts` && req.method === "GET") return ok([...scripts.entries()].map(([id, s]) => ({ id, tag: s.tag, tags: (s.metadata.tags as string[]) ?? [], created_on: s.created_on, modified_on: s.modified_on })));
+  // the account's Secrets Store: names, values kept only to be replaced, never returned
+  { const m = p.match(new RegExp(`^${A}/secrets_store/stores/([^/]+)/secrets(?:/([^/]+))?$`));
+    if (m) { const list = storeSecrets.get(m[1]!) ?? (storeSecrets.set(m[1]!, []), storeSecrets.get(m[1]!)!); const id = m[2];
+      if (!id && req.method === "GET") return ok(list.map(({ id, name, scopes }) => ({ id, name, scopes, store_id: m[1] })));
+      if (!id && req.method === "POST") { const items = (await req.json()) as { name: string; value: string; scopes?: string[] }[]; const made = []; for (const it of items) { if (!it.name || / /.test(it.name)) return err(400, 10021, "a secret name cannot contain spaces"); if (list.some((x) => x.name === it.name)) return err(409, 10039, `secret ${it.name} already exists`); const row = { id: crypto.randomUUID().replace(/-/g, ""), name: it.name, value: it.value, scopes: it.scopes ?? [] }; list.push(row); made.push({ id: row.id, name: row.name, scopes: row.scopes }); } return ok(made); }
+      if (id && req.method === "PATCH") { const row = list.find((x) => x.id === id); if (!row) return err(404, 10040, "secret not found"); const b = (await req.json()) as { value?: string; scopes?: string[] }; if (typeof b.value === "string") row.value = b.value; if (b.scopes) row.scopes = b.scopes; return ok({ id: row.id, name: row.name, scopes: row.scopes }); }
+      if (id && req.method === "DELETE") { const i = list.findIndex((x) => x.id === id); if (i < 0) return err(404, 10040, "secret not found"); list.splice(i, 1); return ok(null); }
+    } }
+  { const m = p.match(new RegExp(`^${A}/workers/scripts/([^/]+)/secrets/([^/]+)$`));
+    if (m && req.method === "DELETE") { const s = scripts.get(m[1]!); if (!s) return err(404, 10007, "workers.api.error.script_not_found"); s.secrets = (s.secrets ?? []).filter((n) => n !== decodeURIComponent(m[2]!)); return ok(null); } }
   { const m = p.match(new RegExp(`^${A}/workers/scripts/([^/]+)(?:/(settings|assets-upload-session|schedules|subdomain|secrets))?$`));
     if (m) { const name = m[1]!; const sub = m[2]; const s = scripts.get(name);
       if (!sub && req.method === "PUT") {

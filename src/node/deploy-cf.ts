@@ -8,7 +8,7 @@ import { resolve } from "node:path";
 import { parseRedirects, writeCloudProject, type RedirectEntry } from "./cloud-init";
 import { pathToFileURL } from "node:url";
 import { loadEnv } from "./serve";
-import { loadSecrets, SECRETS_DIR, workerSecretNames, type LoadedSecrets, putWorkerSecrets } from "./secrets";
+import { deleteWorkerSecrets, loadSecrets, putStoreSecrets, readSecretsValues, SECRETS_DIR, STORE_KNOB, storeBindings, storeSecretName, storeSecrets, workerSecretNames, type LoadedSecrets, putWorkerSecrets } from "./secrets";
 import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
 
 const API = (process.env.CLOUDFLARE_API_BASE ?? "https://api.cloudflare.com/client/v4").replace(/\/$/, "");
@@ -160,7 +160,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   // Smart Placement runs the Worker next to its D1 database: PocketBase-shaped requests are several dependent queries.
   // The rate-limit binding is an exact per-location ceiling per IP on top of the settings' rules (which count per
   // isolate); the Analytics Engine dataset takes one data point per request at any log level.
-  const wranglerConfig = JSON.stringify({
+  const workerConfig: Record<string, unknown> = {
     name, account_id: account.id, placement: { mode: "smart" },
     ...(domain ? { workers_dev: false } : {}), // the custom domain is attached through the API after the upload (see below)
     d1_databases: [{ binding: "DB", database_name: `${name}-db`, database_id: db.uuid, migrations_dir: "./db/migrations" }],
@@ -172,8 +172,9 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
       ...(observability ? { observability: { logs: { enabled: true, invocation_logs: true } } } : {}),
     // the realtime hub: a SQLite-backed Durable Object class exported from this Worker (free plan included), one per instance
     ...(hub ? { durable_objects: { bindings: [{ name: "HUB", class_name: "VoidbaseHub" }] }, migrations: [{ tag: "voidbase-hub-v1", new_sqlite_classes: ["VoidbaseHub"] }] } : {}),
-  }, null, 2) + "\n";
-  writeFileSync(`${cloud}/wrangler.jsonc`, `// written by voidbase deploy; ids are real resources on account ${account.id}\n${wranglerConfig}`);
+  };
+  const writeWorkerConfig = () => writeFileSync(`${cloud}/wrangler.jsonc`, `// written by voidbase deploy; ids are real resources on account ${account.id}\n${JSON.stringify(workerConfig, null, 2)}\n`);
+  writeWorkerConfig();
   // non-secret worker vars: the instance's own name and account (a control plane needs them to find itself), the
   // hooks' AUDITLOG, plus VOIDBASE_DEPLOY_VARS=A,B from the environment; secrets (VOIDBASE_DEPLOY_SECRETS=X,Y) never go here
   const listed = (key: string) => (process.env[key] ?? "").split(",").map((k) => k.trim()).filter(Boolean);
@@ -204,7 +205,13 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   // what the Worker already holds: a checkout with no credentials of its own (CI) must not replace the superuser
   // the Worker has with a generated one that only this checkout would know
   const onWorker = await workerSecretNames(api, account.id, name);
-  const keepSuperuser = placeholder && !saved && onWorker.includes("VOIDBASE_SUPERUSER_EMAIL") && onWorker.includes("VOIDBASE_SUPERUSER_PASSWORD");
+  // the account's Secrets Store, when the deploy is told which one (src/node/secrets.ts): a secret held there counts
+  // the way one on the Worker does
+  const store = process.env[STORE_KNOB] || readSecretsValues(secretsDir)?.[STORE_KNOB] || "";
+  const inStore = store ? await storeSecrets(api, account.id, store) : new Map<string, string>();
+  const heldInStore = (k: string) => inStore.has(storeSecretName(name, k));
+  const held = (k: string) => onWorker.includes(k) || heldInStore(k);
+  const keepSuperuser = placeholder && !saved && held("VOIDBASE_SUPERUSER_EMAIL") && held("VOIDBASE_SUPERUSER_PASSWORD");
   if (keepSuperuser) log("superuser: no credentials in this checkout, the Worker keeps the ones it has");
   else {
     if (!email) email = "admin@example.com";
@@ -223,23 +230,31 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const kept: string[] = [];
   for (const k of declared) {
     const v = pbSecrets.evaluation?.stored[k]; if (v === undefined) continue;
-    if (onWorker.includes(k)) { kept.push(k); continue; }
+    if (held(k)) { kept.push(k); continue; }
     if (k === "VOIDBASE_SUPERUSER_PASSWORD" && v === "changeme123") { log("secrets: VOIDBASE_SUPERUSER_PASSWORD in secrets.json is the dev placeholder, not stored"); continue; }
     secretMap.set(k, v);
   }
   // a secret declared optional may have no value anywhere: the app reads undefined, as declared, and the deploy goes on
   const optionalSecrets = new Set(definition ? (await definition.info()).filter((k) => k.optional).map((k) => k.name) : []);
-  const missingSecrets = declared.filter((k) => !secretMap.has(k) && !onWorker.includes(k) && !optionalSecrets.has(k));
+  const missingSecrets = declared.filter((k) => !secretMap.has(k) && !held(k) && !optionalSecrets.has(k));
   if (missingSecrets.length) {
     const msg = `${missingSecrets.length} declared secret(s) have no value in ${secretsDir}/secrets.json and are not on the Worker "${name}" yet: ${missingSecrets.join(", ")}. Push them once from a machine that has them: voidbase secrets push --name ${name}`;
     if (opts.dryRun) log(`secrets: ${msg}`); else throw new Error(msg);
   } else if (declared.length) log(`secrets: ${declared.length} declared; ${declared.filter((k) => secretMap.has(k)).length} stored from here, ${kept.length} kept as the Worker has them (voidbase secrets push replaces)`);
   const secrets = [...secretMap.entries()];
+  // with a store: every secret the Worker uses is bound from the store by name, and the Worker's own of those names
+  // are retired, because a binding name is one thing or the other
+  const storeKeys = store ? [...new Set([...secretMap.keys(), ...declared.filter(heldInStore), ...extraSecrets.filter(heldInStore)])] : [];
+  const retire = storeKeys.filter((k) => onWorker.includes(k));
+  if (store) {
+    workerConfig.secrets_store_secrets = storeBindings(store, name, storeKeys); writeWorkerConfig();
+    log(`secrets store ${store}: ${secrets.length ? `${opts.dryRun ? "would store" : "storing"} ${secrets.map(([k]) => k).join(", ")}` : "nothing to store"}; bound by name: ${storeKeys.join(", ") || "none"}${retire.length ? `; ${opts.dryRun ? "would retire" : "retiring"} ${retire.join(", ")} from the Worker's own secrets` : ""}`);
+  }
 
   const url = domain ? `https://${domain}` : await workersSubdomain(api, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null));
   if (domain) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")} (workers.dev off): attached through the Workers Custom Domains API after the upload (Cloudflare adds the DNS record and certificate)`);
   log(`bindings: D1, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
-  if (opts.dryRun) { log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put ${secrets.length} secrets (${secrets.map(([k]) => k).join(", ")}) and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig, project: cloud }; }
+  if (opts.dryRun) { log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put ${secrets.length} secrets (${secrets.map(([k]) => k).join(", ")}) and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud }; }
 
   // the toolchain comes with the voidbase package (void, and wrangler through void)
   const voidDir = resolve(Bun.resolveSync("void/package.json", PKG), "..");
@@ -259,12 +274,15 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     env.VOIDBASE_APP_DIR = resolve(publicDir); await sh(["bun", resolve(PKG, "scripts/sync-app.ts"), "--dest", `${cloud}/public`], undefined); log(`static site ${resolve(publicDir)} served at / (the panel stays at /_/)`);
     if (pathRedirects.length) writeFileSync(`${cloud}/public/_redirects`, pathRedirects.map((r) => `${r.path} ${r.to} ${r.status}`).join("\n") + "\n");
   }
-  if (secrets.length) log(`secrets: storing ${secrets.map(([k]) => k).join(", ")} on the Worker`);
+  if (secrets.length && !store) log(`secrets: storing ${secrets.map(([k]) => k).join(", ")} on the Worker`);
   // Through the Workers API when the Worker exists, which is every deploy but the first: `wrangler secret put` reads
   // the value from stdin and, on Cloudflare's build machines, sometimes never sees the end of it and waits forever
   // (the demo's deploys hung there twice). The first deploy has no Worker to put a secret on, and wrangler creates
   // one, so that is the only time it is still used.
-  if (secrets.length && (await workerExists(api, account.id, name))) await putWorkerSecrets(api, account.id, name, Object.fromEntries(secrets));
+  if (store) {
+    if (secrets.length) { const r = await putStoreSecrets(api, account.id, store, name, Object.fromEntries(secrets)); log(`secrets store: ${r.created.length ? `created ${r.created.join(", ")}` : ""}${r.created.length && r.updated.length ? "; " : ""}${r.updated.length ? `replaced ${r.updated.join(", ")}` : ""}`); }
+    if (retire.length) { await deleteWorkerSecrets(api, account.id, name, retire); log(`secrets: ${retire.join(", ")} retired from the Worker's own secrets; the store binds them now`); }
+  } else if (secrets.length && (await workerExists(api, account.id, name))) await putWorkerSecrets(api, account.id, name, Object.fromEntries(secrets));
   else for (const [k, v] of secrets) await sh(["bun", wrangler, "secret", "put", k, "--name", name], v + "\n");
   await sh([voidBin, "deploy", "--backend", "cloudflare"]);
   for (const host of domains) {
@@ -276,7 +294,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     const ok = await fetch(`${url}/api/health`).then((r) => r.status).catch(() => 0);
     log(`\nlive: ${url}  (health ${ok || "not reachable yet"})\n├─ REST API:  ${url}/api/\n└─ Dashboard: ${url}/_/   sign in as ${keepSuperuser ? "the superuser the Worker already had" : `${email} (password in ${credFile})`}`);
   } else log("deployed; workers.dev subdomain not enabled on this account, add a route or enable it in the dashboard (or VOIDBASE_DEPLOY_DOMAIN=<host> / --domain)");
-  return { name, account: account.id, url, wranglerConfig, project: cloud };
+  return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud };
 }
 
 // ---- host-scoped redirects as zone Redirect Rules (Rulesets API, phase http_request_dynamic_redirect) --------------

@@ -181,7 +181,7 @@ switch (cmd) {
   }
   case "secrets": {
     // pb_secrets/ (src/node/secrets.ts): what is declared, what has a value here, what the Worker has; push the values
-    const { secretsState, putWorkerSecrets, workerSecretNames, SECRETS_DIR } = await import("../src/node/secrets");
+    const { secretsState, putWorkerSecrets, putStoreSecrets, readSecretsValues, storeSecretName, storeSecrets, STORE_KNOB, workerSecretNames, SECRETS_DIR } = await import("../src/node/secrets");
     const { deployTarget } = await import("../src/node/deploy-cf");
     const dir = resolve(flags.dir ?? process.env.VOIDBASE_SECRETS_DIR ?? SECRETS_DIR);
     const state = await secretsState(dir);
@@ -194,20 +194,28 @@ switch (cmd) {
       if (ev.invalid.length) throw new Error(`${dir}/secrets.json: ${ev.invalid.map((i) => `${i.name}: ${i.message}`).join(", ")}`);
       const values: Record<string, string> = {}; for (const k of secretNames) if (state.provided.includes(k) && ev.stored[k] !== undefined) values[k] = ev.stored[k]!;
       if (!Object.keys(values).length) { console.log(`nothing to push: none of ${secretNames.join(", ") || "(no secrets declared)"} has a value in ${dir}/secrets.json`); break; }
-      const before = await workerSecretNames(api, account.id, name);
-      const done = await putWorkerSecrets(api, account.id, name, values).catch((e: Error) => { throw new Error(`${e.message}\n  (the Worker "${name}" must exist: voidbase deploy creates it and stores the secrets itself)`); });
-      console.log(`pushed ${done.length} secret(s) to worker "${name}" (account ${account.name}): ${done.map((k) => `${k}${before.includes(k) ? " (replaced)" : ""}`).join(", ")}`);
+      const store = process.env[STORE_KNOB] || readSecretsValues(dir)?.[STORE_KNOB] || "";
+      if (store) {
+        // the account's Secrets Store (src/node/secrets.ts): stored by name, bound to the Worker by the next deploy
+        const r = await putStoreSecrets(api, account.id, store, name, values);
+        console.log(`pushed ${Object.keys(values).length} secret(s) to the Secrets Store ${store} for worker "${name}" (account ${account.name}): ${[...r.created.map((k) => `${k} (created)`), ...r.updated.map((k) => `${k} (replaced)`)].join(", ")}; a deploy binds a new name`);
+      } else {
+        const before = await workerSecretNames(api, account.id, name);
+        const done = await putWorkerSecrets(api, account.id, name, values).catch((e: Error) => { throw new Error(`${e.message}\n  (the Worker "${name}" must exist: voidbase deploy creates it and stores the secrets itself)`); });
+        console.log(`pushed ${done.length} secret(s) to worker "${name}" (account ${account.name}): ${done.map((k) => `${k}${before.includes(k) ? " (replaced)" : ""}`).join(", ")}`);
+      }
       const left = secretNames.filter((k) => !values[k]); if (left.length) console.log(`no local value, left as they are: ${left.join(", ")}`);
       break;
     }
     // list (default): a row per declared name
-    let onWorker: string[] | null = null; let worker = "";
-    try { const t = await deployTarget({ name: flags.name, account: flags.account, log: () => undefined }); worker = t.name; onWorker = await workerSecretNames(t.api, t.account.id, t.name); } catch { /* no token here: local view only */ }
+    let onWorker: string[] | null = null; let worker = ""; let inStore: Set<string> | null = null;
+    const listStore = process.env[STORE_KNOB] || readSecretsValues(dir)?.[STORE_KNOB] || "";
+    try { const t = await deployTarget({ name: flags.name, account: flags.account, log: () => undefined }); worker = t.name; onWorker = await workerSecretNames(t.api, t.account.id, t.name); if (listStore) inStore = new Set([...(await storeSecrets(t.api, t.account.id, listStore)).keys()]); } catch { /* no token here: local view only */ }
     console.log(`${dir}: ${def.names.length} declared (${secretNames.length} secret, ${def.of("server").length} server, ${def.of("public").length} public${def.of("local").length ? `, ${def.of("local").length} local, never deployed` : ""})${state.values ? `, ${state.provided.length} valued in secrets.json` : ", no secrets.json"}${onWorker ? `, worker "${worker}" has ${onWorker.filter((k) => secretNames.includes(k)).length} of the secrets` : " (set VOIDBASE_DEPLOY_CF_API_KEY to compare with the Worker)"}`);
     for (const i of state.info) {
       const where = state.provided.includes(i.name) ? "local value" : i.fallback !== undefined ? `default ${i.access === "secret" ? "(set)" : JSON.stringify(i.fallback)}` : i.optional ? "optional, unset" : "no local value";
-      const worker = onWorker && i.access === "secret" ? `  ${onWorker.includes(i.name) ? "on the worker" : "NOT on the worker"}` : "";
-      console.log(`  ${i.name.padEnd(30)} ${i.access.padEnd(7)} ${where.padEnd(18)}${worker}${i.description ? `  ${i.description}` : ""}`);
+      const presence = onWorker && i.access === "secret" ? `  ${inStore?.has(storeSecretName(worker, i.name)) ? "in the store" : onWorker.includes(i.name) ? "on the worker" : inStore ? "NOT in the store" : "NOT on the worker"}` : "";
+      console.log(`  ${i.name.padEnd(30)} ${i.access.padEnd(7)} ${where.padEnd(18)}${presence}${i.description ? `  ${i.description}` : ""}`);
     }
     if (state.undeclared.length) console.log(`  in secrets.json but not declared (never deployed): ${state.undeclared.join(", ")}`);
     break;

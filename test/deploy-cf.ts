@@ -34,6 +34,16 @@ try {
   check("voidbase secrets: a row per declared name with its tier, local value or default, and Worker presence", list.code === 0 && /5 declared \(3 secret, 1 server, 0 public, 1 local, never deployed\), 1 valued in secrets\.json, worker "shopdemo-backend" has 0 of the secrets/.test(list.out) && /OPTIONAL_TOKEN\s+secret/.test(list.out) && /SMTP_PASSWORD\s+secret\s+local value\s+NOT on the worker\s+the SMTP password/.test(list.out) && /WEBHOOK_TOKEN\s+secret\s+no local value/.test(list.out) && /ADMIN_EMAILS\s+server\s+default "root@example\.com"/.test(list.out) && /DEPLOY_NOTE\s+local\s+default "never deployed"/.test(list.out), list.out.slice(0, 500));
   const push = run(["secrets", "push"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
   check("voidbase secrets push before the first deploy: the Worker does not exist yet, and it says so", push.code === 1 && /must exist/.test(push.out), push.out.slice(-300));
+  // the account's Secrets Store: a deploy told which store stores the declared secrets there, binds them by name and retires the Worker's own
+  const stored = run(["deploy", "--dry-run", "--analytics"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_SECRETS_STORE: "store-1" });
+  check("with VOIDBASE_SECRETS_STORE the dry run says what it would store and bind, and what it would retire from the Worker", stored.code === 0 && /secrets store store-1: would store [^;]*VOIDBASE_SUPERUSER_EMAIL/.test(stored.out) && /bound by name: [^\n]*VOIDBASE_SUPERUSER_PASSWORD/.test(stored.out) && !/storing .* on the Worker/.test(stored.out), stored.out.split("\n").filter((l) => /secrets/.test(l)).join(" | ").slice(0, 400));
+  const pushStore = run(["secrets", "push"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_SECRETS_STORE: "store-1" });
+  const storeState = (await (await fetch(`${MOCK}/__state`)).json()) as { storeSecrets: Record<string, { name: string; scopes: string[] }[]> };
+  check("secrets push with a store: the values land in the store as <worker>__KEY, scoped to Workers", pushStore.code === 0 && /pushed \d+ secret\(s\) to the Secrets Store store-1/.test(pushStore.out) && (storeState.storeSecrets["store-1"] ?? []).some((x) => /__SMTP_PASSWORD$/.test(x.name) && x.scopes.includes("workers")), pushStore.out + JSON.stringify(storeState.storeSecrets));
+  const pushAgain = run(["secrets", "push"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_SECRETS_STORE: "store-1" });
+  check("pushing again replaces rather than duplicates", pushAgain.code === 0 && /\(replaced\)/.test(pushAgain.out) && (storeState.storeSecrets["store-1"] ?? []).length === ((await (await fetch(`${MOCK}/__state`)).json()) as { storeSecrets: Record<string, unknown[]> }).storeSecrets["store-1"].length, pushAgain.out);
+  const listStore = run(["secrets"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_SECRETS_STORE: "store-1" });
+  check("voidbase secrets with a store says which names the store holds", listStore.code === 0 && /SMTP_PASSWORD\s+secret\s+local value\s+in the store/.test(listStore.out), listStore.out.split("\n").filter((l) => /SMTP_PASSWORD/.test(l)).join(" | "));
   // CI="": a build deploys and no more, so the pipeline part is exercised as it is on a machine
   const syncDry = run(["sync", "--dry-run"], { CI: "", VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", CLOUDFLARE_BUILDS_TOKEN: "" });
   check("voidbase sync: the deploy, then the pipeline part says what it needs when there is no Builds token", syncDry.code === 0 && /dry run: would sync the panel/.test(syncDry.out) && /ci: not connected.*CLOUDFLARE_BUILDS_TOKEN as a local\(\) key/.test(syncDry.out), syncDry.out.slice(-400));
@@ -64,7 +74,8 @@ try {
   const creds2 = JSON.parse(readFileSync(`${dir}/pb_data/.superuser-credentials`, "utf8")) as { password: string };
   check("second run is idempotent: resources exist, same ids, same password", second.code === 0 && /D1 .* exists/.test(second.out) && /R2 .* exists/.test(second.out) && readFileSync(`${PROJECT}/wrangler.jsonc`, "utf8") === cfg && creds2.password === creds.password, second.out.slice(0, 200));
   const calls = (await fetch(`${MOCK}/__calls`).then((r) => r.json())) as string[];
-  check("only the expected API calls were made", calls.every((c) => /^GET \/accounts|d1\/database|r2\/buckets|queues|workers\/subdomain|workers\/scripts\/[^/]+\/secrets/.test(c)) && calls.filter((c) => c.startsWith("POST")).length === 3, calls.join(", "));
+  // resources, the Worker's secrets and the account's Secrets Store (one create for the store's secrets, then a replace)
+  check("only the expected API calls were made", calls.every((c) => /^GET \/accounts|d1\/database|r2\/buckets|queues|workers\/subdomain|workers\/scripts\/[^/]+\/secrets|secrets_store\/stores\/store-1\/secrets/.test(c)) && calls.filter((c) => c.startsWith("POST")).length === 4 && calls.filter((c) => c.startsWith("PATCH")).length === 1, calls.join(", "));
 
   // managing instances without a project: both commands resolve the account from the token and nothing else
   const onAccount = run(["instances"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });

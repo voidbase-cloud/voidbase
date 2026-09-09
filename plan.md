@@ -364,8 +364,15 @@ Order of work:
    installed `backups` from it, which takes the place of the shipped one, and `echo` from a throwaway marketplace
    made of static files on GitHub (`voidbase-cloud/voidbase-throwaway-marketplace`, served by raw.githubusercontent.com).
    Live on demo.voidbase.cloud: `/api/echo` answers, `/api/plugins` reports both origins, backups still works. The
-   same files served locally with `voidbase serve` load through the Bun path. Not wired yet: stack apps (the
-   adapter does not carry pb_plugins into the generated app) and cloud instances (no dashboard install).
+   same files served locally with `voidbase serve` load through the Bun path. Then (0.9.0-beta.8) the two shapes
+   that were missing: the adapter carries `pb_plugins` and `voidbase.lock` into a stack app's generated app
+   (`test/adapter.ts` boots one and gets the plugin's route), and a cloud instance installs from its page: the
+   control plane records the set and queues a build, `scripts/instance-build.ts` (the `instance-build` workflow,
+   every five minutes when the repository variable `VB_CLOUD_URL` is set, with `VB_BUILD_EMAIL`/`VB_BUILD_PASSWORD`
+   as a superuser there) builds a release with `voidbase bundle --plugins-dir` from the base release's tag, pushes
+   it without activating, and the control plane deploys the instance from it; an upgrade with plugins is that
+   rebuild. Measured by the site's cloud e2e (11 checks) and a live builder run against voidbase.cloud, which had
+   no active release at all until 0.9.0-beta.8 was pushed to it. Not built: the unpackaged way.
 5. **Done** with each step: the site's plugins page and `PluginsSoon`, the marketplace README, SUBMISSION, form and
    cards, and the plugin packages' READMEs say what exists and what does not.
 

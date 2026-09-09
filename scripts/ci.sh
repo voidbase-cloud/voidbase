@@ -160,7 +160,9 @@ release_work() {  # release-please, npm and the executables in this build (docs/
     if [ -n "$rel" ]; then
       if ! npm view "@voidbase-cloud/voidbase@$v" version >/dev/null 2>&1; then why="release v$v is not on npm yet"
       elif ! printf '%s' "$rel" | grep -q checksums.txt && [ "${CI_HOT:-0}" != 1 ]; then why="release v$v has no executables yet"; fi
-    fi
+    # package.json only ever names a version release-please merged: one with no GitHub release and no npm version
+    # is a merged release PR whose own build did not get this far, and release-please creates its release from it
+    elif ! npm view "@voidbase-cloud/voidbase@$v" version >/dev/null 2>&1; then why="v$v is neither a GitHub release nor on npm: a merged release PR whose build did not finish"; fi
   fi
   if [ -z "$why" ]; then skip_step release "nothing to release"; return 0; fi
   echo; echo "=== release: $why"

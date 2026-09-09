@@ -298,25 +298,61 @@ text editing where it renders, the shop. They are blocked on decision 0.2 exactl
 
 ---
 
-## Phase 6 — Installing
+## Phase 6 and 7 — Installing and the marketplace, as one system (direction of 2026-09-09)
 
-- `voidbase.lock`: what is installed, at which version, from which registry, with an integrity hash. An install is
-  a commit for the shapes that have a repository.
-- CLI: `plugins`, `plugins add`, `plugins remove`, `plugins update`, per the commands already written in
-  `PluginsSoon.tsx`. They are the specification; keep them exactly, including `--name` for a local instance and
-  `--registry`.
-- Registry: a listing served over HTTP, ours as the default via `VOIDBASE_PLUGIN_REGISTRY`, anyone's by URL. The
-  page already promises nothing about our path is better than a private one — keep that true by developing against
-  a local registry fixture rather than the real one.
-- Compatibility: a plugin declares its voidbase range, install refuses outside it, and `voidbase update` says which
-  installed plugins will not survive a jump **before** performing it.
+Mahmood's direction, recorded verbatim in intent: auditing a plugin's source, bundling and packaging it, re-auditing
+the packaged bundle and serving it are the **marketplace's** responsibility, so that contributing a plugin to the
+official marketplace is simple. Anyone can run a competing, non-official marketplace for templates and plugins. An
+instance connects to several marketplaces, installs plugins from any of them, and is not locked to the official
+marketplace or to our official plugins.
 
----
+What that settles, and what it changes from the earlier version of these two phases:
 
-## Phase 7 — The marketplace
+- **A plugin is a source repository with a `plugin.json`.** The contributor never builds or publishes an artifact.
+  The three official plugins already have that shape (`voidbase-cloud/voidbase-plugin-backups`, `-realtime`,
+  `-hardening`, listed on the marketplace through its own form on 2026-09-09). Their GitHub Packages publishing
+  (`@voidbase-cloud/plugin-*`) is not the install path; the marketplace's bundle is. Keep the workflow while it costs
+  nothing, retire it when bundles are served.
+- **The marketplace is a pipeline, not only a list.** On approval it fetches the repository at a commit, audits the
+  source (the deterministic checks it already runs for templates, plus `checkManifest` from voidbase and the
+  interface names against `KNOWN`), bundles the plugin into one file with Bun's bundler (voidbase's entry points
+  external, everything else inlined), re-audits the bundle (what it imports, that it reaches no network, `eval`,
+  process or credential-shaped thing, and that its manifest matches the source's), hashes it (sha256), stores it in
+  its own R2 and records the audit beside the entry. The marketplace is a voidbase stack app with an instance that
+  "holds nothing yet, it is here for what comes after listing": this is what comes after listing.
+- **The registry protocol is open and small**, so a competing marketplace is another server implementing it, and a
+  static site with object storage is enough: `GET /registry/v1/index.json` (kinds; for each plugin its name,
+  versions, manifest, integrity, bundle URL, audit summary, source repository and commit),
+  `GET /registry/v1/plugins/<name>/<version>.json`, `GET /registry/v1/plugins/<name>/<version>/bundle.js`.
+  Versioned, cacheable, no accounts. The spec lives in voidbase (`docs/registry.md`), because voidbase is the
+  consumer and the spec is what stops the official marketplace being privileged.
+- **The instance side.** `voidbase plugins ls|add|remove|update` take a marketplace URL (`--marketplace`, and
+  `VOIDBASE_PLUGIN_MARKETPLACES` as the configured list; ours is a default that can be removed). `voidbase.lock`
+  records, per plugin, the marketplace it came from, the version, the integrity hash and the source commit.
+  `pb_plugins/` holds the downloaded bundles; on Cloudflare the set is fixed at deploy, so an install is a download
+  plus a redeploy, as `PluginsSoon` already says. The loader loads `pb_plugins/*/bundle.js` beside the built-in
+  list and resolves the whole graph as it does now. Two marketplaces offering one plugin name is refused unless the
+  lockfile qualifies it (`<marketplace>/<name>`), the same rule as two providers of one interface. An instance with no
+  marketplace configured runs its built-ins and nothing else changes.
+- **Trust is the hash and the audit, not the marketplace's name.** An instance verifies the integrity hash on every
+  install and build; a bundle is evaluated inside the instance the way `pb_hooks` is; a marketplace never runs a
+  plugin. The official plugins go through the same pipeline as anyone's, which is the proof that nothing about our
+  path is privileged.
 
-Out of scope for this repository beyond the registry protocol it serves. What this repo owes it: a stable manifest
-format, a stable registry API, and the integrity hash. Everything else is the marketplace's own.
+Order of work:
+
+1. `docs/registry.md`, the protocol, and a fixture marketplace under `test/` that serves it, so the instance side is
+   developed against something that is not ours.
+2. The marketplace pipeline: audit source, bundle, re-audit, hash, store, serve `/registry/v1/*` from the vb backend
+   over R2 and the registry files; run it from the submission workflow on `approved`, and as `bun scripts/bundle.ts
+   <repo> <commit>` by hand.
+3. The instance: bundles in `pb_plugins`, the four CLI verbs, the lockfile with integrity, multi-marketplace rules,
+   `voidbase update` saying which installed plugins will not survive a jump before performing it.
+4. The three official plugins re-listed through the pipeline (bundle, audit, hash), and installed into the demo from
+   the official marketplace to prove the loop; then one of them installed from a second, throwaway marketplace to
+   prove there is no lock-in.
+5. The site's plugins page, `PluginsSoon`, the marketplace README and SUBMISSION corrected as each step makes them
+   true, not after.
 
 ---
 

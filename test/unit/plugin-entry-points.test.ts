@@ -18,6 +18,7 @@ const expected: Record<string, string[]> = {
   "./plugins/backups": ["backups"],
   "./plugins/realtime": ["realtime"],
   "./plugins/hardening": ["hardening"],
+  "./registry": ["fetchIndex", "problemsWithIndex", "integrityOf", "download"],
 };
 
 describe("the plugin API is reachable from a package", () => {

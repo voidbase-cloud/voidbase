@@ -341,8 +341,9 @@ What that settles, and what it changes from the earlier version of these two pha
 
 Order of work:
 
-1. `docs/registry.md`, the protocol, and a fixture marketplace under `test/` that serves it, so the instance side is
-   developed against something that is not ours.
+1. **Done** (2026-09-09): `docs/registry.md`, the protocol; `src/node/registry.ts` (validator, integrity, fetch, pick,
+   download, exported as `@voidbase-cloud/voidbase/registry`); the fixture marketplace under `test/fixtures/registry`,
+   served by Bun in `test/unit/registry.test.ts`, whose bundle loads through the kernel and answers its route.
 2. The marketplace pipeline: audit source, bundle, re-audit, hash, store, serve `/registry/v1/*` from the vb backend
    over R2 and the registry files; run it from the submission workflow on `approved`, and as `bun scripts/bundle.ts
    <repo> <commit>` by hand.

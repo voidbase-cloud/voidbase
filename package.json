@@ -44,6 +44,7 @@
     "./plugins/backups": "./src/server/plugins/backups.ts",
     "./plugins/realtime": "./src/server/plugins/realtime.ts",
     "./plugins/hardening": "./src/server/plugins/hardening.ts",
+    "./registry": "./src/node/registry.ts",
     "./secrets": "./src/env/define.ts"
   },
   "imports": {

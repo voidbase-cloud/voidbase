@@ -1,0 +1,32 @@
+{
+  "version": "0.1.0",
+  "manifest": {
+    "name": "echo",
+    "version": "0.1.0",
+    "tier": "community",
+    "voidbase": "*"
+  },
+  "integrity": "sha256-OQf2vXCbJn+W/gRCQ4xts7+Je9XMYERdfVgn70PPYZg=",
+  "bundle": "plugins/echo/0.1.0/bundle.js",
+  "bytes": 467,
+  "source": {
+    "repository": "example/voidbase-plugin-echo",
+    "commit": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "publishedOn": "2026-09-09",
+  "audit": {
+    "ranOn": "2026-09-09",
+    "checks": [
+      {
+        "name": "imports only what an instance provides",
+        "passed": true,
+        "detail": "the bundle imports nothing"
+      },
+      {
+        "name": "manifest matches the source",
+        "passed": true,
+        "detail": "plugin.json and the bundle agree"
+      }
+    ]
+  }
+}

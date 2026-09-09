@@ -444,8 +444,12 @@ Order of work:
    `ensureCollections(plugin, db, definitions)` (`@voidbase-cloud/voidbase/plugins/collections`) creates the
    missing ones through the collections service and refuses a name the manifest does not own before touching the
    database. Measured in `test/unit/plugin-collections.test.ts` and by the adapter boot, whose carried plugin owns
-   and creates `carried_notes`; proven on the testbeds by echo 0.2.0 from the throwaway marketplace owning
-   `echoes` on the demo and on a cloud instance the builder built.
+   and creates `carried_notes`; proven on the demo by echo 0.2.0 from the throwaway marketplace owning `echoes`.
+   The first cloud run found what the demo could not: the builder builds a release from voidbase's own checkout,
+   where the package is not in its own node_modules, so a bundle importing `@voidbase-cloud/voidbase/kernel` had
+   nothing to resolve to and Rolldown refused the build (a project's Vite finds the package installed). Fixed in
+   the hooks plugin, which maps a bundle's bare imports to voidbase's files through its exports map and hono to
+   its own copy (`providedImport`, unit-tested); the cloud loop with echo 0.2.0 is the proof.
 
 ## Where it is going: three ways to run, two modes, one CLI (Mahmood, 2026-09-09)
 

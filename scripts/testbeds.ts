@@ -8,6 +8,8 @@
 // way. The commit is what the old hourly tracker made, `chore(deps): voidbase <version>`, by voidbase-bot. The token
 // is handed to git through a credential helper, never on the command line and never in a URL, and every line
 // printed is scrubbed of it. A testbed that cannot be moved fails this step, so the release build shows it.
+// npm serves a version a little after `npm publish` returns (the first run found it three seconds too early), so
+// this waits until the registry answers for it before asking bun to install it.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +30,18 @@ async function sh(cmd: string[], cwd: string): Promise<string> {
   if (code !== 0) throw new Error(scrub(`${cmd.join(" ")} exited ${code}\n${(out + err).trim().slice(-1500)}`));
   return out;
 }
+
+/** the registry answers for the version: publish returns before every replica serves it */
+async function served(): Promise<boolean> {
+  for (let i = 0; i < 24; i++) {
+    const r = await fetch(`https://registry.npmjs.org/${encodeURIComponent(PKG).replace("%40", "@")}/${version}`, { headers: { "user-agent": "voidbase-testbeds" } }).catch(() => null);
+    if (r?.ok) { const j = (await r.json().catch(() => ({}))) as { version?: string }; if (j.version === version) return true; }
+    if (i === 0) console.log(`waiting for the registry to serve ${PKG}@${version}`);
+    await Bun.sleep(10000);
+  }
+  return false;
+}
+if (!(await served())) { console.error(`${PKG}@${version} is not served by the registry after four minutes; run \`bun scripts/testbeds.ts ${version}\` once it is`); process.exit(1); }
 
 let failed = 0;
 for (const repo of repos) {

@@ -72,6 +72,34 @@ opt-in) and `community`.
 - Every step is gated by `bun test` and the full conformance suite (`bun run ci`): a plugin change that breaks
   PocketBase compatibility has failed regardless of how clean the graph is.
 
+## Owning collections
+
+A manifest names the collections a plugin owns (`collections`), which is what lets the loader refuse a second owner
+at install. Owning one also means creating it: in `apply`, the plugin asks for the work to be done once per isolate
+with the bindings, because `apply` runs at module scope and the database arrives with the request:
+
+```ts
+import { onBootstrap } from "@voidbase-cloud/voidbase/kernel";
+import { ensureCollections } from "@voidbase-cloud/voidbase/plugins/collections";
+
+const plugin = {
+  manifest: { name: "shop", version: "1.0.0", tier: "community", voidbase: ">=0.9.0-beta.15", collections: ["orders"] },
+  apply(ctx) {
+    onBootstrap(ctx, (env) => ensureCollections(plugin, env.DB, [
+      { name: "orders", type: "base", fields: [{ name: "total", type: "number" }] },
+    ]));
+    ctx.app.get("/api/shop/orders", ...);
+  },
+};
+```
+
+The definition is what `POST /api/collections` takes, and the collection is created through the same service the
+panel uses, table and all, once, when it is missing. The kernel runs every plugin's bootstrap after voidbase's own
+(the system collections, the settings row, the superuser), in load order, so a plugin that extends a collection
+another one owns runs after the owner created it; a failure is retried by the next request. A name the manifest
+does not own is refused before the database is touched. The auth plugin's five collections predate this: they are
+system tables voidbase's own schema creates, and the manifest owns them so nothing else can.
+
 ## Installing
 
 `voidbase plugins add <name>[@version]` installs a plugin from a marketplace (docs/registry.md): the bundle is

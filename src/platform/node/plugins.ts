@@ -13,6 +13,8 @@ import * as interfaces from "../../server/interfaces";
 import * as kernel from "../../server/kernel";
 import * as backups from "../../server/plugins/backups";
 import * as hardening from "../../server/plugins/hardening";
+import * as auth from "../../server/plugins/auth";
+import * as collections from "../../server/plugins/collections";
 import * as manifest from "../../server/plugins/manifest";
 import * as realtime from "../../server/plugins/realtime";
 import type { Plugin } from "../../server/plugins/manifest";
@@ -27,6 +29,8 @@ const PROVIDED: Record<string, object> = {
   "@voidbase-cloud/voidbase/plugins/backups": backups,
   "@voidbase-cloud/voidbase/plugins/realtime": realtime,
   "@voidbase-cloud/voidbase/plugins/hardening": hardening,
+  "@voidbase-cloud/voidbase/plugins/auth": auth,
+  "@voidbase-cloud/voidbase/plugins/collections": collections,
   hono,
 };
 const PROVIDED_RE = /^(@voidbase-cloud\/voidbase|hono)(\/|$)/;

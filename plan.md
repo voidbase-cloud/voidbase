@@ -439,6 +439,14 @@ Order of work:
 
 ---
 
+9. **Done** (2026-09-09): a plugin creates the collections it owns. `onBootstrap(ctx, fn)` in the kernel registers
+   work done once per isolate with the bindings, run by `app.ts` after voidbase's own bootstrap in load order;
+   `ensureCollections(plugin, db, definitions)` (`@voidbase-cloud/voidbase/plugins/collections`) creates the
+   missing ones through the collections service and refuses a name the manifest does not own before touching the
+   database. Measured in `test/unit/plugin-collections.test.ts` and by the adapter boot, whose carried plugin owns
+   and creates `carried_notes`; proven on the testbeds by echo 0.2.0 from the throwaway marketplace owning
+   `echoes` on the demo and on a cloud instance the builder built.
+
 ## Where it is going: three ways to run, two modes, one CLI (Mahmood, 2026-09-09)
 
 The picture to work towards, now on the site's roadmap too. An instance runs three ways: the standalone

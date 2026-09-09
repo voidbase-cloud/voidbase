@@ -69,7 +69,7 @@ try {
 
   // ---- an installed plugin at the project root: pb_plugins and voidbase.lock are carried into the generated app ----
   // written the way `voidbase plugins add` writes them, with the hash the lockfile has to carry
-  const carried = 'const manifest = { name: "carried", version: "1.0.0", tier: "community", voidbase: "*" };\nexport default { manifest, apply(ctx) { ctx.app.get("/api/carried", (c) => c.text("carried")); } };\n';
+  const carried = 'import { onBootstrap } from "@voidbase-cloud/voidbase/kernel";\nimport { ensureCollections } from "@voidbase-cloud/voidbase/plugins/collections";\nconst manifest = { name: "carried", version: "1.0.0", tier: "community", voidbase: "*", collections: ["carried_notes"] };\nconst plugin = { manifest, apply(ctx) { ctx.app.get("/api/carried", (c) => c.text("carried")); onBootstrap(ctx, (env) => ensureCollections(plugin, env.DB, [{ name: "carried_notes", type: "base", fields: [{ name: "text", type: "text" }] }])); } };\nexport default plugin;\n';
   mkdirSync(`${WORK}/pb_plugins/carried`, { recursive: true });
   writeFileSync(`${WORK}/pb_plugins/carried/bundle.js`, carried);
   writeFileSync(`${WORK}/voidbase.lock`, JSON.stringify({ lockfileVersion: 1, marketplaces: [], plugins: { carried: { version: "1.0.0", integrity: await integrityOf(new TextEncoder().encode(carried)), marketplace: "http://marketplace.invalid", source: { repository: "example/carried", commit: "0123456" }, installedOn: "2026-09-09" } }, disabled: [] }, null, 2));
@@ -153,6 +153,8 @@ try {
   check("void/queues sends to the app queue and the consumer runs it (inline without a queue binding)", enqueued.json.queued === "queue@example.com" && (outbox1.json.outbox as string[])?.includes("queue@example.com"), JSON.stringify([enqueued.json, outbox1.json]));
 
   const su = await fetch(`${base}/api/collections/_superusers/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: "root@example.com", password: "root-password-1" }) }).then((r) => r.json() as Promise<{ token: string }>);
+  const owned = await fetch(`${base}/api/collections/carried_notes`, { headers: { authorization: su.token } });
+  check("the collection the carried plugin owns was created by the plugin at bootstrap, table and all", owned.status === 200 && ((await owned.json()) as { name: string }).name === "carried_notes", String(owned.status));
   const crons = await fetch(`${base}/api/crons`, { headers: { authorization: su.token } }).then((r) => r.json() as Promise<{ id: string; expression: string }[]>);
   check("the cron is registered with the schedule its module exports", crons.some((j) => j.id === "tick" && j.expression === "*/5 * * * *"), JSON.stringify(crons.slice(0, 3)));
   await fetch(`${base}/api/crons/tick`, { method: "POST", headers: { authorization: su.token } });

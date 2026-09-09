@@ -12,13 +12,14 @@ const root = resolve(import.meta.dir, "../..");
 const exportsMap = pkg.exports as Record<string, string>;
 
 const expected: Record<string, string[]> = {
-  "./kernel": ["createKernel", "load", "serve", "using", "whatLoaded"],
+  "./kernel": ["createKernel", "load", "serve", "using", "whatLoaded", "onBootstrap", "runBootstraps"],
   "./plugins": ["checkManifest"],
   "./interfaces": ["KNOWN"],
   "./plugins/auth": ["auth", "provider"],
   "./plugins/backups": ["backups"],
   "./plugins/realtime": ["realtime"],
   "./plugins/hardening": ["hardening"],
+  "./plugins/collections": ["ensureCollections"],
   "./registry": ["fetchIndex", "problemsWithIndex", "integrityOf", "download"],
 };
 

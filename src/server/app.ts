@@ -21,7 +21,7 @@ import { mountFilesApi, protectedAccess } from "./files-api";
 import { BATCH_CONTEXT_HEADER, batchContextToken, mountBatch } from "./batch";
 import { mountLogsApi, requestLogger } from "./logs";
 import { mountCronsApi } from "./crons";
-import { createKernel, load, using, whatLoaded } from "./kernel";
+import { createKernel, load, runBootstraps, using, whatLoaded } from "./kernel";
 import { auth as authPlugin } from "./plugins/auth";
 import { backups as backupsPlugin } from "./plugins/backups";
 import { realtime as realtimePlugin } from "./plugins/realtime";
@@ -69,6 +69,8 @@ app.use("*", async (c, next) => {
 
 app.use("*", async (c, next) => {
   await ensureBootstrapped(c.env.DB, (db) => applyPendingMigrations(db, hookGlobals(), c.env));
+  // then what the plugins asked to do once with the bindings: creating the collections they own (kernel onBootstrap)
+  await runBootstraps(kernel, c.env);
   // settings.s3 swaps the file storage for an S3 bucket; everything downstream keeps using c.env.STORAGE
   const s3 = (await loadSettings(c.env.DB)).s3;
   if (s3.enabled) c.env = { ...c.env, STORAGE: s3Bucket(s3) };

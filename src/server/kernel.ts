@@ -31,19 +31,49 @@
 import { Context } from "cordis";
 import type { Hono } from "hono";
 import { logger } from "#platform/log";
-import type { AppEnv } from "./types";
+import type { AppEnv, Bindings } from "./types";
 import type { Plugin } from "./plugins/manifest";
 import { resolve } from "./plugins/resolve";
+
+/** work a plugin does once per isolate with the bindings, on the first request: creating what it owns */
+export type Bootstrap = (env: Bindings) => Promise<void> | void;
 
 export interface Kernel extends Context {
   /** the app a plugin mounts its routes on */
   app: Hono<AppEnv>;
+  /** what plugins asked to run at bootstrap, in load order (onBootstrap) */
+  bootstraps: { plugin: string; run: Bootstrap }[];
 }
 
 export function createKernel(app: Hono<AppEnv>): Kernel {
   const kernel = new Context() as Kernel;
   kernel.app = app;
+  kernel.bootstraps = [];
   return kernel;
+}
+
+/**
+ * Register work to do once per isolate, on the first request, with the bindings: a plugin cannot touch the database
+ * in `apply`, because `apply` runs at module scope and the bindings arrive with the request. The kernel runs these
+ * after voidbase's own bootstrap (the system collections, the settings row, the superuser), in load order, so a
+ * plugin that extends a collection another one owns runs after the owner created it.
+ */
+export function onBootstrap(ctx: Kernel, run: Bootstrap): void {
+  // a plugin's ctx is a fork; `bootstraps` reaches the root's list through it. The name is the plugin being applied
+  // right now: load() applies them one at a time, and cordis refuses a property set on a fork.
+  ctx.bootstraps.push({ plugin: applying ?? "?", run });
+}
+let applying: string | undefined;
+
+const bootstrapped = new WeakMap<Kernel, Promise<void>>();
+/** run every plugin's bootstrap once per isolate; a failure is retried by the next request, the way voidbase's own is */
+export function runBootstraps(kernel: Kernel, env: Bindings): Promise<void> {
+  let p = bootstrapped.get(kernel);
+  if (!p) {
+    p = (async () => { for (const b of kernel.bootstraps) await b.run(env); })().catch((err) => { bootstrapped.delete(kernel); throw err; });
+    bootstrapped.set(kernel, p);
+  }
+  return p;
 }
 
 /** what this instance ended up running, for the health endpoint and for anything that asks */
@@ -103,7 +133,7 @@ export async function load(kernel: Kernel, plugins: Plugin[], voidbaseVersion: s
       name: plugin.manifest.name,
       // cordis waits on service names, and an interface is a service name
       inject: plugin.manifest.requires ?? [],
-      apply: (ctx: Context) => apply(ctx as Kernel),
+      apply: (ctx: Context) => { applying = plugin.manifest.name; try { return apply(ctx as Kernel); } finally { applying = undefined; } },
     });
   }
 

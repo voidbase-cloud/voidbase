@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.19](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.18...v0.9.0-beta.19) (2026-09-09)
+
+
+### Features
+
+* **adapter:** workflows/ modules become Cloudflare Workflows, exported from the Worker and bound ([0031925](https://github.com/voidbase-cloud/voidbase/commit/0031925475b5a5c892dafb07ee891ac9a5ba39d1))
+
 ## [0.9.0-beta.18](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.17...v0.9.0-beta.18) (2026-09-09)
 
 

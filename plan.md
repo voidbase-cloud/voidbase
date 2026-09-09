@@ -262,7 +262,13 @@ In this order, because it runs from proven to hardest.
    and asks `auth-slot.ts` who is signed in and what a superuser is, `filter/compile.ts` asks the provider for the
    fields an auth record answers to, and an instance without a provider loads with nobody signed in and reports
    `auth@1` missing. Measured by `test/unit/auth-plugin.test.ts` (the seam), the adapter boot and the conformance
-   suites (the behaviour). Not moved: the bootstrap still creates the auth collections the manifest owns.
+   suites (the behaviour). Released as 0.9.0-beta.14; on the testbeds the same day: the demo's smoke and the full
+   cloud loop (12 checks, an instance built with a plugin by the builder) pass with auth as the plugin, and a
+   project with `disabled: ["auth"]` boots with nobody signed in, 404 on the auth routes, 401 on the inventory and
+   the warning in its log. `@voidbase-cloud/plugin-auth` (its own repository, published on the tag) is listed on the
+   marketplace as `auth` 0.1.0, and the demo installs it by name, so `/api/plugins` there names the marketplace as
+   auth's origin: a core plugin replaced by a release of the same code, which is the road a different provider
+   takes. Not moved: the bootstrap still creates the auth collections the manifest owns.
 
 
 Each step: the feature moves behind an interface, the old module keeps its exports until the last call site is

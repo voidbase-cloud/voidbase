@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.18](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.17...v0.9.0-beta.18) (2026-09-09)
+
+
+### Features
+
+* **deploy:** a flag() tier, held by Cloudflare Flagship and evaluated per request ([2050f97](https://github.com/voidbase-cloud/voidbase/commit/2050f97e99593949e27234d20cba149b50068a75))
+
 ## [0.9.0-beta.17](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.16...v0.9.0-beta.17) (2026-09-09)
 
 

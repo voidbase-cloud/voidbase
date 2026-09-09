@@ -38,6 +38,12 @@
     "./bundle": "./src/node/bundle.ts",
     "./adapter": "./src/adapter/runtime.ts",
     "./adapter/plugin": "./src/adapter/index.ts",
+    "./kernel": "./src/server/kernel.ts",
+    "./interfaces": "./src/server/interfaces/index.ts",
+    "./plugins": "./src/server/plugins/manifest.ts",
+    "./plugins/backups": "./src/server/plugins/backups.ts",
+    "./plugins/realtime": "./src/server/plugins/realtime.ts",
+    "./plugins/hardening": "./src/server/plugins/hardening.ts",
     "./secrets": "./src/env/define.ts"
   },
   "imports": {

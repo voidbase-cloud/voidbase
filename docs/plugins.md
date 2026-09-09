@@ -16,6 +16,17 @@ working plan. What is here is what a contributor needs to touch it.
 | `src/server/plugins/*.ts` | the plugins voidbase ships with today: `backups`, `realtime`, `hardening`. |
 | `GET /api/plugins` | what this instance loaded: names, providers, tiers, and any core interface nobody provides. Superuser only. |
 
+## The entry points a plugin package uses
+
+The package exposes the plugin API and the plugins it ships, so a plugin can live in its own package and be typed
+against this voidbase: `@voidbase-cloud/voidbase/kernel` (`createKernel`, `load`, `serve`, `using`, `whatLoaded`,
+`Kernel`), `@voidbase-cloud/voidbase/plugins` (`Plugin`, `PluginManifest`, `checkManifest`),
+`@voidbase-cloud/voidbase/interfaces` (the interface types and `KNOWN`), and `@voidbase-cloud/voidbase/plugins/backups`,
+`/plugins/realtime`, `/plugins/hardening` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
+the map honest. The official plugin packages (`@voidbase-cloud/plugin-*`, one repository each) re-export the shipped
+objects through these entry points: the code lives here once, and the package is the plugin's name, manifest and
+version as the marketplace lists it.
+
 ## What a plugin is
 
 ```ts

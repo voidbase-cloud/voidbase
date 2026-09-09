@@ -3,6 +3,18 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.15](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.14...v0.9.0-beta.15) (2026-09-09)
+
+
+### Features
+
+* **plugin:** a plugin creates the collections it owns, once, at bootstrap ([b645279](https://github.com/voidbase-cloud/voidbase/commit/b64527997f55d682e49d5fdeee8de4ad041740da))
+
+
+### Documentation
+
+* **plan:** auth as the core plugin, proven on the testbeds, packaged and listed ([d62af16](https://github.com/voidbase-cloud/voidbase/commit/d62af167cb2ec8160c101e85dced53479befd858))
+
 ## [0.9.0-beta.14](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.13...v0.9.0-beta.14) (2026-09-09)
 
 

@@ -371,8 +371,16 @@ Order of work:
    every five minutes when the repository variable `VB_CLOUD_URL` is set, with `VB_BUILD_EMAIL`/`VB_BUILD_PASSWORD`
    as a superuser there) builds a release with `voidbase bundle --plugins-dir` from the base release's tag, pushes
    it without activating, and the control plane deploys the instance from it; an upgrade with plugins is that
-   rebuild. Measured by the site's cloud e2e (11 checks) and a live builder run against voidbase.cloud, which had
-   no active release at all until 0.9.0-beta.8 was pushed to it. Not built: the unpackaged way.
+   rebuild. Measured by the site's cloud e2e (12 checks) and then for real on voidbase.cloud, which is what the site
+   and the demo are for: a user with a Cloudflare connection (a superuser can mint one through PocketBase's
+   impersonation endpoint, with the org's deploy key sealed the way the OAuth callback seals a token) created an
+   instance in the org account, installed `echo` from the throwaway marketplace, the builder workflow built
+   `0.9.0-beta.8-vb-plugin-test.<id>` and the control plane deployed it, `/api/echo` answered on the instance and
+   `/api/plugins` named the origin, all in under three minutes; then the instance and the user were deleted. The
+   first real run found what the mock had hidden: the Worker upload sent its Durable Object migration as an array
+   (Cloudflare 10021), so no cloud instance could have been created on a real account; fixed in 0.9.0-beta.9,
+   and the mock now answers the way Cloudflare did. voidbase.cloud also had no active release at all until
+   0.9.0-beta.8 was pushed to it. Not built: the unpackaged way.
 5. **Done** with each step: the site's plugins page and `PluginsSoon`, the marketplace README, SUBMISSION, form and
    cards, and the plugin packages' READMEs say what exists and what does not.
 

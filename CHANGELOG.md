@@ -3,6 +3,19 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.10](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.9...v0.9.0-beta.10) (2026-09-09)
+
+
+### Bug Fixes
+
+* **deploy:** store a redeploy's secrets through the Workers API, not through wrangler's stdin ([40b11d6](https://github.com/voidbase-cloud/voidbase/commit/40b11d6a6810ad4a33982697c86a0bb20f87c6dd))
+
+
+### Documentation
+
+* **plugin:** the cloud install is proven on voidbase.cloud, and the bug the mock hid is recorded ([5ebb52c](https://github.com/voidbase-cloud/voidbase/commit/5ebb52cf53fe741eb9de4f5bba5b155862e9df30))
+* **plugin:** the testbeds run themselves: nightly live tests, hourly release tracking ([3a3efaa](https://github.com/voidbase-cloud/voidbase/commit/3a3efaaf7f20d02c7f9322b520e1602a7c7e1658))
+
 ## [0.9.0-beta.9](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.8...v0.9.0-beta.9) (2026-09-09)
 
 

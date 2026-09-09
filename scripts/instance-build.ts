@@ -45,6 +45,8 @@ async function checkoutBase(version: string): Promise<string> {
     await sh(["git", "fetch", "--tags", "--quiet"], REPO);
     await sh(["git", "worktree", "add", "--detach", dir, `v${version}`], REPO);
     await sh(["bun", "install", "--frozen-lockfile"], dir);
+    // a fresh checkout has no .void/ (what `void prepare` generates), and the release build needs it
+    await sh(["bun", "node_modules/.bin/void", "prepare"], dir);
   }
   return dir;
 }

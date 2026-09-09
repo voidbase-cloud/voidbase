@@ -5,14 +5,18 @@
 import { copyFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-const PLATFORM_MODULES = ["env", "log", "sse", "sockets", "hooks", "migrations", "photon"];
+const PLATFORM_MODULES = ["env", "log", "sse", "sockets", "hooks", "migrations", "photon", "plugins"];
 import ts from "typescript";
 import type { Plugin } from "vite";
+import { pluginsModuleSource } from "./src/node/installed";
 
 const VIRTUAL = "virtual:voidbase-hooks";
 const RESOLVED = "\0" + VIRTUAL;
 const VIRTUAL_MIGRATIONS = "virtual:voidbase-migrations";
 const RESOLVED_MIGRATIONS = "\0" + VIRTUAL_MIGRATIONS;
+// pb_plugins: the installed bundles, each verified against voidbase.lock at build time (src/node/installed.ts)
+const VIRTUAL_PLUGINS = "virtual:voidbase-plugins";
+const RESOLVED_PLUGINS = "\0" + VIRTUAL_PLUGINS;
 
 // method names whose calls perform I/O in the voidbase runtime
 const ASYNC_PROPS = new Set([
@@ -208,9 +212,10 @@ export function writeNotFoundShells(dir: string): string[] {
   return written;
 }
 
-export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; hubEntry?: string } = {}): Plugin {
+export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; pluginsDir?: string; hubEntry?: string } = {}): Plugin {
   const dir = resolve(options.dir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks");
   const migrationsDir = resolve(options.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations");
+  const pluginsDir = resolve(options.pluginsDir ?? process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins");
   // hubEntry: the module exporting VoidbaseHub (src/server/hub.ts). Void generates the Worker entry (.void/entry.ts)
   // and exports only its own classes, so the instance's Durable Object class is appended to that entry at bundle time;
   // wrangler.jsonc declares the binding (HUB) and the new_sqlite_classes migration.
@@ -233,8 +238,13 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; h
       if (hubEntry && id.replace(/\\/g, "/").endsWith("/.void/entry.ts")) return { code: `${code}\nexport { VoidbaseHub } from ${JSON.stringify(hubEntry)};\n`, map: null };
       return null;
     },
-    resolveId(id) { return id === VIRTUAL ? RESOLVED : id === VIRTUAL_MIGRATIONS ? RESOLVED_MIGRATIONS : null; },
-    load(id) {
+    resolveId(id) { return id === VIRTUAL ? RESOLVED : id === VIRTUAL_MIGRATIONS ? RESOLVED_MIGRATIONS : id === VIRTUAL_PLUGINS ? RESOLVED_PLUGINS : null; },
+    async load(id) {
+      if (id === RESOLVED_PLUGINS) {
+        const root = resolve(pluginsDir, "..");
+        for (const f of ["voidbase.lock"]) if (existsSync(join(root, f))) this.addWatchFile(join(root, f));
+        return pluginsModuleSource(pluginsDir);
+      }
       if (id === RESOLVED) {
         if (existsSync(dir)) for (const f of readdirSync(dir)) this.addWatchFile(join(dir, f));
         return compileHooksDir(dir);

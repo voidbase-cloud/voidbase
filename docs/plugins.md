@@ -72,8 +72,31 @@ opt-in) and `community`.
 - Every step is gated by `bun test` and the full conformance suite (`bun run ci`): a plugin change that breaks
   PocketBase compatibility has failed regardless of how clean the graph is.
 
+## Installing
+
+`voidbase plugins add <name>[@version]` installs a plugin from a marketplace (docs/registry.md): the bundle is
+downloaded into `pb_plugins/<name>/bundle.js` with the marketplace's record beside it as `release.json`, its bytes are
+verified against the integrity the marketplace promised, and `voidbase.lock` pins the marketplace, the version, the
+integrity and the source commit. `plugins remove`, `plugins enable`, `plugins update` and `plugins ls` are the rest
+of it (`bin/voidbase.ts`, `src/node/installed.ts`). The marketplaces a project uses are the lockfile's list (ours is
+the default and can be removed) or `VOIDBASE_PLUGIN_MARKETPLACES`; one name served by two marketplaces is refused
+until `--marketplace` says which, the same rule the loader applies to two providers of one interface.
+
+An instance reads the same files when it starts. On Bun (`voidbase serve`, a local instance, the executable)
+`src/platform/node/plugins.ts` verifies every bundle against the lockfile, refuses a changed byte by name, and imports
+the bundles with their bare imports (`@voidbase-cloud/voidbase/*`, `hono`) resolved to the modules the process is
+already running, which is what lets a bundle load inside the executable, where there is no node_modules. On Workers
+`hooks-plugin.ts` generates `virtual:voidbase-plugins` at build time from the same verification, so a mismatch fails
+the build rather than the instance. `app.ts` then loads what ships minus what the lockfile turned off minus what an
+installed plugin shadows by name, plus the installed ones, as one graph, and `/api/plugins` says where each came
+from (`origins`) and what is turned off.
+
+Removing a shipped plugin turns it off for the project (`disabled` in the lockfile); installing one with a shipped
+plugin's name replaces it. That, and the open registry protocol, is what keeps an instance free of our marketplace
+and of our plugins. `voidbase update` names the installed plugins whose range excludes the target before it changes
+anything.
+
 ## What is not built
 
-There is nothing to install. `pb_plugins/`, `voidbase plugins add`, the lockfile, the registry and the marketplace
-are proposals on the site, not code; the set of plugins an instance runs is the list in `app.ts`. Auth, the
-first core plugin, is still built in, which is why `CORE` is empty.
+Auth, the first core plugin, is still built in, which is why `CORE` is empty. A marketplace's audit is a first pass
+and not a sandbox: a bundle runs inside the instance with everything the instance has, the way `pb_hooks` does.

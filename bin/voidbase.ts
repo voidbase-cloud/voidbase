@@ -18,11 +18,11 @@ const flags: Record<string, string> = {}; const positional: string[] = [];
 for (let i = 0; i < argv.length; i++) { const a = argv[i]!; if (a.startsWith("--")) { const [k, v] = a.slice(2).split("="); flags[k!] = v ?? (argv[i + 1] && !argv[i + 1]!.startsWith("--") ? argv[++i]! : "1"); } else positional.push(a); }
 const [cmd, sub, ...rest] = positional;
 const url = (flags.url ?? process.env.VOIDBASE_URL ?? "http://127.0.0.1:8090").replace(/\/$/, "");
-const serveOpts = () => ({ http: flags.http, dir: flags.dir, hooksDir: flags.hooksDir, migrationsDir: flags.migrationsDir, secretsDir: flags.secretsDir, publicDir: flags.publicDir });
+const serveOpts = () => ({ http: flags.http, dir: flags.dir, hooksDir: flags.hooksDir, migrationsDir: flags.migrationsDir, pluginsDir: flags.pluginsDir, secretsDir: flags.secretsDir, publicDir: flags.publicDir });
 const admin = () => { const [email, password] = (flags.admin ?? `${process.env.VOIDBASE_SUPERUSER_EMAIL ?? "admin@example.com"}:${process.env.VOIDBASE_SUPERUSER_PASSWORD ?? ""}`).split(":") as [string, string]; return { email, password }; };
 const HELP = `voidbase - PocketBase-compatible backend: a single Bun process locally, Cloudflare Workers via Void in production
 
-  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--secretsDir pb_secrets] [--publicDir pb_public] [--dev] [--entry main.ts]
+  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--pluginsDir pb_plugins] [--secretsDir pb_secrets] [--publicDir pb_public] [--dev] [--entry main.ts]
                                      run the server like "pocketbase serve" (--dev restarts when hooks or migrations change;
                                      --entry runs your own main.ts, the counterpart of a custom PocketBase build)
   superuser upsert <email> <password>  create or update a superuser: on the local data directory (--dir) or on a running
@@ -56,6 +56,18 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   local ls                           the instances on this machine, with their ports and whether they are running
   local start [name]                 run one (the first, if no name is given)
   local rm <name> [--purge] [--yes]  forget one; --purge deletes its directory and database too
+
+  plugins [ls]                       what this project runs: the plugins voidbase ships (and which are turned off or
+                                     replaced) and the ones installed from a marketplace, with their versions
+  plugins add <name>[@version] [--marketplace url] [--force]
+                                     install a plugin from the marketplaces the project uses (voidbase.lock, or
+                                     VOIDBASE_PLUGIN_MARKETPLACES): the bundle goes into pb_plugins/<name>, verified
+                                     against the marketplace's hash, and is pinned in voidbase.lock. A name served
+                                     by two marketplaces is refused until --marketplace says which
+  plugins remove <name>              uninstall it; for a plugin voidbase ships, turn it off for this project
+  plugins enable <name>              turn a shipped plugin back on
+  plugins update [name]              bring installed plugins to the latest their own marketplace serves
+                                     (--dir <project> or --name <local instance> picks the project; default: here)
 
   instances [--account id]           list the voidbase instances on the Cloudflare account the token reaches
   destroy <name> [--yes]             delete an instance and everything it owns: the Worker, its database, its bucket,
@@ -127,6 +139,14 @@ switch (cmd) {
       process.exit(behind ? 1 : 0);
     }
 
+    // Installed plugins declare the voidbase range they work against; the ones outside the target's are named now,
+    // before anything changes, because a plugin that stops loading after an update is the kind of surprise that
+    // makes people stop updating.
+    {
+      const target = flags.to ?? (await findLatest().catch(() => null));
+      const stuck = target ? (await import("../src/node/installed")).outsideRange(process.cwd(), target) : [];
+      if (stuck.length) console.warn(`these installed plugins work against a voidbase range that excludes ${target}, and will not load after the update: ${stuck.map((p) => `${p.name} (${p.range})`).join(", ")}. Update or remove them first (voidbase plugins update / remove).`);
+    }
     // the executable answers for itself, in PocketBase's words, including when there is nothing to do
     if (install.shape === "executable") {
       const { update } = await import("../src/node/update");
@@ -274,6 +294,58 @@ switch (cmd) {
 
     console.error("usage: voidbase local new|ls|start|rm");
     process.exit(1);
+  }
+  case "plugins": {
+    // The project's plugins: what ships, what was installed from a marketplace, what is turned off. The project is the
+    // current directory unless --dir names one or --name names a local instance; the instance reads the same files
+    // (voidbase.lock, pb_plugins) when it starts, and on Cloudflare the deploy bundles them, so a change here is live
+    // after a restart or a deploy and not before.
+    const I = await import("../src/node/installed");
+    const root = flags.name ? (await import("../src/node/local")).find(flags.name)?.dir : resolve(flags.dir ?? ".");
+    if (!root) { console.error(`no local instance called ${flags.name} (voidbase local ls)`); process.exit(1); }
+    const voidbaseVersion = await currentVersion();
+    const restart = "\nAn instance loads plugins when it starts: restart it, or deploy (voidbase deploy, or push).";
+    const usage = "usage: voidbase plugins [ls] | add <name>[@version] [--marketplace url] [--force] | remove <name> | enable <name> | update [name]";
+    try {
+      switch (sub ?? "ls") {
+        case "ls": case "list": {
+          const l = I.listPlugins(root);
+          console.log(`shipped:      ${l.shipped.map((p) => `${p.name}${p.state === "active" ? "" : ` (${p.state})`}`).join(", ")}`);
+          console.log(l.installed.length ? `installed:    ${l.installed.map((p) => `${p.name} ${p.version} (${p.marketplace})`).join(", ")}` : "installed:    none");
+          console.log(`marketplaces: ${l.marketplaces.join(", ")}`);
+          break;
+        }
+        case "add": {
+          if (!rest[0]) { console.error(usage); process.exit(1); }
+          const a = await I.addPlugin(root, rest[0], { marketplace: flags.marketplace, force: "force" in flags, voidbaseVersion });
+          if (a.unchanged) { console.log(`${a.name} ${a.version} is already installed from ${a.marketplace}`); break; }
+          console.log(`installed ${a.name} ${a.version} from ${a.marketplace}${a.previous ? ` (was ${a.previous})` : ""}${a.shadows ? `; it takes the place of the ${a.name} voidbase ships` : ""}${restart}`);
+          break;
+        }
+        case "remove": case "rm": {
+          if (!rest[0]) { console.error(usage); process.exit(1); }
+          const r = I.removePlugin(root, rest[0]);
+          console.log(r === "removed" ? `removed ${rest[0]}${restart}` : r === "disabled" ? `${rest[0]} ships with voidbase; it is now turned off for this project (voidbase plugins enable ${rest[0]} turns it back on)${restart}` : `${rest[0]} is already turned off`);
+          break;
+        }
+        case "enable": {
+          if (!rest[0]) { console.error(usage); process.exit(1); }
+          const r = I.enablePlugin(root, rest[0]);
+          console.log(r === "enabled" ? `${rest[0]} is turned back on${restart}` : `${rest[0]} was not turned off`);
+          break;
+        }
+        case "update": {
+          const u = await I.updatePlugins(root, rest[0], { voidbaseVersion });
+          for (const x of u.updated) console.log(`${x.name} ${x.from} -> ${x.to} (${x.marketplace})`);
+          if (u.current.length) console.log(`up to date: ${u.current.join(", ")}`);
+          if (!u.updated.length && !u.current.length) console.log("nothing installed");
+          if (u.updated.length) console.log(restart);
+          break;
+        }
+        default: console.error(usage); process.exit(1);
+      }
+    } catch (err) { console.error(err instanceof Error ? err.message : String(err)); process.exit(1); }
+    break;
   }
   case "instances": {
     // What is on the account, without a project: an instance is a Worker voidbase tagged as one when it deployed.

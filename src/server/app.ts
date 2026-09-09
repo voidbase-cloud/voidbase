@@ -28,6 +28,8 @@ import { createKernel, load, using, whatLoaded } from "./kernel";
 import { backups as backupsPlugin } from "./plugins/backups";
 import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
+import { SHIPPED } from "./plugins/shipped";
+import { disabled as disabledPlugins, installed as installedPlugins } from "#platform/plugins";
 import type { Hardening, Realtime } from "./interfaces";
 import { VERSION } from "./version";
 import { mountSqlApi } from "./sql";
@@ -532,7 +534,16 @@ mountCronsApi(app);
 // app serves anything. cordis applies a plugin on a later tick, which is why this awaits: top level await in an
 // ES module is the only place both facts can be true at once.
 export const kernel = createKernel(app);
-await load(kernel, [realtimePlugin, hardeningPlugin, backupsPlugin], VERSION);
+// What ships, minus what the project turned off, minus what an installed plugin shadows by name; then what the
+// project installed (pb_plugins, verified against voidbase.lock by the platform module). One graph, resolved once.
+const shipped = [realtimePlugin, hardeningPlugin, backupsPlugin];
+if (shipped.map((p) => p.manifest.name).join() !== SHIPPED.join()) throw new Error("voidbase: src/server/plugins/shipped.ts disagrees with the plugins app.ts loads");
+const shadowed = new Set(installedPlugins.map((p) => p.name));
+const active = shipped.filter((p) => !disabledPlugins.includes(p.manifest.name) && !shadowed.has(p.manifest.name));
+await load(kernel, [...active, ...installedPlugins.map((p) => p.plugin)], VERSION, {
+  origins: Object.fromEntries([...active.map((p) => [p.manifest.name, "shipped"]), ...installedPlugins.map((p) => [p.name, `${p.marketplace} ${p.version}`])]),
+  disabled: disabledPlugins,
+});
 
 // What this instance is running, which is the question a bare instance has to be able to answer about itself. For
 // the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface.

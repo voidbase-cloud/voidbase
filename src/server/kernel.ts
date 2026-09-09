@@ -57,11 +57,15 @@ export interface Loaded {
    * point of moving it out, but it is not a lean instance and it should not have to be guessed at from a 404.
    */
   missingCore: string[];
+  /** where each plugin came from: "shipped", or the marketplace and version it was installed from */
+  origins: Record<string, string>;
+  /** shipped plugins the project turned off in voidbase.lock */
+  disabled: string[];
 }
 
 const loaded = new WeakMap<Kernel, Loaded>();
 export const whatLoaded = (kernel: Kernel): Loaded =>
-  loaded.get(kernel) ?? { names: [], providers: {}, tiers: {}, missingCore: [] };
+  loaded.get(kernel) ?? { names: [], providers: {}, tiers: {}, missingCore: [], origins: {}, disabled: [] };
 
 /**
  * Fill an interface this plugin declared it provides. The name is the one in the manifest, version and all.
@@ -86,7 +90,7 @@ export function using<T>(ctx: Kernel, iface: string): T {
  * Nothing is applied if anything is wrong, and everything wrong is reported at once: an install that fails four
  * times in a row teaches you four things slowly.
  */
-export async function load(kernel: Kernel, plugins: Plugin[], voidbaseVersion: string): Promise<Loaded> {
+export async function load(kernel: Kernel, plugins: Plugin[], voidbaseVersion: string, extra: { origins?: Record<string, string>; disabled?: string[] } = {}): Promise<Loaded> {
   const { order, providers, problems, missingCore } = resolve(plugins, voidbaseVersion);
   if (problems.length) {
     throw new Error(`voidbase: these plugins cannot be loaded together:\n  - ${problems.join("\n  - ")}`);
@@ -108,6 +112,8 @@ export async function load(kernel: Kernel, plugins: Plugin[], voidbaseVersion: s
     providers: Object.fromEntries([...providers].map(([i, n]) => [i, n])),
     tiers: Object.fromEntries(order.map((p) => [p.manifest.name, p.manifest.tier])),
     missingCore,
+    origins: extra.origins ?? Object.fromEntries(order.map((p) => [p.manifest.name, "shipped"])),
+    disabled: extra.disabled ?? [],
   };
   loaded.set(kernel, result);
   logger.info("voidbase: plugins loaded", { plugins: result.names });

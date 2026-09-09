@@ -353,8 +353,13 @@ Order of work:
    bundles are hundreds of bytes; R2 is the step to take when they are not. `registry:check` validates the served
    registry with voidbase's own `problemsWithIndex` and every bundle against its record. Proof: voidbase's client read
    marketplace.voidbase.cloud, downloaded the three official releases and verified their integrity.
-3. The instance: bundles in `pb_plugins`, the four CLI verbs, the lockfile with integrity, multi-marketplace rules,
-   `voidbase update` saying which installed plugins will not survive a jump before performing it.
+3. **Done** (2026-09-09): `src/node/installed.ts` (the lockfile, add/remove/enable/update/ls, the collision rule,
+   `outsideRange` for `voidbase update`), `src/platform/node/plugins.ts` (verify every bundle against the lockfile and
+   import it with its bare imports resolved to the running instance's modules, via Bun's `build.module`, so the
+   executable loads bundles too) and `virtual:voidbase-plugins` from `hooks-plugin.ts` for Workers (verified at
+   build). `app.ts` loads shipped minus disabled minus shadowed, plus installed; `/api/plugins` reports origins.
+   `test/unit/installed.test.ts` measures all of it against the fixture marketplace, including a bundle importing the
+   kernel entry point.
 4. The three official plugins re-listed through the pipeline (bundle, audit, hash), and installed into the demo from
    the official marketplace to prove the loop; then one of them installed from a second, throwaway marketplace to
    prove there is no lock-in.

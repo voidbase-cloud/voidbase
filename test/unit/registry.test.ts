@@ -4,7 +4,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { resolve } from "node:path";
-import { download, fetchIndex, integrityOf, pick, problemsWithIndex, verifyIntegrity } from "../../src/node/registry";
+import { compareVersions, download, fetchIndex, integrityOf, pick, problemsWithIndex, verifyIntegrity } from "../../src/node/registry";
 import { createKernel, load, whatLoaded } from "../../src/server/kernel";
 
 const root = resolve(import.meta.dir, "../fixtures/registry");
@@ -89,5 +89,16 @@ describe("what an index has to say", () => {
     const { index } = await fetchIndex(base);
     const twice = { ...index, plugins: [index.plugins[0]!, index.plugins[0]!] };
     expect(problemsWithIndex(twice).join()).toContain("echo is listed twice");
+  });
+});
+
+describe("versions, compared the way latest and a pin need them", () => {
+  test("numbers as numbers, prerelease before release, identifiers numeric before alphabetic", () => {
+    expect(compareVersions("0.10.0", "0.9.0")).toBeGreaterThan(0);
+    expect(compareVersions("0.9.0-beta.6", "0.9.0")).toBeLessThan(0);
+    expect(compareVersions("0.9.0-beta.10", "0.9.0-beta.9")).toBeGreaterThan(0);
+    expect(compareVersions("0.9.0-beta", "0.9.0-beta.1")).toBeLessThan(0);
+    expect(compareVersions("1.0.0-alpha", "1.0.0-1")).toBeGreaterThan(0);
+    expect(compareVersions("1.2.3", "1.2.3")).toBe(0);
   });
 });

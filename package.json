@@ -75,6 +75,10 @@
     "#platform/photon": {
       "workerd": "./src/platform/workers/photon.ts",
       "default": "./src/platform/node/photon.ts"
+    },
+    "#platform/plugins": {
+      "workerd": "./src/platform/workers/plugins.ts",
+      "default": "./src/platform/node/plugins.ts"
     }
   },
   "files": [

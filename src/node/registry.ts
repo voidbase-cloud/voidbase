@@ -124,6 +124,27 @@ export function problemsWithIndex(index: unknown): string[] {
   return out;
 }
 
+/**
+ * Versions, compared the way a marketplace's `latest` and a lockfile's pin need them: numbers as numbers, and a
+ * prerelease before the release it precedes (0.9.0-beta.6 < 0.9.0), identifiers numeric before alphabetic.
+ */
+export function compareVersions(a: string, b: string): number {
+  const [ac = "", ap = ""] = a.split("-", 2); const [bc = "", bp = ""] = b.split("-", 2);
+  const an = ac.split(".").map(Number), bn = bc.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if ((an[i] ?? 0) !== (bn[i] ?? 0)) return (an[i] ?? 0) - (bn[i] ?? 0);
+  if (!ap && !bp) return 0; if (!ap) return 1; if (!bp) return -1;
+  const x = ap.split("."), y = bp.split(".");
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const s = x[i], t = y[i];
+    if (s === undefined) return -1; if (t === undefined) return 1; if (s === t) continue;
+    const ns = Number(s), nt = Number(t);
+    if (!Number.isNaN(ns) && !Number.isNaN(nt)) return ns - nt;
+    if (!Number.isNaN(ns)) return -1; if (!Number.isNaN(nt)) return 1;
+    return s < t ? -1 : 1;
+  }
+  return 0;
+}
+
 /** SRI over the bundle's bytes, the form the index carries and the instance recomputes */
 export async function integrityOf(bytes: Uint8Array): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))); // a copy: the digest wants a plain ArrayBuffer view

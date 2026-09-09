@@ -153,7 +153,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const mode: "package" | "internal" = opts.dir || installed ? "package" : "internal";
   const entry = ["main.ts", "main.js"].map((f) => resolve(consumer, f)).find((f) => existsSync(f) && /export\s+(async\s+)?function\s+register\b|export\s*\{[^}]*\bregister\b/.test(readFileSync(f, "utf8")));
   if (entry) log(`composing ${entry} (register) into the Worker`);
-  writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), entry, queue, hub });
+  writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), pluginsDir: resolve(consumer, process.env.VOIDBASE_PLUGINS_DIR || "pb_plugins"), entry, queue, hub });
   if (!queue) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/queues`, { recursive: true, force: true }); }
   if (!cron) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/crons`, { recursive: true, force: true }); log("cron trigger disabled (VOIDBASE_DEPLOY_CRON=0 / --no-cron): maintenance runs lazily in requests"); }
     log(observability ? "observability: invocation logs kept for the dashboard" : "observability off (VOIDBASE_DEPLOY_OBSERVABILITY=0)");

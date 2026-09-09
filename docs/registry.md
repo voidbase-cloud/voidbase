@@ -80,8 +80,8 @@ never imports Node built-ins, because an instance may be a Worker. A bundle is e
 4. Loads the bundle beside the plugins it ships and resolves the whole graph as it does for them: two providers of
    one interface, a cycle, a missing requirement or a version outside the range are refused before anything runs.
 
-Steps 3 and 4 are the install side of the plan (`plan.md`, Phase 6 and 7) and are not built yet; 1 and 2 are
-`src/node/registry.ts` today.
+1 and 2 are `src/node/registry.ts`; 3 and 4 are `src/node/installed.ts`, `src/platform/*/plugins.ts` and the
+`voidbase plugins` commands (docs/plugins.md, Installing).
 
 ## Running your own
 

@@ -100,6 +100,7 @@ export function generateMainEntry(m: VoidManifest, opts: GenerateOptions = {}): 
     dir: \`\${import.meta.dir}/pb_data\`,
     hooksDir: process.env.VOIDBASE_HOOKS_DIR ?? \`\${import.meta.dir}/pb_hooks\`,
     migrationsDir: process.env.VOIDBASE_MIGRATIONS_DIR ?? \`\${import.meta.dir}/pb_migrations\`,
+    pluginsDir: process.env.VOIDBASE_PLUGINS_DIR ?? \`\${import.meta.dir}/pb_plugins\`,
     publicDir: \`\${import.meta.dir}/pb_public\`,
     ...flags,
   });

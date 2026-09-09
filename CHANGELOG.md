@@ -3,6 +3,18 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.6](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.5...v0.9.0-beta.6) (2026-09-09)
+
+
+### Features
+
+* **plugin:** the registry protocol an instance reads a marketplace with ([84d2f1f](https://github.com/voidbase-cloud/voidbase/commit/84d2f1f41ce457a759289a5042bdc11a8cef7c78))
+
+
+### Documentation
+
+* **plugin:** installing and the marketplace as one system, per the 2026-09-09 direction ([662126e](https://github.com/voidbase-cloud/voidbase/commit/662126e7e148ce9aab49ada4e55e870a4443d119))
+
 ## [0.9.0-beta.5](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.4...v0.9.0-beta.5) (2026-09-09)
 
 

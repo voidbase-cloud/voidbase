@@ -408,13 +408,32 @@ Order of work:
    Worker and Cloudflare is the CI. The CI triggers build every push (release-please's branch excluded, by its exact
    name: the API takes no wildcard), a second Worker, `voidbase-builder`, exists for one trigger (a Worker takes two
    at most) that runs `scripts/instance-build.ts` and is started by the control plane through the Builds
-   API (and again by its keeper cron, `crons/keeper.ts` on the site, for a build nobody claimed), the release build
-   moves the testbeds onto a published version itself (`scripts/testbeds.ts`), each testbed's deploy checks itself
-   (the demo's smoke inside its deploy, the site's provisioning smoke inside its deploy), and the full cloud proof
-   runs as two short builds the keeper starts an hour apart. The marketplace's approval is a maintainer's command.
-   GitHub holds no secrets or variables any more.
+   API (and again by its keeper cron, `crons/keeper.ts` on the site, for a build nobody claimed), and the release
+   build moves the testbeds onto a published version itself (`scripts/testbeds.ts`, which waits for the registry to
+   serve the version and pushes with its own token: a build image pushes as Cloudflare's GitHub App otherwise). The
+   marketplace's approval is a maintainer's command. GitHub holds no secrets or variables any more. Then Mahmood cut
+   the three apps' pipelines to the bone ("this is insane, they are low importance apps"): a push to master is
+   `bun run build` (Vite) and `bun run deploy` (`voidbase sync`), nothing else, no branch builds; the live proof is
+   `bun run live` on the site by hand, the demo's smoke is `bun test` by hand. Found on the way and fixed in
+   voidbase: a Void app's `crons/` schedule never reached the Worker's cron triggers (0.9.0-beta.13), and the
+   request-log suite compared rows by an equal timestamp.
 
 ---
+
+## Where it is going: three ways to run, two modes, one CLI (Mahmood, 2026-09-09)
+
+The picture to work towards, now on the site's roadmap too. An instance runs three ways: the standalone
+executable on your own machine, the npm package on your own machine (on miniflare, so the Workers code runs as it
+runs deployed; today it runs on Bun), and on Cloudflare through wrangler, the voidbase CLI or voidbase cloud. A
+machine is put on the internet in a minute with a try.cloudflare.com quick tunnel (`voidbase serve --tunnel`, for
+the executable and the npm package alike). All three run in two modes: a vanilla instance (no repository, no
+project, no directory layout: download the executable or install the package globally and run it, or make a cloud
+instance) or a voidbase project, which wraps the instance in the `pb_` folders you version on GitHub and deploy
+from CI/CD. A GitHub voidbase project and a Cloudflare voidbase project are synced with one CLI command, which is
+how CI/CD gets set up. The CLI moves data between all three ways in either direction. And the adapter builds
+voidbase stack semantics into voidbase project semantics, so a stack app is hosted on a machine or on Cloudflare
+like any project. What exists: the executable, the package on Bun, Cloudflare all three ways, both modes in shape,
+`voidbase sync`, the adapter. What does not: miniflare for the package, the tunnel flag, the migration command.
 
 ## What to correct on the site when this lands
 

@@ -5,9 +5,10 @@
 //
 // Runs as the last step of the release flow (scripts/release.sh) with GH_TOKEN, a token that may push to the
 // repositories in TESTBEDS (comma separated; default the three of voidbase-cloud), and from any machine the same
-// way. The commit is what the old hourly tracker made, `chore(deps): voidbase <version>`, by voidbase-bot. The token
-// is handed to git through a credential helper, never on the command line and never in a URL, and every line
-// printed is scrubbed of it. A testbed that cannot be moved fails this step, so the release build shows it.
+// way. The commit is what the old hourly tracker made, `chore(deps): voidbase <version>`, by voidbase-bot. The push
+// names the token in the URL it pushes to: a build image carries git credentials of its own (Cloudflare's pushes
+// as its GitHub App, which may not push here) and they win over a credential helper, and every line printed is
+// scrubbed of the token. A testbed that cannot be moved fails this step, so the release build shows it.
 // npm serves a version a little after `npm publish` returns (the first run found it three seconds too early), so
 // this waits until the registry answers for it before asking bun to install it.
 import { mkdtempSync, rmSync } from "node:fs";
@@ -21,8 +22,7 @@ if (!token) { console.error("GH_TOKEN is not set: nothing can be pushed"); proce
 const repos = (process.env.TESTBEDS ?? "voidbase-cloud/voidbase-demo,voidbase-cloud/voidbase-marketplace,voidbase-cloud/voidbase-site").split(",").map((r) => r.trim()).filter(Boolean);
 const PKG = "@voidbase-cloud/voidbase";
 const scrub = (s: string) => s.split(token).join("***");
-// git asks the helper for credentials; the helper answers from the environment
-const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: '!f() { echo "username=x-access-token"; echo "password=$GH_TOKEN"; }; f' };
+const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
 
 async function sh(cmd: string[], cwd: string): Promise<string> {
   const p = Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe", env: gitEnv });
@@ -54,7 +54,8 @@ for (const repo of repos) {
     if (pinned === version) { console.log(`${repo}: already on ${version}`); continue; }
     await sh(["bun", "add", "--exact", `${PKG}@${version}`], dir);
     await sh(["git", "-c", "user.name=voidbase-bot", "-c", "user.email=noreply@voidbase.cloud", "commit", "--quiet", "-am", `chore(deps): voidbase ${version}`], dir);
-    await sh(["git", "push", "--quiet", "origin", "HEAD"], dir);
+    const branch = (await sh(["git", "rev-parse", "--abbrev-ref", "HEAD"], dir)).trim() || "master";
+    await sh(["git", "push", "--quiet", `https://x-access-token:${token}@github.com/${repo}.git`, `HEAD:${branch}`], dir);
     console.log(`${repo}: ${pinned} -> ${version}, pushed; its Cloudflare build deploys it`);
   } catch (err) {
     failed++;

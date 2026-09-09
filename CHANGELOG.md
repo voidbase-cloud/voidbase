@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.17](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.16...v0.9.0-beta.17) (2026-09-09)
+
+
+### Features
+
+* **deploy:** the account's Secrets Store holds a Worker's declared secrets when asked ([0cb82c2](https://github.com/voidbase-cloud/voidbase/commit/0cb82c2a3a6cce4c481e37cc19088272e79b1b05))
+
 ## [0.9.0-beta.16](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.15...v0.9.0-beta.16) (2026-09-09)
 
 

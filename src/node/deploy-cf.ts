@@ -227,7 +227,9 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     if (k === "VOIDBASE_SUPERUSER_PASSWORD" && v === "changeme123") { log("secrets: VOIDBASE_SUPERUSER_PASSWORD in secrets.json is the dev placeholder, not stored"); continue; }
     secretMap.set(k, v);
   }
-  const missingSecrets = declared.filter((k) => !secretMap.has(k) && !onWorker.includes(k));
+  // a secret declared optional may have no value anywhere: the app reads undefined, as declared, and the deploy goes on
+  const optionalSecrets = new Set(definition ? (await definition.info()).filter((k) => k.optional).map((k) => k.name) : []);
+  const missingSecrets = declared.filter((k) => !secretMap.has(k) && !onWorker.includes(k) && !optionalSecrets.has(k));
   if (missingSecrets.length) {
     const msg = `${missingSecrets.length} declared secret(s) have no value in ${secretsDir}/secrets.json and are not on the Worker "${name}" yet: ${missingSecrets.join(", ")}. Push them once from a machine that has them: voidbase secrets push --name ${name}`;
     if (opts.dryRun) log(`secrets: ${msg}`); else throw new Error(msg);

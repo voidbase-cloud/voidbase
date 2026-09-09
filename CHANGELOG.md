@@ -3,6 +3,24 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.14](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.13...v0.9.0-beta.14) (2026-09-09)
+
+
+### Features
+
+* **auth:** auth is the core plugin providing auth@1, and the core asks it through a slot ([c3e8282](https://github.com/voidbase-cloud/voidbase/commit/c3e8282df30029b36ea60e3fe19bee4f9740ece8))
+
+
+### Bug Fixes
+
+* **ci:** a merged release whose own build failed is published by the next build of master ([0b4e904](https://github.com/voidbase-cloud/voidbase/commit/0b4e9044de46bae59fd8a0fc0a87d4683335fe0e))
+* **release:** the testbeds step waits for the manifest bun reads and retries the install ([d90b5a1](https://github.com/voidbase-cloud/voidbase/commit/d90b5a123e484ff80ebf08524e46b2abb090b478))
+
+
+### Documentation
+
+* **plan:** the apps' pipelines cut to build and sync, and the three-ways direction ([bd7f3de](https://github.com/voidbase-cloud/voidbase/commit/bd7f3de0fef4c53f4f6d2db332f695976585cb02))
+
 ## [0.9.0-beta.13](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.12...v0.9.0-beta.13) (2026-09-09)
 
 

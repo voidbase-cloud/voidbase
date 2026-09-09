@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 const PLATFORM_MODULES = ["env", "log", "sse", "sockets", "hooks", "migrations", "photon", "plugins"];
 import ts from "typescript";
 import type { Plugin } from "vite";
-import { pluginsModuleSource } from "./src/node/installed";
+import { pluginsModuleSource, providedImport } from "./src/node/installed";
+import pkg from "./package.json" with { type: "json" };
 
 const VIRTUAL = "virtual:voidbase-hooks";
 const RESOLVED = "\0" + VIRTUAL;
@@ -238,7 +239,18 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; p
       if (hubEntry && id.replace(/\\/g, "/").endsWith("/.void/entry.ts")) return { code: `${code}\nexport { VoidbaseHub } from ${JSON.stringify(hubEntry)};\n`, map: null };
       return null;
     },
-    resolveId(id) { return id === VIRTUAL ? RESOLVED : id === VIRTUAL_MIGRATIONS ? RESOLVED_MIGRATIONS : id === VIRTUAL_PLUGINS ? RESOLVED_PLUGINS : null; },
+    async resolveId(id, importer) {
+      if (id === VIRTUAL) return RESOLVED;
+      if (id === VIRTUAL_MIGRATIONS) return RESOLVED_MIGRATIONS;
+      if (id === VIRTUAL_PLUGINS) return RESOLVED_PLUGINS;
+      // an installed bundle's bare imports mean this package's own modules (src/node/installed.ts providedImport)
+      if (importer && importer.replace(/\\/g, "/").includes("/pb_plugins/")) {
+        const provided = providedImport(id, here, pkg.exports as Record<string, string>);
+        if (provided && "file" in provided) return provided.file;
+        if (provided && "from" in provided) return (await this.resolve(id, provided.from, { skipSelf: true }))?.id ?? null;
+      }
+      return null;
+    },
     async load(id) {
       if (id === RESOLVED_PLUGINS) {
         const root = resolve(pluginsDir, "..");

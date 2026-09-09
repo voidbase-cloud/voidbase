@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { addPlugin, enablePlugin, listPlugins, locate, outsideRange, pluginsModuleSource, readLock, removePlugin, updatePlugins, verifyInstalled } from "../../src/node/installed";
+import { addPlugin, enablePlugin, listPlugins, locate, outsideRange, pluginsModuleSource, providedImport, readLock, removePlugin, updatePlugins, verifyInstalled } from "../../src/node/installed";
 import { integrityOf } from "../../src/node/registry";
 import { loadInstalled } from "../../src/platform/node/plugins";
 import { createKernel, load, whatLoaded } from "../../src/server/kernel";
@@ -177,5 +177,23 @@ describe("remove, enable, update", () => {
     const rec = join(root, "pb_plugins/echo/release.json"); const r = JSON.parse(readFileSync(rec, "utf8")); r.manifest.voidbase = "^0.9.0"; writeFileSync(rec, JSON.stringify(r));
     expect(outsideRange(root, "1.0.0")).toEqual([{ name: "echo", range: "^0.9.0" }]);
     expect(outsideRange(root, "0.9.5")).toEqual([]);
+  });
+});
+
+describe("what an installed bundle's bare imports mean when the Worker is built", () => {
+  const exportsMap = { ".": "./src/node/index.ts", "./kernel": "./src/server/kernel.ts", "./plugins/collections": "./src/server/plugins/collections.ts" };
+  test("voidbase's own name and subpaths map to its files through the package's exports map", () => {
+    expect(providedImport("@voidbase-cloud/voidbase/kernel", "/pkg", exportsMap)).toEqual({ file: "/pkg/src/server/kernel.ts" });
+    expect(providedImport("@voidbase-cloud/voidbase", "/pkg", exportsMap)).toEqual({ file: "/pkg/src/node/index.ts" });
+    expect(providedImport("@voidbase-cloud/voidbase/plugins/collections", "/pkg", exportsMap)).toEqual({ file: "/pkg/src/server/plugins/collections.ts" });
+  });
+  test("a subpath the map does not export is nothing, and so is anything that is not voidbase or hono", () => {
+    expect(providedImport("@voidbase-cloud/voidbase/secret", "/pkg", exportsMap)).toBeNull();
+    expect(providedImport("left-pad", "/pkg", exportsMap)).toBeNull();
+    expect(providedImport("@voidbase-cloud/voidbase-site", "/pkg", exportsMap)).toBeNull();
+  });
+  test("hono resolves from the package's own copy", () => {
+    expect(providedImport("hono", "/pkg", exportsMap)).toEqual({ from: "/pkg/package.json" });
+    expect(providedImport("hono/cors", "/pkg", exportsMap)).toEqual({ from: "/pkg/package.json" });
   });
 });

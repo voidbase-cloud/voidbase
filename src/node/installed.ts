@@ -200,3 +200,21 @@ export function outsideRange(root: string, target: string): { name: string; rang
   }
   return out;
 }
+
+/**
+ * What an installed bundle's bare import means when the Worker is built: voidbase's own files, by the package's
+ * own exports map, and hono from voidbase's copy. A bundle may import only those (docs/registry.md), and a
+ * project's Vite would find them in node_modules; the builder builds from voidbase's checkout, where the package
+ * is not in its own node_modules and a bare self-import has nothing to resolve to. So the plugin maps them itself,
+ * the same way the Bun loader provides them (platform/node/plugins.ts), and both shapes see the same modules.
+ * Returns the file for a voidbase specifier, "hono" for hono's (the caller resolves it from the package), or null.
+ */
+export function providedImport(id: string, packageDir: string, exportsMap: Record<string, string>): { file: string } | { from: string } | null {
+  const m = /^@voidbase-cloud\/voidbase(\/.*)?$/.exec(id);
+  if (m) {
+    const target = exportsMap[m[1] ? `.${m[1]}` : "."];
+    return target ? { file: join(packageDir, target) } : null;
+  }
+  if (id === "hono" || id.startsWith("hono/")) return { from: join(packageDir, "package.json") };
+  return null;
+}

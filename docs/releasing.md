@@ -98,7 +98,8 @@ release:
   flow (release-please in dry-run mode, `npm publish --dry-run`, the executables, nothing published, no release
   touched), or locally `bun run release -- --dry-run` (needs `GH_TOKEN` with read access and `NPM_TOKEN`).
 - A release cut by hand also publishes: `gh release create vX.Y.Z --notes-file notes.md` after bumping `package.json`
-  to X.Y.Z on `master`; the `release` event starts a build of the tagged commit, whose release step publishes it.
+  to X.Y.Z on `master`; the next build of master finds a release that is not on npm and publishes it, or
+  `bun run release` does from a machine at that commit.
 - Publishing from a machine: `bun run check && bun test`, then
   `NPM_CONFIG_//registry.npmjs.org/:_authToken=$VOIDBASE_NPM_TOKEN npm publish --access public`.
 
@@ -107,9 +108,10 @@ requests and issues write on this repository: release-please opens and labels th
 with it, the assets are uploaded with it), `NPM_TOKEN` (an npm granular token with publish rights on the
 `@voidbase-cloud` scope) and optionally `GH_PACKAGES_TOKEN` (a classic PAT with `write:packages`; without it the
 GitHub Packages copy is skipped). `bun scripts/cf-builds.ts setup` stores them from the environment; builds of other
-branches never carry them. GitHub itself holds only what the workflow needs to start builds: the secret
-`CLOUDFLARE_BUILDS_TOKEN` and the trigger variables. release-please's PR needs no organization setting for Actions,
-since a PAT opens it.
+branches never carry them. GitHub itself holds nothing: there are no Actions, so no Actions secrets or variables.
+release-please's PR needs no organization setting for Actions, since a PAT opens it. `GH_TOKEN` also pushes the
+testbed bumps (`scripts/testbeds.ts`, the last step of a publish), so it needs contents write on
+`voidbase-cloud/voidbase-demo`, `voidbase-marketplace` and `voidbase-site` as well.
 
 Consumers: `bun add @voidbase-cloud/voidbase`; from GitHub Packages instead, `.npmrc` with
 `@voidbase-cloud:registry=https://npm.pkg.github.com` and a token with `read:packages`.

@@ -7,6 +7,8 @@
 #                    GitHub Packages, the tarball on the release
 #   executables      when that release lacks checksums.txt: every platform, the exe smoke, the archives and checksums on
 #                    the release, the notes opened with the `./voidbase update` hint
+#   testbeds         once the version is on npm: the demo, the marketplace and the site are pinned to it and pushed
+#                    (scripts/testbeds.ts), and their Cloudflare builds deploy them
 # Idempotent: a re-run after a partial failure does only what is still missing. Steps are recorded for the status page
 # (ci/public, kind release).
 #   scripts/release.sh [--dry-run] [--tag vX.Y.Z] [--no-pr] [--hot]
@@ -86,6 +88,12 @@ publish_npm() {
 if [ "$on_npm" = 1 ] && [ -z "$DRY" ]; then skip_step publish; echo "$PKG@$VERSION is already on npm"
 elif [ -z "${GH_TOKEN:-}" ]; then echo "release $TAG needs publishing but GH_TOKEN is not set"; exit 1
 else step publish publish_npm || exit 1; [ -z "$DRY" ] && outputs "published=true"; fi
+
+# the testbeds run the newest release on purpose (a regression is meant to show up there first): once the version is
+# on npm, the release build moves them onto it. Idempotent: a testbed already there is left alone.
+if [ -n "$DRY" ]; then skip_step testbeds "dry run"
+elif [ "${TESTBEDS:-}" = 0 ]; then skip_step testbeds "TESTBEDS=0"
+else step testbeds bun scripts/testbeds.ts "$VERSION" || exit 1; fi
 
 build_executables() {
   . scripts/ci-oracles.sh

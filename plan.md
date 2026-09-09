@@ -404,6 +404,15 @@ Order of work:
    repository connection and once from its workflow, on that one-build account; `scripts/cf-build.sh` now adopts
    the build the connection started and starts one only when none appears, and stays the fallback for a trigger
    that stopped listening.
+8. **Done** (2026-09-09), no GitHub Actions anywhere: Mahmood's direction, every repository is connected to its
+   Worker and Cloudflare is the CI. The CI triggers build every push (release-please's branch excluded, by its exact
+   name: the API takes no wildcard), a second Worker, `voidbase-builder`, exists for one trigger (a Worker takes two
+   at most) that runs `scripts/instance-build.ts` and is started by the control plane through the Builds
+   API (and again by its keeper cron, `crons/keeper.ts` on the site, for a build nobody claimed), the release build
+   moves the testbeds onto a published version itself (`scripts/testbeds.ts`), each testbed's deploy checks itself
+   (the demo's smoke inside its deploy, the site's provisioning smoke inside its deploy), and the full cloud proof
+   runs as two short builds the keeper starts an hour apart. The marketplace's approval is a maintainer's command.
+   GitHub holds no secrets or variables any more.
 
 ---
 

@@ -127,8 +127,7 @@ deploys with nothing but the deploy token once `voidbase secrets push` has store
 voidbase and a seeded reference PocketBase (`scripts/seed-reference.sh`), runs every suite through
 `scripts/ci-suites.sh` on the Workers and Bun runtimes, then the production-build boots, the prebuilt executable and
 the starter smoke, and renders the status page at [release.voidbase.cloud](https://release.voidbase.cloud/).
-Cloudflare Workers Builds runs it (`scripts/cf-builds.ts setup`); `.github/workflows/cloudflare.yml` only starts the
-builds; see [docs/ci.md](docs/ci.md).
+Cloudflare Workers Builds runs it on every push (`scripts/cf-builds.ts setup`); see [docs/ci.md](docs/ci.md).
 
 ## Docs
 

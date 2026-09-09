@@ -1,8 +1,8 @@
 # CI and release: one flow, Cloudflare runs it
 
 `scripts/ci.sh` is the whole CI, and its last step runs `scripts/release.sh`, the whole release flow, when the
-commits call for it. Both run the same way on a dev machine and on Cloudflare Workers Builds; GitHub Actions only
-starts the builds (`.github/workflows/cloudflare.yml`).
+commits call for it. Both run the same way on a dev machine and on Cloudflare Workers Builds, which builds every
+push through the repository's connection; there are no GitHub Actions.
 Every step is recorded (`scripts/ci-lib.sh`) and `scripts/ci-status.ts` renders the record into `ci/public`:
 `index.html`, `status.json`, `badge.svg`, the suite logs and the screenshots. That directory is the status Worker a
 build deploys.
@@ -45,7 +45,7 @@ oracle sync, the servers, the reference and Chrome happen only when a selected c
 
 | change | what runs |
 | --- | --- |
-| docs, README, surface, `ci/`, `.github/` | commit messages and the plan: about half a minute |
+| docs, README, surface, `ci/` | commit messages and the plan: about half a minute |
 | one suite's file | that suite on both runtimes, with the servers it needs |
 | `src/node/deploy-cf.ts`, `src/cloud` | typecheck, unit, the deploy dry run, the executable smoke, cloud-rest: under two minutes |
 | `src/node/serve.ts`, `bin/voidbase.ts` | the Bun pass and the executable smoke |
@@ -100,17 +100,16 @@ with its own meanings (build the site and typecheck it, deploy the instance, rea
 would deploy with). `voidbase sync` writes these three into the triggers it creates whenever the project has the
 scripts, so a project set up from the CLI and one set up by hand in the dashboard end up saying the same thing.
 
-**One change, one build.** GitHub starts every build here, so the count is decided by which events
-`.github/workflows/cloudflare.yml` answers. It declines two: release-please's own pull request, whose diff is a
-changelog, a version and a manifest generated from commits the master build has already run, and the release that
-pull request publishes while hot mode is on, because in hot mode the master build that merged it is the one that
-published to npm. With hot mode off the release build still runs, since that is where a release's executables are
-built. So a push to master is one build, a pull request is two (its branch and the merge), and a release is one.
+**One change, one build.** Cloudflare builds every push, so the count is decided by the triggers' branch filters.
+The branches trigger declines one branch: release-please's own, whose diff is a changelog, a version and a manifest
+generated from commits the master build has already run. A release is the master build that merged its pull request:
+in hot mode that build publishes to npm and moves the testbeds; with hot mode off it also builds the release's
+executables. So a push to master is one build, a pull request is one (its branch; the merge is a push to master),
+and a release is one.
 
 None of the three verbs supervises the commands it runs: no deadline, no retry, no watchdog. A build that hangs or
 fails is the build platform's to cut short and to run again -- Cloudflare has a twenty minute limit and a retry
-button, GitHub Actions has the same -- and keeping that logic out of the scripts is what makes them read as a build
-path rather than a supervisor.
+button -- and keeping that logic out of the scripts is what makes them read as a build path rather than a supervisor.
 
 ## What is kept between runs
 
@@ -133,28 +132,22 @@ lacks the shared libraries Chrome needs, unpacks them from Ubuntu's packages int
 private apt root, `dpkg-deb -x`, `LD_LIBRARY_PATH`): the Workers Builds image has neither Chrome nor sudo nor those
 libraries. The unpacking path is exercised on a dev machine with `CI_BROWSER_DOWNLOAD=1 CI_BROWSER_LIBS=always`.
 
-## GitHub Actions only starts builds
+## Every push builds
 
-`.github/workflows/cloudflare.yml` is the only workflow. It never runs the flows: it asks Cloudflare Workers Builds
-for a build of the commit at hand through the Builds API (a few seconds of Actions time) and exits.
+The "Cloudflare Workers and Pages" GitHub App tells Cloudflare about every push to the connected repository, and the
+triggers decide what runs:
 
-| event | build started |
+| event | build |
 | --- | --- |
-| push to master | the master trigger; the release step of the build then refreshes the release PR for releasable commits or publishes a merged release PR |
-| pull request from a branch of this repository | the branches trigger: a preview URL of the results, no release work, no secrets |
-| release published | the master trigger for the tagged commit, whose release step publishes it |
-| Actions > cloudflare > Run workflow | the ref's trigger |
+| push to master | the master trigger; the release step of the build then refreshes the release PR for releasable commits, or publishes a merged release PR and moves the testbeds onto it |
+| push to any other branch (a pull request's branch included) | the branches trigger: a preview URL of the results, no release work, no secrets; release-please's own branch is excluded |
+| `bun scripts/cf-builds.ts build --branch <b>` or the dashboard's retry | the same, started by hand |
+| the control plane queues a cloud instance build | the `voidbase-builder (instance-build)` trigger, started through the API by voidbase.cloud (docs/plugins.md), never by a push |
 
-The job is skipped until the repository variables exist (`CF_ACCOUNT_ID`, `CF_CI_TRIGGER_MASTER`,
-`CF_CI_TRIGGER_BRANCHES`) together with the secret `CLOUDFLARE_BUILDS_TOKEN`; `bun scripts/cf-builds.ts setup
---github` stores all four. With the repository variable
-`CF_BUILDS_WAIT=1` the job also waits for the builds it started and fails when one fails, so the pull request check
-reflects the result; without it the check only means "started", and the result lives in the dashboard, in
-`cf-builds.ts logs`, and on the status page. Pushes never build on their own: every trigger's watch paths exclude every
-path, and the API is not subject to them. Standard GitHub-hosted runners are free for public repositories anyway; the
-trigger job spends seconds.
+Nothing runs on GitHub's side: no Actions, no Actions secrets, no variables. The check run Cloudflare posts back
+is the pull request's status, and the result lives in the dashboard, in `cf-builds.ts logs`, and on the status page.
 
-Two things stop existing with this layout because they need the OIDC token only a GitHub Actions run can mint:
+Two things do not exist with this layout because they need the OIDC token only a GitHub Actions run can mint:
 `npm publish --provenance` and the build attestations of the release archives. Releases carry checksums only.
 
 ## Cloudflare Workers Builds
@@ -163,13 +156,20 @@ Two things stop existing with this layout because they need the OIDC token only 
 "Cloudflare Workers and Pages" GitHub App starts a build on every push to a connected repository, runs a build command
 and a deploy command in Cloudflare's build image, and posts a check run (and a preview URL on pull requests) back to
 GitHub. One project, `voidbase-ci`, runs voidbase's flows there: a Worker whose deploy publishes the status page of
-the build (`ci/wrangler.jsonc`, assets only). A project has at most two triggers with one command each, which is
-why the release flow runs inside the CI build rather than as a project of its own:
+the build (`ci/wrangler.jsonc`, assets only). A trigger has one build command and one deploy command, and a Worker
+has two triggers at most (the API answers 12030 to a third), which is why the release flow runs inside the CI build
+rather than as a project of its own, and why the instance builder is a second Worker, `voidbase-builder`, a
+placeholder script that serves nothing and exists for its one trigger:
 
 | trigger | build command | deploy command |
 | --- | --- | --- |
-| master | `bash scripts/ci.sh` | `wrangler deploy -c ci/wrangler.jsonc` |
-| branches | `bash scripts/ci.sh` | `wrangler versions upload -c ci/wrangler.jsonc`: a preview URL of the results on the pull request |
+| master | `bun run build` (the CI suite) | `bun run deploy` (`wrangler deploy -c ci/wrangler.jsonc`) |
+| branches | `bun run build` | `bun run version` (`wrangler versions upload`): a preview URL of the results on the pull request |
+| `voidbase-builder (instance-build)` | `bun scripts/instance-build.ts` | nothing: the release it builds reaches its instance through the control plane |
+
+The builder trigger's watch paths exclude every path, so a push never starts it; the control plane does,
+through the Builds API, with the builder's three variables on the trigger (`VB_CLOUD_URL`, and the superuser it
+claims builds as, `VB_BUILD_EMAIL` and `VB_BUILD_PASSWORD`).
 
 A failed build command means no deploy, so the status Worker shows the last build that ran to the end; the log of a
 failed build is in the dashboard and in `cf-builds.ts logs`. The release secrets (`GH_TOKEN`, `NPM_TOKEN`, optionally
@@ -184,10 +184,11 @@ failed build is in the dashboard and in `cf-builds.ts logs`. The release secrets
 | build timeout | 20 minutes | 20 minutes |
 | CPU, memory | 2 vCPU, 8 GB | 4 vCPU, 8 GB |
 
-The image is Ubuntu 24.04 x86_64 with Node 22, Bun 1.2.15 (the projects set `BUN_VERSION=1.3.14`, the version the
-workflows pin), git, curl, unzip and build-essential; no Chrome, no lsof, no jq, no gh. The scripts need none of them:
-`scripts/gh-release.ts` talks to GitHub's API directly. The 20-minute timeout is the constraint to watch: the CI run
-takes 7.5 minutes on GitHub's 4 vCPU and gets 2 on the Free plan, and the two projects build one after the other there.
+The image is Ubuntu 24.04 x86_64 with Node 22, Bun 1.2.15 (the projects set `BUN_VERSION=1.3.14`, the version setup
+pins), git, curl, unzip and build-essential; no Chrome, no lsof, no jq, no gh. The scripts need none of them:
+`scripts/gh-release.ts` talks to GitHub's API directly. The 20-minute timeout and the one concurrent build of the
+Free plan are the constraints to watch: a full CI run takes about nine minutes on 2 vCPU, and every project of the
+account (the CI, the site, the demo, the marketplace, the instance builds) waits in the same queue.
 
 ### Setup, once
 
@@ -196,18 +197,18 @@ takes 7.5 minutes on GitHub's 4 vCPU and gets 2 on the Free plan, and the two pr
 2. Create a user API token at dash.cloudflare.com/profile/api-tokens with **Workers Builds Configuration: Edit** and
    **Workers Scripts: Edit**, and export it as `CLOUDFLARE_BUILDS_TOKEN`. The Builds API takes user tokens only; the
    account-owned token `voidbase deploy` uses is rejected.
-3. `GH_TOKEN=... NPM_TOKEN=... bun scripts/cf-builds.ts setup --github` connects the repository, creates the Worker
-   and its two triggers with push builds off, sets `BUN_VERSION`, stores the release secrets it finds in the
-   environment on the master trigger, and writes the workflow's variables and secret into the GitHub repository
-   (`gh variable set`, `gh secret set`). The release secrets: `GH_TOKEN` (a fine-grained PAT with contents and pull requests write on the repository, for release-please
-   and the release assets), `NPM_TOKEN` (the npm granular token), optionally `GH_PACKAGES_TOKEN` (a classic PAT with
-   `write:packages`; fine-grained tokens cannot publish packages, and without it the GitHub Packages copy is skipped).
-   The first run stops when the account has no build token yet: open the `voidbase-ci` Worker in the dashboard,
-   Settings > Builds > API token > Create new token, and run setup again.
+3. `GH_TOKEN=... NPM_TOKEN=... VB_BUILD_EMAIL=... VB_BUILD_PASSWORD=... bun scripts/cf-builds.ts setup` connects the
+   repository, creates the CI Worker with its two triggers (every push builds) and the builder Worker with its one
+   (only through the API), sets `BUN_VERSION`, and stores the secrets it finds in the environment: the release
+   secrets on the master trigger, the builder's superuser on the builder trigger. The release secrets: `GH_TOKEN` (a fine-grained
+   PAT with contents and pull requests write on this repository and contents write on the testbeds' repositories,
+   for release-please, the release assets and the testbed bumps), `NPM_TOKEN` (the npm granular token), optionally
+   `GH_PACKAGES_TOKEN` (a classic PAT with `write:packages`; fine-grained tokens cannot publish packages, and without
+   it the GitHub Packages copy is skipped). The first run stops when the account has no build token yet: open the
+   `voidbase-ci` Worker in the dashboard, Settings > Builds > API token > Create new token, and run setup again.
 4. `bun scripts/cf-builds.ts build --branch master --follow` runs the first build and streams its log; `status`,
    `builds`, `logs <uuid>`, `cancel <uuid>` and `env` cover the rest (the header of the script lists them).
-5. From then on every push and pull request goes through the workflow, one build each. `gh variable set
-   CF_BUILDS_WAIT --body 1` makes the workflow wait for the build it started.
+5. From then on every push builds, one build each.
 
 `test/cf-builds.ts` runs the CLI against `test/cf-mock.ts`, whose Builds endpoints follow the request and response
 shapes of Cloudflare's API reference; the live API is exercised the first time the App and the user token exist.
@@ -218,8 +219,8 @@ shapes of Cloudflare's API reference; the live API is exercised the first time t
   checksums only.
 - GitHub Packages only with `GH_PACKAGES_TOKEN`.
 - Logs live in the dashboard and in `cf-builds.ts logs`; the deployed page is the last build that ran to the end.
-- release-please and the release assets use `GH_TOKEN`, a PAT, so a release it creates fires the `release` event and
-  the workflow starts one more release build for the tagged commit, which finds everything published and stops.
+- A release cut by hand (`gh release create vX.Y.Z` after bumping `package.json` on master) is published by the next
+  build of master, which finds a release that is not on npm; nothing listens for GitHub's `release` event.
 
 ## The status page
 

@@ -11,7 +11,11 @@ import { writeCloudProject } from "./cloud-init";
 import { assetHash, contentTypeFor, type ReleaseManifest, type ReleaseSource } from "../cloud/rest";
 
 const PKG = resolve(import.meta.dir, "../..");
-export interface BundleOptions { out?: string; version?: string; hub?: boolean; queue?: boolean; log?: (line: string) => void; keepProject?: boolean }
+export interface BundleOptions {
+  out?: string; version?: string; hub?: boolean; queue?: boolean; log?: (line: string) => void; keepProject?: boolean;
+  /** a project's pb_plugins (voidbase.lock beside it): the installed plugins are baked into the release's Worker, verified against the lockfile at build */
+  pluginsDir?: string;
+}
 
 const walk = (dir: string, base = dir): string[] => readdirSync(dir).flatMap((n) => { const f = join(dir, n); return statSync(f).isDirectory() ? walk(f, base) : [relative(base, f).replace(/\\/g, "/")]; });
 const sh = async (cmd: string[], cwd: string) => { const p = Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe", env: process.env }); const [out, errText, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]); if (code !== 0) throw new Error(`${cmd.join(" ")} exited with ${code}\n${out.slice(-2000)}\n${errText.slice(-2000)}`); return out; };
@@ -24,7 +28,9 @@ export async function buildRelease(o: BundleOptions = {}): Promise<{ dir: string
   const src = resolve(PKG, ".cloud/_release-src"); mkdirSync(`${src}/pb_hooks`, { recursive: true }); mkdirSync(`${src}/pb_migrations`, { recursive: true });
   const cloud = resolve(PKG, ".cloud/_release"); rmSync(cloud, { recursive: true, force: true });
   const hub = o.hub !== false; const queue = o.queue !== false;
-  writeCloudProject(cloud, "internal", { hooksDir: `${src}/pb_hooks`, migrationsDir: `${src}/pb_migrations`, queue: queue ? "jobs" : false, hub });
+  const pluginsDir = o.pluginsDir ? resolve(o.pluginsDir) : `${src}/pb_plugins`; mkdirSync(pluginsDir, { recursive: true });
+  writeCloudProject(cloud, "internal", { hooksDir: `${src}/pb_hooks`, migrationsDir: `${src}/pb_migrations`, pluginsDir, queue: queue ? "jobs" : false, hub });
+  if (o.pluginsDir) log(`plugins: ${pluginsDir} (voidbase.lock beside it decides what is baked in)`);
   // placeholder ids: the real bindings are set at upload time from the manifest
   writeFileSync(`${cloud}/wrangler.jsonc`, JSON.stringify({
     name: "voidbase", placement: { mode: "smart" },

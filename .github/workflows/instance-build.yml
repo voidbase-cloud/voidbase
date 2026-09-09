@@ -1,0 +1,30 @@
+# Builds for cloud instances that installed a plugin (scripts/instance-build.ts): the control plane queues them, and
+# this workflow claims and builds them on a schedule, so the control plane needs no token to reach GitHub. Minutes
+# of latency, which the dashboard says. The repository variable VB_CLOUD_URL turns it on; VB_BUILD_EMAIL and
+# VB_BUILD_PASSWORD are a superuser on that control plane, kept as secrets.
+name: instance-build
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: instance-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: vars.VB_CLOUD_URL != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - env:
+          VB_CLOUD_URL: ${{ vars.VB_CLOUD_URL }}
+          VB_BUILD_EMAIL: ${{ secrets.VB_BUILD_EMAIL }}
+          VB_BUILD_PASSWORD: ${{ secrets.VB_BUILD_PASSWORD }}
+        run: bun scripts/instance-build.ts

@@ -83,7 +83,8 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      and installed. --check changes nothing and exits 1 when behind, 2 when it
                                      could not find out, which is what a pipeline reads
   version                            print the version
-  bundle [--out dir] [--version v]   build the generic Worker + panel as a release directory (default .cloud/releases/<v>)
+  bundle [--out dir] [--version v]   build the generic Worker + panel as a release directory (default .cloud/releases/<v>);
+         [--plugins-dir pb_plugins]     --plugins-dir bakes a project's installed plugins (voidbase.lock beside them) into the Worker
          [--push http://vb --token t]  and optionally push it into a voidbase control plane (POST /api/vbcloud/releases)
   release push <dir> --url http://vb --token <superuser token>   push a built release ( --no-activate keeps the current one)
   superuser list                     list superusers (--url, --admin)
@@ -383,7 +384,7 @@ switch (cmd) {
   case "token": { const { tokenHelp } = await import("../src/node/deploy-cf"); console.log(tokenHelp()); break; }
   case "bundle": {
     const { buildRelease, pushRelease } = await import("../src/node/bundle");
-    const r = await buildRelease({ out: flags.out as string | undefined, version: flags.version as string | undefined, hub: flags["no-hub"] ? false : undefined, queue: flags["no-queue"] ? false : undefined, keepProject: !!flags["keep-project"] });
+    const r = await buildRelease({ out: flags.out as string | undefined, version: flags.version as string | undefined, hub: flags["no-hub"] ? false : undefined, queue: flags["no-queue"] ? false : undefined, keepProject: !!flags["keep-project"], pluginsDir: flags["plugins-dir"] ? resolve(flags["plugins-dir"]) : undefined });
     if (flags.push) await pushRelease({ dir: r.dir, url: String(flags.push), token: String(flags.token ?? process.env.VOIDBASE_RELEASE_TOKEN ?? ""), activate: !flags["no-activate"] });
     break;
   }

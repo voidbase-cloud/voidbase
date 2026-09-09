@@ -96,6 +96,18 @@ plugin's name replaces it. That, and the open registry protocol, is what keeps a
 and of our plugins. `voidbase update` names the installed plugins whose range excludes the target before it changes
 anything.
 
+## Cloud instances
+
+A cloud instance's owner holds no filesystem, and the control plane is a Worker with no bun and no Vite, so the set
+of plugins is fixed when the instance's Worker is built. Installing one is therefore a rebuild: the control plane
+records the plugin set on the instance (`POST /api/vbcloud/instances/:id/plugins`) and queues a build;
+`scripts/instance-build.ts`, run by the `instance-build` workflow every few minutes, claims the build
+(`GET /api/vbcloud/builds/next`), installs the plugins with the instance's own released voidbase (checked out at its
+tag, so the code is exactly the release's), verifies each bundle against the hash the control plane recorded, builds
+a release with `voidbase bundle --plugins-dir`, pushes it without making it the default, and the control plane
+re-provisions the instance from it (`POST /api/vbcloud/builds/:id/done`). An upgrade of an instance that has
+plugins is the same build on the new base rather than a plain re-provision, which would drop them.
+
 ## What is not built
 
 Auth, the first core plugin, is still built in, which is why `CORE` is empty. A marketplace's audit is a first pass

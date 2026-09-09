@@ -3,6 +3,15 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.13](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.12...v0.9.0-beta.13) (2026-09-09)
+
+
+### Bug Fixes
+
+* **adapter:** an app's crons become the Worker's cron triggers ([cc299a5](https://github.com/voidbase-cloud/voidbase/commit/cc299a5d3caa65040dad98fa99dfc22a7482b4be))
+* **release:** the testbeds step pushes with its own token, not the build image's identity ([1c63aa5](https://github.com/voidbase-cloud/voidbase/commit/1c63aa58c3b61afc1b684386833b83c8424ddd5b))
+* **release:** the testbeds step waits for npm to serve the version before moving them ([ce219c4](https://github.com/voidbase-cloud/voidbase/commit/ce219c43618f1e0cf8e637208b8b7280c891c89d))
+
 ## [0.9.0-beta.12](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.11...v0.9.0-beta.12) (2026-09-09)
 
 

@@ -7,6 +7,7 @@ import { ident } from "../db";
 import { nowString } from "../ids";
 import type { Sign, Token } from "./lexer";
 import { parseFilter, type Expr } from "./parser";
+import { authFields } from "../auth-slot";
 
 export class FilterError extends Error {}
 
@@ -74,7 +75,7 @@ const MACROS: Record<string, () => unknown> = {
   "@yearEnd": () => nowString(new Date()).slice(0, 4) + "-12-31 23:59:59.999Z",
 };
 
-const REQUEST_AUTH_STATIC = new Set(["id", "collectionId", "collectionName", "email", "emailVisibility", "verified"]);
+// what an auth record answers to beyond its collection's own fields is the auth provider's to say (auth@1 schema), not this file's
 
 export const jsonEach = (col: string) =>
   `json_each(CASE WHEN iif(json_valid(${col}), json_type(${col})='array', FALSE) THEN ${col} ELSE json_array(${col}) END)`;
@@ -252,7 +253,7 @@ class Compiler {
       else if (field === "collectionName") v = auth.collection.name;
       else {
         const f = (auth.collection.fields as Field[]).find((x) => x.name === field);
-        if (!f && !REQUEST_AUTH_STATIC.has(field)) throw new FilterError(`unknown @request.auth field "${field}"`);
+        if (!f && !authFields().includes(field)) throw new FilterError(`unknown @request.auth field "${field}"`);
         v = auth.row[field];
         if (f && isMultiple(f) && typeof v === "string") { try { v = JSON.parse(v); } catch { v = [v]; } }
         if (f?.type === "bool") v = v ? 1 : 0;

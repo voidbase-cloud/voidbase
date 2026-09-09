@@ -3,7 +3,7 @@
 // against that minute. The superuser API lists jobs and runs one on demand.
 import type { Hono } from "hono";
 import { logger } from "#platform/log";
-import { requireSuperuser } from "./auth";
+import { requireSuperuser } from "./auth-slot";
 import { run } from "./db";
 import { notFound } from "./errors";
 import { crons as hookCrons } from "./hooks/runtime";

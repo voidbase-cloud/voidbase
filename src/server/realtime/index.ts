@@ -16,7 +16,7 @@ import { loadCollections } from "../collections/model";
 import { one, stmt } from "../db";
 import { badRequest, notFound } from "../errors";
 import { nowString, randomString } from "../ids";
-import { findAuthRecordByToken, isSuperuser } from "../auth";
+import { fromToken, isSuperuser } from "../auth-slot";
 import { enrich, fetchRecord, recordMatchesRule, type RecordContext } from "../records/service";
 import { rowToValues } from "../records/values";
 import { trigger } from "../hooks/runtime";
@@ -220,7 +220,7 @@ async function dispatch(env: AppEnv["Bindings"], cl: Client, ch: Change, collect
 
 async function deliver(db: D1Database, bindings: AppEnv["Bindings"], cl: Client, sub: Subscription, collection: Collection, ch: Change, collections: Map<string, Collection>) {
   const token = sub.headers.authorization?.replace(/^bearer /i, "") || cl.token;
-  const auth = token ? await findAuthRecordByToken(db, token) : null;
+  const auth = token ? await fromToken(token, bindings) : null;
   const ctx: RecordContext = {
     db, storage: bindings.STORAGE, auth, superuser: isSuperuser(auth),
     request: { auth: auth ? { collection: auth.collection, row: auth.row } : null, method: "GET", query: sub.query, headers: sub.headers, body: {}, context: "realtime" },

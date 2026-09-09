@@ -43,18 +43,8 @@ export async function loadAuth(c: Context<AppEnv>): Promise<AuthRecord | null> {
 
 export const isSuperuser = (auth: AuthRecord | null | undefined) => !!auth && auth.collection.name === SUPERUSERS;
 
-export function requireAuth(c: Context<AppEnv>): AuthRecord {
-  const auth = c.get("auth");
-  if (!auth) throw unauthorized("The request requires valid record authorization token.");
-  return auth;
-}
-
-export function requireSuperuser(c: Context<AppEnv>): AuthRecord {
-  const auth = c.get("auth");
-  if (!auth) throw unauthorized("The request requires valid record authorization token.");
-  if (!isSuperuser(auth)) throw forbidden("The authorized record is not allowed to perform this action.");
-  return auth;
-}
+// what a route needs of the request's auth is the core's question, asked through the slot (auth-slot.ts)
+export { requireAuth, requireSuperuser } from "./auth-slot";
 
 export async function newAuthToken(auth: AuthRecord, refreshable = true, durationOverride?: number): Promise<string> {
   const secret = option<string>(auth.collection, "authToken.secret", "");

@@ -1,6 +1,6 @@
 // POST /api/sql (apis/sql.go, the panel's SQL console): superuser-only raw SQL against D1, at most 1000 rows.
 import type { Hono } from "hono";
-import { requireSuperuser } from "./auth";
+import { requireSuperuser } from "./auth-slot";
 import { ApiError, badRequest } from "./errors";
 import type { AppEnv } from "./types";
 

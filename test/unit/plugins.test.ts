@@ -6,7 +6,7 @@
 // handed to a container.
 import { describe, expect, test } from "bun:test";
 import { checkManifest, type Plugin, type PluginManifest } from "../../src/server/plugins/manifest";
-import { resolve, satisfies } from "../../src/server/plugins/resolve";
+import { CORE, resolve, satisfies } from "../../src/server/plugins/resolve";
 import { Hono } from "hono";
 import { createKernel, load, serve, using, whatLoaded } from "../../src/server/kernel";
 
@@ -181,7 +181,6 @@ describe("the kernel refuses a graph it cannot load", () => {
 });
 
 describe("the tier that is not optional", () => {
-  // the core list is empty while auth is still built in, so these pass the list they are testing against
   test("an instance with no provider for a core interface says so rather than pretending it is lean", () => {
     const { missingCore, problems } = resolve([plugin({ name: "backups" })], "0.9.0", ["auth@1"]);
     expect(problems).toEqual([]);
@@ -193,15 +192,17 @@ describe("the tier that is not optional", () => {
     expect(missingCore).toEqual([]);
   });
 
-  test("nothing is core yet, because nothing has left the core: no instance warns today", () => {
-    expect(resolve([plugin({ name: "backups" })], "0.9.0").missingCore).toEqual([]);
+  test("auth is core, since it left the core: an instance without a provider says so with the default list", () => {
+    expect(CORE).toEqual(["auth@1"]);
+    expect(resolve([plugin({ name: "backups" })], "0.9.0").missingCore).toEqual(["auth@1"]);
   });
 
   test("removing a core plugin is possible, which is the entire point of moving auth out", () => {
     // not a refusal: the graph loads, and the instance reports what it is missing
-    const { problems, order } = resolve([plugin({ name: "backups" })], "0.9.0");
+    const { problems, order, missingCore } = resolve([plugin({ name: "backups" })], "0.9.0");
     expect(problems).toEqual([]);
     expect(order.map((p) => p.manifest.name)).toEqual(["backups"]);
+    expect(missingCore).toEqual(["auth@1"]);
   });
 });
 

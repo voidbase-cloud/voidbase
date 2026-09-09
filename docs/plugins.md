@@ -22,7 +22,7 @@ The package exposes the plugin API and the plugins it ships, so a plugin can liv
 against this voidbase: `@voidbase-cloud/voidbase/kernel` (`createKernel`, `load`, `serve`, `using`, `whatLoaded`,
 `Kernel`), `@voidbase-cloud/voidbase/plugins` (`Plugin`, `PluginManifest`, `checkManifest`),
 `@voidbase-cloud/voidbase/interfaces` (the interface types and `KNOWN`), and `@voidbase-cloud/voidbase/plugins/backups`,
-`/plugins/realtime`, `/plugins/hardening` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
+`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
 the map honest. The official plugin packages (`@voidbase-cloud/plugin-*`, one repository each) re-export the shipped
 objects through these entry points: the code lives here once, and the package is the plugin's name, manifest and
 version as the marketplace lists it.
@@ -110,7 +110,22 @@ default, and the control plane re-provisions the instance from it (`POST /api/vb
 then checks that the instance answers. An upgrade of an instance that has plugins is the same build on the new base
 rather than a plain re-provision, which would drop them.
 
+## Auth is the core plugin
+
+Auth left the core on 2026-09-09 (plan.md, decision 0.3): `src/server/plugins/auth.ts` is a plugin of tier `core`
+that provides `auth@1`, owns `_superusers`, `_externalAuths`, `_authOrigins`, `_otps` and `_mfas`, and mounts every
+auth route (password, OAuth2, refresh, methods, the flows, passkeys). The interface has three parts, because the
+core knows auth's shape and not only its result: `authenticate` (a request in, a record or null out) and
+`fromToken` (the record behind a token the provider issued, of a given kind), `schema` (the fields every auth record
+answers to in a rule, which `filter/compile.ts` asks for instead of keeping a list of its own) and `collections`
+(which collections hold accounts), plus `isSuperuser`, which the core asks and does not decide. The core reaches
+the provider through `src/server/auth-slot.ts` and imports none of the implementation, so replacing auth is
+providing `auth@1` from another plugin. `CORE` lists `auth@1`: an instance running without a provider loads, runs
+with nobody signed in and every superuser route answering 401, and says what it is missing at boot and on
+`/api/plugins`. `voidbase plugins remove auth` is that instance. Still in the core: the bootstrap creates the auth
+collections; the manifest owns them, and handing their creation over is next.
+
 ## What is not built
 
-Auth, the first core plugin, is still built in, which is why `CORE` is empty. A marketplace's audit is a first pass
-and not a sandbox: a bundle runs inside the instance with everything the instance has, the way `pb_hooks` does.
+A marketplace's audit is a first pass and not a sandbox: a bundle runs inside the instance with everything the
+instance has, the way `pb_hooks` does. A second auth provider (Better Auth) does not exist yet; the seam does.

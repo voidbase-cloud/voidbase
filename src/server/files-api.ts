@@ -1,7 +1,7 @@
 // File tokens (apis/file.go fileToken): short-lived JWTs signed with the collection's fileToken secret that
 // let a client fetch protected files with ?token=... The files route uses `protectedAccess` for the check.
 import type { Context, Hono } from "hono";
-import { findAuthRecordByToken } from "./auth";
+import { fromToken } from "./auth-slot";
 import { ipInList, realIP } from "./hardening";
 import type { Collection } from "./collections/model";
 import { unauthorized } from "./errors";
@@ -37,7 +37,7 @@ export function mountFilesApi(app: Hono<AppEnv>) {
 // protected file: the ?token= file token (superusers subject to the IP allowlist) must satisfy the view rule
 export async function protectedAccess(c: Context<AppEnv>, ctx: RecordContext, collection: Collection, row: Row): Promise<boolean> {
   const token = c.req.query("token") ?? "";
-  let auth = token ? await findAuthRecordByToken(c.env.DB, token, "file") : null;
+  let auth = token ? await fromToken(token, c.env, "file") : null;
   if (auth && auth.collection.name === "_superusers") {
     const allowed = (await loadSettings(c.env.DB)).superuserIPs;
     if (allowed.length && !ipInList(allowed, await realIP(c))) auth = null;

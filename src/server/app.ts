@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
-import { authMethods, authRefresh, authWithPassword, findAuthRecordByToken, isSuperuser, loadAuth, requireSuperuser } from "./auth";
+import { authenticate, fromToken, isSuperuser, provideAuthLookup, requireSuperuser } from "./auth-slot";
 import { ensureBootstrapped } from "./bootstrap";
 import { collectionToJSON, findCollection, invalidateCollections, listCollections, loadCollections, type Collection } from "./collections/model";
 import type { Field } from "./collections/fields";
@@ -16,21 +16,19 @@ import type { Settings } from "./settings";
 import { applyPendingMigrations, withHookStore } from "./hooks/migrations";
 import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
 import { deletePrefix } from "./records/files";
-import { authWithOAuth2, mountOAuth2Redirect } from "./oauth2";
 import { mountSettingsApi } from "./settings-api";
-import { mountAuthFlows } from "./auth-flows";
-import { mountAuthExtra } from "./auth-extra";
 import { mountFilesApi, protectedAccess } from "./files-api";
 import { BATCH_CONTEXT_HEADER, batchContextToken, mountBatch } from "./batch";
 import { mountLogsApi, requestLogger } from "./logs";
 import { mountCronsApi } from "./crons";
 import { createKernel, load, using, whatLoaded } from "./kernel";
+import { auth as authPlugin } from "./plugins/auth";
 import { backups as backupsPlugin } from "./plugins/backups";
 import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
 import { SHIPPED } from "./plugins/shipped";
 import { disabled as disabledPlugins, installed as installedPlugins } from "#platform/plugins";
-import type { Hardening, Realtime } from "./interfaces";
+import type { Auth, Hardening, Realtime } from "./interfaces";
 import { VERSION } from "./version";
 import { mountSqlApi } from "./sql";
 import { realIPWith } from "./hardening";
@@ -53,8 +51,7 @@ import { ApiError, badRequest, forbidden, notFound } from "./errors";
 import { randomIdSuffix, randomString } from "./ids";
 import { createCollection, deleteCollection, importCollections, inferViewFields, truncateCollection, updateCollection } from "./collections/service";
 import { loadSettings, publicSettings } from "./settings";
-import { mountWebAuthn } from "./webauthn";
-import type { AppEnv, Row } from "./types";
+import type { AppEnv, Row, Bindings } from "./types";
 
 export const app = new Hono<AppEnv>();
 let served = false; // onBootstrap / onServe fire once per isolate, on the first request
@@ -81,7 +78,8 @@ app.use("*", async (c, next) => {
   c.set("realtime", using<Realtime>(kernel, "realtime@1").for(c.env));
   // onBootstrap/onServe handlers may use $app (find/save records and collections) like PocketBase's, so they run inside a hook store
   if (!served) { served = true; await withHookStore(c.env.DB, c.env, async () => { await trigger("onBootstrap", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined); await trigger("onServe", { app: undefined as unknown, router: app, next: async () => undefined as unknown }, null, async () => undefined); }); }
-  c.set("auth", await loadAuth(c));
+  // who is asking, from whoever provides auth@1 (the auth plugin, unless the project replaced it): nobody without one
+  c.set("auth", await authenticate(c.req.raw, c.env));
     // Not on the realtime stream: its invocation lives as long as the connection, and waitUntil work is cancelled
     // when that closes, so maintenance attached to it is dropped after having claimed the hour's slot. Let a short
     // request carry it instead.
@@ -260,26 +258,8 @@ app.put("/api/collections/import", async (c) => {
 });
 
 // --- records: auth --------------------------------------------------------
-app.post("/api/collections/:collection/auth-with-password", async (c) => {
-  const collection = await mustFindCollection(c, c.req.param("collection"));
-  return authWithPassword(c, collection);
-});
-
-app.post("/api/collections/:collection/auth-with-oauth2", async (c) => {
-  const collection = await mustFindCollection(c, c.req.param("collection"));
-  if (collection.type !== "auth") throw notFound("Missing or invalid auth collection context.");
-  return authWithOAuth2(c, collection, await recordContext(c));
-});
-
-app.post("/api/collections/:collection/auth-refresh", async (c) => {
-  const collection = await mustFindCollection(c, c.req.param("collection"));
-  return authRefresh(c, collection);
-});
-
-app.get("/api/collections/:collection/auth-methods", async (c) => {
-  const collection = await mustFindCollection(c, c.req.param("collection"));
-  return authMethods(c, collection);
-});
+// The auth routes (auth-with-password, OAuth2, refresh, methods, the flows, passkeys) are the auth plugin's
+// (plugins/auth.ts), mounted when the kernel loads it below; nothing here knows how a session is made.
 
 // --- records --------------------------------------------------------------
 export async function recordContextFor(c: Context<AppEnv>): Promise<RecordContext> { return recordContext(c); }
@@ -513,17 +493,7 @@ function sortBy<T extends object>(items: T[], sort: string, allowed: string[]): 
   return out;
 }
 
-// --- passkeys (the starter's Go webauthn routes, native here) ---------------
-// mounted for every app; the routes answer only where a `passkeys` collection exists
-mountWebAuthn(app);
-mountOAuth2Redirect(app);
 mountSettingsApi(app);
-const authDeps = {
-  collection: async (c: Context<AppEnv>) => { const coll = await mustFindCollection(c, c.req.param("collection") ?? ""); if (coll.type !== "auth") throw notFound("Missing or invalid auth collection context."); return coll; },
-  ctx: (c: Context<AppEnv>) => recordContext(c),
-};
-mountAuthFlows(app, authDeps);
-mountAuthExtra(app, authDeps);
 mountFilesApi(app);
 mountBatch(app);
 mountLogsApi(app);
@@ -536,7 +506,7 @@ mountCronsApi(app);
 export const kernel = createKernel(app);
 // What ships, minus what the project turned off, minus what an installed plugin shadows by name; then what the
 // project installed (pb_plugins, verified against voidbase.lock by the platform module). One graph, resolved once.
-const shipped = [realtimePlugin, hardeningPlugin, backupsPlugin];
+const shipped = [authPlugin, realtimePlugin, hardeningPlugin, backupsPlugin];
 if (shipped.map((p) => p.manifest.name).join() !== SHIPPED.join()) throw new Error("voidbase: src/server/plugins/shipped.ts disagrees with the plugins app.ts loads");
 const shadowed = new Set(installedPlugins.map((p) => p.name));
 const active = shipped.filter((p) => !disabledPlugins.includes(p.manifest.name) && !shadowed.has(p.manifest.name));
@@ -544,6 +514,9 @@ await load(kernel, [...active, ...installedPlugins.map((p) => p.plugin)], VERSIO
   origins: Object.fromEntries([...active.map((p) => [p.manifest.name, "shipped"]), ...installedPlugins.map((p) => [p.name, `${p.marketplace} ${p.version}`])]),
   disabled: disabledPlugins,
 });
+// from here on the core asks whoever provides auth@1 who is signed in and what a superuser is (auth-slot.ts); looked
+// up on every question rather than kept, because a provider can be replaced while the instance runs
+provideAuthLookup(() => using<Auth | undefined>(kernel, "auth@1"));
 
 // What this instance is running, which is the question a bare instance has to be able to answer about itself. For
 // the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface.
@@ -611,8 +584,8 @@ installServices({
     return row ? HookRecord.fromRow(coll, row) : null;
   },
   findAuthRecordByToken: async (token, type) => {
-    const ctx = await hookStore.getStore()!.ctx();
-    const auth = await findAuthRecordByToken(ctx.db, token, type);
+    const store = hookStore.getStore()!;
+    const auth = await fromToken(token, store.env as unknown as Bindings, type);
     return auth ? HookRecord.fromRow(auth.collection, auth.row) : null;
   },
   expandRecords: async (records, expands) => {

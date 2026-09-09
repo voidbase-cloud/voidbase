@@ -3,7 +3,7 @@
 // collections, tables, rows and files. PocketBase archives (SQLite files) cannot be restored here.
 import type { Context, Hono } from "hono";
 import { unzipSync, zipSync } from "fflate";
-import { findAuthRecordByToken, requireSuperuser } from "./auth";
+import { fromToken, requireSuperuser } from "./auth-slot";
 import { ipInList, realIP } from "./hardening";
 import { invalidateCollections, loadCollections } from "./collections/model";
 import { planCreate } from "./collections/service";
@@ -205,7 +205,7 @@ export function mountBackupsApi(app: Hono<AppEnv>) {
     return c.body(null, 204);
   });
   app.get("/api/backups/:key", async (c) => {
-    const auth = await findAuthRecordByToken(c.env.DB, c.req.query("token") ?? "", "file");
+    const auth = await fromToken(c.req.query("token") ?? "", c.env, "file");
     if (!auth || auth.collection.name !== "_superusers") throw forbidden("Insufficient permissions to access the resource.");
     const allowed = (await loadSettings(c.env.DB)).superuserIPs;
     if (allowed.length && !ipInList(allowed, await realIP(c))) throw forbidden("Insufficient permissions to access the resource.");

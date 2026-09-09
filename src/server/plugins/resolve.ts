@@ -21,11 +21,12 @@ import { checkManifest } from "./manifest";
 /**
  * The interfaces an instance is not usable without, whoever provides them.
  *
- * Empty until something actually leaves the core. Auth is the first candidate and it is still built in, so listing
- * `auth@1` here would make every instance warn that it is running without auth while auth is running fine. An
- * interface joins this list in the same commit that removes its built-in implementation, and not before.
+ * An interface joins this list in the same commit that removes its built-in implementation, and not before:
+ * listing `auth@1` while auth was still built in would have made every instance warn that it was running without
+ * auth while auth was running fine. Auth left the core on 2026-09-09 (plugins/auth.ts provides it), so an instance
+ * without a provider is one that says so.
  */
-export const CORE: InterfaceName[] = [];
+export const CORE: InterfaceName[] = ["auth@1"];
 
 export interface Resolution {
   /** load order: everything a plugin requires comes before it */

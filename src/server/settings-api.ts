@@ -7,7 +7,7 @@ import { lengthErr, loadSettings, maxErr, mergeSettings, minErr, publicSettings,
 import { randomString } from "./ids";
 import type { AppEnv, Row } from "./types";
 import type { Field } from "./collections/fields";
-import { requireSuperuser } from "./auth";
+import { requireSuperuser } from "./auth-slot";
 import { S3Bucket } from "./storage/s3";
 import { requestHook, trigger } from "./hooks/runtime";
 

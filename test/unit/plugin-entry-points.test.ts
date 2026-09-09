@@ -15,6 +15,7 @@ const expected: Record<string, string[]> = {
   "./kernel": ["createKernel", "load", "serve", "using", "whatLoaded"],
   "./plugins": ["checkManifest"],
   "./interfaces": ["KNOWN"],
+  "./plugins/auth": ["auth", "provider"],
   "./plugins/backups": ["backups"],
   "./plugins/realtime": ["realtime"],
   "./plugins/hardening": ["hardening"],
@@ -33,7 +34,7 @@ describe("the plugin API is reachable from a package", () => {
   }
 
   test("each shipped plugin's manifest name is its entry point's last segment", async () => {
-    for (const name of ["backups", "realtime", "hardening"]) {
+    for (const name of ["auth", "backups", "realtime", "hardening"]) {
       const mod = (await import(resolve(root, exportsMap[`./plugins/${name}`]!))) as Record<string, { manifest: { name: string } }>;
       expect(mod[name]!.manifest.name).toBe(name);
     }

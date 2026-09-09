@@ -16,23 +16,30 @@ import type { AppEnv, AuthRecord, Bindings, Row } from "../types";
 import type { Field } from "../collections/fields";
 
 /**
- * Authentication. Three parts, not one.
+ * Authentication. Three parts, not one (plan.md, decision 0.3, taken 2026-09-09).
  *
  * The roadmap's contract is "a request goes in, a record or null comes out", and that is too small for what the
  * core actually does with auth: filter/compile.ts resolves `@request.auth.<field>` against the record's fields
- * when it compiles a rule to SQL. The core knows auth's shape, not only its result, so the shape is in the
- * contract. Without `schema` a rule referring to a field that does not exist would compile and fail at query time
- * instead of being refused when it was written.
+ * when it compiles a rule to SQL, and the records API resolves list and view rules against the auth collections.
+ * The core knows auth's shape, not only its result, so the shape is in the contract: `schema` says what every
+ * auth record answers to in a rule beyond its collection's own fields, and `collections` says which collections
+ * hold accounts. What a superuser is belongs to the provider too; the core asks and does not decide. Bindings
+ * arrive with the request, so the lookups take them rather than holding one.
+ *
+ * The core reaches the provider through src/server/auth-slot.ts and never imports it. An instance with no
+ * provider runs with nobody signed in and says which core interface it is missing.
  */
 export interface Auth {
-  /** who is making this request, or nobody */
-  authenticate(request: Request): Promise<AuthRecord | null>;
-  /** the fields `@request.auth.*` may name, so rules can still be checked when they are written */
-  schema(): Promise<Field[]>;
+  /** who is making this request, or nobody: the token the request carries, verified against this instance */
+  authenticate(request: Request, env: Bindings): Promise<AuthRecord | null>;
+  /** the record behind a token this provider issued, of one of its kinds: "auth" (the default), "file", "verification", "passwordReset", "emailChange" */
+  fromToken(token: string, env: Bindings, type?: string): Promise<AuthRecord | null>;
+  /** the fields every auth record answers to in a rule whatever its collection declares: what `@request.auth.<field>` may name beyond the collection's own fields */
+  schema(): Pick<Field, "name" | "type">[];
   /** which collections hold auth records, since list and view rules resolve against them */
-  collections(): Promise<string[]>;
+  collections(env: Bindings): Promise<string[]>;
   /** whether this record is a superuser, which the core asks about and does not decide */
-  isSuperuser(record: AuthRecord): boolean;
+  isSuperuser(record: AuthRecord | null | undefined): boolean;
 }
 
 /**

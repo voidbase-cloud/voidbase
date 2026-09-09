@@ -83,7 +83,12 @@ The roadmap's contract — "a request goes in, a record or null comes out, and a
 superuser" — is too small. `filter/compile.ts` resolves `@request.auth.<field>` against the auth record's fields
 when compiling rules to SQL. The core knows auth's *shape*, not just its result.
 
-**Decide:** the auth interface has three parts, not one.
+**Decided 2026-09-09 (Mahmood: "okay sounds good, go"):** the auth interface has three parts, not one, and auth is
+the core plugin providing it (`src/server/plugins/auth.ts`; the core asks through `src/server/auth-slot.ts`). The
+two lookups take the request's bindings, `fromToken` joined the contract because files, backups and realtime verify
+tokens of other kinds, `schema` returns name and type of the fields every auth record answers to (what
+`filter/compile.ts` kept as a static set), and `collections` reads the auth collections from the schema, since an
+auth collection is a type any collection can have. `isSuperuser` is the provider's. What was proposed:
 
 - `authenticate(request) -> record | null` — the part the roadmap already has.
 - `schema() -> Field[]` — what `@request.auth.*` may name, so the rule compiler can keep validating rules at
@@ -206,7 +211,7 @@ and redeploy — minutes, and a deployment event rather than a toggle.
 
 ---
 
-## Phase 4 — Tiers, and a bare instance — **partly done**
+## Phase 4 — Tiers, and a bare instance — **done** (auth left the core 2026-09-09; `CORE = ["auth@1"]`)
 
 - Three tiers as a manifest field: `core`, `official`, `community`. **Done.**
 - The `CORE` list of interfaces an instance is not usable without is **empty until something actually leaves the
@@ -251,6 +256,14 @@ In this order, because it runs from proven to hardest.
    suite and the starter's hub delivery test among them) before it was committed.
 4. **Auth**, last, and only if 0.3 resolved cleanly. It is the first core plugin and the one that proves the tier
    exists, but it is also the one whose schema the rule compiler embeds.
+4. **Auth.** **Done** (2026-09-09), as the core plugin providing `auth@1`, with the three-part contract of 0.3 plus
+   `fromToken` and `isSuperuser`. The implementation is unchanged in `auth.ts`, `auth-flows.ts`, `auth-extra.ts`,
+   `oauth2/` and `webauthn.ts`; the plugin mounts the routes and serves the interface, `app.ts` imports none of it
+   and asks `auth-slot.ts` who is signed in and what a superuser is, `filter/compile.ts` asks the provider for the
+   fields an auth record answers to, and an instance without a provider loads with nobody signed in and reports
+   `auth@1` missing. Measured by `test/unit/auth-plugin.test.ts` (the seam), the adapter boot and the conformance
+   suites (the behaviour). Not moved: the bootstrap still creates the auth collections the manifest owns.
+
 
 Each step: the feature moves behind an interface, the old module keeps its exports until the last call site is
 converted, then the module goes. `bun test` and the conformance suite gate every step — plugin work that breaks
@@ -466,7 +479,7 @@ Correcting the page is part of the phase that makes it true, not a follow-up.
                                              └─→ 4 tiers
                                                     │
                      5a realtime, one plugin ──┤   (needs a full ci run beside it)
-                                 5a auth ───────────┘  (only if 0.3 resolved)
+                                 5a auth ───────────┘  (done: 0.3 decided, auth@1 is core)
 ```
 
 The two that decide whether the rest is worth starting are 0.1 and 0.2. Neither is a coding problem.

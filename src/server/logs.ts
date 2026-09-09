@@ -12,7 +12,7 @@ import { FilterSyntaxError } from "./filter/lexer";
 import { nowString, randomId } from "./ids";
 import { loadSettings } from "./settings";
 import type { AppEnv } from "./types";
-import { requireSuperuser } from "./auth";
+import { requireSuperuser } from "./auth-slot";
 
 export const LEVEL = { debug: -4, info: 0, warn: 4, error: 8 } as const;
 const cut = (s: string, max: number) => (s.length > max ? s.slice(0, max) + "..." : s);

@@ -6,6 +6,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { adapt, scanVoidApp } from "../src/adapter/index";
+import { integrityOf } from "../src/node/registry";
 
 
 const PKG = resolve(import.meta.dir, "..");
@@ -65,6 +66,13 @@ try {
   writeFileSync(`${WORK}/vb_secrets/secrets.json`, secretsJson);
   check("vb_secrets/main.ts names the configuration and its tiers without being run", m.secrets?.names.join() === "TEST_SECRET,OTHER_SECRET,MAX_ITEMS,PUBLIC_LABEL" && m.secrets.access.TEST_SECRET === "secret" && m.secrets.access.MAX_ITEMS === "server" && m.secrets.access.PUBLIC_LABEL === "public" && m.extras.secretsDir === "vb_secrets", JSON.stringify(m.secrets));
 
+  // ---- an installed plugin at the project root: pb_plugins and voidbase.lock are carried into the generated app ----
+  // written the way `voidbase plugins add` writes them, with the hash the lockfile has to carry
+  const carried = 'const manifest = { name: "carried", version: "1.0.0", tier: "community", voidbase: "*" };\nexport default { manifest, apply(ctx) { ctx.app.get("/api/carried", (c) => c.text("carried")); } };\n';
+  mkdirSync(`${WORK}/pb_plugins/carried`, { recursive: true });
+  writeFileSync(`${WORK}/pb_plugins/carried/bundle.js`, carried);
+  writeFileSync(`${WORK}/voidbase.lock`, JSON.stringify({ lockfileVersion: 1, marketplaces: [], plugins: { carried: { version: "1.0.0", integrity: await integrityOf(new TextEncoder().encode(carried)), marketplace: "http://marketplace.invalid", source: { repository: "example/carried", commit: "0123456" }, installedOn: "2026-09-09" } }, disabled: [] }, null, 2));
+
   // ---- the conversion, through the Vite plugin the app actually uses ---------------------------------------------
   // --bun: Vite's config loader hands the config to the runtime, and voidbase ships TypeScript sources
   const build = Bun.spawnSync(["bunx", "--bun", "vite", "build"], { cwd: WORK, env: process.env, stdout: "pipe", stderr: "pipe" });
@@ -83,6 +91,7 @@ try {
   check("nothing is generated into the project root: it stays a plain Void app", !existsSync(`${WORK}/main.ts`) && !existsSync(`${WORK}/pb_hooks`) && !existsSync(`${WORK}/pb_public`) && !existsSync(`${WORK}/pb_migrations`), readdirSync(WORK).join(" "));
   check("vb_secrets/ becomes pb_secrets/: the declaration re-exported where voidbase deploy looks, the values beside it, git-ignored", /export \{ default \} from "\.\.\/\.\.\/vb_secrets\/main";/.test(readFileSync(`${WORK}/.voidbase/pb_secrets/main.ts`, "utf8")) && existsSync(`${WORK}/.voidbase/pb_secrets/secrets.json`) && /^pb_secrets\/secrets\.json$/m.test(readFileSync(`${WORK}/.voidbase/.gitignore`, "utf8")), readdirSync(`${WORK}/.voidbase`).join(" "));
   check("vb_migrations/ is copied in as the generated app's pb_migrations", existsSync(`${WORK}/.voidbase/pb_migrations/1800000001_marker.js`), readdirSync(`${WORK}/.voidbase/pb_migrations`).join(" "));
+  check("pb_plugins/ and voidbase.lock are carried into the generated app as they are", existsSync(`${WORK}/.voidbase/pb_plugins/carried/bundle.js`) && readFileSync(`${WORK}/.voidbase/voidbase.lock`, "utf8") === readFileSync(`${WORK}/voidbase.lock`, "utf8"), readdirSync(`${WORK}/.voidbase`).join(" "));
   const migration = readFileSync(`${WORK}/.voidbase/pb_migrations/0001_outbox.void.js`, "utf8");
   check("a Drizzle migration becomes a PocketBase migration, split on its statement markers", /CREATE TABLE/.test(migration) && /CREATE INDEX/.test(migration) && (migration.match(/execSQL/g) ?? []).length === 2, migration.slice(0, 160));
   check("the static build lands in .voidbase/pb_public, with a 404 shell for the asset layer", existsSync(`${WORK}/.voidbase/pb_public/index.html`) && existsSync(`${WORK}/.voidbase/pb_public/robots.txt`) && existsSync(`${WORK}/.voidbase/pb_public/404.html`), readdirSync(`${WORK}/.voidbase/pb_public`).join(" "));
@@ -130,6 +139,8 @@ try {
   check("requireAuth() refuses an unauthenticated request the way $apis.requireAuth does", guarded.status === 401, `${guarded.status} ${JSON.stringify(guarded.json).slice(0, 80)}`);
   const order = await get("/api/order");
   check("middleware runs in file order before the handler", JSON.stringify(order.json.middleware) === JSON.stringify(["01", "02"]), JSON.stringify(order.json));
+  const fromPlugin = await fetch(`${base}/api/carried`);
+  check("the carried plugin is loaded by the generated app, verified against the lockfile, and its route answers", fromPlugin.status === 200 && (await fromPlugin.text()) === "carried", String(fromPlugin.status));
   const missing = await get("/api/nope");
   check("an unknown /api path is still a 404", missing.status === 404, String(missing.status));
   const health = await fetch(`${base}/api/health`);

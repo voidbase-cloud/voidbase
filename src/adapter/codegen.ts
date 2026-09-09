@@ -261,6 +261,19 @@ export function writeVoidbaseApp(m: VoidManifest, opts: GenerateOptions & { migr
   }
   if (existsSync(migrationsOut) && !readdirSync(migrationsOut).length) rmSync(migrationsOut, { recursive: true, force: true });
 
+  // pb_plugins and voidbase.lock: what `voidbase plugins add` installed at the project root, carried in as they are.
+  // They are pinned by hash and verified when the app starts, so the generated app runs them and a deploy from
+  // .voidbase/ finds them; a stale copy is replaced whole, and one the project no longer has is removed.
+  const carry = (rel: string) => {
+    const src = join(m.root, rel); const out = join(m.root, OUT, rel);
+    if (!existsSync(src)) { drop(rel); return; }
+    rmSync(out, { recursive: true, force: true });
+    cpSync(src, out, { recursive: true });
+    written.push(`${OUT}/${rel}`);
+  };
+  carry("voidbase.lock");
+  carry("pb_plugins");
+
   // pb_secrets: the declaration vb_secrets/main.ts makes, where `voidbase serve` and `voidbase deploy` look for it
   // (a re-export: the validators and their types stay the project's), and the local values beside it
   drop("pb_secrets");

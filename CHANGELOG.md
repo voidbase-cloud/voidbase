@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.5](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.4...v0.9.0-beta.5) (2026-09-09)
+
+
+### Features
+
+* **plugin:** public entry points for plugin packages ([68d7684](https://github.com/voidbase-cloud/voidbase/commit/68d768405da42962b3e8dc3cfbc4017c42823336))
+
 ## [0.9.0-beta.4](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.3...v0.9.0-beta.4) (2026-09-08)
 
 

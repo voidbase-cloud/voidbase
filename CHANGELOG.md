@@ -3,6 +3,18 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.12](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.11...v0.9.0-beta.12) (2026-09-09)
+
+
+### Features
+
+* **cloud:** the instance builder is a Cloudflare build the control plane starts ([c7a70d6](https://github.com/voidbase-cloud/voidbase/commit/c7a70d63c2261452f45c58510f180421abc52842))
+
+
+### Documentation
+
+* **plan:** beta.10 and beta.11 rolled onto the testbeds, and what rolling them found ([fb6e515](https://github.com/voidbase-cloud/voidbase/commit/fb6e5152d016ecb88025576110d2f4b4f3bde024))
+
 ## [0.9.0-beta.11](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.10...v0.9.0-beta.11) (2026-09-09)
 
 

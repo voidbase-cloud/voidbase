@@ -8,8 +8,8 @@ import { resolve } from "node:path";
 import { parseRedirects, writeCloudProject, type RedirectEntry } from "./cloud-init";
 import { pathToFileURL } from "node:url";
 import { loadEnv } from "./serve";
-import { loadSecrets, SECRETS_DIR, workerSecretNames, type LoadedSecrets } from "./secrets";
-import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findZone, rateLimitNamespace, resolveAccount, workersSubdomain } from "../cloud/rest";
+import { loadSecrets, SECRETS_DIR, workerSecretNames, type LoadedSecrets, putWorkerSecrets } from "./secrets";
+import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
 
 const API = (process.env.CLOUDFLARE_API_BASE ?? "https://api.cloudflare.com/client/v4").replace(/\/$/, "");
 export const TOKEN_ENV = "VOIDBASE_DEPLOY_CF_API_KEY";
@@ -258,7 +258,12 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     if (pathRedirects.length) writeFileSync(`${cloud}/public/_redirects`, pathRedirects.map((r) => `${r.path} ${r.to} ${r.status}`).join("\n") + "\n");
   }
   if (secrets.length) log(`secrets: storing ${secrets.map(([k]) => k).join(", ")} on the Worker`);
-  for (const [k, v] of secrets) await sh(["bun", wrangler, "secret", "put", k, "--name", name], v + "\n");
+  // Through the Workers API when the Worker exists, which is every deploy but the first: `wrangler secret put` reads
+  // the value from stdin and, on Cloudflare's build machines, sometimes never sees the end of it and waits forever
+  // (the demo's deploys hung there twice). The first deploy has no Worker to put a secret on, and wrangler creates
+  // one, so that is the only time it is still used.
+  if (secrets.length && (await workerExists(api, account.id, name))) await putWorkerSecrets(api, account.id, name, Object.fromEntries(secrets));
+  else for (const [k, v] of secrets) await sh(["bun", wrangler, "secret", "put", k, "--name", name], v + "\n");
   await sh([voidBin, "deploy", "--backend", "cloudflare"]);
   for (const host of domains) {
     const d = await attachCustomDomain(api, account.id, { hostname: host, service: name });

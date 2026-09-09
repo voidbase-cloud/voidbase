@@ -3,6 +3,19 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.9](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.8...v0.9.0-beta.9) (2026-09-09)
+
+
+### Bug Fixes
+
+* **cloud:** the builder prepares its base checkout before building ([440431b](https://github.com/voidbase-cloud/voidbase/commit/440431b3dc7bf322eddb8ff9b3bbd2dd8e409b49))
+* **cloud:** the Worker upload sends its Durable Object migration as one object ([5eeb15f](https://github.com/voidbase-cloud/voidbase/commit/5eeb15f4de17aa833c103a7f71e234f085e598a4))
+
+
+### Documentation
+
+* **plugin:** every shape installs now; the plan records the cloud build path ([29d36a0](https://github.com/voidbase-cloud/voidbase/commit/29d36a00421c400e6de0a2a08ed1c3836d30167c))
+
 ## [0.9.0-beta.8](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.7...v0.9.0-beta.8) (2026-09-09)
 
 

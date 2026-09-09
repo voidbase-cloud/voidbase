@@ -3,6 +3,18 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.16](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.15...v0.9.0-beta.16) (2026-09-09)
+
+
+### Bug Fixes
+
+* **bundle:** a bundle's voidbase and hono imports resolve when built from voidbase's checkout ([ed25297](https://github.com/voidbase-cloud/voidbase/commit/ed25297ac7ed99eba12a656cce89eaaaa3fd1bda))
+
+
+### Documentation
+
+* **plan:** what the cloud loop found about bundles built from voidbase's own checkout ([4613a9b](https://github.com/voidbase-cloud/voidbase/commit/4613a9b836f6f9030820a34f4e283d2f97012c5b))
+
 ## [0.9.0-beta.15](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.14...v0.9.0-beta.15) (2026-09-09)
 
 

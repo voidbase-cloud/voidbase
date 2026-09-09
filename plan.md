@@ -382,7 +382,15 @@ Order of work:
    and the mock now answers the way Cloudflare did. voidbase.cloud also had no active release at all until
    0.9.0-beta.8 was pushed to it. Not built: the unpackaged way.
 5. **Done** with each step: the site's plugins page and `PluginsSoon`, the marketplace README, SUBMISSION, form and
-   cards, and the plugin packages' READMEs say what exists and what does not.
+   cards, and the plugin packages' READMEs say what exists and what does not. The plugins page is now the
+   reference (what one is, how it arrives, decided, not, write one) rather than the design it was built from.
+6. **Done** (2026-09-09), the testbeds run themselves: `voidbase-site/.github/workflows/live.yml` runs
+   `test/cloud-live.ts --no-dispatch` (a throwaway instance on the account, a plugin installed, the builder's
+   rebuild deployed, everything deleted) and `test/demo-live.ts` every night; `track-voidbase.yml` in the demo,
+   the marketplace and the site bumps each to the latest published voidbase every hour and deploys it (the
+   site starts its own Cloudflare build through `scripts/cf-build.sh`, because a push by the workflow token
+   starts no workflow). Mahmood's rule, recorded in memory: the testbeds exist to break before voidbase ships
+   something broken; mocks prove the wiring, only they prove the product.
 
 ---
 

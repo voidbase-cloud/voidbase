@@ -7,6 +7,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symli
 import { resolve } from "node:path";
 import { adapt, scanVoidApp } from "../src/adapter/index";
 import { integrityOf } from "../src/node/registry";
+import { cronTriggers } from "../hooks-plugin";
 
 
 const PKG = resolve(import.meta.dir, "..");
@@ -85,6 +86,7 @@ try {
   check("the hook publishes the hook globals before it requires the bundle, so pb works at module init",
     /globalThis\.__voidbaseHooks = __g;[\s\S]*require\(/.test(readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.pb.js`, "utf8")), readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.pb.js`, "utf8").slice(-200));
   check("the hook that registers it uses only hook globals", /require\(`\$\{__hooks\}\/void-app\.js`\)/.test(readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.pb.js`, "utf8")), readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.pb.js`, "utf8").slice(-200));
+  check("each cron's schedule is written into that hook as a literal, so the deploy makes it a cron trigger of the Worker", /cronAdd\("tick", "\*\/5 \* \* \* \*"\)/.test(readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.pb.js`, "utf8")) && cronTriggers(`${WORK}/.voidbase/pb_hooks`).includes("*/5 * * * *"), `${readFileSync(`${WORK}/.voidbase/pb_hooks/void-app.pb.js`, "utf8").slice(-300)} | triggers ${cronTriggers(`${WORK}/.voidbase/pb_hooks`).join(", ")}`);
   const mainTs = readFileSync(`${WORK}/.voidbase/main.ts`, "utf8");
   check("the generated app is PocketBase-shaped: main.ts, package.json, .gitignore, pb_hooks, pb_migrations, pb_public", ["main.ts", "package.json", ".gitignore", "pb_hooks", "pb_migrations", "pb_public"].every((f) => existsSync(`${WORK}/.voidbase/${f}`)), readdirSync(`${WORK}/.voidbase`).join(" "));
   check("its main.ts is only the runner: every line of the app's server code is in pb_hooks", !/registerVoidApp/.test(mainTs) && !/\bfrom "\.\.\//.test(mainTs), mainTs.slice(0, 400));

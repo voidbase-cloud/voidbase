@@ -24,6 +24,8 @@ export interface VoidRoute {
   splat?: string;
 }
 export interface VoidModule { file: string; name: string }
+/** A `crons/` file: its `cron` export, a string literal, becomes one of the Worker's cron triggers at build time. */
+export interface VoidCron extends VoidModule { expr: string }
 /** A `vb_hooks/` file: one PocketBase hook, registered once. `hook` is `routerUse` or an `on*` event name. */
 export interface VoidHook extends VoidModule { hook: string }
 export interface VoidQueue extends VoidModule {
@@ -68,7 +70,7 @@ export interface VoidManifest {
   middleware: VoidModule[];
   /** vb_hooks/: one PocketBase hook per file, registered once when the app mounts */
   hooks: VoidHook[];
-  crons: VoidModule[];
+  crons: VoidCron[];
   queues: VoidQueue[];
   migrations: VoidMigration[];
   /** vb_secrets/main.ts: the configuration the app declares, names and tiers only (values are never part of the manifest) */
@@ -214,7 +216,10 @@ export function scanVoidApp(opts: ScanOptions = {}): VoidManifest {
     }
     return { ...m, hook };
   });
-  const crons = modules("crons");
+  // the schedule has to be a string literal: it becomes one of the Worker's cron triggers when the app is deployed
+  // (hooks-plugin's cronTriggers reads it back out of the generated hook), and a value computed at runtime cannot
+  // be written into a deploy
+  const crons: VoidCron[] = modules("crons").map((c) => ({ ...c, expr: cronExprOf(readFileSync(join(root, c.file), "utf8"), c.file) }));
   const queues: VoidQueue[] = modules("queues").map((q) => ({ ...q, binding: `QUEUE_${q.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}` }));
 
   const migrationsDir = join(root, "db", "migrations");
@@ -274,4 +279,12 @@ function grepImports(root: string, specifier: string): boolean {
     }
   }
   return false;
+}
+
+const CRON_EXPORT = /export\s+const\s+cron\s*(?::\s*string)?\s*=\s*(["'`])([^"'`]+)\1/;
+/** the literal schedule a crons/ module exports; anything else cannot become a cron trigger of the Worker */
+function cronExprOf(source: string, file: string): string {
+  const m = CRON_EXPORT.exec(source);
+  if (!m) throw new Error(`voidbase: ${file} needs \`export const cron = "<expression>"\` as a string literal: the schedule becomes one of the Worker's cron triggers when the app is deployed, so it has to be readable at build time.`);
+  return m[2]!.trim();
 }

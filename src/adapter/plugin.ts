@@ -43,7 +43,7 @@ export async function adapt(root: string, opts: AdapterOptions & { clientDir?: s
     mkdirSync(hooks, { recursive: true });
     const { code, bytes } = await bundleHookApp(join(root, ".voidbase", "void-entry.ts"), root);
     writeFileSync(join(hooks, "void-app.js"), code);
-    writeFileSync(join(hooks, "void-app.pb.js"), generateHookWrapper());
+    writeFileSync(join(hooks, "void-app.pb.js"), generateHookWrapper(manifest.crons));
     written.push(".voidbase/pb_hooks/void-app.js", ".voidbase/pb_hooks/void-app.pb.js");
     bundleBytes = bytes;
   }

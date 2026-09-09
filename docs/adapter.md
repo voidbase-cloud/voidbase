@@ -194,7 +194,7 @@ secrets` commands: `docs/deploy.md`.
 | `middleware/*.ts` | `routerUse(...)`, in file order | every request, as in Void (see below) |
 | `vb_hooks/*.ts` | the hook each file names, registered once | `onBootstrap`, `onRecordCreate`, the mailer hooks |
 | `vb_secrets/main.ts` + `secrets.json` | `.voidbase/pb_secrets/main.ts` (a re-export) + `secrets.json` | secrets to the Worker's secrets, the rest to its vars, `public` keys into the client build (see below) |
-| `crons/*.ts` | `cronAdd(<file name>, cron, handler)` | listed by `GET /api/crons`, runnable with `POST /api/crons/<name>` |
+| `crons/*.ts` | `cronAdd(<file name>, cron, handler)`; the literal `cron` export also becomes a cron trigger of the Worker at deploy | listed by `GET /api/crons`, runnable with `POST /api/crons/<name>` |
 | `queues/*.ts` | a voidbase job per message | `void/queues` and `c.env.QUEUE_<NAME>` produce; the consumer runs on the jobs queue, or inline where there is none |
 | `db/schema.ts` + `void/db` | Drizzle over voidbase's D1 | the same database PocketBase's collections live in |
 | `db/migrations/*.sql` | `.voidbase/pb_migrations/<name>.void.js` | applied and recorded like any other migration, on both runtimes |

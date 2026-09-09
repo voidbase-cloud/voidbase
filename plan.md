@@ -391,6 +391,19 @@ Order of work:
    site starts its own Cloudflare build through `scripts/cf-build.sh`, because a push by the workflow token
    starts no workflow). Mahmood's rule, recorded in memory: the testbeds exist to break before voidbase ships
    something broken; mocks prove the wiring, only they prove the product.
+7. **Done** (2026-09-09), and what rolling for real found: 0.9.0-beta.10 stores a redeployed Worker's secrets
+   through the Workers API instead of one `wrangler secret put` at a time, because the demo's build hung on the
+   second put twice, and an account that runs one build at a time queues every other build behind a hung one
+   until Cloudflare gives up on it half an hour later. 0.9.0-beta.11 lets a deploy through when a secret declared
+   `.optional()` has no value, because the site's deploy failed on its declared, valueless builder token. The
+   trackers, dispatched by hand rather than waited an hour for, put beta.11 on the demo (`test/demo-live.ts`,
+   10 of 10, sixteen seconds after the build), on the marketplace (its Cloudflare build runs the registry check,
+   the site build and the typecheck, which matters because a push by the workflow token starts no GitHub
+   workflow) and on the site, whose deploy with the builder token declared `.optional()` and absent (8 secrets
+   declared, none valued, deployed) is the live proof of beta.11. The site had also been building every commit twice, once from Cloudflare's
+   repository connection and once from its workflow, on that one-build account; `scripts/cf-build.sh` now adopts
+   the build the connection started and starts one only when none appears, and stays the fallback for a trigger
+   that stopped listening.
 
 ---
 

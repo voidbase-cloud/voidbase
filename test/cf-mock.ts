@@ -112,7 +112,11 @@ Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, 
         const metadata = JSON.parse(await meta.text()) as Record<string, unknown>; const modules = [...form.keys()].filter((k) => k !== "metadata");
         if (!modules.includes(String(metadata.main_module))) return err(400, 10021, `main_module ${metadata.main_module} is not among the uploaded modules`);
         if (metadata.assets && (metadata.assets as { jwt?: string }).jwt !== COMPLETION_JWT) return err(400, 10022, "assets: invalid completion token");
-        const tag = (metadata.migrations as { tag: string }[] | undefined)?.at(-1)?.tag ?? s?.migrationTag ?? null;
+        // Cloudflare takes one migration object (or steps), never an array: what it answered voidbase.cloud with, verbatim
+        if (Array.isArray(metadata.migrations)) return err(400, 10021, "json: cannot unmarshal array into Go struct field Metadata.migrations of type reader.ActorMigrations");
+        const mig = metadata.migrations as { new_tag?: string; tag?: string; new_sqlite_classes?: string[] } | undefined;
+        if (mig && (!mig.new_tag || !mig.new_sqlite_classes?.length)) return err(400, 10021, "migrations: new_tag and new_sqlite_classes are required");
+        const tag = mig?.new_tag ?? s?.migrationTag ?? null;
         if (s && metadata.migrations && s.migrationTag === tag) return err(400, 10023, `migration tag ${tag} already applied`);
         const now = new Date().toISOString();
         scripts.set(name, { tag: s?.tag ?? crypto.randomUUID().replace(/-/g, ""), metadata, modules, schedules: s?.schedules ?? [], subdomain: s?.subdomain ?? false, assets: metadata.assets ? [...uploadedHashes] : (s?.assets ?? []), migrationTag: tag, created_on: s?.created_on ?? now, modified_on: now });

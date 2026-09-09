@@ -188,7 +188,9 @@ export async function provisionInstance(cf: CfApi, o: ProvisionOptions): Promise
     main_module: m.mainModule, compatibility_date: m.compatibilityDate, compatibility_flags: m.compatibilityFlags, bindings,
     ...(o.smartPlacement === false ? {} : { placement: { mode: "smart" } }),
     ...(assetsJwt ? { assets: { jwt: assetsJwt, config: m.assetsConfig } } : {}),
-    ...(o.hub !== false && o.applyDoMigrations !== false && m.durableObjects.length ? { migrations: m.durableObjects.map((d) => ({ tag: d.tag, new_sqlite_classes: [d.className] })) } : {}),
+    // one migration object, as the script upload wants it (an array is refused with 10021): every class the release
+    // declares, under the release's tag; the deployed script remembers the tag, so it is sent once
+    ...(o.hub !== false && o.applyDoMigrations !== false && m.durableObjects.length ? { migrations: { new_tag: m.durableObjects[m.durableObjects.length - 1]!.tag, new_sqlite_classes: m.durableObjects.map((d) => d.className) } } : {}),
     tags: ["voidbase", `voidbase-release:${m.version}`, ...(o.tags ?? [])],
   };
   const form = new FormData();

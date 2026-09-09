@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.11](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.10...v0.9.0-beta.11) (2026-09-09)
+
+
+### Bug Fixes
+
+* **deploy:** a secret declared optional does not block a deploy when it has no value ([0b4c62d](https://github.com/voidbase-cloud/voidbase/commit/0b4c62dbe651aeca01ac6aa4caafe707f6bd6bc6))
+
 ## [0.9.0-beta.10](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.9...v0.9.0-beta.10) (2026-09-09)
 
 

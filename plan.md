@@ -485,8 +485,12 @@ shipped plugin: on disk on Bun, as a commit to the repository it deploys from on
 release for a customer's instance; voidbase.cloud wraps voidbase and the user's Cloudflare account, plus the
 GitHub connection for templates and pipelines (Mahmood, 2026-09-10: "that shouldn't be us, it should be the user
 themselves through their cloudflare account, ideally from within the instance itself as a core plugin"). The
-builder trigger, the instance-build workflow and the per-instance releases went with it. What does not exist:
-miniflare for the package, the tunnel flag, the migration command.
+builder trigger, the instance-build workflow and the per-instance releases went with it. And voidbase.cloud itself
+does its work in the browser (Mahmood, 2026-09-10: "voidbase cloud does not need any server capabilities really"):
+the site keeps sign-in, sealed tokens, rows and two pass-throughs to Cloudflare's and GitHub's APIs; the page
+provisions, upgrades and deletes in the user's account with voidbase's REST code, links repositories, and changes
+plugins through the instance's installer. What does not exist: miniflare for the package, the tunnel flag, the
+migration command.
 
 ## What to correct on the site when this lands
 

@@ -480,7 +480,10 @@ from CI/CD. A GitHub voidbase project and a Cloudflare voidbase project are sync
 how CI/CD gets set up. The CLI moves data between all three ways in either direction. And the adapter builds
 voidbase stack semantics into voidbase project semantics, so a stack app is hosted on a machine or on Cloudflare
 like any project. What exists: the executable, the package on Bun, Cloudflare all three ways, both modes in shape,
-`voidbase sync`, the adapter. What does not: miniflare for the package, the tunnel flag, the migration command.
+`voidbase sync`, the adapter, and (2026-09-10) the project side of the cloud: an instance with a repository linked
+gets its plugins as commits to that repository, deployed by the repository's own build, so the demo is a system
+project of voidbase.cloud and the plugin lifecycle is proven on it (`bun run live` in voidbase-site). What does
+not: miniflare for the package, the tunnel flag, the migration command.
 
 ## What to correct on the site when this lands
 

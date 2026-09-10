@@ -3,6 +3,25 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.20](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.19...v0.9.0-beta.20) (2026-09-10)
+
+
+### Features
+
+* **ci:** the instance builder is voidbase-ci's second trigger; no branches trigger ([8ca3e4a](https://github.com/voidbase-cloud/voidbase/commit/8ca3e4ad806990bf04f651535a67bb4b9d65115b))
+
+
+### Bug Fixes
+
+* **deploy:** a Flagship flag is created with its (empty) rules array ([5ba55d6](https://github.com/voidbase-cloud/voidbase/commit/5ba55d6f51db11210c02336ee12d03873375cf6c))
+* **deploy:** voidbase sync connects one trigger, and removes the branches trigger it used to make ([a9676af](https://github.com/voidbase-cloud/voidbase/commit/a9676afc459a9531531f62d15759f74fbed043ed))
+
+
+### Documentation
+
+* **plan:** the project side of the cloud exists; the demo is a system project ([c06ff52](https://github.com/voidbase-cloud/voidbase/commit/c06ff520e6f278817ab00452935bfc41dbf35658))
+* **plugins:** project instances: plugins as commits to the linked repository ([0cfa4ad](https://github.com/voidbase-cloud/voidbase/commit/0cfa4ad2a2db0169e5d5456e6d5702ac720166de))
+
 ## [0.9.0-beta.19](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.18...v0.9.0-beta.19) (2026-09-09)
 
 

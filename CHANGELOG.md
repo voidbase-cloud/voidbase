@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.23](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.22...v0.9.0-beta.23) (2026-09-10)
+
+
+### Bug Fixes
+
+* **deploy:** a Workflow step evaluates the app module before it opens the app ([b06d31c](https://github.com/voidbase-cloud/voidbase/commit/b06d31c51aaef702b86db800111ac35eaa2c4278))
+
 ## [0.9.0-beta.22](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.21...v0.9.0-beta.22) (2026-09-10)
 
 

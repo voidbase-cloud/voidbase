@@ -221,7 +221,6 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
       log(`flags: ${flagKeys.join(", ")} keep their defaults: ${err instanceof Error ? err.message.split("\n")[0] : err} (Flagship needs "Flagship: Write" on the deploy token)`);
     }
   }
-  writeFileSync(`${cloud}/.env`, Object.entries(baked).map(([k, v]) => `${k}=${v}\n`).join(""));
   log(`project: ${cloud}`);
 
   // superuser: from the environment (PB_* is what the starter's entrypoint uses) or generated once and kept in pb_data
@@ -276,10 +275,13 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   // are retired, because a binding name is one thing or the other
   const storeKeys = store ? [...new Set([...secretMap.keys(), ...declared.filter(heldInStore), ...extraSecrets.filter(heldInStore)])] : [];
   const retire = storeKeys.filter((k) => onWorker.includes(k));
+  if (!store) writeFileSync(`${cloud}/.env`, Object.entries(baked).map(([k, v]) => `${k}=${v}\n`).join(""));
   if (store) {
     workerConfig.secrets_store_secrets = storeBindings(store, name, storeKeys); writeWorkerConfig();
     // the names, as a var: a Workflow step sees the same bindings as RPC stubs whose shape says nothing (src/server/secrets-store.ts)
     if (storeKeys.length) baked[STORE_KEYS_VAR] = storeKeys.join(",");
+    // the vars file Void bakes into the Worker is written here, once everything that goes in it is known
+    writeFileSync(`${cloud}/.env`, Object.entries(baked).map(([k, v]) => `${k}=${v}\n`).join(""));
     log(`secrets store ${store}: ${secrets.length ? `${opts.dryRun ? "would store" : "storing"} ${secrets.map(([k]) => k).join(", ")}` : "nothing to store"}; bound by name: ${storeKeys.join(", ") || "none"}${retire.length ? `; ${opts.dryRun ? "would retire" : "retiring"} ${retire.join(", ")} from the Worker's own secrets` : ""}`);
   }
 

@@ -6,11 +6,15 @@
 // Secrets Store bindings resolved first. The class itself extends WorkflowEntrypoint from cloudflare:workers in
 // the module; the adapter bundles the module, the deploy exports the class from the Worker and binds it as
 // WORKFLOW_<NAME>, and `env.WORKFLOW_<NAME>.create({ id, params })` starts an instance.
+import { loadHooks } from "./hooks";
 import { withHookStore } from "./hooks/migrations";
 import { resolveSecretBindings } from "./secrets-store";
 import type { AppEnv } from "./types";
 
 export async function withApp<T>(env: AppEnv["Bindings"], fn: () => Promise<T> | T): Promise<T> {
+  // a Workflow step can run in an isolate that never served a request, where nothing has loaded the hook files
+  // yet (they publish the PocketBase API the app's shared code reaches through `pb`); loading is once per isolate
+  loadHooks();
   await resolveSecretBindings(env as unknown as Record<string, unknown>);
   return withHookStore(env.DB, env, fn);
 }

@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 import { parseRedirects, writeCloudProject, type RedirectEntry } from "./cloud-init";
 import { pathToFileURL } from "node:url";
 import { loadEnv } from "./serve";
+import { STORE_KEYS_VAR } from "../server/secrets-store";
 import { deleteWorkerSecrets, loadSecrets, putStoreSecrets, readSecretsValues, SECRETS_DIR, STORE_KNOB, storeBindings, storeSecretName, storeSecrets, workerSecretNames, type LoadedSecrets, putWorkerSecrets } from "./secrets";
 import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
 import { ensureFlags, ensureFlagshipApp, FLAGS_BINDING, FLAGS_VAR } from "./flagship";
@@ -277,6 +278,8 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const retire = storeKeys.filter((k) => onWorker.includes(k));
   if (store) {
     workerConfig.secrets_store_secrets = storeBindings(store, name, storeKeys); writeWorkerConfig();
+    // the names, as a var: a Workflow step sees the same bindings as RPC stubs whose shape says nothing (src/server/secrets-store.ts)
+    if (storeKeys.length) baked[STORE_KEYS_VAR] = storeKeys.join(",");
     log(`secrets store ${store}: ${secrets.length ? `${opts.dryRun ? "would store" : "storing"} ${secrets.map(([k]) => k).join(", ")}` : "nothing to store"}; bound by name: ${storeKeys.join(", ") || "none"}${retire.length ? `; ${opts.dryRun ? "would retire" : "retiring"} ${retire.join(", ")} from the Worker's own secrets` : ""}`);
   }
 

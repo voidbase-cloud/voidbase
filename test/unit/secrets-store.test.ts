@@ -34,6 +34,12 @@ describe("resolving them", () => {
     await resolveSecretBindings(env);
     expect(env.S).toBe("ok"); expect(attempts).toBe(2);
   });
+  test("a name the deploy listed is resolved even as an RPC stub, whose shape says nothing (a Workflow step)", async () => {
+    const stub = { get: async () => "from-the-stub", fetch: () => null, connect: () => null };
+    const env: Record<string, unknown> = { VOIDBASE_STORE_SECRETS: "TOKEN, MISSING", TOKEN: stub, SERVICE: { fetch: () => null, connect: () => null } };
+    await resolveSecretBindings(env);
+    expect(env.TOKEN).toBe("from-the-stub"); expect(typeof (env.SERVICE as { fetch: unknown }).fetch).toBe("function");
+  });
   test("an env with no bindings of that kind costs nothing", async () => {
     const env: Record<string, unknown> = { X: "1" };
     await resolveSecretBindings(env); expect(env.X).toBe("1");

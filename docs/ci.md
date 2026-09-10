@@ -139,9 +139,8 @@ triggers decide what runs:
 | event | build |
 | --- | --- |
 | push to master | the master trigger; the release step of the build then refreshes the release PR for releasable commits, or publishes a merged release PR and moves the testbeds onto it |
-| push to any other branch | nothing: the Worker's two trigger slots are master and the instance builder |
+| push to any other branch | nothing: only master has a trigger |
 | `bun scripts/cf-builds.ts build --branch <b>` or the dashboard's retry | the same, started by hand |
-| the control plane queues a cloud instance build | the `voidbase-ci (instance-build)` trigger, started through the API by voidbase.cloud (docs/plugins.md), never by a push |
 
 Nothing runs on GitHub's side: no Actions, no Actions secrets, no variables. The check run Cloudflare posts back
 is the pull request's status, and the result lives in the dashboard, in `cf-builds.ts logs`, and on the status page.
@@ -157,23 +156,17 @@ and a deploy command in Cloudflare's build image, and posts a check run (and a p
 GitHub. One project, `voidbase-ci`, runs voidbase's flows there: a Worker whose deploy publishes the status page of
 the build (`ci/wrangler.jsonc`, assets only). A trigger has one build command and one deploy command, and a Worker
 has two triggers at most (the API answers 12030 to a third), which is why the release flow runs inside the CI build
-rather than as a project of its own, and why the second slot is the instance builder rather than a preview build of
-other branches:
+rather than as a project of its own; the second slot stays free:
 
 | trigger | build command | deploy command |
 | --- | --- | --- |
 | master | `bun run build` (the CI suite) | `bun run deploy` (`wrangler deploy -c ci/wrangler.jsonc`) |
-| `voidbase-ci (instance-build)` | `bun scripts/instance-build.ts` | nothing: the release it builds reaches its instance through the control plane |
 
 
-The builder trigger's watch paths exclude every path, so a push never starts it (on paper it is "every branch but
-master", since two triggers on one Worker may not match the same branch); the control plane does, through the
-Builds API, naming the branch it wants (master), with the builder's three variables on the trigger (`VB_CLOUD_URL`, and the superuser it
-claims builds as, `VB_BUILD_EMAIL` and `VB_BUILD_PASSWORD`).
 
 A failed build command means no deploy, so the status Worker shows the last build that ran to the end; the log of a
 failed build is in the dashboard and in `cf-builds.ts logs`. The release secrets (`GH_TOKEN`, `NPM_TOKEN`, optionally
-`GH_PACKAGES_TOKEN`) are build secrets of the master trigger only, so the builder's builds never carry them.
+`GH_PACKAGES_TOKEN`) are build secrets of the master trigger.
 
 ### Limits and cost
 
@@ -197,10 +190,10 @@ account (the CI, the site, the demo, the marketplace, the instance builds) waits
 2. Create a user API token at dash.cloudflare.com/profile/api-tokens with **Workers Builds Configuration: Edit** and
    **Workers Scripts: Edit**, and export it as `CLOUDFLARE_BUILDS_TOKEN`. The Builds API takes user tokens only; the
    account-owned token `voidbase deploy` uses is rejected.
-3. `GH_TOKEN=... NPM_TOKEN=... VB_BUILD_EMAIL=... VB_BUILD_PASSWORD=... bun scripts/cf-builds.ts setup` connects the
-   repository, creates the CI Worker with its two triggers (every push builds) and the builder Worker with its one
+3. `GH_TOKEN=... NPM_TOKEN=... bun scripts/cf-builds.ts setup` connects the
+   repository, creates the CI Worker with its trigger (every push to master builds)
    (only through the API), sets `BUN_VERSION`, and stores the secrets it finds in the environment: the release
-   secrets on the master trigger, the builder's superuser on the builder trigger. The release secrets: `GH_TOKEN` (a fine-grained
+   secrets on the master trigger. The release secrets: `GH_TOKEN` (a fine-grained
    PAT with contents and pull requests write on this repository and contents write on the testbeds' repositories,
    for release-please, the release assets and the testbed bumps), `NPM_TOKEN` (the npm granular token), optionally
    `GH_PACKAGES_TOKEN` (a classic PAT with `write:packages`; fine-grained tokens cannot publish packages, and without

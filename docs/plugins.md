@@ -124,32 +124,25 @@ plugin's name replaces it. That, and the open registry protocol, is what keeps a
 and of our plugins. `voidbase update` names the installed plugins whose range excludes the target before it changes
 anything.
 
-## Cloud instances
+## Changing an instance's plugins: the installer
 
-A cloud instance's owner holds no filesystem, and the control plane is a Worker with no bun and no Vite, so the set
-of plugins is fixed when the instance's Worker is built. Installing one is therefore a rebuild: the control plane
-records the plugin set on the instance (`POST /api/vbcloud/instances/:id/plugins`) and queues a build;
-`scripts/instance-build.ts`, a Cloudflare Workers Build (the `voidbase-ci (instance-build)` trigger) that the
-control plane starts the moment a build is queued and starts again from its keeper cron for one nobody claimed,
-claims the build (`GET /api/vbcloud/builds/next`), installs the plugins with the instance's own released voidbase
-(the release's tarball from GitHub, so the code is exactly the release's), verifies each bundle against the hash the
-control plane recorded, builds a release with `voidbase bundle --plugins-dir`, pushes it without making it the
-default, and the control plane re-provisions the instance from it (`POST /api/vbcloud/builds/:id/done`); the build
-then checks that the instance answers. An upgrade of an instance that has plugins is the same build on the new base
-rather than a plain re-provision, which would drop them.
+`installer` is a shipped plugin, and it is how an instance changes its own plugins: `POST /api/plugins/install`
+`{ name, version?, marketplace? }`, `POST /api/plugins/remove { name }`, `POST /api/plugins/update { name? }`,
+and `GET /api/plugins/available?marketplace=` for what a marketplace serves (superusers, like `/api/plugins`, which
+now says where the plugins live under `installer`). Three places they can live, and the installer knows which:
 
-## Project instances
+| mode | where | what a change is |
+| --- | --- | --- |
+| `filesystem` | Bun: `voidbase serve`, the executable | `pb_plugins/` and `voidbase.lock` changed in place, as the CLI does; the instance loads them when it restarts |
+| `repository` | a project deployed from a repository: `VOIDBASE_PROJECT_REPO` (owner/name, `VOIDBASE_PROJECT_BRANCH` if not master) and `VOIDBASE_GH_TOKEN` on the Worker | one commit to the repository (`src/server/project-sync.ts`: the bundle downloaded and verified in the instance, `pb_plugins/<name>/{bundle.js,release.json}` written or deleted, the lockfile entry added or removed, through GitHub's Git Data API), which the repository's own build deploys |
+| `fixed` | a Worker built without either | nothing: the answer says what to connect |
 
-An instance with a repository linked to it on voidbase.cloud (`vb_repos.instance`) deploys from that repository, so
-its plugins live there, in `pb_plugins/` and `voidbase.lock`, exactly as the CLI writes them. A plugin change
-through the control plane is therefore one commit to the repository (`voidbase-site/src/shared/project.ts`: the
-bundle is downloaded and verified there, `pb_plugins/<name>/{bundle.js,release.json}` are written or deleted, the
-lockfile entry is added or removed, all in one commit made through GitHub's Git Data API with the owner's GitHub
-connection, or with `VB_GH_TOKEN` for the system repositories), and the repository's own pipeline, a push = build +
-`voidbase sync`, deploys it. No builder, no release: the control plane's part ends at the commit, which the
-instance's row records. `voidbase-demo` is such a project (`VB_SYSTEM_PROJECTS`), which is how the demo is the
-live testbed for install, uninstall and update without a throwaway instance (`bun run live` in voidbase-site). An
-upgrade of voidbase on a project instance is a change to the repository's dependency, not a re-provision.
+That is the whole cloud story. A cloud instance is the user's Worker in the user's account, deployed from a
+repository in the user's GitHub by the user's own Workers Build; voidbase.cloud creates the repository from a
+template, sets the two keys on the Worker, and its plugin page is a client of the instance's installer. Nothing is
+built for an instance by anyone but its own pipeline. `voidbase-demo` is such a project, which is how the demo is the
+live testbed for install, uninstall and update (`bun run live` in voidbase-site). An upgrade of voidbase on a project
+instance is a change to the repository's dependency, not a re-provision.
 
 ## Auth is the core plugin
 

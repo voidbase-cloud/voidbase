@@ -16,6 +16,10 @@ export interface Bindings {
   RATE_LIMITER?: { limit(options: { key: string }): Promise<{ success: boolean }> };
   LOGS_ANALYTICS?: { writeDataPoint(point: { blobs?: string[]; doubles?: number[]; indexes?: string[] }): void };
   HUB?: DurableObjectNamespace; // the instance's realtime hub (src/server/hub.ts)
+  // a project instance: the repository it deploys from and a token that commits there (plugins/installer.ts)
+  VOIDBASE_PROJECT_REPO?: string;
+  VOIDBASE_PROJECT_BRANCH?: string;
+  VOIDBASE_GH_TOKEN?: string;
 }
 
 export interface Variables {

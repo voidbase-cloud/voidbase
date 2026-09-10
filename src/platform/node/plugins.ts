@@ -86,3 +86,15 @@ export async function loadInstalled(dir: string): Promise<{ installed: Installed
 const loaded = await loadInstalled(resolve(process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins"));
 export const installed: InstalledPlugin[] = loaded.installed;
 export const disabled: string[] = loaded.disabled;
+
+// ---- the installer's view of the project on disk (src/server/plugins/installer.ts) --------------------------------
+import { addPlugin, listPlugins, removePlugin, updatePlugins } from "../../node/installed";
+import type { FilesystemInstaller } from "../../server/plugins/installer";
+const projectRoot = rootOfPluginsDir(resolve(process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins"));
+export const filesystem: FilesystemInstaller = {
+  root: projectRoot,
+  list: () => { const l = listPlugins(projectRoot); return { installed: l.installed.map((p) => ({ name: p.name, version: p.version, marketplace: p.marketplace })), disabled: l.shipped.filter((p) => p.state !== "active").map((p) => p.name), marketplaces: l.marketplaces }; },
+  add: (spec, o) => addPlugin(projectRoot, spec, o),
+  remove: (name) => removePlugin(projectRoot, name),
+  update: (name, o) => updatePlugins(projectRoot, name, o),
+};

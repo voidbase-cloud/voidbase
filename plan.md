@@ -480,10 +480,13 @@ from CI/CD. A GitHub voidbase project and a Cloudflare voidbase project are sync
 how CI/CD gets set up. The CLI moves data between all three ways in either direction. And the adapter builds
 voidbase stack semantics into voidbase project semantics, so a stack app is hosted on a machine or on Cloudflare
 like any project. What exists: the executable, the package on Bun, Cloudflare all three ways, both modes in shape,
-`voidbase sync`, the adapter, and (2026-09-10) the project side of the cloud: an instance with a repository linked
-gets its plugins as commits to that repository, deployed by the repository's own build, so the demo is a system
-project of voidbase.cloud and the plugin lifecycle is proven on it (`bun run live` in voidbase-site). What does
-not: miniflare for the package, the tunnel flag, the migration command.
+`voidbase sync`, the adapter, and (2026-09-10) the installer: an instance changes its own plugins (`installer`, a
+shipped plugin: on disk on Bun, as a commit to the repository it deploys from on Workers), so nobody builds a
+release for a customer's instance; voidbase.cloud wraps voidbase and the user's Cloudflare account, plus the
+GitHub connection for templates and pipelines (Mahmood, 2026-09-10: "that shouldn't be us, it should be the user
+themselves through their cloudflare account, ideally from within the instance itself as a core plugin"). The
+builder trigger, the instance-build workflow and the per-instance releases went with it. What does not exist:
+miniflare for the package, the tunnel flag, the migration command.
 
 ## What to correct on the site when this lands
 

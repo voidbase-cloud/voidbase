@@ -3,6 +3,14 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.21](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.20...v0.9.0-beta.21) (2026-09-10)
+
+
+### Bug Fixes
+
+* **ci:** fresh-db brings the boot step with it in hot mode ([acb61ab](https://github.com/voidbase-cloud/voidbase/commit/acb61abb251a08ab11291ae0d2ca7edcd795a267))
+* **deploy:** a Workflow step reaches the app and its store secrets ([3b8f93e](https://github.com/voidbase-cloud/voidbase/commit/3b8f93e786a9c6c516a97af031e8615dd6f66f29))
+
 ## [0.9.0-beta.20](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.19...v0.9.0-beta.20) (2026-09-10)
 
 

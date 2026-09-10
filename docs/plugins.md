@@ -138,6 +138,19 @@ default, and the control plane re-provisions the instance from it (`POST /api/vb
 then checks that the instance answers. An upgrade of an instance that has plugins is the same build on the new base
 rather than a plain re-provision, which would drop them.
 
+## Project instances
+
+An instance with a repository linked to it on voidbase.cloud (`vb_repos.instance`) deploys from that repository, so
+its plugins live there, in `pb_plugins/` and `voidbase.lock`, exactly as the CLI writes them. A plugin change
+through the control plane is therefore one commit to the repository (`voidbase-site/src/shared/project.ts`: the
+bundle is downloaded and verified there, `pb_plugins/<name>/{bundle.js,release.json}` are written or deleted, the
+lockfile entry is added or removed, all in one commit made through GitHub's Git Data API with the owner's GitHub
+connection, or with `VB_GH_TOKEN` for the system repositories), and the repository's own pipeline, a push = build +
+`voidbase sync`, deploys it. No builder, no release: the control plane's part ends at the commit, which the
+instance's row records. `voidbase-demo` is such a project (`VB_SYSTEM_PROJECTS`), which is how the demo is the
+live testbed for install, uninstall and update without a throwaway instance (`bun run live` in voidbase-site). An
+upgrade of voidbase on a project instance is a change to the repository's dependency, not a re-provision.
+
 ## Auth is the core plugin
 
 Auth left the core on 2026-09-09 (plan.md, decision 0.3): `src/server/plugins/auth.ts` is a plugin of tier `core`

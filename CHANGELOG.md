@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.22](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.21...v0.9.0-beta.22) (2026-09-10)
+
+
+### Bug Fixes
+
+* **deploy:** the vars file is written after the store block ([38ccb84](https://github.com/voidbase-cloud/voidbase/commit/38ccb842ad9e144770a4f6bd1e62b3050b7844a8))
+
 ## [0.9.0-beta.21](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.20...v0.9.0-beta.21) (2026-09-10)
 
 

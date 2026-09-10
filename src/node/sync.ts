@@ -103,10 +103,9 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   // did before the verbs existed.
   const buildCmd = hasScript("build") ? `${step}bun run build` : voidApp ? `${step}bunx --bun vite build` : prefix ? `echo "${prefix}: nothing to build"` : "true";
   const deployCmd = hasScript("deploy") ? `${step}bun run deploy` : `${step}bunx @voidbase-cloud/voidbase sync --name ${deployed.name}${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN ? ` --domain ${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN}` : ""}`;
-  // Workers Builds gives a trigger one deploy command, so a branch trigger spends it on the third verb: what this
-  // branch would deploy with, which changes nothing live.
-  const branchCmd = hasScript("version") ? `${step}bun run version` : `echo "branch build: built${hasScript("check") ? " and checked" : ""}, nothing to deploy"`;
-  if (opts.dryRun) { log(`\nci (dry run): would connect ${repo} to Worker ${deployed.name}: branch ${branch} builds \`${buildCmd}\` and deploys \`${deployCmd}\`; other branches build only`); return; }
+  // One trigger, one branch: a push to it builds and deploys, other branches build nowhere (the plainest pipeline;
+  // `bun run version` stays a verb for a laptop).
+  if (opts.dryRun) { log(`\nci (dry run): would connect ${repo} to Worker ${deployed.name}: branch ${branch} builds \`${buildCmd}\` and deploys \`${deployCmd}\`; other branches build nowhere`); return; }
 
   const cf = new CfApi(buildsToken, API);
   const account = await resolveAccount(cf, deployed.account).catch((e: Error) => { throw new Error(`${e.message} (is ${BUILDS_TOKEN_ENV} a user token that reaches account ${deployed.account}?)`); });
@@ -125,7 +124,9 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   const existing = await triggers(cf, account.id, tag);
   const common = { root_directory: "/", build_caching: true, path_includes: ["*"], path_excludes: [] as string[] };
   const prod = await ensureTrigger(cf, account.id, tag, connection, buildToken, { trigger_name: `${deployed.name} (${branch})`, build_command: buildCmd, deploy_command: deployCmd, branch_includes: [branch], branch_excludes: [], ...common });
-  const rest = await ensureTrigger(cf, account.id, tag, connection, buildToken, { trigger_name: `${deployed.name} (branches)`, build_command: buildCmd, deploy_command: branchCmd, branch_includes: ["*"], branch_excludes: [branch], ...common });
+  // the branches trigger of earlier layouts goes: nothing builds but a push to the branch
+  const stale = existing.filter((t) => t.trigger_uuid !== prod.uuid);
+  for (const t of stale) await cf.json("DELETE", `/accounts/${account.id}/builds/triggers/${t.trigger_uuid}`);
 
   // what a build on Cloudflare needs: Bun, the deploy token, and the declared server/public values this machine has
   // (a build has no secrets.json; the Worker keeps its secrets)
@@ -136,11 +137,10 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   const plain: string[] = [];
   if (state.definition) for (const k of state.definition.of("server", "public")) { const v = state.values?.[k]; if (v !== undefined) { env[k] = { value: v, is_secret: false }; plain.push(k); } }
   await setTriggerEnv(cf, account.id, prod.uuid, env);
-  await setTriggerEnv(cf, account.id, rest.uuid, { BUN_VERSION: env.BUN_VERSION! });
 
   log(`\nci: ${repo} -> Worker ${deployed.name} (account ${account.name})`);
   log(`  ${prod.created ? "created" : "updated"} trigger "${deployed.name} (${branch})": a push to ${branch} runs \`${buildCmd}\`, then \`${deployCmd}\`${existing.length && !prod.created ? " (watch paths left as they were)" : ""}`);
-  log(`  ${rest.created ? "created" : "updated"} trigger "${deployed.name} (branches)": every other branch runs \`${buildCmd}\`, then \`${branchCmd}\`; nothing live is touched`);
+  for (const t of stale) log(`  removed trigger "${t.trigger_name}": only a push to ${branch} builds`);
   log(`  build environment: BUN_VERSION${deployToken ? ", VOIDBASE_DEPLOY_CF_API_KEY (secret)" : ""}${plain.length ? `, ${plain.join(", ")}` : ""}`);
   log(`  the pipeline: push to ${branch} and watch it at ${link}`);
 }

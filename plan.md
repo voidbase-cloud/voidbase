@@ -424,10 +424,10 @@ Order of work:
    the build the connection started and starts one only when none appears, and stays the fallback for a trigger
    that stopped listening.
 8. **Done** (2026-09-09), no GitHub Actions anywhere: Mahmood's direction, every repository is connected to its
-   Worker and Cloudflare is the CI. The CI triggers build every push (release-please's branch excluded, by its exact
-   name: the API takes no wildcard), a second Worker, `voidbase-builder`, exists for one trigger (a Worker takes two
-   at most) that runs `scripts/instance-build.ts` and is started by the control plane through the Builds
-   API (and again by its keeper cron, `crons/keeper.ts` on the site, for a build nobody claimed), and the release
+   Worker and Cloudflare is the CI. The master trigger builds every push to master; the Worker's second trigger (a Worker takes
+   two at most, so other branches build nowhere; 2026-09-10, Mahmood: four Workers on the account and no more)
+   is `voidbase-ci (instance-build)`, which runs `scripts/instance-build.ts` and is started by the control plane
+   through the Builds API (the site's Workflow watches the build and restarts a dead one), and the release
    build moves the testbeds onto a published version itself (`scripts/testbeds.ts`, which waits for the registry to
    serve the version and pushes with its own token: a build image pushes as Cloudflare's GitHub App otherwise). The
    marketplace's approval is a maintainer's command. GitHub holds no secrets or variables any more. Then Mahmood cut
@@ -450,6 +450,22 @@ Order of work:
    nothing to resolve to and Rolldown refused the build (a project's Vite finds the package installed). Fixed in
    the hooks plugin, which maps a bundle's bare imports to voidbase's files through its exports map and hono to
    its own copy (`providedImport`, unit-tested); the cloud loop with echo 0.2.0 is the proof.
+
+10. **Done** (2026-09-10), Cloudflare's own products for what voidbase already has (Mahmood: "we are not using
+    Secrets Store, Workflows or Flagship even though our instance already has these concepts"). *Secrets Store*:
+    `VOIDBASE_SECRETS_STORE=<store id>` makes a deploy store every declared `secret()` in the account's store as
+    `<worker>__KEY`, bind each as `secrets_store_secrets`, and retire the Worker's own of those names; the runtime
+    resolves every such binding's async `get()` once per isolate (`src/server/secrets-store.ts`) before anything
+    reads env; `voidbase secrets push` and the listing follow. *Flagship*: a `flag()` tier (booleans) that the
+    deploy creates in a Flagship app named after the Worker with its default (the dashboard's word wins after),
+    binds as `FLAGS` and bakes as `VOIDBASE_FLAGS`; `src/server/flags.ts` evaluates the declared flags per request
+    with a targeting key and writes them onto the request's env, so every reader of a boolean knob sees the flag.
+    *Workflows*: `workflows/<name>.ts` in a Void app is bundled beside the app, exported from the Worker and bound
+    as `WORKFLOW_<NAME>`; `withApp(env, fn)` (`@voidbase-cloud/voidbase/workflows`) opens the app inside a step.
+    voidbase.cloud's instance builds are such a run (start the builder, wait for its report, fail with a reason
+    after 45 minutes), which retires the keeper cron; the site's presence and self-delete knobs and the demo's
+    uploads are flags. Left to Mahmood: the deploy token lacks "Account Secrets Store Edit" and "Flagship Write",
+    so the store and the flags stay at their fallbacks on the three apps until it has them.
 
 ## Where it is going: three ways to run, two modes, one CLI (Mahmood, 2026-09-09)
 

@@ -12,7 +12,7 @@
 // becoming the default, and the control plane re-provisions the instance from it. Every step that fails reports the
 // reason back, so the dashboard can say it.
 //
-// It runs as a Cloudflare Workers Build: the `voidbase-builder (instance-build)` trigger (scripts/cf-builds.ts setup
+// It runs as a Cloudflare Workers Build: the `voidbase-ci (instance-build)` trigger (scripts/cf-builds.ts setup
 // creates it, with these three variables) has this as its build command and nothing on push, and the control plane
 // starts it the moment a build is queued; its keeper cron starts it again for a build nobody claimed. The base
 // release's code comes from GitHub's tarball of the tag (VB_BASE_REPO, default voidbase-cloud/voidbase), because a

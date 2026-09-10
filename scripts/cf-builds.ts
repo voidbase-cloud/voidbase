@@ -1,7 +1,7 @@
 // Cloudflare Workers Builds for this repository through the Builds REST API (docs/ci.md): connects the GitHub
-// repository, creates the CI project (a Worker that serves its status page) with its three triggers, build variables
+// repository, creates the CI project (a Worker that serves its status page) with its two triggers, build variables
 // and secrets, triggers builds and follows their logs. The release flow runs inside the CI build (scripts/ci.sh).
-//   bun scripts/cf-builds.ts setup [--repo voidbase-cloud/voidbase] [--ci voidbase-ci] [--builder voidbase-builder] [--branch master] [--domain release.voidbase.cloud] [--cloud https://voidbase.cloud]
+//   bun scripts/cf-builds.ts setup [--repo voidbase-cloud/voidbase] [--ci voidbase-ci] [--branch master] [--domain release.voidbase.cloud] [--cloud https://voidbase.cloud]
 //   bun scripts/cf-builds.ts status [--ci voidbase-ci]
 //   bun scripts/cf-builds.ts build [--worker voidbase-ci] [--branch master | --commit <sha>] [--trigger <name>] [--follow]
 //   bun scripts/cf-builds.ts builds [--worker voidbase-ci]
@@ -15,13 +15,14 @@
 // the token reaches several. `setup` stores the release secrets from the environment on the master trigger when they
 // are set: GH_TOKEN (release-please, release assets), NPM_TOKEN or VOIDBASE_NPM_TOKEN, GH_PACKAGES_TOKEN. With CI_CACHE_TOKEN (an
 // API token with Workers R2 Storage edit; VOIDBASE_DEPLOY_CF_API_KEY is accepted) it creates the R2 bucket the builds
-// keep their downloads in (--cache-bucket, default voidbase-ci-cache) and stores the token on every trigger. Every push
-// builds: master on the master trigger, any other branch on the branches trigger, except release-please's own branch,
-// whose diff the master build already ran. A Worker takes two triggers at most (the API says 12030 to a third), so
-// the instance builder is a second Worker, `voidbase-builder` (a placeholder script that serves nothing), with one
-// trigger, `voidbase-builder (instance-build)`, that never builds on push: it runs scripts/instance-build.ts for
-// cloud instances and is started by the control plane (--cloud, or VB_CLOUD_URL; the builder's superuser there from
-// VB_BUILD_EMAIL and VB_BUILD_PASSWORD). CLOUDFLARE_API_BASE and GITHUB_API_URL point everything at test/cf-mock.ts.
+// keep their downloads in (--cache-bucket, default voidbase-ci-cache) and stores the token on the master trigger.
+// A push to master builds on the master trigger; other branches build nowhere (a Worker takes two triggers at most,
+// the API says 12030 to a third, and the second one is the instance builder). That second trigger,
+// `voidbase-ci (instance-build)`, never builds on push (its watch paths exclude everything; on paper it is "every
+// branch but master", since two triggers on one Worker may not match the same branch): it runs
+// scripts/instance-build.ts for cloud instances and is started by the control plane with branch master (--cloud, or
+// VB_CLOUD_URL; the builder's superuser there from VB_BUILD_EMAIL and VB_BUILD_PASSWORD). Any other trigger on the CI Worker (the branches trigger of earlier layouts) is removed by
+// setup. CLOUDFLARE_API_BASE and GITHUB_API_URL point everything at test/cf-mock.ts.
 import { CfApi, CfError, ensureR2, resolveAccount, workersSubdomain } from "../src/cloud/rest";
 
 const [cmd = "status", ...rest] = process.argv.slice(2);
@@ -39,17 +40,15 @@ if (!token) {
 }
 const cf = new CfApi(token, process.env.CLOUDFLARE_API_BASE);
 const GITHUB_API = (process.env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
-const CI = args.ci ?? "voidbase-ci", BRANCH = args.branch ?? "master", BUILDER = args.builder ?? "voidbase-builder";
+const CI = args.ci ?? "voidbase-ci", BRANCH = args.branch ?? "master";
 // release-please's branch, by its exact name: the Builds API takes no wildcard in a branch filter
-const RELEASE_BRANCH = `release-please--branches--${BRANCH}--components--${args.component ?? "voidbase"}`;
 const BUN_VERSION = "1.3.14";  // the version CI pins on every trigger; the image's default is older
 // the three verbs every project answers (docs/ci.md): scripts/pipeline.ts reads what they mean from the environment
 const DEPLOY = "bun run deploy";
-const PREVIEW = "bun run version";
 const CI_BUILD = "bun run build";
 const INSTANCE_BUILD = "bun scripts/instance-build.ts";
 const INSTANCE_DEPLOY = 'echo "instance builds reach their instances through the control plane; nothing to deploy here"';
-const triggerNames = { ciMaster: `${CI} (${BRANCH})`, ciBranches: `${CI} (branches)`, instanceBuild: `${BUILDER} (instance-build)` };
+const triggerNames = { ciMaster: `${CI} (${BRANCH})`, instanceBuild: `${CI} (instance-build)` };
 
 interface Trigger { trigger_uuid: string; trigger_name: string; external_script_id?: string; build_command?: string; deploy_command?: string; root_directory?: string; branch_includes?: string[]; branch_excludes?: string[]; path_includes?: string[]; path_excludes?: string[]; build_caching_enabled?: boolean; [k: string]: unknown }
 interface Build { build_uuid: string; status?: string; build_outcome?: string; created_on?: string; created_at?: string; stopped_on?: string; build_trigger_metadata?: { branch?: string; commit_hash?: string; [k: string]: unknown }; [k: string]: unknown }
@@ -138,8 +137,6 @@ try {
     // 2. the projects' Workers first, so the dashboard link below points at something that exists
     const ci = await ensureWorker(CI);
     console.log(`Worker ${CI}: ${ci.created ? "created" : "exists"} (tag ${ci.tag})`);
-    const bw = await ensureWorker(BUILDER);
-    console.log(`Worker ${BUILDER}: ${bw.created ? "created" : "exists"} (tag ${bw.tag}); a placeholder, its trigger builds instances`);
     // 3. the build token Workers Builds deploys with (the dashboard creates one under Settings > Builds > API token)
     const tokens = (await cf.json<{ build_token_uuid: string; build_token_name?: string }[]>("GET", `${A}/builds/tokens`)).result ?? [];
     const buildToken = tokens[0]?.build_token_uuid ?? die(`no build token on the account yet: open ${dash(CI)} > Settings > Builds > API token > Create new token once, then rerun setup`);
@@ -148,9 +145,13 @@ try {
     // its diff is a changelog and a version generated from commits the master build already ran
     const common = { root_directory: "/", path_includes: ["*"], path_excludes: [], build_caching_enabled: true };
     const prod = await ensureTrigger(ci.tag, connection, buildToken, { trigger_name: triggerNames.ciMaster, build_command: CI_BUILD, deploy_command: DEPLOY, branch_includes: [BRANCH], branch_excludes: [], ...common });
-    const preview = await ensureTrigger(ci.tag, connection, buildToken, { trigger_name: triggerNames.ciBranches, build_command: CI_BUILD, deploy_command: PREVIEW, branch_includes: ["*"], branch_excludes: [BRANCH, RELEASE_BRANCH], ...common });
-    // the instance builder: master's code on its own Worker, started through the API by the control plane and never by a push
-    const builder = await ensureTrigger(bw.tag, connection, buildToken, { trigger_name: triggerNames.instanceBuild, build_command: INSTANCE_BUILD, deploy_command: INSTANCE_DEPLOY, branch_includes: [BRANCH], branch_excludes: [], root_directory: "/", path_includes: ["*"], path_excludes: ["*"], build_caching_enabled: false });
+    // any other trigger on the Worker goes (the branches trigger of earlier layouts): the second slot is the builder's
+    for (const t of await triggers(ci.tag)) if (t.trigger_name !== triggerNames.ciMaster && t.trigger_name !== triggerNames.instanceBuild) { await cf.json("DELETE", `${A}/builds/triggers/${t.trigger_uuid}`); console.log(`trigger ${t.trigger_uuid} "${t.trigger_name}" removed: the Worker's second trigger is the instance builder`); }
+    // the instance builder: master's code, started through the API by the control plane and never by a push (its
+    // watch paths exclude everything). Two triggers on one Worker may not match the same branch (12042, or 12002
+    // for any overlap), so this one is "every branch but master" on paper; a build started through the API names
+    // its branch, master, and the API accepts that (checked 2026-09-10)
+    const builder = await ensureTrigger(ci.tag, connection, buildToken, { trigger_name: triggerNames.instanceBuild, build_command: INSTANCE_BUILD, deploy_command: INSTANCE_DEPLOY, branch_includes: ["*"], branch_excludes: [BRANCH], root_directory: "/", path_includes: ["*"], path_excludes: ["*"], build_caching_enabled: false }, true);
     // the record of the last green run of master, which scripts/ci-plan.ts compares the inputs against: the status
     // page's canonical address (--domain, the custom domain ci/wrangler.jsonc declares), else the workers.dev one
     const domain = args.domain ?? process.env.CI_DOMAIN ?? "release.voidbase.cloud";
@@ -164,13 +165,13 @@ try {
       if (r) { console.log(`cache bucket ${bucket}: ${r.created ? "created" : "exists"}`); cacheVars = { CI_CACHE_BUCKET: { value: bucket, is_secret: false }, CI_CACHE_ACCOUNT: { value: account.id, is_secret: false }, CI_CACHE_TOKEN: { value: cacheToken, is_secret: true } }; }
     } else console.log("cache bucket: skipped (set CI_CACHE_TOKEN, an API token with Workers R2 Storage edit, to keep downloads between builds)");
     const vars: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false }, CI_BROWSER: { value: "1", is_secret: false }, ...(statusUrl ? { CI_STATUS_URL: { value: statusUrl, is_secret: false } } : {}), ...cacheVars };
-    // the release secrets on the master trigger only: builds of other branches never carry them
+    // the release secrets on the master trigger only: the builder's trigger never carries them
     const secrets: EnvVars = {};
     const ghTok = process.env.GH_TOKEN, npmTok = process.env.NPM_TOKEN ?? process.env.VOIDBASE_NPM_TOKEN, ghpTok = process.env.GH_PACKAGES_TOKEN;
     if (ghTok) secrets.GH_TOKEN = { value: ghTok, is_secret: true };
     if (npmTok) secrets.NPM_TOKEN = { value: npmTok, is_secret: true };
     if (ghpTok) secrets.GH_PACKAGES_TOKEN = { value: ghpTok, is_secret: true };
-    await setEnv(prod.uuid, { ...vars, ...secrets }); await setEnv(preview.uuid, vars);
+    await setEnv(prod.uuid, { ...vars, ...secrets });
     // the builder's three variables: where the control plane is, and the superuser it claims builds as
     const cloud = (args.cloud ?? process.env.VB_CLOUD_URL ?? "https://voidbase.cloud").replace(/\/+$/, "");
     const builderVars: EnvVars = { BUN_VERSION: { value: BUN_VERSION, is_secret: false }, VB_CLOUD_URL: { value: cloud, is_secret: false } };
@@ -180,11 +181,10 @@ try {
     if (statusUrl) console.log(`  CI_STATUS_URL ${statusUrl} (the last green run's record, for incremental runs)`);
     console.log(`  release secrets on the ${BRANCH} trigger: ${Object.keys(secrets).join(", ") || "none (set GH_TOKEN and NPM_TOKEN in the environment and rerun, or `env --trigger \"" + triggerNames.ciMaster + "\" --secret GH_TOKEN=...`)"}`);
     console.log(`  trigger ${prod.uuid} ${BRANCH}: ${prod.created ? "created" : "updated"}; build \`${CI_BUILD}\`, deploy \`${DEPLOY}\``);
-    console.log(`  trigger ${preview.uuid} other branches: ${preview.created ? "created" : "updated"}; deploy \`${PREVIEW}\` (preview URL on the pull request)`);
-    console.log(`  trigger ${builder.uuid} instance builds on ${BUILDER}: ${builder.created ? "created" : "updated"}; build \`${INSTANCE_BUILD}\` for ${cloud}, started by the control plane, never by a push; builder superuser ${builderVars.VB_BUILD_EMAIL && builderVars.VB_BUILD_PASSWORD ? "stored" : "not set (VB_BUILD_EMAIL and VB_BUILD_PASSWORD in the environment, or `env --worker " + BUILDER + " --secret ...`)"}`);
+    console.log(`  trigger ${builder.uuid} instance builds on ${CI}: ${builder.created ? "created" : "updated"}; build \`${INSTANCE_BUILD}\` for ${cloud}, started by the control plane, never by a push; builder superuser ${builderVars.VB_BUILD_EMAIL && builderVars.VB_BUILD_PASSWORD ? "stored" : "not set (VB_BUILD_EMAIL and VB_BUILD_PASSWORD in the environment, or `env --worker " + CI + " --secret ...`)"}`);
     console.log(`\ndone. Every push to ${repo} builds on ${dash(CI)}. First build: bun scripts/cf-builds.ts build --branch ${BRANCH} --follow`);
   } else if (cmd === "status") {
-    for (const name of [CI, BUILDER]) {
+    for (const name of [CI]) {
       const w = (await workers()).find((s) => s.id === name);
       if (!w?.tag) { console.log(`${name}: no such Worker`); continue; }
       const ts = await triggers(w.tag); const last = await latestBuild(w.tag);

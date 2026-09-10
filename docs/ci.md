@@ -83,7 +83,7 @@ Cloudflare Workers Builds calls three commands, and both projects answer with th
 ```
 Build command     bun run build
 Deploy command    bun run deploy
-Version command   bun run version      (a branch build; set as the branch trigger's command)
+Version command   bun run version      (a preview upload, by hand: no trigger runs it)
 Root directory    /
 ```
 
@@ -101,11 +101,10 @@ would deploy with). `voidbase sync` writes these three into the triggers it crea
 scripts, so a project set up from the CLI and one set up by hand in the dashboard end up saying the same thing.
 
 **One change, one build.** Cloudflare builds every push, so the count is decided by the triggers' branch filters.
-The branches trigger declines one branch: release-please's own, whose diff is a changelog, a version and a manifest
-generated from commits the master build has already run. A release is the master build that merged its pull request:
+Only master has a trigger, so release-please's own branch (a changelog, a version and a manifest generated from
+commits the master build has already run) builds nowhere. A release is the master build that merged its pull request:
 in hot mode that build publishes to npm and moves the testbeds; with hot mode off it also builds the release's
-executables. So a push to master is one build, a pull request is one (its branch; the merge is a push to master),
-and a release is one.
+executables. So a push to master is one build, a pull request is none until it merges (a push to master), and a release is one.
 
 None of the three verbs supervises the commands it runs: no deadline, no retry, no watchdog. A build that hangs or
 fails is the build platform's to cut short and to run again -- Cloudflare has a twenty minute limit and a retry
@@ -140,9 +139,9 @@ triggers decide what runs:
 | event | build |
 | --- | --- |
 | push to master | the master trigger; the release step of the build then refreshes the release PR for releasable commits, or publishes a merged release PR and moves the testbeds onto it |
-| push to any other branch (a pull request's branch included) | the branches trigger: a preview URL of the results, no release work, no secrets; release-please's own branch is excluded |
+| push to any other branch | nothing: the Worker's two trigger slots are master and the instance builder |
 | `bun scripts/cf-builds.ts build --branch <b>` or the dashboard's retry | the same, started by hand |
-| the control plane queues a cloud instance build | the `voidbase-builder (instance-build)` trigger, started through the API by voidbase.cloud (docs/plugins.md), never by a push |
+| the control plane queues a cloud instance build | the `voidbase-ci (instance-build)` trigger, started through the API by voidbase.cloud (docs/plugins.md), never by a push |
 
 Nothing runs on GitHub's side: no Actions, no Actions secrets, no variables. The check run Cloudflare posts back
 is the pull request's status, and the result lives in the dashboard, in `cf-builds.ts logs`, and on the status page.
@@ -158,22 +157,23 @@ and a deploy command in Cloudflare's build image, and posts a check run (and a p
 GitHub. One project, `voidbase-ci`, runs voidbase's flows there: a Worker whose deploy publishes the status page of
 the build (`ci/wrangler.jsonc`, assets only). A trigger has one build command and one deploy command, and a Worker
 has two triggers at most (the API answers 12030 to a third), which is why the release flow runs inside the CI build
-rather than as a project of its own, and why the instance builder is a second Worker, `voidbase-builder`, a
-placeholder script that serves nothing and exists for its one trigger:
+rather than as a project of its own, and why the second slot is the instance builder rather than a preview build of
+other branches:
 
 | trigger | build command | deploy command |
 | --- | --- | --- |
 | master | `bun run build` (the CI suite) | `bun run deploy` (`wrangler deploy -c ci/wrangler.jsonc`) |
-| branches | `bun run build` | `bun run version` (`wrangler versions upload`): a preview URL of the results on the pull request |
-| `voidbase-builder (instance-build)` | `bun scripts/instance-build.ts` | nothing: the release it builds reaches its instance through the control plane |
+| `voidbase-ci (instance-build)` | `bun scripts/instance-build.ts` | nothing: the release it builds reaches its instance through the control plane |
 
-The builder trigger's watch paths exclude every path, so a push never starts it; the control plane does,
-through the Builds API, with the builder's three variables on the trigger (`VB_CLOUD_URL`, and the superuser it
+
+The builder trigger's watch paths exclude every path, so a push never starts it (on paper it is "every branch but
+master", since two triggers on one Worker may not match the same branch); the control plane does, through the
+Builds API, naming the branch it wants (master), with the builder's three variables on the trigger (`VB_CLOUD_URL`, and the superuser it
 claims builds as, `VB_BUILD_EMAIL` and `VB_BUILD_PASSWORD`).
 
 A failed build command means no deploy, so the status Worker shows the last build that ran to the end; the log of a
 failed build is in the dashboard and in `cf-builds.ts logs`. The release secrets (`GH_TOKEN`, `NPM_TOKEN`, optionally
-`GH_PACKAGES_TOKEN`) are build secrets of the master trigger only, so builds of other branches never carry them.
+`GH_PACKAGES_TOKEN`) are build secrets of the master trigger only, so the builder's builds never carry them.
 
 ### Limits and cost
 

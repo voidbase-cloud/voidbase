@@ -129,7 +129,7 @@ anything.
 A cloud instance's owner holds no filesystem, and the control plane is a Worker with no bun and no Vite, so the set
 of plugins is fixed when the instance's Worker is built. Installing one is therefore a rebuild: the control plane
 records the plugin set on the instance (`POST /api/vbcloud/instances/:id/plugins`) and queues a build;
-`scripts/instance-build.ts`, a Cloudflare Workers Build (the `voidbase-builder (instance-build)` trigger) that the
+`scripts/instance-build.ts`, a Cloudflare Workers Build (the `voidbase-ci (instance-build)` trigger) that the
 control plane starts the moment a build is queued and starts again from its keeper cron for one nobody claimed,
 claims the build (`GET /api/vbcloud/builds/next`), installs the plugins with the instance's own released voidbase
 (the release's tarball from GitHub, so the code is exactly the release's), verifies each bundle against the hash the

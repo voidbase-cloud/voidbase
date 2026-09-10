@@ -6,6 +6,9 @@
 // Secrets Store bindings resolved first. The class itself extends WorkflowEntrypoint from cloudflare:workers in
 // the module; the adapter bundles the module, the deploy exports the class from the Worker and binds it as
 // WORKFLOW_<NAME>, and `env.WORKFLOW_<NAME>.create({ id, params })` starts an instance.
+// the app module itself: evaluating it installs the hook services and loads the hook files (app.ts, at its end).
+// A Workflow step can run in an isolate where the fetch handler never imported it, so the import is made here.
+import "./app";
 import { loadHooks } from "./hooks";
 import { withHookStore } from "./hooks/migrations";
 import { resolveSecretBindings } from "./secrets-store";

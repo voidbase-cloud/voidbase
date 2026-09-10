@@ -104,12 +104,13 @@ function hot(d: Decisions, opts: DecideOptions) {
 function derive(d: Decisions) {
   const any = (prefix: string, filter: (k: string) => boolean = () => true) => Object.keys(d).some((k) => k.startsWith(prefix) && filter(k) && d[k]!.run);
   const suites = any("suite:"), bun = any("bun:"), browser = any("suite:", isBrowserKey) || d["step:starter"]!.run;
-  const boot = any("suite:", (k) => k !== "suite:cloud-rest") || d["step:starter"]!.run;
+  // fresh-db seeds its isolated D1 from the dev server's file (test/fresh-db.ts), so it needs the boot too
+  const boot = any("suite:", (k) => k !== "suite:cloud-rest") || d["step:starter"]!.run || d["step:fresh-db"]!.run;
   const reference = any("suite:", (k) => k !== "suite:cloud-rest") || bun || d["step:deploy-cf"]!.run;
   d["step:suites"] = { run: suites, reason: suites ? "suites selected" : "no suite selected" };
   d["step:suites-bun"] = { run: bun, reason: bun ? "suites selected" : "no suite selected" };
   d["step:browser"] = { run: browser, reason: browser ? "a browser suite runs" : "no browser suite runs" };
-  d["step:boot"] = { run: boot, reason: boot ? "a suite needs the dev server" : "nothing needs the dev server" };
+  d["step:boot"] = { run: boot, reason: boot ? (d["step:fresh-db"]!.run && !any("suite:", (k) => k !== "suite:cloud-rest") && !d["step:starter"]!.run ? "fresh-db needs the dev server's D1 file" : "a suite needs the dev server") : "nothing needs the dev server" };
   d["step:reference"] = { run: reference, reason: reference ? "a suite needs the reference and the mocks" : "nothing needs the reference" };
   const oracles = d["step:typecheck"]!.run || boot || bun || d["step:exe-smoke"]!.run || d["step:deploy-cf"]!.run || d["step:starter"]!.run;
   d["step:oracles"] = { run: oracles, reason: oracles ? "a selected step needs the starter, the panel or the generated types" : "nothing needs the oracles" };

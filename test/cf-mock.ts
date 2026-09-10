@@ -115,7 +115,7 @@ Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, 
       const app = appId ? flagshipApps.get(appId) : undefined; if (appId && !app) return err(404, 10021, "app not found");
       if (app && !flagKey && !p.endsWith("/flags") && req.method === "GET") return ok({ id: app.id, name: app.name });
       if (app && p.endsWith("/flags") && req.method === "GET") return ok(app.flags.map((f) => ({ key: f.key, enabled: f.enabled, default_variation: f.default_variation })), { result_info: { cursor: null } });
-      if (app && p.endsWith("/flags") && req.method === "POST") { const b = (await req.json()) as Record<string, unknown>; if (!b.key || !b.variations || !b.default_variation) return err(400, 10021, "key, variations and default_variation are required"); if (app.flags.some((f) => f.key === b.key)) return err(409, 10021, `flag ${b.key} already exists`); app.flags.push(b); return ok({ key: b.key }); }
+      if (app && p.endsWith("/flags") && req.method === "POST") { const b = (await req.json()) as Record<string, unknown>; if (!b.key || !b.variations || !b.default_variation) return err(400, 10021, "key, variations and default_variation are required"); if (!Array.isArray(b.rules)) return err(400, 10021, "Validation error: Invalid input: expected array, received undefined");  // the live API wants rules, even empty (2026-09-10) if (app.flags.some((f) => f.key === b.key)) return err(409, 10021, `flag ${b.key} already exists`); app.flags.push(b); return ok({ key: b.key }); }
     } }
   // the account's Secrets Store: names, values kept only to be replaced, never returned
   { const m = p.match(new RegExp(`^${A}/secrets_store/stores/([^/]+)/secrets(?:/([^/]+))?$`));

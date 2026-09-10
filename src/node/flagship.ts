@@ -46,7 +46,7 @@ export async function ensureFlags(api: CfApi, account: string, app: string, flag
   const missing = flags.filter((f) => !have.has(f.key));
   if (dryRun) return missing.map((f) => f.key);
   for (const f of missing) {
-    await api.json("POST", `/accounts/${account}/flagship/apps/${app}/flags`, { key: f.key, description: (f.description ?? "").slice(0, 512), enabled: true, default_variation: f.fallback ? "on" : "off", variations: { on: true, off: false } }).catch(guide);
+    await api.json("POST", `/accounts/${account}/flagship/apps/${app}/flags`, { key: f.key, description: (f.description ?? "").slice(0, 512), enabled: true, default_variation: f.fallback ? "on" : "off", variations: { on: true, off: false }, rules: [] }).catch(guide);  // rules is required, even empty (the API says "expected array" without it; checked 2026-09-10)
   }
   return missing.map((f) => f.key);
 }

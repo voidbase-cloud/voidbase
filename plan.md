@@ -489,8 +489,11 @@ like any project, and (2026-09-11) its `pwa` option makes a stack app installabl
 a service worker written from what the app declares, with the client half in `@voidbase-cloud/sdk/pwa`. What
 exists: the executable, the package on Bun, Cloudflare all three ways, both modes in shape,
 `voidbase sync`, the adapter, (2026-09-11) the first payment provider: `stripe`, a shipped plugin providing
-`payments@1` over fetch alone, owning `customers`, `subscriptions` and `payments` and its own signed webhook, so
-Polar and Lemon Squeezy are the same shape with a different signature; and (2026-09-10) the installer: an instance changes its own plugins (`installer`, a
+`payments@1` over fetch alone, owning `customers`, `subscriptions` and `payments` and its own signed webhook, and
+(2026-09-11) `polar` and `lemonsqueezy` behind the same interface: what the three share moved into
+`payments-shared.ts`, each provider file is its knobs, its calls, its signature and its events, and the three are
+one provider of `payments@1` to the loader (stripe claims it, the others join its family), so changing provider is
+changing which key is set; and (2026-09-10) the installer: an instance changes its own plugins (`installer`, a
 shipped plugin: on disk on Bun, as a commit to the repository it deploys from on Workers), so nobody builds a
 release for a customer's instance; voidbase.cloud wraps voidbase and the user's Cloudflare account, plus the
 GitHub connection for templates and pipelines (Mahmood, 2026-09-10: "that shouldn't be us, it should be the user

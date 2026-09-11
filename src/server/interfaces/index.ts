@@ -56,18 +56,26 @@ export interface Auth {
  * collections the provider owns (`customers`, `subscriptions`, `payments`), never the provider's own ids: the app
  * talks about its rows and the plugin translates.
  */
-export interface PaymentsRoute { via: string; webhook: string; livemode: boolean }
+export interface PaymentsRoute {
+  via: string;
+  webhook: string;
+  livemode: boolean;
+  /** other shipped providers whose key is set too; `via` answers because it comes first in the shipped order */
+  also?: string[];
+  /** why `via` and not one of `also`, for whoever reads /api/plugins */
+  reason?: string;
+}
 export interface Payments {
   /** where payments go with these bindings, for /api/plugins; null means this provider has no key here */
   route(env: Bindings): PaymentsRoute | null;
   /** start a checkout for a customers row and return where to send the customer */
-  checkout(env: Bindings, o: { customer: string; items: { price: string; quantity: number }[]; success: string; cancel: string; mode?: "payment" | "subscription" }): Promise<{ url: string }>;
+  checkout(env: Bindings, o: { customer: string; items: { price: string; quantity: number }[]; success: string; cancel?: string; mode?: "payment" | "subscription" }): Promise<{ url: string }>;
   /** where a customer manages their own billing, when the provider hosts such a page */
   portal(env: Bindings, o: { customer: string; return: string }): Promise<{ url: string }>;
   /** verify and interpret a provider's webhook and write what it says into the collections; the route belongs to the provider's own plugin */
   webhook(env: Bindings, request: Request): Promise<{ kind: string; customer?: string; subscription?: string; payment?: string; raw: Row } | null>;
-  /** stop a subscriptions row: at the period's end by default, or now */
-  cancel(env: Bindings, subscription: string, o?: { now?: boolean }): Promise<void>;
+  /** stop a subscriptions row: at the period's end by default, or now; `resume` takes a period-end cancellation back */
+  cancel(env: Bindings, subscription: string, o?: { now?: boolean; resume?: boolean }): Promise<void>;
 }
 
 /**

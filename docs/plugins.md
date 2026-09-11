@@ -587,78 +587,174 @@ over the table the definition creates. The seo plugin reads `VOIDBASE_LOCALES` t
 the sitemap and `og:locale` plus canonical URLs per locale in the page metadata ("The crawlers' view of the
 instance"). Not here: a locale in the route, a panel screen over the reports, and the interface strings.
 
-## Taking money: stripe
+## Taking money: stripe, polar, lemonsqueezy
 
-`stripe` is a shipped plugin (tier `official`, `src/server/plugins/stripe.ts`) that provides `payments@1` against
-Stripe's REST API with `fetch` alone: form-encoded bodies (`line_items[0][price]`), `Authorization: Bearer`, and
-`Stripe-Version` pinned to `2025-08-27.basil`, so a change on Stripe's side arrives when that line changes and not
-before. No Stripe SDK. It is the roadmap's "Payment providers, as official plugins", first of the three it names.
+Three shipped plugins (tier `official`) take money through `payments@1`: `stripe` (`src/server/plugins/stripe.ts`),
+`polar` (`polar.ts`) and `lemonsqueezy` (`lemonsqueezy.ts`). They are the roadmap's "Payment providers, as official
+plugins": one plugin per provider, all providing the same interface, each owning its webhook route, verifying
+signatures, and writing customers, subscriptions and payments into collections the app queries like any other.
+Each talks to its provider with `fetch` alone, no SDK, and each file holds only what differs: its knobs, its API
+calls, its signature check, and its event names read into the same rows. Everything else is
+`src/server/plugins/payments-shared.ts`.
 
-**The knobs.** `STRIPE_SECRET_KEY` (`sk_test_...` or `sk_live_...`) and `STRIPE_WEBHOOK_SECRET` (the `whsec_...`
-of the endpoint registered in Stripe's dashboard). Both are secrets: declare them with `secret(...)` in `env.ts`
-so they live in `pb_secrets`/`vb_secrets` and reach the Worker as encrypted secrets, never as vars. The plugin reads
-them from the request env first and the runtime env second, like mail's domain. Without the key the plugin is
-loaded and idle: `payments@1` is provided, `route(env)` is null, every route answers 503 naming the knob, the three
-collections are not created, and `GET /api/plugins` says `payments: { via: "none" }`. With it:
-`payments: { via: "stripe", webhook: "/api/payments/stripe/webhook", livemode: true|false }`, livemode read off the
-key's prefix.
+**What is shared** (`payments-shared.ts`). The three collections and their rules, created by `ensureCollections`
+at kernel bootstrap on the first request that carries a provider's key, each with `created` and `updated`
+autodates and a unique index on the provider id:
 
-**The interface.** `payments@1` was reshaped for this plugin (2026-09-11) the way mail was: the key arrives with the
-request, so every method takes the env. `route(env)`, `checkout(env, { customer, items, success, cancel, mode? })`,
-`portal(env, { customer, return })`, `webhook(env, request)` and `cancel(env, subscription, { now? })`. `customer`
-and `subscription` are ids of the plugin's own rows, never Stripe's ids: the app talks about its rows and the plugin
-translates. The routes below call the same code.
-
-**The collections it owns**, created on the first request that carries the key (`ensureCollections`, kernel
-onBootstrap), each with `created` and `updated` autodates and a unique index on the provider id:
-
-- `customers`: `user` (relation to `users`, optional), `provider` (text, `"stripe"`), `providerId` (text, `cus_...`),
-  `email` (text). Rules: list and view `user = @request.auth.id`; create, update and delete superuser only.
-- `subscriptions`: `customer` (relation), `providerId` (`sub_...`), `status` (select: `incomplete`,
-  `incomplete_expired`, `trialing`, `active`, `past_due`, `canceled`, `unpaid`, `paused`), `price` (text, the
-  price id), `currentPeriodEnd` (date), `cancelAtPeriodEnd` (bool). Rules: list and view
+- `customers`: `user` (relation to `users`, optional), `provider` (text: `stripe`, `polar` or `lemonsqueezy`),
+  `providerId` (text, the provider's customer id), `email` (text). Rules: list and view `user = @request.auth.id`;
+  create, update and delete superuser only.
+- `subscriptions`: `customer` (relation), `providerId`, `status` (select: `incomplete`, `incomplete_expired`,
+  `trialing`, `active`, `past_due`, `canceled`, `unpaid`, `paused`), `price` (text: the price, product or variant
+  the subscription is for), `currentPeriodEnd` (date), `cancelAtPeriodEnd` (bool). Rules: list and view
   `customer.user = @request.auth.id`; writes superuser only.
-- `payments`: `customer` (relation), `providerId` (`pi_...`, or the invoice id when there is no payment intent yet),
-  `amount` (number, the minor unit), `currency` (text), `status` (select: `pending`, `succeeded`, `failed`,
-  `refunded`, `canceled`), `subscription` (relation, optional), `raw` (json, the Stripe object). Same rules as
-  subscriptions.
+- `payments`: `customer` (relation), `providerId`, `amount` (number, the minor unit), `currency` (text), `status`
+  (select: `pending`, `succeeded`, `failed`, `refunded`, `canceled`), `subscription` (relation, optional), `raw`
+  (json, the provider's object). Same rules as subscriptions.
 
 So a signed-in user reads their own rows through the records API and realtime like any other collection, and
-nothing writes them but the plugin, through the records service as a superuser, so hooks fire and the rows look
-like the panel wrote them.
+nothing writes them but the plugins, through the records service as a superuser (`d1Rows`), so hooks fire and the
+rows look like the panel wrote them. Every write is an upsert by `providerId` (`ensureCustomer`, `upsert`), which
+is what makes a provider's retries and a replayed webhook a no-op rather than a duplicate. Also shared: the
+customers row behind a signed-in user (`customerForUser`: found by `provider` and `user`, or created at the
+provider on the first contact), the four routes under `/api/payments/<provider>/` and their checks (`paymentsPlugin`
+mounts them given a `PaymentProvider`), the `Payments` implementation served as `payments@1`, and the `payments`
+field of `GET /api/plugins`. A fourth provider is a `PaymentProvider` and a call to `paymentsPlugin`; the package
+exports `./plugins/payments-shared` for one written outside voidbase.
 
-**The routes**, all under `/api/payments/stripe/`:
+**The interface.** `payments@1` takes the env on every method, because the keys arrive with the request:
+`route(env)`, `checkout(env, { customer, items, success, cancel?, mode? })`, `portal(env, { customer, return })`,
+`webhook(env, request)` and `cancel(env, subscription, { now?, resume? })`. `customer` and `subscription` are ids
+of the plugin's own rows, never the provider's ids: the app talks about its rows and the plugin translates. The
+routes below call the same code.
 
-- `POST checkout`, signed-in user. Body `{ items: [{ price, quantity }], success, cancel, mode?: "payment" |
-  "subscription" }` (`mode` defaults to `payment`). Finds the user's `customers` row or creates the customer at
-  Stripe (`POST /v1/customers` with the email and `metadata[voidbase_user]`) and the row, then creates a Checkout
-  Session with `client_reference_id` and `metadata[voidbase_customer]` set to the row id. Answers `{ url }`.
-- `POST portal`, signed-in user. Body `{ return }`. A billing portal session for the user's customer. `{ url }`.
-- `POST cancel`, the subscription's owner or a superuser. Body `{ subscription, now? }` (a `subscriptions` row
-  id). Cancels at the period's end by default (`cancel_at_period_end=true`); `now: true` deletes the subscription
-  at Stripe. The row follows at once; the webhook confirms later. Answers `{ subscription, status,
-  cancelAtPeriodEnd }`.
-- `POST webhook`, no auth. Register `https://<instance>/api/payments/stripe/webhook` in Stripe's dashboard
-  (Developers > Webhooks) and put its signing secret in `STRIPE_WEBHOOK_SECRET`. The `Stripe-Signature` header is
-  verified as HMAC SHA-256 over `t.payload` against the secret, with a five-minute tolerance on `t` and a
-  constant-time compare; a bad or stale signature is 400 and nothing is read. Then `checkout.session.completed`
-  (the customer, and in payment mode the payment), `customer.subscription.created|updated|deleted` (the
-  subscription row, `deleted` as status `canceled`), `invoice.paid` and `invoice.payment_failed` (a payment linked
-  to its subscription), `payment_intent.succeeded|payment_failed` (the payment) are written as upserts by
-  `providerId`, so Stripe's retries and a replay change nothing. Any other event is 200 and ignored
-  (`{ received: true, handled: false }`). Both invoice shapes are read: the 2025 versions moved a subscription's
-  period onto its items and an invoice's subscription and payment intent under `parent` and `payments`.
+**The knobs are secrets**: declare them with `secret(...)` in `env.ts` so they live in `pb_secrets`/`vb_secrets`
+and reach the Worker as encrypted secrets, never as vars. A plugin reads them from the request env first and the
+runtime env second, like mail's domain. Without its key a plugin is loaded and idle: `route(env)` is null, every
+route answers 503 naming the knob, and the collections are not created.
 
-A Stripe error comes back as 400 with Stripe's message (`Stripe answered 402: Your card was declined`), a Stripe
-outage as 502. `test/unit/stripe-plugin.test.ts` measures the signature check, the encoding, the three routes
-against a fake `fetch`, every event against in-memory rows, the replay, and the no-key state; nothing calls Stripe.
+**One active provider.** The loader refuses two plugins providing one interface, and it checks at load, when the
+keys are not known: on Workers they arrive with the request. So the three cannot each claim `payments@1`, and none
+can claim it only when its key is set. They are one provider from the loader's point of view instead: `stripe`,
+first in the shipped order, claims `payments@1` and owns the three collections (the loader refuses two owners as
+well); `polar` and `lemonsqueezy` require `payments@1` and join stripe's family when they are applied. The
+`Payments` served is a dispatcher over the family: per request it answers for the first provider in shipped
+order (stripe, polar, lemonsqueezy) whose key these bindings carry. With no keys `GET /api/plugins` says
+`payments: { via: "none" }`; with one key `{ via: "polar", webhook: "/api/payments/polar/webhook", livemode }`;
+with two keys the first wins and `/api/plugins` says which and why:
+`{ via: "polar", ..., also: ["lemonsqueezy"], reason: "LEMONSQUEEZY_API_KEY is set too; polar answers because it
+comes first in the shipped order ..." }`, and the routes of the provider that lost answer 409 so nothing is taken
+through a provider that is not the active one. Changing provider is therefore changing which key is set; the rows
+keep their shape, with `provider` saying which. What follows from the family: `whatLoaded().providers` names
+`stripe` whatever key is set, and disabling `stripe` in `voidbase.lock` refuses `polar` and `lemonsqueezy` at load
+(`polar requires "payments@1" and nothing installed provides it`). To not use Stripe, leave its key unset.
 
-**What Polar and Lemon Squeezy would share.** The interface, the three collections and their rules, the
-`/api/payments/<provider>/` prefix, the upsert-by-`providerId` discipline, `route(env)` for `/api/plugins`, and
-the test shape (a fake fetch, in-memory rows). What each brings: its own signature scheme (Polar signs with
-Standard Webhooks, Lemon Squeezy with `X-Signature` HMAC over the raw body), its own event names mapped onto the
-same six effects, and its own `customer`/`subscription`/`order` objects read into the same fields. Changing
-provider is removing one plugin and installing another; the rows keep their shape, with `provider` saying which.
+**The routes**, the same four under each `/api/payments/<provider>/`:
+
+- `POST checkout`, signed-in user. Body `{ items: [{ price, quantity }], success, cancel?, mode?: "payment" |
+  "subscription" }`. Finds the user's `customers` row or creates the customer at the provider and the row, then
+  starts a checkout. Answers `{ url }`. What `price` means, and whether `cancel` and `mode` are read, is the
+  provider's (below).
+- `POST portal`, signed-in user. Body `{ return }`. Where the user manages their billing. `{ url }`.
+- `POST cancel`, the subscription's owner or a superuser. Body `{ subscription, now?, resume? }` (a
+  `subscriptions` row id). Cancels at the period's end by default; `now: true` ends it at once where the
+  provider offers that; `resume: true` takes a period-end cancellation back. The row follows at once; the webhook
+  confirms later. Answers `{ subscription, status, cancelAtPeriodEnd }`.
+- `POST webhook`, no auth. Register `https://<instance>/api/payments/<provider>/webhook` at the provider and put
+  its signing secret in the plugin's webhook knob. A bad, missing or (where there is a timestamp) stale signature
+  is 400 and nothing is read; without the secret the route is 503 rather than accepting anything. An event the
+  plugin does not read is 200 and ignored (`{ received: true, handled: false }`).
+
+A provider's error comes back as 400 with its message (`Stripe answered 402: Your card was declined`), an outage
+as 502. Each plugin's test (`test/unit/stripe-plugin.test.ts`, `polar-plugin.test.ts`,
+`lemonsqueezy-plugin.test.ts`) measures the signature check, the three routes against a fake `fetch` (URL, method,
+auth header, body), every event against in-memory rows, the replay, and the no-key state;
+`test/unit/payments-shared.test.ts` measures the family. Nothing calls a provider.
+
+### stripe
+
+Stripe's REST API with form-encoded bodies (`line_items[0][price]`), `Authorization: Bearer`, and `Stripe-Version`
+pinned to `2025-08-27.basil`, so a change on Stripe's side arrives when that line changes and not before.
+
+- Knobs: `STRIPE_SECRET_KEY` (`sk_test_...` or `sk_live_...`; `livemode` is read off its prefix),
+  `STRIPE_WEBHOOK_SECRET` (the `whsec_...` of the endpoint registered in Stripe's dashboard).
+- Checkout: `price` is a Stripe price id, `quantity` is sent, `cancel` is required, `mode` defaults to `payment`.
+  The customer is created with `POST /v1/customers` (email and `metadata[voidbase_user]`), the session with
+  `POST /v1/checkout/sessions` (`client_reference_id` and `metadata[voidbase_customer]` set to the row id).
+  Portal: `POST /v1/billing_portal/sessions`. Cancel: `POST /v1/subscriptions/{id}` with `cancel_at_period_end`
+  (`true`, or `false` to resume); `now: true` is `DELETE /v1/subscriptions/{id}`.
+- Webhook: register `https://<instance>/api/payments/stripe/webhook` (Developers > Webhooks). `Stripe-Signature`
+  is HMAC SHA-256 over `t.payload` against the secret, a five-minute tolerance on `t`, a constant-time compare.
+  Events: `checkout.session.completed` (the customer, and in payment mode the payment),
+  `customer.subscription.created|updated|deleted` (the subscription row, `deleted` as status `canceled`),
+  `invoice.paid` and `invoice.payment_failed` (a payment linked to its subscription, keyed by the payment intent or
+  the invoice id), `payment_intent.succeeded|payment_failed` (the payment). Both invoice shapes are read: the 2025
+  versions moved a subscription's period onto its items and an invoice's subscription and payment intent under
+  `parent` and `payments`.
+
+### polar
+
+Polar's REST API with JSON bodies and `Authorization: Bearer`, against `https://api.polar.sh` or, with
+`POLAR_SANDBOX=1`, `https://sandbox-api.polar.sh`. Pinned to Polar's `2026-04` OpenAPI document as read on
+2026-09-11 (`polar.sh/docs/openapi/2026-04.openapi.json`).
+
+- Knobs: `POLAR_ACCESS_TOKEN` (an organization access token), `POLAR_WEBHOOK_SECRET` (the `whsec_...` shown when
+  the endpoint is created), optional `POLAR_SANDBOX=1` (`livemode` is false with it).
+- Checkout: `price` is a Polar product id; the customer picks among the products listed, so `quantity`, `cancel`
+  and `mode` are not read. The customer is looked up by email (`GET /v1/customers/?email=`; an email is unique in
+  an organization) and otherwise created with `POST /v1/customers/` (`external_id` set to the user id), then
+  `POST /v1/checkouts/` with `products`, `customer_id`, `customer_email`, `success_url` and `metadata`; the answer
+  is its `url`. Portal: `POST /v1/customer-sessions/` with `customer_id` and `return_url`, answering
+  `customer_portal_url`. Cancel: `PATCH /v1/subscriptions/{id}` with `cancel_at_period_end` (`true`, or `false`
+  to resume); `now: true` is `DELETE /v1/subscriptions/{id}` (revoke).
+- Webhook: register `https://<instance>/api/payments/polar/webhook` (Settings > Webhooks). Polar signs with
+  Standard Webhooks: `webhook-id`, `webhook-timestamp` (unix seconds) and `webhook-signature` (`v1,<base64>`),
+  HMAC SHA-256 over `id.timestamp.body`, a five-minute tolerance. Two keys are tried, because Polar changed how a
+  secret is meant: secrets generated on or after 8 September 2026 follow Standard Webhooks (the part after `whsec_`
+  is base64, the key is its bytes), older ones use Polar HMAC (the key is the UTF-8 bytes of the whole `whsec_...`
+  string). Events: `checkout.updated` (once `status` is `succeeded`: the customer, tied to the user through
+  `external_customer_id`), `order.created`, `order.paid` and `order.refunded` (a payment keyed by the order id,
+  `total_amount`, linked to its subscription; `paid` says succeeded), and every `subscription.*` event
+  (`created`, `updated`, `active`, `canceled`, `revoked`, and the others Polar sends, all carrying the whole
+  subscription: status as Polar says it, which is the rows' vocabulary; `revoked` as `canceled`; `canceled` keeps
+  the status and sets `cancelAtPeriodEnd`).
+- Not verified against a live account: whether `POST /v1/customers/` refuses a duplicate email is not stated in
+  the document (the email lookup runs first either way), and the day Polar switched secret formats is taken from
+  its delivery page; both keys are accepted regardless.
+
+### lemonsqueezy
+
+Lemon Squeezy's JSON:API (`application/vnd.api+json`, `Authorization: Bearer`) at
+`https://api.lemonsqueezy.com`, pinned to docs.lemonsqueezy.com as read on 2026-09-11.
+
+- Knobs: `LEMONSQUEEZY_API_KEY`, `LEMONSQUEEZY_STORE_ID` (the numeric store id every checkout and customer belongs
+  to; without it the routes answer 503 naming it), `LEMONSQUEEZY_WEBHOOK_SECRET` (the signing secret typed when
+  the webhook is created). Test mode is a switch on the store, not a property of the key, so `livemode` is `true`.
+- Checkout: one item whose `price` is a numeric variant id; a `quantity` above 1 goes as
+  `checkout_data.variant_quantities`; `cancel` and `mode` are not read (the variant decides). The customer is
+  looked up by email in the store (`GET /v1/customers?filter[store_id]=&filter[email]=`) and otherwise created
+  with `POST /v1/customers` (`name` from the auth record or the email's local part), then `POST /v1/checkouts`
+  with `product_options.redirect_url`, `checkout_data.email` and `checkout_data.custom` (`voidbase_user`,
+  `voidbase_customer`, which come back on every webhook as `meta.custom_data`) and the `store` and `variant`
+  relationships; the answer is `data.attributes.url`. Portal: `GET /v1/customers/{id}` and its
+  `urls.customer_portal`, a signed URL Lemon Squeezy issues once the customer has ordered (400 before that;
+  `return` has nowhere to go). Cancel: `DELETE /v1/subscriptions/{id}` cancels at the period's end (the
+  subscription is `cancelled` and runs until `ends_at`); `resume: true` is `PATCH` with `cancelled: false`;
+  `now: true` is 400, Lemon Squeezy does not offer it.
+- Webhook: register `https://<instance>/api/payments/lemonsqueezy/webhook` (Settings > Webhooks) and subscribe at
+  least `order_created`, `subscription_created`, `subscription_updated` and `subscription_payment_success`.
+  `X-Signature` is the hex HMAC SHA-256 of the raw body under the secret, compared in constant time; there is no
+  timestamp, so a replay verifies and the upsert makes it a no-op. Events: `order_created` and `order_refunded`
+  (a payment keyed `order_<id>`, `total`, the customer from `customer_id` and `user_email`, the user from
+  `meta.custom_data`), `subscription_created|updated|cancelled|resumed|expired|paused|unpaused` (one row: `on_trial`
+  as `trialing`, `cancelled` as `active` with `cancelAtPeriodEnd` and `ends_at` as the period end, `expired` as
+  `canceled`, `price` the variant id; the order that started it is linked as its first payment),
+  `subscription_payment_success|failed|recovered|refunded` (a payment keyed `invoice_<id>` linked to its
+  subscription; the `initial` invoice is skipped because `order_created` already wrote that money). Ids are
+  integers and an order and an invoice can share a number, which is what the prefixes are for.
+- Not verified against a live account: whether `POST /v1/customers` refuses an email the store already has (the
+  lookup runs first either way), and whether `urls.customer_portal` on a customer is null before the first order
+  (the create-customer example shows null, which is how the 400 is decided).
 
 ## Backups worth relying on: backups
 

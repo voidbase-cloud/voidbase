@@ -25,6 +25,14 @@ export interface Bindings {
   // Stripe: the secret key and the webhook signing secret, both secrets on the Worker (plugins/stripe.ts)
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
+  // Polar: the access token, the webhook secret, and `1` for the sandbox (plugins/polar.ts)
+  POLAR_ACCESS_TOKEN?: string;
+  POLAR_WEBHOOK_SECRET?: string;
+  POLAR_SANDBOX?: string;
+  // Lemon Squeezy: the API key, the store the checkouts belong to, the webhook signing secret (plugins/lemonsqueezy.ts)
+  LEMONSQUEEZY_API_KEY?: string;
+  LEMONSQUEEZY_STORE_ID?: string;
+  LEMONSQUEEZY_WEBHOOK_SECRET?: string;
   // a project instance: the repository it deploys from and a token that commits there (plugins/installer.ts)
   VOIDBASE_PROJECT_REPO?: string;
   VOIDBASE_PROJECT_BRANCH?: string;

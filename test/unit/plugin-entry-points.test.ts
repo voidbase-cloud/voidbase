@@ -27,6 +27,9 @@ const expected: Record<string, string[]> = {
   "./plugins/ai": ["ai", "aiWith", "aiRoute"],
   "./plugins/translations": ["translations", "translationsWith", "parseTranslatable", "parseLocales", "negotiateLocale"],
   "./plugins/stripe": ["stripe", "stripeWith", "verifySignature", "formEncode", "applyEvent"],
+  "./plugins/polar": ["polar", "polarWith", "verifySignature", "applyEvent"],
+  "./plugins/lemonsqueezy": ["lemonsqueezy", "lemonsqueezyWith", "verifySignature", "applyEvent"],
+  "./plugins/payments-shared": ["paymentsPlugin", "collectionDefinitions", "d1Rows", "ensureCustomer", "upsert", "customerForUser"],
   "./plugins/domains": ["domains", "domainsInfo"],
   "./plugins/collections": ["ensureCollections"],
   "./workflows": ["withApp"],
@@ -45,7 +48,7 @@ describe("the plugin API is reachable from a package", () => {
   }
 
   test("each shipped plugin's manifest name is its entry point's last segment", async () => {
-    for (const name of ["auth", "backups", "realtime", "hardening", "openapi", "mcp", "seo", "mail", "ai", "translations", "stripe", "domains"]) {
+    for (const name of ["auth", "backups", "realtime", "hardening", "openapi", "mcp", "seo", "mail", "ai", "translations", "stripe", "polar", "lemonsqueezy", "domains"]) {
       const mod = (await import(resolve(root, exportsMap[`./plugins/${name}`]!))) as Record<string, { manifest: { name: string } }>;
       expect(mod[name]!.manifest.name).toBe(name);
     }

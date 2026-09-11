@@ -1,4 +1,7 @@
 // The ASSETS fetcher for `voidbase serve`: the admin panel under /_/ and the public directory for everything else.
+// `voidbaseAdapter({ panel: { path, hide } })` moves the panel: its files are then in the public directory under
+// that path (the adapter copies and rebases them there), and an empty `panelDir` is how `hide` reaches here --
+// /_/ stops resolving, exactly as the `_redirects` rules the same option writes make it stop on Cloudflare.
 import { existsSync, statSync } from "node:fs";
 import { join, normalize } from "node:path";
 export function assetsFetcher(opts: { panelDir: string; publicDir?: string }) {
@@ -18,7 +21,8 @@ export function assetsFetcher(opts: { panelDir: string; publicDir?: string }) {
   return {
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url); const path = decodeURIComponent(url.pathname);
-      const target = path === "/_" || path.startsWith("/_/") ? file(opts.panelDir, path.slice(2) || "/") : opts.publicDir ? file(opts.publicDir, path) : null;
+      const panel = path === "/_" || path.startsWith("/_/");
+      const target = panel ? (opts.panelDir ? file(opts.panelDir, path.slice(2) || "/") : null) : opts.publicDir ? file(opts.publicDir, path) : null;
       if (!target) return new Response("not found", { status: 404 });
       const f = Bun.file(target);
       const headers = { "content-type": f.type || "application/octet-stream", "content-length": String(f.size) };

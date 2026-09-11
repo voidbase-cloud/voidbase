@@ -7,6 +7,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { adapt, scanVoidApp } from "../src/adapter/index";
+import { ensurePanelDir } from "../src/node/panel";
 import { integrityOf } from "../src/node/registry";
 import { cronTriggers } from "../hooks-plugin";
 
@@ -175,8 +176,47 @@ try {
   delete process.env.VOIDBASE_LOCALES;
   rmSync(`${WORK}/dist/client/guide.html`);
 
-  // the app below runs with it, so the worker and the manifest are served like any other file
-  await adapt(WORK, { quiet: true, clientDir: "dist/client", pwa: { icon: "icon.svg", precache: ["/robots.txt"] } });
+  // ---- panel: the admin panel under the app's own path, behind the app's own check -------------------------------
+  const bare = await adapt(WORK, { quiet: true, clientDir: "dist/client" });
+  check("without the panel option nothing of it is written: no directory, no rule, and the generated main.ts says nothing about it",
+    !bare.panel && !existsSync(`${pub}/admin`) && !/\/api\/panel/.test(readFileSync(`${pub}/_redirects`, "utf8")) && !/panel:/.test(readFileSync(`${WORK}/.voidbase/main.ts`, "utf8")), readdirSync(pub).join(" "));
+
+  const moved = await adapt(WORK, { quiet: true, clientDir: "dist/client", panel: { path: "/admin" } });
+  const panelIndex = readFileSync(`${pub}/admin/index.html`, "utf8");
+  check("the panel's files are written under the path, with the 404 shell the asset layer serves for a deep link",
+    moved.panel?.path === "/admin/" && existsSync(`${pub}/admin/index.html`) && existsSync(`${pub}/admin/assets`) && existsSync(`${pub}/admin/extensions.js`) && existsSync(`${pub}/admin/404.html`) && moved.written.some((w) => w.endsWith("pb_public/admin/")),
+    `${moved.panel?.path} ${existsSync(`${pub}/admin`) ? readdirSync(`${pub}/admin`).join(" ") : "(none)"}`);
+  check("the index needs no rewriting: PocketBase's build references its assets relatively, so it works wherever it sits",
+    /src="\.\/assets\//.test(panelIndex) && !panelIndex.includes("/_/") && panelIndex === readFileSync(`${await ensurePanelDir()}/index.html`, "utf8"), panelIndex.slice(0, 160));
+  const panelBundles = readdirSync(`${pub}/admin/assets`).filter((f) => f.endsWith(".js")).map((f) => readFileSync(`${pub}/admin/assets/${f}`, "utf8"));
+  check("the two URLs the bundle does hardcode are rebased: the API base to /, and the extensions registry to the path",
+    (moved.panel?.rebased.length ?? 0) > 0 && !panelBundles.some((b) => /\bnew\s+[A-Za-z_$][\w$]*\s*\(\s*(["'`])\.\.\/\1/.test(b)) && panelBundles.some((b) => b.includes("/admin/extensions.js")) && !panelBundles.some((b) => b.includes("/_/extensions.js")),
+    (moved.panel?.rebased ?? []).join(" "));
+  check("moving the panel alone writes no rule at all: /_/ is still there and the path is open", moved.panel?.rules.length === 0 && !/\/api\/panel/.test(readFileSync(`${pub}/_redirects`, "utf8")), readFileSync(`${pub}/_redirects`, "utf8"));
+  check("the generated main.ts carries the option, so `voidbase serve` puts the panel where the build did", /panel: \{"path":"\/admin","guard":false,"hide":false\}/.test(readFileSync(`${WORK}/.voidbase/main.ts`, "utf8")), readFileSync(`${WORK}/.voidbase/main.ts`, "utf8").slice(-500));
+
+  const guardedPanel = await adapt(WORK, { quiet: true, clientDir: "dist/client", panel: { path: "/admin", guard: "superuser" } });
+  const guardedRedirects = readFileSync(`${pub}/_redirects`, "utf8");
+  check("guard sends the bare path, the directory and its index to /api/panel, which is the only way the Worker sees them",
+    /^\/admin \/api\/panel\?at=\/admin\/ 302$/m.test(guardedRedirects) && /^\/admin\/ \/api\/panel\?at=\/admin\/ 302$/m.test(guardedRedirects) && /^\/admin\/index\.html \/api\/panel\?at=\/admin\/ 302$/m.test(guardedRedirects) && guardedPanel.panel?.rules.length === 3, guardedRedirects);
+  check("a guarded panel has no 404.html of its own: that copy would be the index, readable by anyone", !existsSync(`${pub}/admin/404.html`) && existsSync(`${pub}/admin/index.html`), readdirSync(`${pub}/admin`).join(" "));
+
+  const hidden = await adapt(WORK, { quiet: true, clientDir: "dist/client", panel: { path: "/admin", hide: true } });
+  const hiddenRedirects = readFileSync(`${pub}/_redirects`, "utf8");
+  check("hide takes /_/ away: every URL under it is ruled to /api/panel with no `at`, which answers 404",
+    /^\/_ \/api\/panel 302$/m.test(hiddenRedirects) && /^\/_\/ \/api\/panel 302$/m.test(hiddenRedirects) && /^\/_\/\* \/api\/panel 302$/m.test(hiddenRedirects) && hidden.panel?.hidden === true && /^\/sitemap\.xml \/api\/seo\/sitemap\.xml 302$/m.test(hiddenRedirects), hiddenRedirects);
+  const againPanel = await adapt(WORK, { quiet: true, clientDir: "dist/client", panel: { path: "/admin", hide: true } });
+  check("the panel pass is idempotent: the same rules, in one copy, and the same files", readFileSync(`${pub}/_redirects`, "utf8") === hiddenRedirects && againPanel.panel?.rules.length === 3 && (hiddenRedirects.match(/\/api\/panel/g) ?? []).length === 3 && readFileSync(`${pub}/admin/index.html`, "utf8") === panelIndex, `${againPanel.panel?.rules.length} rules`);
+
+  let panelBadPath = "";
+  try { await adapt(WORK, { quiet: true, clientDir: "dist/client", panel: { path: "/api/panel" } }); } catch (err) { panelBadPath = err instanceof Error ? err.message : String(err); }
+  check("a path under /api fails the build: that prefix is the Worker's own", /under \/api/.test(panelBadPath), panelBadPath.split("\n")[0] ?? "(no error)");
+  let panelBadHide = "";
+  try { await adapt(WORK, { quiet: true, clientDir: "dist/client", panel: { hide: true } }); } catch (err) { panelBadHide = err instanceof Error ? err.message : String(err); }
+  check("hide without a path of its own fails the build, because it would take the only panel away", /give the panel a path of its own/.test(panelBadHide), panelBadHide.split("\n")[0] ?? "(no error)");
+
+  // the app below runs with it, so the worker, the manifest and the moved panel are served like any other file
+  await adapt(WORK, { quiet: true, clientDir: "dist/client", pwa: { icon: "icon.svg", precache: ["/robots.txt"] }, panel: { path: "/admin" } });
 
   // ---- a static app: nothing to run, so nothing is generated to run it ------------------------------------------
   const staticApp = resolve(PKG, "test/.tmp/static-app");
@@ -261,6 +301,10 @@ try {
   const swServed = await get("/sw.js");
   const manifestServed = await get("/manifest.webmanifest");
   check("sw.js and manifest.webmanifest are served from pb_public, the worker with the precache list the option asked for", swServed.status === 200 && /javascript/.test(swServed.type) && swServed.text.includes('"/robots.txt"') && manifestServed.status === 200 && manifestServed.json.name === "Void on voidbase", `${swServed.status} ${swServed.type} ${manifestServed.status} ${manifestServed.type}`);
+  const panelServed = await get("/admin/");
+  const panelChunk = await get(`/admin/assets/${readdirSync(`${WORK}/.voidbase/pb_public/admin/assets`).filter((f) => f.endsWith(".js"))[0]}`);
+  const panelHome = await get("/_/");
+  check("the moved panel is served by the same process at its path, chunks included, and /_/ still answers (hide is off)", panelServed.status === 200 && panelServed.text.includes("<title>PocketBase</title>") && panelChunk.status === 200 && panelHome.status === 200, `${panelServed.status} ${panelChunk.status} ${panelHome.status}`);
   const collections = await get("/api/collections?perPage=1");
   check("PocketBase's own API is untouched by the app's routes", collections.status === 401 || collections.status === 200, String(collections.status));
 

@@ -364,6 +364,78 @@ where there is no voidbase at all — Void's build importing the same module to 
 that renders per request has no runtime here, so today a loader answers where server code runs, which is
 `routes/`, `middleware/` and `vb_hooks/`. `sessionOf` is what it will call when pages render on this Worker too.
 
+## The panel under your own path
+
+The admin panel is PocketBase's own static build, served at `/_/` since the beginning. The `panel` option moves it,
+and optionally puts its front door behind a check:
+
+```ts
+voidbaseAdapter({ panel: { path: "/admin", guard: "superuser", hide: true } })
+```
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `path` | `/_/` | where the panel's files are written inside the generated `pb_public`. `/admin`, `/admin/` and `admin` all mean `/admin/` |
+| `guard` | `false` | `"superuser"` puts the panel's entry behind a voidbase superuser session; without one it answers 404 |
+| `hide` | `false` | takes `/_/` away, so the panel is only where `path` says |
+
+Without the option nothing changes: no files are copied, no rule is written, and the panel stays at `/_/` exactly
+as it was. `hide` needs a `path` of its own, or it would take the only panel away, and the build says so.
+
+**What the panel's build hardcodes, measured rather than assumed** (PocketBase 0.40.2, the version
+`src/node/panel.ts` pins):
+
+- `index.html` references everything relatively (`./assets/...`, `./libs/...`), so it is copied unchanged and works
+  from wherever it sits. There is no `<base>` to rewrite.
+- the router is a hash router (`#/collections`), so there is no router base to rebase either.
+- the API base is `new PocketBase("../")`, which the SDK resolves as the origin plus `location.pathname` plus
+  `../`. That is right at `/_/` and at any other one-segment path, and wrong at a deeper one: `/ops/panel/` would
+  call `/ops/api/...`. So the literal is rewritten at build time to `/`, which is origin-rooted and
+  depth-independent, and a voidbase instance's API is always at the origin's `/api`.
+- two absolute `/_/` URLs exist in the bundle. One builds the "API example" URL shown in the panel and already
+  falls back to `window.location.origin` when the path is not `/_/`, so it is right once moved. The other loads
+  `/_/extensions.js` (the UI extension registry) and is rewritten to `<path>extensions.js`.
+
+Nothing else in the build names `/_/`. The rewrite touches `assets/*.js` in the copy only, and if a future panel
+version stops constructing its base that way the build fails with what it looked for, rather than shipping a panel
+whose API calls go somewhere else. So this is a rebase, not a redirect: the panel really is served from your path.
+
+**The guard.** On Cloudflare the asset layer answers every path outside `/api` and never invokes the Worker
+(platform.md item 1), so a check on the panel's path can only run if something sends that path to `/api`. `guard`
+writes the rules for exactly that, into `pb_public/_redirects`, beside the seo plugin's and the locales':
+
+```
+/admin /api/panel?at=/admin/ 302
+/admin/ /api/panel?at=/admin/ 302
+/admin/index.html /api/panel?at=/admin/ 302
+```
+
+`GET /api/panel` answers the panel's index to a request carrying a voidbase superuser session, and **404** to
+everything else. 404 and not 403: someone who is not a superuser should not learn the panel is there. The session
+is read from the `Authorization` header, from the `pb_auth` cookie the SDK writes with
+`authStore.exportToCookie()` (a browser navigating to a URL sends no header, so that cookie is how a browser
+carries one), or from `?token=`. The `at` value comes from the rule the build wrote, and is checked before use --
+one leading slash, a trailing slash, no host, no scheme, no `..`, not under `/api` -- so a request cannot turn the
+handler into an open redirect. The index is answered with a `<base href="<path>">` injected, so its relative asset
+URLs still resolve against the panel's own directory, and with `Cache-Control: private, no-store`.
+
+**What the guard covers, and what it does not.** It covers the panel's entry: the three URLs above, which is every
+address a browser resolves the panel's directory to. It does **not** cover the hashed chunks under the path
+(`/admin/assets/...`, `/admin/libs/...`): those are served by the asset layer, and anyone who knows their exact
+URLs can read them. They are PocketBase's stock build, the same bytes the project publishes, and they hold nothing
+about your instance; every call the panel makes is still authorised by the API's own rules, so a person who gets
+past the front door with no session sees a panel that cannot read anything. The guard hides the panel and gates
+its entry. It is not a second authorisation layer over your data -- the collection rules are that.
+
+**`hide`.** Rules are applied before the asset layer looks for a file, so `hide` rules `/_`, `/_/` and `/_/*` to
+`/api/panel` with no `at`, which is the case that answers 404 for everybody. The panel's files still ship at `/_/`
+(the deploy syncs them there), and nothing resolves to them.
+
+**On Bun.** `voidbase serve` reads the same option: the adapter writes it into the generated `main.ts`, so the
+runtime knows where the panel is, mounts the same `/api/panel` handler on the path itself (the app runs before the
+static fallback there, so no `_redirects` are needed), and stops serving `/_/` when `hide` is on. What works on
+Cloudflare works on Bun, from one option.
+
 ## Two shapes of app
 
 The adapter looks at what the project actually has:
@@ -437,6 +509,8 @@ the `pwa` option (the manifest's defaults, the icon set, the worker's precache l
 `index.html`, a new version for a changed shell, and nothing of it without the option), the `locales` option (the
 rules each mode writes, the `hreflang` links and the `lang` attribute on the pages, the 404 shell without
 alternates, absolute links under `VOIDBASE_SITE_URL`, a second pass writing the same bytes, nothing without the
-option, and codes that disagree with `VOIDBASE_LOCALES` failing the build), and that nothing is
-written outside `.voidbase/`. Run it with
+option, and codes that disagree with `VOIDBASE_LOCALES` failing the build), the `panel` option (the files under
+the path, the index copied unchanged, the two rebased URLs, the guard's three rules, `hide` ruling `/_/` away, a
+second pass writing the same bytes, the two build errors, nothing without the option, and the moved panel served
+by `voidbase serve` at its path), and that nothing is written outside `.voidbase/`. Run it with
 `bun test/adapter.ts`, or as part of `bash scripts/ci.sh` (step `adapter`).

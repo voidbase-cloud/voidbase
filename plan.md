@@ -501,6 +501,11 @@ cookie as the token when there is no `Authorization` header, and adds `auth-clea
 loader asks `sessionOf(request)` and gets the record the API would have; the knob refuses to take effect, and
 fails the deploy, unless `VOIDBASE_CORS_ORIGINS` or `VOIDBASE_CSRF=double-submit` is on, because a cookie a
 browser attaches on its own is what those two exist for. What
+
+client types against, with `--check` as a build's gate. And (2026-09-11) its `panel` option serves PocketBase's own
+admin panel under the app's own path instead of `/_/`, rebasing at build time the two URLs its bundle hardcodes,
+with `guard: "superuser"` putting the entry behind a superuser session through the same `_redirects`-to-`/api`
+mechanism the seo plugin uses (404, never 403) and `hide` ruling `/_/` away. What
 exists: the executable, the package on Bun, Cloudflare all three ways, both modes in shape,
 `voidbase sync`, the adapter, (2026-09-11) the ai plugin's memory as records: `ai_conversations` and `ai_messages`,
 created once the Workers AI binding is there, written through the records service so realtime sees each reply land,

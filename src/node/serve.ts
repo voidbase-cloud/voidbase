@@ -7,13 +7,21 @@ import { d1, openDatabase } from "./d1";
 import { fsBucket } from "./storage";
 import { assetsFetcher } from "./assets";
 import { ensurePanelDir } from "./panel";
+import { normalizePanelPath, PANEL_DEFAULT_PATH } from "../server/panel-paths";
 import { embedded } from "./embedded";
 
 export interface ServeOptions { http?: string; dir?: string; hooksDir?: string; migrationsDir?: string; pluginsDir?: string;
   /** pb_secrets/: the declaration and the git-ignored values (VOIDBASE_SECRETS_DIR) */
   secretsDir?: string; publicDir?: string; quiet?: boolean;
   /** put the instance on the internet through a Cloudflare quick tunnel (cloudflared; src/node/tunnel.ts) */
-  tunnel?: boolean }
+  tunnel?: boolean;
+  /**
+   * The Void adapter's `panel` option, baked into the generated main.ts so `voidbase serve` and `voidbase deploy`
+   * serve the panel from the same place: `path` is where its files are in pb_public, `guard` puts its entry behind
+   * a superuser session (src/server/panel-guard.ts), `hide` stops /_/ resolving here the way the adapter's
+   * `_redirects` rules stop it on Cloudflare.
+   */
+  panel?: { path?: string; guard?: "superuser" | false; hide?: boolean } }
 const PKG = resolve(import.meta.dir, "../..");
 
 // system tables: the same SQL migrations Void applies on Cloudflare
@@ -78,15 +86,23 @@ export async function openLocal(opts: ServeOptions) {
   applySystemMigrations(sqlite, emb?.migrations ?? readSystemMigrations());
   // PocketBase serves ./pb_public at / when the directory exists (--publicDir); a build there is a full static host
   const publicDir = opts.publicDir ? resolve(opts.publicDir) : existsSync(resolve("pb_public")) ? resolve("pb_public") : undefined;
-  const env = { DB: d1(sqlite), STORAGE: fsBucket(`${dir}/storage`), ASSETS: assetsFetcher({ panelDir: await ensurePanelDir(), publicDir }) };
-  return { dir, sqlite, env };
+  // the panel: where it is, whether its entry is guarded, and whether /_/ is still served. Set before the app
+  // module is imported, which is what lets it mount the guard on the path itself (src/server/app.ts)
+  const panelPath = opts.panel ? normalizePanelPath(opts.panel.path ?? PANEL_DEFAULT_PATH) : PANEL_DEFAULT_PATH;
+  const panelHidden = !!opts.panel?.hide && panelPath !== PANEL_DEFAULT_PATH;
+  if (opts.panel) {
+    process.env.VOIDBASE_PANEL_PATH = panelPath;
+    if (opts.panel.guard === "superuser") process.env.VOIDBASE_PANEL_GUARD = "superuser"; else delete process.env.VOIDBASE_PANEL_GUARD;
+  }
+  const env = { DB: d1(sqlite), STORAGE: fsBucket(`${dir}/storage`), ASSETS: assetsFetcher({ panelDir: panelHidden ? "" : await ensurePanelDir(), publicDir }) };
+  return { dir, sqlite, env, panel: { path: panelPath, guard: opts.panel?.guard === "superuser" ? "superuser" as const : false, hidden: panelHidden } };
 }
 
 export interface VoidbaseServer { server: ReturnType<typeof Bun.serve>; env: Awaited<ReturnType<typeof openLocal>>["env"]; stop: () => void }
 
 // The library entry: `const app = await voidbase(opts); register things; await app.start()` (main.go's shape).
 export async function voidbase(opts: ServeOptions = {}) {
-  const { dir, env } = await openLocal(opts);
+  const { dir, env, panel } = await openLocal(opts);
   // the app module reads the hooks and migrations directories while loading
   const { app } = await import("../server/app");
   const { appApi } = await import("../server/api");
@@ -118,7 +134,7 @@ export async function voidbase(opts: ServeOptions = {}) {
     if (!opts.quiet) {
       const shown = hostname === "0.0.0.0" ? "127.0.0.1" : hostname;
       console.log(`voidbase (data: ${dir}, hooks: ${process.env.VOIDBASE_HOOKS_DIR})`);
-      console.log(`Server started at http://${shown}:${port}\n├─ REST API:  http://${shown}:${port}/api/\n${tunnelUrl ? "├─" : "└─"} Dashboard: http://${shown}:${port}/_/${tunnelUrl ? `\n└─ Tunnel:    ${tunnelUrl}` : ""}`);
+      console.log(`Server started at http://${shown}:${port}\n├─ REST API:  http://${shown}:${port}/api/\n${tunnelUrl ? "├─" : "└─"} Dashboard: http://${shown}:${port}${panel.path}${tunnelUrl ? `\n└─ Tunnel:    ${tunnelUrl}` : ""}`);
     }
     // bootstrap now (system collections, settings, superuser from env, pb_migrations) instead of on the first request
     await fetch(`http://127.0.0.1:${port}/api/health`).catch(() => undefined);

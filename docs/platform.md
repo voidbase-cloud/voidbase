@@ -33,6 +33,13 @@ assets, live, WebSockets, queues, KV and SSE frame what Void exposes today.
    binding returns a real 404 for `/api` misses so API clients keep PocketBase's JSON 404, and browser navigations to
    an unknown `/api` URL get the HTML page. Verified on a deployed probe: misses never invoke the Worker, real assets
    keep their ETags, nested `_/404.html` wins for `/_/...`. docs/differences.md records the status-code difference.
+   The same scoping is why anything that has to run *outside* `/api` is expressed as a `_redirects` rule to an
+   `/api/...` handler rather than as a `run_worker_first` glob: the seo plugin's three files, the `locales`
+   option's prefixes, and the adapter's `panel` option, whose `guard` sends the panel's own path to `/api/panel`
+   so a superuser check can run at all (docs/adapter.md). A per-path `run_worker_first` list is what Void infers
+   for the Worker (`["/api", "/api/*"]`), and the generated `void.json` exposes no knob to widen it, so widening
+   it is not on the table today; a rule costs one redirect on one URL, where the glob would put the Worker in
+   front of every file under that path.
 2. **Log writes are the biggest D1 cost.** Default `settings.logs.minLevel` to warnings on Cloudflare (4xx, 5xx,
    slow requests), keep the full log opt-in from the panel, and offer a sink that is built for this volume:
    Workers Logs or Analytics Engine ($0.25 per million data points, queryable in the dashboard) instead of D1 rows.

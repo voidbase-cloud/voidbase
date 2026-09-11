@@ -86,6 +86,8 @@ group("service worker", () => {
     const install = sw.split('addEventListener("install"')[1]!.split("addEventListener(")[0]!;
     expect(install).not.toContain("skipWaiting");
     expect(sw).toContain('const NEVER = ["/api/", "/_/"]');
+    // the `panel` option's path is not this app either: a moved panel is left to the network like /_/ is
+    expect(generateServiceWorker({ version: "abc123abc123", precache: ["/"], start: "/", never: ["/admin/"] })).toContain('const NEVER = ["/api/", "/_/", "/admin/"]');
     expect(sw).toContain('if (request.mode === "navigate") { event.respondWith(networkFirst(request, url)); return; }');
     expect(sw).toContain("url.pathname.startsWith(ASSETS) || PRECACHE.includes(url.pathname)");
   });

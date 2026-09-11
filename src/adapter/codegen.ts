@@ -17,6 +17,12 @@ const ident = (prefix: string, i: number) => `${prefix}${i}`;
 export interface GenerateOptions {
   /** package name the generated files import voidbase from */
   pkg?: string;
+  /**
+   * The `panel` option, written into the generated main.ts so `bun .voidbase/main.ts` serves the panel where the
+   * build put it. On Cloudflare the adapter's `_redirects` rules do the same job; this is the Bun half of the pair
+   * (src/adapter/panel.ts, src/node/serve.ts).
+   */
+  panel?: { path?: string; guard?: "superuser" | false; hide?: boolean };
 }
 
 /** The bundle entry: imports the app's own modules and hands them to the hook runtime. Bundled into pb_hooks. */
@@ -77,6 +83,9 @@ require(\`\${__hooks}/void-app.js\`).register();
 /** The generated app's entry: the app's own voidbase extensions, and a Bun runner. */
 export function generateMainEntry(m: VoidManifest, opts: GenerateOptions = {}): string {
   const pkg = opts.pkg ?? ADAPTER_PACKAGE;
+  // the panel's place, so `voidbase serve` agrees with what the build wrote into pb_public and with the
+  // `_redirects` rules a deploy uploads
+  const panel = opts.panel ? `\n    panel: ${JSON.stringify({ path: opts.panel.path ?? "/_/", guard: opts.panel.guard === "superuser" ? "superuser" : false, hide: !!opts.panel.hide })},` : "";
   const lines = [
     BANNER,
     "//",
@@ -104,7 +113,7 @@ export function generateMainEntry(m: VoidManifest, opts: GenerateOptions = {}): 
     hooksDir: process.env.VOIDBASE_HOOKS_DIR ?? \`\${import.meta.dir}/pb_hooks\`,
     migrationsDir: process.env.VOIDBASE_MIGRATIONS_DIR ?? \`\${import.meta.dir}/pb_migrations\`,
     pluginsDir: process.env.VOIDBASE_PLUGINS_DIR ?? \`\${import.meta.dir}/pb_plugins\`,
-    publicDir: \`\${import.meta.dir}/pb_public\`,
+    publicDir: \`\${import.meta.dir}/pb_public\`,${panel}
     ...flags,
   });
   register(app);

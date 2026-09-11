@@ -15,6 +15,7 @@ import type { Settings } from "./settings";
 import { applyPendingMigrations, withHookStore } from "./hooks/migrations";
 import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
 import { deletePrefix } from "./records/files";
+import { PANEL_API, panelEntry, panelEntryPaths, panelGuardFromEnv, panelPathFromEnv } from "./panel-guard";
 import { mountSettingsApi } from "./settings-api";
 import { mountFilesApi, protectedAccess } from "./files-api";
 import { BATCH_CONTEXT_HEADER, batchContextToken, mountBatch } from "./batch";
@@ -152,6 +153,15 @@ app.get("/api/health", async (c) => {
   }
   return c.json({ message: "API is healthy.", code: 200, data });
 });
+
+// --- the admin panel's guarded front door ---------------------------------
+// `voidbaseAdapter({ panel: { path, guard: "superuser" } })`. On Cloudflare the adapter's `_redirects` rules send
+// the panel's path here, because the asset layer never invokes the Worker outside /api; on Bun the app runs before
+// the static fallback, so the same handler is mounted on the path itself and both runtimes answer alike.
+app.get(PANEL_API, (c) => panelEntry(c));
+app.get(`${PANEL_API}/*`, (c) => c.json(notFound().toJSON(), 404));
+const panelPath = panelGuardFromEnv() ? panelPathFromEnv() : "";
+for (const path of panelEntryPaths(panelPath)) app.get(path, (c) => panelEntry(c, panelPath));
 
 // --- settings -------------------------------------------------------------
 app.get("/api/settings", async (c) => {

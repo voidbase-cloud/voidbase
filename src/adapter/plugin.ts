@@ -15,10 +15,12 @@ import { join, resolve } from "node:path";
 import { bundleHookApp, bundleWorkflow } from "./bundle";
 import { writeLocales, type LocalesOptions, type LocalesResult } from "./locales";
 import { generateHookWrapper, hasServerCode, writeVoidbaseApp, type GenerateOptions } from "./codegen";
+import { writePanel, type PanelOptions, type PanelResult } from "./panel";
 import { writePwa, type PwaOptions, type PwaResult } from "./pwa";
 import { scanVoidApp, SECRETS_DIR, type VoidManifest } from "./scan";
 import { loadDefinition, readSecretsValues } from "../node/secrets";
 import { writeSeoRedirects } from "./seo-redirects";
+import { normalizePanelPath, PANEL_DEFAULT_PATH } from "../server/panel-paths";
 
 export interface AdapterOptions extends GenerateOptions {
   /** where the built site goes inside the generated app; voidbase serves it at `/` */
@@ -35,12 +37,12 @@ export interface AdapterOptions extends GenerateOptions {
   locales?: LocalesOptions;
 }
 
-export interface AdaptResult { manifest: VoidManifest; written: string[]; copied: number; bundleBytes: number; pwa?: PwaResult; locales?: LocalesResult }
+export interface AdaptResult { manifest: VoidManifest; written: string[]; copied: number; bundleBytes: number; pwa?: PwaResult; locales?: LocalesResult; panel?: PanelResult }
 
 /** Runs the whole conversion once. Exported so `voidbase adapt` and the tests do not need Vite. */
 export async function adapt(root: string, opts: AdapterOptions & { clientDir?: string } = {}): Promise<AdaptResult> {
   const manifest = scanVoidApp({ root, dev: false });
-  const { written } = writeVoidbaseApp(manifest, { pkg: opts.pkg, migrations: opts.migrations });
+  const { written } = writeVoidbaseApp(manifest, { pkg: opts.pkg, migrations: opts.migrations, panel: opts.panel });
 
   // routes/, middleware/, vb_hooks/, crons/ and queues/ become one bundled hook: a hook cannot import from npm, and Void's
   // handlers do (see src/adapter/bundle.ts)
@@ -78,10 +80,17 @@ export async function adapt(root: string, opts: AdapterOptions & { clientDir?: s
   // idempotent: the copy above removed the previous pass's files)
   let pwa: PwaResult | undefined;
   if (opts.pwa) {
-    pwa = await writePwa(root, publicDir, opts.pwa);
+    pwa = await writePwa(root, publicDir, opts.pwa, opts.panel ? [normalizePanelPath(opts.panel.path ?? PANEL_DEFAULT_PATH)] : []);
     written.push(...pwa.files.map((f) => `${rel}/${f}`));
   }
-  return { manifest, written, copied, bundleBytes, pwa, locales };
+  // panel: last, so the passes above never walk the panel's own HTML (it is PocketBase's build, not this app's)
+  let panel: PanelResult | undefined;
+  if (opts.panel) {
+    panel = await writePanel(publicDir, opts.panel);
+    if (panel.copied) written.push(`${rel}${panel.path}`);
+    if (panel.rules.length) written.push(`${rel}/_redirects`);
+  }
+  return { manifest, written, copied, bundleBytes, pwa, locales, panel };
 }
 
 const firstExisting = (paths: string[]) => paths.find((p) => existsSync(p) && statSync(p).isDirectory());
@@ -130,7 +139,7 @@ export function voidbaseAdapter(options: AdapterOptions = {}) {
       // a fresh checkout has no .voidbase/ yet, and the project's tsconfig extends the fragment written there, which
       // Vite reads before any build hook runs: generate the app now (buildStart does it again, idempotently)
       const manifest = await report(() => scanVoidApp({ root: projectRoot, dev: process.env.NODE_ENV !== "production" }));
-      writeVoidbaseApp(manifest, { pkg: options.pkg, migrations: options.migrations });
+      writeVoidbaseApp(manifest, { pkg: options.pkg, migrations: options.migrations, panel: options.panel });
       const loaded = await report(() => loadDefinition(join(projectRoot, SECRETS_DIR)));
       if (!loaded) return undefined;
       const raw: Record<string, unknown> = { ...(readSecretsValues(join(projectRoot, SECRETS_DIR)) ?? {}) };
@@ -150,15 +159,15 @@ export function voidbaseAdapter(options: AdapterOptions = {}) {
     async buildStart() {
       // keep the glue in step with the files while developing, so `voidbase serve --entry main.ts` sees new routes
       const manifest = await report(() => scanVoidApp({ root, dev: process.env.NODE_ENV !== "production" }));
-      writeVoidbaseApp(manifest, { pkg: options.pkg, migrations: options.migrations });
+      writeVoidbaseApp(manifest, { pkg: options.pkg, migrations: options.migrations, panel: options.panel });
     },
     // fires once per built environment; the work is idempotent and the client builds last, so report only then
     async closeBundle(this: { environment?: { name?: string } }) {
       const clientDir = options.clientDir ?? (clientOut && existsSync(resolve(root, clientOut)) ? clientOut : undefined);
-      const { manifest, copied, bundleBytes, pwa, locales } = await report(() => adapt(root, { ...options, clientDir }));
+      const { manifest, copied, bundleBytes, pwa, locales, panel } = await report(() => adapt(root, { ...options, clientDir }));
       const counts = `${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.hooks.length} hook(s), ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)${manifest.secrets ? `, ${manifest.secrets.names.length} secret(s)` : ""}${bundleBytes ? ` -> pb_hooks/void-app.js (${Math.round(bundleBytes / 1024)} kB)` : ""}`;
       if (!hasClient || this.environment?.name === "client") {
-          log(`${manifest.mode === "static" ? "static site" : counts}; ${copied} entr(ies) into ${options.publicDir ?? ".voidbase/pb_public"}${pwa ? `; pwa ${pwa.version}: ${pwa.files.join(", ")} (${pwa.precache.length} precached)` : ""}${locales ? `; locales ${locales.codes.join(", ")} (${locales.mode}${locales.site ? `, ${locales.site}` : ", relative links"}): ${locales.pages.length} page(s)${locales.rules.length ? `, ${locales.rules.length} rule(s)` : ""}` : ""}`);
+          log(`${manifest.mode === "static" ? "static site" : counts}; ${copied} entr(ies) into ${options.publicDir ?? ".voidbase/pb_public"}${pwa ? `; pwa ${pwa.version}: ${pwa.files.join(", ")} (${pwa.precache.length} precached)` : ""}${locales ? `; locales ${locales.codes.join(", ")} (${locales.mode}${locales.site ? `, ${locales.site}` : ", relative links"}): ${locales.pages.length} page(s)${locales.rules.length ? `, ${locales.rules.length} rule(s)` : ""}` : ""}${panel ? `; panel at ${panel.path}${panel.guard ? " behind a superuser session" : ""}${panel.hidden ? ", /_/ taken away" : ""}${panel.rebased.length ? ` (${panel.rebased.length} bundle(s) rebased)` : ""}` : ""}`);
         for (const u of manifest.unsupported) console.warn(`voidbase: ${u.what} is not carried over — ${u.why}`);
         for (const c of manifest.collisions) console.warn(`voidbase: ${c} is served by voidbase itself, so the app route never runs — move it off that path`);
       }

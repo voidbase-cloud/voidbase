@@ -6,3 +6,5 @@ export { generateMainEntry, generateMigration, generateServerModule, splitSql, w
 export { exportedNames, routeUrl, scanVoidApp, type ScanOptions, type VoidManifest, type VoidMigration, type VoidModule, type VoidQueue, type VoidRoute } from "./scan";
 export { alternateLinks, localeRules, pageUrl, resolveLocales, setLang, writeLocales, writeLocaleRedirects, type LocalesOptions, type LocalesResult } from "./locales";
 export { generateManifest, generateServiceWorker, injectHead, insertIntoHead, precacheList, versionOf, writePwa, type PwaOptions, type PwaResult } from "./pwa";
+export { appendPanelRedirects, rebasePanelAssets, writePanel, type PanelOptions, type PanelResult } from "./panel";
+export { normalizePanelPath, panelRedirectLines, PANEL_API, PANEL_DEFAULT_PATH } from "../server/panel-paths";

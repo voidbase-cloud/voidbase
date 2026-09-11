@@ -92,7 +92,66 @@ rows actually written", and 5 and 6 are the two latency wins visible to users.
 | 8 KV | skipped: settings are cached per isolate and Smart Placement makes the remaining D1 read cheap | |
 | 9 rate limits | done: the rate-limit binding as a per-location ceiling per IP while rate limits are enabled (`--rate-limit`); eventually consistent by Cloudflare's design | `src/server/hardening.ts`, `src/node/deploy-cf.ts` |
 | 10 Durable Object hub | done: one SQLite-backed `VoidbaseHub` per instance, exported from the instance's own Worker (the plugin appends it to Void's generated entry; wrangler.jsonc declares the binding and the `new_sqlite_classes` migration, which Void's Cloudflare backend accepts). Each SSE connection holds one hibernatable socket to it, writes publish after their D1 batch commits, subscription changes are relayed through it, and the object sweeps sockets that stopped pinging. Without the binding (Bun, `--no-hub`) the D1 poll stays. Local fan-out to 100 clients: p50 346 ms (poll: 587 ms), one client: about 50 ms. Void itself neither promises custom Durable Objects nor offers a cheaper primitive: `void/live` keeps one active object per open stream and caps a topic at 256 subscribers | `src/server/hub.ts`, `src/server/realtime/`, `hooks-plugin.ts` `hubEntry` |
+| 11 Durable Object database | done (2026-09-11), behind `VOIDBASE_DATABASE=durable`: the instance's data in its own SQLite-backed `VoidbaseDatabase` through the same D1 interface, `batch` a real transaction; the 100-column and 100-parameter ceilings stay (measured on workerd). Section below | `src/server/durable-db.ts`, `src/server/durable-d1.ts`, `test/workers-durable.ts` |
 
+
+## The database as a Durable Object: `VOIDBASE_DATABASE=durable` (2026-09-11)
+
+The roadmap's transactions entry, shipped behind a knob. With `VOIDBASE_DATABASE=durable` (the environment or
+`pb_secrets/secrets.json`; `--database durable` on `voidbase deploy` and on `voidbase serve --workers`) an instance's
+data lives in its own SQLite-backed Durable Object, `VoidbaseDatabase` (`src/server/durable-db.ts`), exported from
+the instance's Worker beside the realtime hub and bound as `DB_OBJECT` under its own `new_sqlite_classes` migration
+tag (`voidbase-database-v1`); no D1 is created or bound. Without the knob nothing changes.
+
+**What changes in the code: one seam.** Every query already goes through the D1 interface (`src/server/db.ts`), and
+`src/node/d1.ts` is the proof it is swappable (the Bun runtime over `bun:sqlite`). `src/server/durable-d1.ts` is the
+second implementation: `d1OverDurable(stub)` gives `prepare`/`bind`/`first`/`all`/`run`/`raw`, `batch` and `exec` over
+four RPC methods on the object (`query`, `raw`, `exec`, `batch`: one RPC per statement, one per batch), and
+`bindDatabase(env)` rebinds `env.DB` to it when no D1 is bound and the namespace is, at the four entry points (the
+request middleware in `app.ts`, `runDue` for cron ticks, `consumeJobs` for the queue, `withApp` for Workflow steps), so
+nothing else in the server knows. Results are shaped like D1's (`results`, `success`, `meta.changes`,
+`meta.last_row_id`, `meta.rows_read`, `meta.rows_written`); errors carry SQLite's own message
+(`UNIQUE constraint failed: table.column`), which is what the record and collection services match on. The system
+tables come from the same `db/migrations/*.sql` Void applies to a D1, carried as `src/server/schema-sql.ts` (written by
+`scripts/schema-sql.ts`, kept current by a unit test) and applied once by the object's constructor, recorded in
+`_void_migrations`, so the first request after a deploy finds the schema as it would on D1.
+
+**What goes away: D1's batch as an approximation of a transaction.** The object is a single writer over its own SQLite
+file, so `batch` runs inside `ctx.storage.transactionSync`: all or nothing, rolled back on the first error.
+`test/workers-durable.ts` runs it on workerd: two inserts in one batch, the second violating a unique index, leave no
+row; the same two statements outside a batch leave the first. Hook code still has no interactive transaction (a
+`transaction(steps)` RPC where a step reads an earlier result is the next step, not this one), and `POST /api/batch`
+keeps its emulated rollback, which holds on the object too.
+
+**What does not go away: the ceilings.** The roadmap entry expected D1's 100 bound parameters and 100 columns to stop
+applying. They do not: workerd enforces the same limits on a Durable Object's SQLite storage (Cloudflare documents
+both at 100 for SQLite-backed objects), and the test measures it rather than assuming: a table of 100 columns and a
+statement binding 100 parameters pass, 101 of either fails with SQLite's `too many columns` and `too many SQL
+variables` (workerd 1.20260903.1). A collection is still at most 97 user fields beside `id`, `created` and `updated`.
+The 100 KB statement, the 2 MB row and the 10 GB per object apply as well (D1 allows 10 GB per database).
+
+**What stays the same.** The REST API, the panel, hooks, `pb_migrations`, the backups (an archive is the same file
+whichever side holds the data, which is what makes `voidbase migrate` the migration path), the realtime hub (its own
+object), the queue, R2, the Bun runtime (`src/node/d1.ts`, untouched) and every deploy without the knob.
+
+**Costs, roughly, from Cloudflare's published rates.** D1 bills rows read and written (about $0.001 per million reads
+and $1 per million writes past the included amounts) plus storage. A Durable Object bills requests ($0.15 per million
+past the first million), duration (GB-seconds while it is active) and its SQLite storage at the same per-row rates
+as D1 plus $0.20 per GB-month. So a request that was N D1 round trips is now N RPCs to one object, each an object
+request, and the object is active while it answers: cheaper for chatty requests placed near the object, not free.
+Check the pricing page before promising numbers to anyone.
+
+**Single writer, one location.** A Durable Object lives in one place (created near the first request that named it)
+and serializes its work: that is what makes the transaction real, and what caps throughput at one object's, since
+every write in the instance goes through it. Smart Placement stays on, so the Worker moves toward what it calls;
+D1's read replicas (the Sessions API) do not apply. The per-isolate caches (settings, collections) live in the Worker,
+not the object, and invalidate as before.
+
+**Migration path.** Two steps, both existing commands: deploy the durable-backed Worker (under a new name, or the same
+name with the knob flipped, which rebinds the Worker away from its D1 and leaves the D1 database on the account,
+untouched), then `voidbase migrate <old-url> <new-url>` moves the data through the backups API. A same-name flip that
+imports the D1 into the object on the first boot was not built: it would mean keeping D1 bound for one deploy and
+copying every table inside a request, and the two-step path is the command the roadmap already promised.
 
 ## Beyond 500 apps per account: one Worker, one Durable Object per app
 
@@ -187,7 +246,8 @@ dispatch binding, the wrangler step goes away.
 Each step is independently useful and keeps every existing suite green.
 
 1. **`src/platform/do/`**: a D1-interface adapter over `ctx.storage.sql` (batch = `transactionSync`, cursors
-   consumed synchronously), an R2 prefix view for `tenant/`, and a `TenantObject` class that runs the existing
+   consumed synchronously; done for the single-tenant case as `src/server/durable-db.ts` + `durable-d1.ts`, behind
+   `VOIDBASE_DATABASE=durable`, see the section above), an R2 prefix view for `tenant/`, and a `TenantObject` class that runs the existing
    Hono app with those bindings. Verified by the same differential suites through a wrangler-deployed dev
    Worker (miniflare runs SQLite objects locally).
 2. **Realtime hub in the object**: writes publish in-process; the router Worker terminates SSE and subscribes over

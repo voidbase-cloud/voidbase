@@ -552,7 +552,10 @@ And (2026-09-11) domains left the deploy: `domains` is the first plugin with a d
 every plugin may use (`before`, `after` and `remove` hooks around `voidbase deploy`, shipped or installed as
 `deploy.js` beside the bundle), attaching the hostnames, waiting for the certificate, redirecting the rest to the
 canonical one and detaching on `voidbase deploy --remove`, so the deploy uploads a Worker, says where it answers,
-and stops; backups' scheduling, previews and observability's toggles are the same shape and come next (docs/plugins.md).
+and stops; backups' scheduling, previews and observability's toggles are the same shape and come next (docs/plugins.md). And (2026-09-11) the roadmap's transactions entry, behind `VOIDBASE_DATABASE=durable`: an
+instance's data in its own SQLite-backed Durable Object through the same D1 interface, so a batched write is a real
+transaction, while the 100-column and 100-parameter ceilings stay, measured on workerd rather than assumed
+(docs/platform.md, "The database as a Durable Object").
 
 ## What to correct on the site when this lands
 

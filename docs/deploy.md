@@ -26,6 +26,7 @@ Secrets and settings that must exist in production (declared in `env.ts`):
 | `VOIDBASE_MAIL_HTTP_URL`, `VOIDBASE_MAIL_HTTP_KEY` | optional HTTP mail provider (Resend-compatible JSON endpoint + bearer key) used instead of SMTP for every email, including the panel's test email |
 | `VOIDBASE_MAIL_DOMAIN` | optional; a domain of the instance's whose zone is on the account (`example.com`, not an address). Read by `voidbase deploy` from the environment or `pb_secrets/secrets.json`: the Worker gets Cloudflare's `send_email` binding as `SEND_EMAIL` and the domain as a var, and the shipped `mail` plugin sends every message whose From is on that domain through Cloudflare Email Service; any other sender goes to SMTP when it is enabled, else is refused with the reason. The domain has to be onboarded for Email Sending once in the dashboard (docs/plugins.md, "Mail from the instance's domain") |
 | `VOIDBASE_AI` | optional; `1` or a Workers AI model name (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`, the default `1` means). Read by `voidbase deploy` from the environment or `pb_secrets/secrets.json`: the Worker gets the Workers AI binding as `AI` and the model as a var, and the shipped `ai` plugin answers `POST /api/ai/chat`, a chat over the instance with the MCP server's tool list for the caller (docs/plugins.md, "A chat over the instance") |
+| `VOIDBASE_DATABASE` | optional; `durable` keeps the instance's data in its own SQLite-backed Durable Object instead of a D1 database (also `--database durable`). Read by `voidbase deploy` from the environment or `pb_secrets/secrets.json`: the Worker gets `DB_OBJECT` bound to `VoidbaseDatabase` under its own migration tag and no D1 is created or bound; unset or `d1` means D1 as before. A batched write becomes a real transaction; the 100-column and 100-parameter ceilings stay; one object per instance (docs/platform.md, "The database as a Durable Object") |
 | `VOIDBASE_TRANSLATABLE`, `VOIDBASE_LOCALES` | optional, both needed for the shipped `translations` plugin to do anything: `posts:title,body;pages:title` declares the fields that have translations (`;` between collections, `,` between fields), `en,ar,fr` the locales (the first is the source, the order the fallback). The records API then answers in `?locale=` or the best `Accept-Language` match and says which in `Content-Language` (docs/plugins.md, "Content in the reader's language") |
 | `VOIDBASE_SITE_URL`, `VOIDBASE_SITEMAP`, `VOIDBASE_ROBOTS_DISALLOW`, `VOIDBASE_LLMS_NOTE` | optional; the shipped `seo` plugin's files: the site's URL when it is not the request's origin, `posts[status="live"]:/blog/{slug},pages:/{slug}` the sitemap entries (a collection, an optional filter, a path template; the collection must be publicly listable), extra `Disallow:` paths for robots.txt, and a paragraph for llms.txt (docs/plugins.md, "The crawlers' view of the instance") |
 | `VOIDBASE_SEO`, `VOIDBASE_SEO_IMAGE_SIZE`, `VOIDBASE_SEO_THEME`, `VOIDBASE_SEO_LOCALE_PATH` | optional; the `seo` plugin's page metadata (`GET /api/seo/meta?path=`) and share cards (`GET /api/seo/og/<collection>/<id>.svg`): `posts:Article{title=title,description=summary,image=cover,datePublished=created,author=author.name}` maps a schema.org type and fields onto a collection (a collection in the sitemap without one gets `WebPage` and the obvious fields), a thumb size for the mapped image, the card's background colour, and `prefix` to put the locale in the path (`/ar/...`) rather than `?locale=` for the `hreflang` alternates `VOIDBASE_LOCALES` adds |
@@ -186,9 +187,10 @@ it as a build secret on the previews trigger.
 | `RATE_LIMITER` (Cloudflare rate-limit binding) | a ceiling per client IP on `/api`, counted per Cloudflare location across every isolate there, on top of the settings' rate-limit rules (which count per isolate). Applies only while rate limits are enabled in Settings, and skips superusers and excluded IPs like the rules do. Cloudflare documents it as eventually consistent, not an exact counter | `--rate-limit 300/10` (requests per 10 or 60 seconds, default PocketBase's `/api/` rule) / `VOIDBASE_DEPLOY_RATE_LIMIT`, `0` disables |
 | `LOGS_ANALYTICS` (Workers Analytics Engine) | one data point per request (method, path, status, auth collection, error, execution time) at any log level, queryable in the dashboard and the SQL API at $0.25 per million points, while the panel's log keeps writing D1 rows from `VOIDBASE_LOG_MIN_LEVEL` up. The account has to enable Analytics Engine once, at https://dash.cloudflare.com/?to=/:account/workers/analytics-engine, or the upload fails with code 10089 | opt-in: `--analytics` / `VOIDBASE_DEPLOY_ANALYTICS=1` |
 | `HUB` (Durable Object `VoidbaseHub`, SQLite-backed, in this Worker) | the realtime hub: every SSE connection holds one hibernatable socket to it, writes publish to it, so events arrive in tens of milliseconds instead of the D1 poll's second, and idle apps cost nothing (the object sleeps). Free plan included | `--no-hub` / `VOIDBASE_DEPLOY_HUB=0` keeps the D1 poll |
+| `DB_OBJECT` (Durable Object `VoidbaseDatabase`, SQLite-backed, in this Worker) | the instance's database when `VOIDBASE_DATABASE=durable`: every query the Worker runs is an RPC to it and a batch is one transaction, rolled back on the first error. It replaces the D1 binding, which is then neither created nor bound; the same 100-column and 100-parameter ceilings apply (docs/platform.md) | `VOIDBASE_DATABASE=durable` or `--database durable`; unset means D1 |
 | `SEND_EMAIL` (Cloudflare Email Service `send_email` binding) | outbound mail from `VOIDBASE_MAIL_DOMAIN` leaves through Cloudflare from the instance's own domain, with the SPF, DKIM and DMARC records Cloudflare wrote when the domain was onboarded; the deploy checks that the domain's zone is on the account and, when the token may read it, whether the domain is onboarded, and prints the dashboard step otherwise. Email Sending is in beta on the Workers Paid plan (checked 2026-09-11) | `VOIDBASE_MAIL_DOMAIN=example.com`; unset means no binding and mail goes where it went before |
 | `AI` (Workers AI `ai` binding) | the `ai` plugin's chat: `POST /api/ai/chat` runs a tool-calling loop on the model the knob names, the tools being the MCP server's list for the caller, each call the instance's own route in process. Configuration only, nothing created on the account; Workers AI is metered per neuron, with a daily free allowance | `VOIDBASE_AI=1` or `VOIDBASE_AI=<model>`; unset means no binding and the route answers 503 |
-| Smart Placement | the Worker runs next to its D1 database | always on |
+| Smart Placement | the Worker runs next to its D1 database, or toward the database object | always on |
 
 ### Configuration and secrets: `pb_secrets/`
 
@@ -460,7 +462,7 @@ with `VOIDBASE_ENCRYPTION_KEY` (`sealSecret` / `openSecret` from `voidbase/cloud
 ## The instance on Cloudflare's local runtime: `voidbase serve --workers`
 
 ```bash
-voidbase serve --workers                    # --http 127.0.0.1:8090, --name, --no-queue, --no-hub as for deploy; also: voidbase dev --workers
+voidbase serve --workers                    # --http 127.0.0.1:8090, --name, --no-queue, --no-hub, --database durable as for deploy; also: voidbase dev --workers
 ```
 
 `voidbase serve` runs the instance on Bun. `--workers` runs it on workerd, Cloudflare's runtime, so what you exercise
@@ -478,8 +480,11 @@ rewrites that file without them. The first workerd start takes half a minute or 
 (maintenance runs lazily in requests; Void prints the `curl` that fires a trigger by hand), Flagship and the
 Secrets Store are out of reach (declared flags keep their baked defaults), and without network the panel is skipped
 with a message while the API still runs. `test/workers-local.ts` boots a temporary project this way and checks the
-API, with a dead Cloudflare API base to prove nothing was called. `vp preview` below stays the rehearsal of the
-production build itself.
+API, with a dead Cloudflare API base to prove nothing was called. `--database durable` (or `VOIDBASE_DATABASE=durable`)
+runs it with the database Durable Object instead of Miniflare's D1, as the deploy's knob does; `test/workers-durable.ts`
+boots a project that way and proves the transaction, the ceilings, a backup and restore and realtime on workerd
+(docs/platform.md, "The database as a Durable Object"). `vp preview` below stays the rehearsal of the production
+build itself.
 
 ## Local preview of the production build
 

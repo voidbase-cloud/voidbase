@@ -8,6 +8,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { writeCloudProject } from "./cloud-init";
+import { seoPngOn } from "../server/plugins/seo-paths";
 import { assetHash, contentTypeFor, type ReleaseManifest, type ReleaseSource } from "../cloud/rest";
 
 const PKG = resolve(import.meta.dir, "../..");
@@ -29,7 +30,8 @@ export async function buildRelease(o: BundleOptions = {}): Promise<{ dir: string
   const cloud = resolve(PKG, ".cloud/_release"); rmSync(cloud, { recursive: true, force: true });
   const hub = o.hub !== false; const queue = o.queue !== false;
   const pluginsDir = o.pluginsDir ? resolve(o.pluginsDir) : `${src}/pb_plugins`; mkdirSync(pluginsDir, { recursive: true });
-  writeCloudProject(cloud, "internal", { hooksDir: `${src}/pb_hooks`, migrationsDir: `${src}/pb_migrations`, pluginsDir, queue: queue ? "jobs" : false, hub });
+  // VOIDBASE_SEO_PNG=1 keeps resvg in the release; off (the default) the wasm and the card's font are not bundled
+  writeCloudProject(cloud, "internal", { hooksDir: `${src}/pb_hooks`, migrationsDir: `${src}/pb_migrations`, pluginsDir, queue: queue ? "jobs" : false, hub, seoPng: seoPngOn(process.env.VOIDBASE_SEO_PNG) });
   if (o.pluginsDir) log(`plugins: ${pluginsDir} (voidbase.lock beside it decides what is baked in)`);
   // placeholder ids: the real bindings are set at upload time from the manifest
   writeFileSync(`${cloud}/wrangler.jsonc`, JSON.stringify({

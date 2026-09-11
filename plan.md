@@ -541,10 +541,12 @@ templates in reverse and answers its canonical URL, OpenGraph and Twitter tags, 
 `VOIDBASE_SEO` maps onto the collection and the ready html fragment, `GET /api/seo/og/<collection>/<id>.svg` renders
 the share card on request, both with an ETag from the record and the VERSION so caches revalidate across a deploy
 (one request is one Worker version, Cloudflare's guarantee), and `VOIDBASE_LOCALES` adds hreflang alternates (docs/plugins.md). And
-(2026-09-11) the card is a PNG where it can be: `<id>.png` rasterises it with resvg behind `#platform/raster`, on
-workerd and on Bun alike, with a subset of Inter carried in the bundle because a Worker has no fonts, and it falls
-back to the SVG body with `X-Voidbase-Card: svg-fallback` rather than an error where it cannot; `og:image` names
-the `.png`, since no social scraper renders SVG, and the wasm roughly doubles the Worker bundle (docs/platform.md). And
+(2026-09-11) the card is a PNG where it is asked for: `VOIDBASE_SEO_PNG=1` has `<id>.png` rasterise it with resvg
+behind `#platform/raster`, on workerd and on Bun alike, with a subset of Inter carried along because a Worker has
+no fonts, and `og:image` names the `.png` since no social scraper renders SVG. It is off by default and off at
+build time too: measured, the rasteriser doubles the gzipped Worker (1.01 to 2.05 MB against a 3 MB free-plan
+ceiling), so with the knob off the build aliases `#platform/raster` to a stub, nothing is bundled, `.png` answers
+the SVG body with `X-Voidbase-Card: svg-fallback` and the meta answer names the `.svg` (docs/platform.md). And
 (2026-09-11) mail from the instance's own domain: `mail` is a shipped plugin providing `mail@1` over Cloudflare's
 `send_email` binding, which `voidbase deploy` adds with `VOIDBASE_MAIL_DOMAIN`, the From held to that domain and SMTP
 staying the fallback for every other sender (docs/plugins.md). And (2026-09-11) the chat over the instance: `ai`

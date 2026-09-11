@@ -17,6 +17,7 @@ import { PREVIEW_OF_VAR, PREVIEW_VAR, previewWorkerName } from "../server/plugin
 import { ensureFlags, ensureFlagshipApp, FLAGS_BINDING, FLAGS_VAR } from "./flagship";
 import { MAIL_BINDING, MAIL_DOMAIN_VAR } from "../server/plugins/mail-binding";
 import { AI_BINDING, AI_VAR, aiModelOf } from "../server/plugins/ai-binding";
+import { SEO_PNG_VAR, seoPngOn } from "../server/plugins/seo-paths";
 import { DATABASE_VAR, DB_OBJECT_BINDING, DB_OBJECT_CLASS, DB_OBJECT_MIGRATION_TAG, databaseKind, type DatabaseKind } from "../server/durable-d1";
 import { discoverDeployPlugins, runDeployHooks } from "./deploy-plugins";
 import type { DeployContext } from "./deploy-plugin";
@@ -94,7 +95,7 @@ function projectName(): string {
 const randomPassword = () => { const a = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const b = crypto.getRandomValues(new Uint8Array(20)); return Array.from(b, (x) => a[x % a.length]).join(""); };
 
 // Bun only loads the .env of the working directory; the starter keeps its PB_* and deploy variables one level up.
-const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DOMAINS", "VOIDBASE_PREVIEW_SEED", "VOIDBASE_PREVIEW_SOURCE_URL", "VOIDBASE_GH_TOKEN", "VOIDBASE_PROJECT_REPO", "VOIDBASE_DEPLOY_DOMAIN", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", MAIL_DOMAIN_VAR, AI_VAR, DATABASE_VAR, "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
+const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DOMAINS", "VOIDBASE_PREVIEW_SEED", "VOIDBASE_PREVIEW_SOURCE_URL", "VOIDBASE_GH_TOKEN", "VOIDBASE_PROJECT_REPO", "VOIDBASE_DEPLOY_DOMAIN", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", MAIL_DOMAIN_VAR, AI_VAR, SEO_PNG_VAR, DATABASE_VAR, "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
 export function loadEnvFiles(files = [".env", ".env.local", "../.env", "../.env.local"]): string[] {
   const loaded: string[] = [];
   for (const f of files) {
@@ -209,6 +210,13 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   // gets the `ai` binding as AI and the model as a var; the binding is config only, nothing on the account to create
   const aiModel = aiModelOf(process.env[AI_VAR] || readSecretsValues(secretsDir)?.[AI_VAR]);
   if (aiModel && !/^@[a-z0-9-]+\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(aiModel)) throw new Error(`${AI_VAR}=${aiModel} is neither 1 nor a Workers AI model name (@cf/meta/llama-3.3-70b-instruct-fp8-fast, for example)`);
+  // share cards as PNG for the seo plugin (VOIDBASE_SEO_PNG=1, from the environment or secrets.json). It is a build
+  // knob first: off, the project's vite.config.ts leaves resvg's wasm and the card's font out of the Worker
+  // entirely (+1.04 MB gzipped when on, docs/platform.md). The same value is baked as a var so the plugin serves
+  // and advertises what this build can actually render. No binding: nothing on the account to create.
+  const seoPngRaw = String(process.env[SEO_PNG_VAR] || readSecretsValues(secretsDir)?.[SEO_PNG_VAR] || "").trim();
+  if (seoPngRaw && !/^(0|1|true|false|on|off|yes|no)$/i.test(seoPngRaw)) throw new Error(`${SEO_PNG_VAR}=${seoPngRaw} is neither on nor off (1 or 0)`);
+  const seoPng = seoPngOn(seoPngRaw);
   if (publicDir && !existsSync(resolve(publicDir, "index.html"))) throw new Error(`public dir ${resolve(publicDir)} has no index.html (build the site first)`);
   // <public dir>/_redirects, Netlify/Pages syntax. Path-only lines go to the assets as Cloudflare's own _redirects (it
   // only accepts relative sources); host-scoped lines (`https://api.example.com/ /_/ 302`) become zone Redirect Rules
@@ -251,7 +259,8 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   // ones that carry a deploy.js; their hooks run before the upload, after it, and on --remove
   const deployPlugins = await discoverDeployPlugins(pluginsDir);
   if (deployPlugins.length) log(`deploy plugins: ${deployPlugins.map((p) => `${p.name} (${p.origin})`).join(", ")}`);
-  writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), pluginsDir, entry, queue, hub, database, workflows: workflows.map((w) => ({ file: w.file, className: w.className })) });
+  writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), pluginsDir, entry, queue, hub, database, seoPng, workflows: workflows.map((w) => ({ file: w.file, className: w.className })) });
+  log(seoPng ? `${SEO_PNG_VAR}=1: seo share cards are rasterised to PNG (resvg, about 1 MB gzipped in the Worker)` : `share cards are SVG (${SEO_PNG_VAR}=1 bundles resvg and serves them as PNG, about 1 MB gzipped more)`);
   if (!queue) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/queues`, { recursive: true, force: true }); }
   if (!cron) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/crons`, { recursive: true, force: true }); log("cron trigger disabled (VOIDBASE_DEPLOY_CRON=0 / --no-cron): maintenance runs lazily in requests"); }
     log(observability ? "observability: invocation logs kept for the dashboard" : "observability off (VOIDBASE_DEPLOY_OBSERVABILITY=0)");
@@ -290,6 +299,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   for (const k of ["AUDITLOG", ...extraVars]) if (process.env[k]) baked[k] = process.env[k]!;
   if (mailDomain) baked[MAIL_DOMAIN_VAR] = mailDomain;
   if (aiModel) baked[AI_VAR] = aiModel;
+  if (seoPng) baked[SEO_PNG_VAR] = "1";
   // the declared server and public values, parsed (defaults filled in): a var is the code's to set on every deploy
   const definition = pbSecrets.state.definition;
   const plainKeys = definition ? definition.of("server", "public", "flag") : [];

@@ -8,7 +8,7 @@ import type { Collection } from "../../src/server/collections/model";
 import { ApiError } from "../../src/server/errors";
 import { createKernel, load } from "../../src/server/kernel";
 import { auth, provider } from "../../src/server/plugins/auth";
-import { buildMeta, etagOf, excerpt, locOf, matchPath, notModified, parseSeo, parseSitemap, seo, seoRedirectLines, seoWith, shareCard, splitLocale, wrap, type MetaAnswer, type SeoSource } from "../../src/server/plugins/seo";
+import { buildMeta, etagOf, excerpt, locOf, matchPath, notModified, parseSeo, parseSitemap, seo, seoPngOn, SEO_PNG_VAR, seoRedirectLines, seoWith, shareCard, splitLocale, wrap, type MetaAnswer, type SeoSource } from "../../src/server/plugins/seo";
 import { CARD_FONT_FAMILY } from "../../src/server/plugins/seo-meta";
 import type { AppEnv, Bindings } from "../../src/server/types";
 import { VERSION } from "../../src/server/version";
@@ -332,7 +332,15 @@ describe("the page's metadata: /api/seo/meta", () => {
     expect(body.description.length).toBeLessThanOrEqual(201);
     expect(body.description.startsWith("Who we are. Who we are.")).toBe(true);
     expect(body.description.endsWith("\u2026")).toBe(true);
-    expect(body.image).toBe("http://shop.example/api/seo/og/pages/g1.png");
+    // VOIDBASE_SEO_PNG is off here (its default), so the answer names the SVG: this build cannot render the PNG
+    expect(body.image).toBe("http://shop.example/api/seo/og/pages/g1.svg");
+    expect(body.og["og:image"]).toBe("http://shop.example/api/seo/og/pages/g1.svg");
+    expect(body.twitter["twitter:image"]).toBe("http://shop.example/api/seo/og/pages/g1.svg");
+    const withPng = await appWith({ VOIDBASE_SITEMAP: SITEMAP, VOIDBASE_SEO: SEO, VOIDBASE_SEO_PNG: "1" });
+    const on = (await meta(withPng.get, "path=/about")).body;
+    expect(on.image).toBe("http://shop.example/api/seo/og/pages/g1.png");
+    expect(on.og["og:image"]).toBe("http://shop.example/api/seo/og/pages/g1.png");
+    expect(on.twitter["twitter:image"]).toBe("http://shop.example/api/seo/og/pages/g1.png");
     expect(body.canonical).toBe("http://shop.example/about");
     expect(body.og["og:type"]).toBe("website");
     expect(body.jsonld).toEqual({ "@context": "https://schema.org", "@type": "WebPage", name: "About us", description: body.description, image: body.image, url: "http://shop.example/about" });
@@ -497,7 +505,7 @@ describe("the share card: /api/seo/og/:collection/:id.png and .svg", () => {
   });
 
   test(".png is the rasterised card: image/png, 1200x630 in its IHDR, the same ETag, 304 on If-None-Match", async () => {
-    const env = { VOIDBASE_SITEMAP: SITEMAP, VOIDBASE_SEO: SEO };
+    const env = { VOIDBASE_SITEMAP: SITEMAP, VOIDBASE_SEO: SEO, VOIDBASE_SEO_PNG: "1" };
     const { bytes } = await appWith(env);
     const { r, body } = await bytes("/api/seo/og/posts/p1.png");
     expect(r.status).toBe(200);
@@ -518,7 +526,7 @@ describe("the share card: /api/seo/og/:collection/:id.png and .svg", () => {
 
   test("a platform with no rasteriser answers .png with the SVG body and says so in a header, not an error", async () => {
     quiet();
-    const env = { VOIDBASE_SITEMAP: SITEMAP, VOIDBASE_SEO: SEO };
+    const env = { VOIDBASE_SITEMAP: SITEMAP, VOIDBASE_SEO: SEO, VOIDBASE_SEO_PNG: "1" };
     const { get } = await appWith(env, seoWith({ ...spySource, rasterize: async () => null }));
     const { r, text } = await get("/api/seo/og/posts/p1.png");
     expect(r.status).toBe(200);
@@ -537,7 +545,7 @@ describe("the share card: /api/seo/og/:collection/:id.png and .svg", () => {
   });
 
   test("a source's own rasteriser is what the route serves; a bad name, a filtered record or a locked collection is not", async () => {
-    const env = { VOIDBASE_SITEMAP: SITEMAP, VOIDBASE_SEO: SEO };
+    const env = { VOIDBASE_SITEMAP: SITEMAP, VOIDBASE_SEO: SEO, VOIDBASE_SEO_PNG: "1" };
     const able = await appWith(env, seoWith({ ...spySource, rasterize: async (svg) => new Uint8Array([...PNG_MAGIC, svg.length & 0xff]) }));
     const ok = await able.bytes("/api/seo/og/posts/p1.png");
     expect(ok.r.status).toBe(200);
@@ -549,6 +557,29 @@ describe("the share card: /api/seo/og/:collection/:id.png and .svg", () => {
     expect(JSON.parse((await get("/api/seo/og/posts/p1.gif")).text).message).toContain("<id>.png or <id>.svg");
     expect((await get("/api/seo/og/secrets/x.svg")).r.status).toBe(403);
     expect((await get("/api/seo/og/nothing/x.svg")).r.status).toBe(404);
+  });
+
+  test("VOIDBASE_SEO_PNG off (the default): .png is the SVG body with the fallback header, and nothing names a .png", async () => {
+    quiet();
+    // the rasteriser is not in the build at all when the knob is off, so the route must not even ask for one
+    let asked = 0;
+    const { get } = await appWith({ VOIDBASE_SITEMAP: SITEMAP, VOIDBASE_SEO: SEO, VOIDBASE_SITE_URL: SITE },
+      seoWith({ ...spySource, rasterize: async () => { asked++; return new Uint8Array(PNG_MAGIC); } }));
+    const { r, text } = await get("/api/seo/og/posts/p1.png");
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toBe("image/svg+xml; charset=utf-8");
+    expect(r.headers.get("x-voidbase-card")).toBe("svg-fallback");
+    expect(r.headers.get("etag")).toBe(P1_ETAG);
+    expect(text.startsWith("<svg")).toBe(true);
+    expect(asked).toBe(0);
+    expect(warned()).toContain("VOIDBASE_SEO_PNG is off");
+    // and the meta answer names the .svg, so no scraper is sent to a PNG this build cannot render
+    const { text: metaText } = await get("/api/seo/meta?path=/about");
+    expect(JSON.parse(metaText).image).toBe("https://shop.example/api/seo/og/pages/g1.svg");
+    // the knob's spellings
+    expect([seoPngOn("1"), seoPngOn("true"), seoPngOn("ON"), seoPngOn("yes")]).toEqual([true, true, true, true]);
+    expect([seoPngOn(""), seoPngOn(undefined), seoPngOn("0"), seoPngOn("off"), seoPngOn("maybe")]).toEqual([false, false, false, false, false]);
+    expect(SEO_PNG_VAR).toBe("VOIDBASE_SEO_PNG");
   });
 
   test("the rasteriser behind #platform/raster renders the card's own SVG and refuses what is not one, without throwing", async () => {

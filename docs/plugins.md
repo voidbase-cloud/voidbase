@@ -381,24 +381,42 @@ with an ellipsis when longer). A collection that is in the sitemap but not in `V
 type `WebPage`, the title from the first text field named `title`, `name` or `headline`, the description from
 `summary`, `description` or `excerpt`, no image field. A malformed entry or mapping is skipped with a warning.
 
-**Share images rendered on request.** `GET /api/seo/og/<collection>/<id>.png` is a 1200x630 card: the app's name,
+**Share images rendered on request.** `GET /api/seo/og/<collection>/<id>.svg` is a 1200x630 card: the app's name,
 the record's title wrapped onto at most three lines of thirty characters (the last one ellipsised), the description
 on one line, every string escaped, on the background colour `VOIDBASE_SEO_THEME` names (a hex colour or a CSS
 colour name; default a neutral dark, `#1f2430`; the text is white on a dark colour and near-black on a light hex
 one). Served `Cache-Control: public, max-age=3600`. The record is found the way the meta route finds it, through
 the first sitemap entry naming the collection, its filter, and the caller's list rule. `image` in the meta answer
 (so `og:image` and `twitter:image`) is this URL whenever no image field is mapped or the record has no file in it,
-so every page has a share image without one being uploaded, and it is the `.png` because no social scraper renders
-SVG: Slack, Twitter/X, LinkedIn, Discord and Facebook all drop an `og:image` they cannot decode, and a card no one
-sees is not a card.
+so every page has a share image without one being uploaded.
 
-The card is built as an SVG either way. `<id>.svg` serves that SVG; `<id>.png` hands it to resvg
-(`@resvg/resvg-wasm`, the Rust rasteriser, pinned at 2.6.2) behind `#platform/raster`, which is the wasm module the
-Workers build bundles on Cloudflare and the same wasm read off disk on Bun. It is imported on the first `.png`
-asked for and instantiated once per isolate, so nothing else pays for it. When it cannot load, or will not parse
-the SVG, `.png` answers the **SVG body** with `Content-Type: image/svg+xml` and `X-Voidbase-Card: svg-fallback`,
-and logs a warning: one URL is right on every platform, and a share image is never worth a 5xx. It answered 406
-before this, which put the failure in front of the crawler instead of behind the header.
+**`VOIDBASE_SEO_PNG=1`: the card as a PNG.** No social scraper renders SVG. Slack, Twitter/X, LinkedIn, Discord
+and Facebook all drop an `og:image` they cannot decode, so an SVG card is a card nobody sees. `<id>.png` hands the
+same SVG to resvg (`@resvg/resvg-wasm`, the Rust rasteriser, pinned at 2.6.2) behind `#platform/raster`: a wasm
+module import the Workers build bundles on Cloudflare, the same wasm read off disk on Bun, imported on the first
+`.png` and instantiated once per isolate.
+
+It is **off by default**, because that rasteriser is 2.4 MB of wasm and adds about 1.04 MB to the *gzipped* Worker
+(1.01 MB to 2.05 MB, against Cloudflare's 3 MB free-plan ceiling), which is not a bill to hand an instance that
+serves no share card, or a third of the free plan's room to take from the app next to it. The knob is read at
+build time and at runtime, and both halves have to agree:
+
+- **build:** the hooks plugin (`pbHooksPlugin`, `hooks-plugin.ts`) aliases `#platform/raster` to a stub that
+  answers `null` unless `VOIDBASE_SEO_PNG` is on, so with the knob off neither resvg's wasm nor the card's font is
+  in the bundle at all. `voidbase deploy` reads the knob from the environment or `pb_secrets/secrets.json` (the
+  way it reads `VOIDBASE_AI` and `VOIDBASE_MAIL_DOMAIN`), writes `seoPng: true` into the generated project's
+  `vite.config.ts`, and says in the plan which of the two you are getting. A project that calls `pbHooksPlugin`
+  itself gets the same from `VOIDBASE_SEO_PNG` in the build's environment, or the `seoPng` option.
+- **runtime:** the same deploy bakes `VOIDBASE_SEO_PNG=1` as a Worker var, and the plugin reads it from the
+  request's env then the runtime's, like every other seo knob. On it rasterises and `og:image` names the `.png`;
+  off it does not even ask the rasteriser, and `og:image` and `twitter:image` name the `.svg`, because pointing a
+  scraper at a PNG this build cannot render would be worse than naming the SVG.
+
+Either way `.png` is a real URL: when the knob is off, or the rasteriser cannot load, or it will not parse the
+SVG, it answers the **SVG body** with `Content-Type: image/svg+xml` and `X-Voidbase-Card: svg-fallback`, and logs
+a warning. One URL is right on every platform, and a share image is never worth a 5xx. It answered 406 before
+this, which put the failure in front of the crawler instead of behind a header. On Bun nothing is bundled or
+stripped, so the knob there is only the runtime half: set it and `voidbase serve` answers PNG.
 
 **The card's fonts.** A Worker has no system fonts, and resvg with no font renders blank text, so the card carries
 its own: Inter (SIL Open Font License 1.1), subset to ASCII, Latin-1's printable half and the punctuation the card
@@ -406,14 +424,15 @@ itself emits, pinned to two static weights (400 for the app name and the descrip
 faces are 80 KB each and live base64-encoded in `src/server/plugins/og-font.ts`, which is **generated and
 committed**: `bun scripts/og-font.ts` rewrites it from google/fonts at one pinned commit, and
 `bun scripts/og-font.ts --check` fails when the committed file is not what the script produces. No build reaches
-the network for it. The SVG names `Inter` first and keeps the generic system stack behind it, so a browser that
-fetches the `.svg` still gets something.
+the network for it. They ride in the same lazy chunk as the rasteriser, so the knob leaves them out too. The SVG
+names `Inter` first and keeps the generic system stack behind it, so a browser that fetches the `.svg` still gets
+something.
 
 **What a card costs.** One rasterisation is about 20 ms of CPU on workerd, and about 60 ms the first time in an
 isolate (the wasm instantiation and building the font database, paid once). That is inside a Worker's CPU budget
 but it is not free, which is what `Cache-Control: public, max-age=3600` and the `ETag` are for: a crawler that
-comes back within the hour, or with the right `If-None-Match`, costs nothing. The rasteriser's wasm is 2.4 MB and
-roughly doubles the gzipped Worker bundle (docs/platform.md), so it is worth knowing it is there.
+comes back within the hour, or with the right `If-None-Match`, costs nothing. The bundle is the other half of the
+price, and the table in docs/platform.md is the one to decide on.
 
 **Deployment skew.** A crawler that arrives during a deploy must not get half a page. On Cloudflare that is the
 platform's own guarantee: each request is served, start to finish, by one Worker version (a gradual deployment
@@ -452,7 +471,8 @@ mapping grammar, the fragment's escaping, the JSON-LD, the defaults, the card, t
 `rasterize(svg)` is the seam the PNG goes through: the default one calls `#platform/raster` at 1200x630, a test
 hands in one that returns bytes, or `null` to exercise the SVG fallback. The real rasteriser runs under
 `bun test` too, so the PNG route is measured against an actual PNG (its signature and the width and height in its
-IHDR chunk), not a stand-in.
+IHDR chunk), not a stand-in. Both states of `VOIDBASE_SEO_PNG` are tested there, and the deploy's half of it in
+`test/deploy-cf.ts`.
 
 ## Mail from the instance's domain: mail
 

@@ -5,11 +5,12 @@
 import { copyFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-const PLATFORM_MODULES = ["env", "log", "sse", "sockets", "hooks", "migrations", "photon", "plugins"];
+const PLATFORM_MODULES = ["env", "log", "sse", "sockets", "hooks", "migrations", "photon", "plugins", "raster"];
 import ts from "typescript";
 import type { Plugin } from "vite";
 import { pluginsModuleSource, providedImport } from "./src/node/installed";
 import { writeSeoRedirects } from "./src/adapter/seo-redirects";
+import { seoPngOn } from "./src/server/plugins/seo-paths";
 import pkg from "./package.json" with { type: "json" };
 
 const VIRTUAL = "virtual:voidbase-hooks";
@@ -214,7 +215,7 @@ export function writeNotFoundShells(dir: string): string[] {
   return written;
 }
 
-export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; pluginsDir?: string; hubEntry?: string; databaseEntry?: string; workflows?: { file: string; className: string }[] } = {}): Plugin {
+export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; pluginsDir?: string; hubEntry?: string; databaseEntry?: string; workflows?: { file: string; className: string }[]; seoPng?: boolean } = {}): Plugin {
   const dir = resolve(options.dir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks");
   const migrationsDir = resolve(options.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations");
   const pluginsDir = resolve(options.pluginsDir ?? process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins");
@@ -225,12 +226,18 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; p
   // a path is resolved here; a bare specifier (a visible project imports the package by name) is left to Vite
   const entryOf = (e?: string) => (e ? (/^[./]/.test(e) || /^[A-Za-z]:[\\/]/.test(e) ? resolve(e) : e) : "");
   const hubEntry = entryOf(options.hubEntry); const databaseEntry = entryOf(options.databaseEntry);
+  // VOIDBASE_SEO_PNG: the seo plugin's share cards as PNG. Off by default, because the rasteriser it needs
+  // (@resvg/resvg-wasm) is 2.4 MB of wasm, roughly doubling the gzipped Worker of every instance, share cards or
+  // not (docs/platform.md). Off, `#platform/raster` is aliased to the stub that answers null, so neither the wasm
+  // nor the card's font is in the build at all; `voidbase deploy` passes the option and bakes the same var so the
+  // runtime answer and the bundle agree. A project that calls this plugin itself can set the variable instead.
+  const seoPng = options.seoPng ?? seoPngOn(process.env.VOIDBASE_SEO_PNG);
   const here = resolve(fileURLToPath(new URL(".", import.meta.url)));
   let clientOut = "";
   return {
     name: "voidbase-pb-hooks",
     // the Workers build takes the workers flavour of every #platform module (package.json "imports" covers Bun/Node)
-    config() { return { resolve: { alias: PLATFORM_MODULES.map((n) => ({ find: `#platform/${n}`, replacement: resolve(here, "src/platform/workers", `${n}.ts`) })) } }; },
+    config() { return { resolve: { alias: PLATFORM_MODULES.map((n) => ({ find: `#platform/${n}`, replacement: resolve(here, "src/platform/workers", `${n === "raster" && !seoPng ? "raster-off" : n}.ts`) })) } }; },
     configResolved(config) { clientOut = resolve(config.root, config.environments?.client?.build?.outDir ?? config.build.outDir); },
     // Asset-first on Cloudflare: the asset layer answers every request outside /api, so the Worker is never invoked
     // for static files. PocketBase's index fallback for deep links is expressed as Cloudflare's `not_found_handling:

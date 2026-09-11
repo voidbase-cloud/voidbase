@@ -9,6 +9,7 @@
 //     through one relation (`author.name`) with `expand`.
 //   VOIDBASE_SEO_IMAGE_SIZE=1200x630   a thumb size of the mapped file field to put in og:image (else the original)
 //   VOIDBASE_SEO_THEME=#1f2430          the share card's background colour (a hex colour or a CSS colour name)
+//   VOIDBASE_SEO_PNG=1                  render the card as PNG (resvg); off, it is SVG and og:image names the .svg
 //   VOIDBASE_SEO_LOCALE_PATH=prefix     locale alternates as /<code>/path rather than ?locale=<code> (VOIDBASE_LOCALES)
 import { logger } from "#platform/log";
 import type { Field } from "../collections/fields";

@@ -95,24 +95,29 @@ rows actually written", and 5 and 6 are the two latency wins visible to users.
 | 11 Durable Object database | done (2026-09-11), behind `VOIDBASE_DATABASE=durable`: the instance's data in its own SQLite-backed `VoidbaseDatabase` through the same D1 interface, `batch` a real transaction; the 100-column and 100-parameter ceilings stay (measured on workerd). Section below | `src/server/durable-db.ts`, `src/server/durable-d1.ts`, `test/workers-durable.ts` |
 
 
-### The Worker bundle, and the two wasm modules in it (2026-09-11)
+### The Worker bundle, and the wasm in it (2026-09-11)
 
-Two of the things voidbase does are Rust compiled to wasm, and they are most of the deployed Worker:
+The Rust-compiled-to-wasm parts of voidbase are most of the deployed Worker, so what is in the bundle is a
+decision, not a detail. Cloudflare's limit is on the **compressed** size: 3 MB on the free plan, 10 MB on Workers
+Paid. Measured with `vp build` on this repo's own Void app plus `gzip -9` per file:
 
 | | raw | gzipped |
 | --- | --- | --- |
 | Everything else (the app, the panel's API, hono, the plugins) | 1.57 MB | 0.39 MB |
 | Photon, for thumbnails (`@cf-wasm/photon`) | 1.57 MB | 0.62 MB |
-| resvg, for share cards (`@resvg/resvg-wasm`) | 2.48 MB | 0.95 MB |
-| The chunk resvg loads with (its glue and the card's two font faces, base64) | 0.24 MB | 0.09 MB |
-| **Total `dist/ssr`** | **5.85 MB** | **2.05 MB** |
+| **Default total `dist/ssr`** | **3.14 MB** | **1.01 MB** |
+| resvg, for PNG share cards (`@resvg/resvg-wasm`), with `VOIDBASE_SEO_PNG=1` | +2.48 MB | +0.95 MB |
+| the chunk it loads with (its glue and the card's two font faces, base64) | +0.24 MB | +0.09 MB |
+| **Total with `VOIDBASE_SEO_PNG=1`** | **5.85 MB** | **2.05 MB** |
 
-Adding resvg for the PNG share cards took the bundle from 3.13 MB raw / 1.01 MB gzipped to 5.85 MB / 2.05 MB:
-+2.71 MB raw and +1.04 MB gzipped, roughly double. The numbers above are measured with `vp build` on this repo's
-own Void app, plus `gzip -9` per file. Cloudflare's limit is what matters, and it is on the compressed size: 3 MB on the free plan,
-10 MB on Workers Paid. 2.05 MB is inside both, with less room on the free plan than before, so the next wasm
-dependency is a decision rather than a detail. Neither module is imported at module load (item 6), so this is
-bundle size and Worker startup, not per-request CPU.
+The PNG share cards were built as an always-on feature first, and the measurement is what made them a knob: 1.01
+to 2.05 MB gzipped is roughly double, and two thirds of the free plan's headroom, charged to every instance
+whether or not it ever serves a card. So `VOIDBASE_SEO_PNG` (docs/plugins.md, docs/deploy.md) is read at build
+time as well as at runtime: off, which is its default, the hooks plugin aliases `#platform/raster` to a stub and
+neither the wasm nor the font is in the build at all (measured at 3.14 MB raw / 1.01 MB gzipped, what it was
+before the feature existed, within 2 KB). The ceiling is only at risk with the knob on, and only on the free
+plan. Neither wasm module is imported at module load (item 6), so all of this is bundle size and Worker startup,
+not per-request CPU.
 
 ## The database as a Durable Object: `VOIDBASE_DATABASE=durable` (2026-09-11)
 

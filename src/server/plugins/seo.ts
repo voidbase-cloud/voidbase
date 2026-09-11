@@ -115,6 +115,14 @@ export function locOf(site: string, pattern: string, record: Record<string, unkn
   return missing ? null : site + path;
 }
 
+/**
+ * VOIDBASE_SEO_PNG: whether this build can rasterise the share card. Read like every other seo knob (the request's
+ * env, then the runtime's), because it decides two things that have to agree: whether `.png` rasterises at all,
+ * and which URL the meta answer names. `voidbase deploy` bakes the var exactly when it built with the rasteriser
+ * in, so a deployed instance never advertises a PNG it cannot render (docs/plugins.md).
+ */
+const pngCards = (c: Context<AppEnv>): boolean => seoPngOn(read(SEO_PNG_VAR, c.env));
+
 /** the locales the translations plugin is configured with, and how a locale goes into a URL */
 const localeSetup = (c: Context<AppEnv>): LocaleSetup | null => localesOf(read("VOIDBASE_LOCALES", c.env), read("VOIDBASE_SEO_LOCALE_PATH", c.env));
 /** one xhtml:link per locale (and x-default) when locales are set, else nothing: the sitemap stays as it was */
@@ -192,9 +200,9 @@ async function staticFile(c: Context<AppEnv>): Promise<Response | null> {
   } catch { return null; }
 }
 
-import { SEO_API } from "./seo-paths";
+import { SEO_API, SEO_PNG_VAR, seoPngOn } from "./seo-paths";
 const CACHE = "public, max-age=300";
-export { SEO_API, SEO_FILES, seoRedirectLines } from "./seo-paths";
+export { SEO_API, SEO_FILES, SEO_PNG_VAR, seoPngOn, seoRedirectLines } from "./seo-paths";
 export { buildMeta, etagOf, excerpt, matchPath, notModified, parseSeo, shareCard, splitLocale, wrap, type MetaAnswer, type SeoMapping } from "./seo-meta";
 const CARD_CACHE = "public, max-age=3600";
 const OG_PATH = `${SEO_API}/og`;
@@ -250,9 +258,9 @@ function mountMeta(app: Hono<AppEnv>, kernel: Kernel, source: SeoSource) {
       site, appName: (await source.appName(c.env).catch(() => "")).trim(), collection: page.collection, record: page.record,
       canonical: locOf(site, page.entry.pattern, page.record) ?? `${site}${new URL(path || "/", site).pathname}`,
       mapping: page.mapping, imageSize: read("VOIDBASE_SEO_IMAGE_SIZE", c.env), locale, locales: page.locales,
-      // .png, not .svg: no social scraper renders SVG, and the .png route falls back to the SVG body itself when
-      // this platform has no rasteriser, so the one URL is right either way
-      card: `${site}${OG_PATH}/${encodeURIComponent(page.collection.name)}/${encodeURIComponent(String(page.record.id ?? ""))}.png`,
+      // .png when this build can rasterise (no social scraper renders SVG), .svg when it cannot: naming a PNG that
+      // comes back as an SVG body would be a lie to the scraper, and the scraper is the whole point of the card
+      card: `${site}${OG_PATH}/${encodeURIComponent(page.collection.name)}/${encodeURIComponent(String(page.record.id ?? ""))}.${pngCards(c) ? "png" : "svg"}`,
     });
     return c.json(meta);
   });
@@ -268,10 +276,11 @@ function mountMeta(app: Hono<AppEnv>, kernel: Kernel, source: SeoSource) {
     const svg = shareCard({ appName: (await source.appName(c.env).catch(() => "")).trim(), title: text.title, description: text.description, theme: read("VOIDBASE_SEO_THEME", c.env) });
     const asSvg = () => { c.header("Content-Type", "image/svg+xml; charset=utf-8"); return c.body(svg); };
     if (m[2] === "svg") return asSvg();
-    const png = await source.rasterize(svg).catch((err: unknown) => { logger.warn("voidbase: seo: share card could not be rasterised", { error: err instanceof Error ? err.message : String(err) }); return null; });
+    // with the knob off the rasteriser is not in the build at all, so there is nothing to ask
+    const png = !pngCards(c) ? null : await source.rasterize(svg).catch((err: unknown) => { logger.warn("voidbase: seo: share card could not be rasterised", { error: err instanceof Error ? err.message : String(err) }); return null; });
     // a card no one sees is worse than a card in the wrong format: the .png URL answers with the SVG rather than an
-    // error when the rasteriser is missing, and says so in a header so a caller can tell the two apart
-    if (!png) { logger.warn("voidbase: seo: share card asked for as .png served as SVG: this platform has no rasteriser", { collection: page.collection.name, id: String(page.record.id ?? "") }); c.header("X-Voidbase-Card", "svg-fallback"); return asSvg(); }
+    // error when there is no rasteriser, and says so in a header so a caller can tell the two apart
+    if (!png) { logger.warn(`voidbase: seo: share card asked for as .png served as SVG (${SEO_PNG_VAR} is off, or this platform has no rasteriser)`, { collection: page.collection.name, id: String(page.record.id ?? "") }); c.header("X-Voidbase-Card", "svg-fallback"); return asSvg(); }
     return new Response(png as BodyInit, { headers: { "Content-Type": "image/png", "Cache-Control": CARD_CACHE, ETag: etag, "X-Voidbase-Version": VERSION } });
   });
 }

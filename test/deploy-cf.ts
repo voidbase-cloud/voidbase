@@ -12,7 +12,7 @@ mkdirSync(`${dir}/pb_secrets`); writeFileSync(`${dir}/pb_secrets/main.ts`, `impo
 mkdirSync(`${root}/shopdemo/sk/build`, { recursive: true }); writeFileSync(`${root}/shopdemo/sk/build/index.html`, "<title>app</title>"); // a frontend build next door
 writeFileSync(`${dir}/package.json`, JSON.stringify({ name: "vb", private: true, dependencies: { "@voidbase-cloud/voidbase": "link:@voidbase-cloud/voidbase" } }));
 writeFileSync(`${dir}/main.ts`, `export function register(app: { router: unknown; hooks: Record<string, (...a: unknown[]) => unknown> }) { app.hooks.routerAdd!("GET", "/api/ts-hello", (e: { json: (s: number, d: unknown) => unknown }) => e.json(200, { message: "hi" })); }\n`);
-const run = (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawnSync(["bun", BIN, ...args], { cwd: dir, env: { ...process.env, CLOUDFLARE_API_BASE: MOCK, VOIDBASE_DEPLOY_CF_API_KEY: "", CLOUDFLARE_API_TOKEN: "", VOIDBASE_SUPERUSER_EMAIL: "", VOIDBASE_SUPERUSER_PASSWORD: "", PB_SUPERUSER_EMAIL: "", PB_SUPERUSER_PASSWORD: "", VOIDBASE_HOOKS_DIR: "", VOIDBASE_MIGRATIONS_DIR: "", VOIDBASE_MAIL_DOMAIN: "", VOIDBASE_AI: "", VOIDBASE_DOMAINS: "", VOIDBASE_DEPLOY_DOMAIN: "", ...env } }); return { code: p.exitCode, out: new TextDecoder().decode(p.stdout) + new TextDecoder().decode(p.stderr) }; };
+const run = (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawnSync(["bun", BIN, ...args], { cwd: dir, env: { ...process.env, CLOUDFLARE_API_BASE: MOCK, VOIDBASE_DEPLOY_CF_API_KEY: "", CLOUDFLARE_API_TOKEN: "", VOIDBASE_SUPERUSER_EMAIL: "", VOIDBASE_SUPERUSER_PASSWORD: "", PB_SUPERUSER_EMAIL: "", PB_SUPERUSER_PASSWORD: "", VOIDBASE_HOOKS_DIR: "", VOIDBASE_MIGRATIONS_DIR: "", VOIDBASE_MAIL_DOMAIN: "", VOIDBASE_AI: "", VOIDBASE_SEO_PNG: "", VOIDBASE_DOMAINS: "", VOIDBASE_DEPLOY_DOMAIN: "", ...env } }); return { code: p.exitCode, out: new TextDecoder().decode(p.stdout) + new TextDecoder().decode(p.stderr) }; };
 try {
   await fetch(`${MOCK}/__calls`, { method: "DELETE" });
   const noToken = run(["deploy", "--dry-run"]);
@@ -185,6 +185,25 @@ try {
   check("VOIDBASE_AI=<model>: that model is the var", aiNamed.code === 0 && /^VOIDBASE_AI=@cf\/qwen\/qwen3-30b-a3b-fp8$/m.test(readFileSync(`${PKG}/.cloud/ai-api/.env`, "utf8")) && /"binding": "AI"/.test(readFileSync(`${PKG}/.cloud/ai-api/wrangler.jsonc`, "utf8")), aiNamed.out.slice(-200));
   const aiBad = run(["deploy", "--dry-run", "--name", "ai-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_AI: "llama" });
   check("VOIDBASE_AI that is neither 1 nor a model name is refused before anything is touched", aiBad.code === 1 && /VOIDBASE_AI=llama is neither 1 nor a Workers AI model name/.test(aiBad.out), aiBad.out.slice(-200));
+  // VOIDBASE_SEO_PNG: a build knob, not a binding. On, the generated vite.config.ts carries seoPng so the hooks
+  // plugin keeps #platform/raster pointed at resvg (about 1 MB gzipped in the Worker) and the same value is baked
+  // as a var so the plugin advertises the .png it can render; off (the default) neither is there.
+  check("without VOIDBASE_SEO_PNG the project does not bundle the rasteriser and no var is baked", !readFileSync(`${PROJECT}/vite.config.ts`, "utf8").includes("seoPng") && !readFileSync(`${PROJECT}/.env`, "utf8").includes("VOIDBASE_SEO_PNG") && !readFileSync(`${PKG}/.cloud/bare-api/vite.config.ts`, "utf8").includes("seoPng"), readFileSync(`${PROJECT}/vite.config.ts`, "utf8").slice(-200));
+  const pngOn = run(["deploy", "--dry-run", "--name", "png-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_SEO_PNG: "1" });
+  const pngCfg = readFileSync(`${PKG}/.cloud/png-api/vite.config.ts`, "utf8"); const pngEnv = readFileSync(`${PKG}/.cloud/png-api/.env`, "utf8");
+  check("VOIDBASE_SEO_PNG=1: seoPng in the generated vite.config.ts, the var baked, the plan says so, still no binding", pngOn.code === 0 && /seoPng: true/.test(pngCfg) && /^VOIDBASE_SEO_PNG=1$/m.test(pngEnv) && /share cards are rasterised to PNG/.test(pngOn.out) && !/"seo"/.test(readFileSync(`${PKG}/.cloud/png-api/wrangler.jsonc`, "utf8")), `${pngOn.out.slice(-300)} :: ${pngEnv}`);
+  const pngOffSaid = run(["deploy", "--dry-run", "--name", "png-off-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+  check("off, the plan says the cards are SVG and how to change it", pngOffSaid.code === 0 && /share cards are SVG \(VOIDBASE_SEO_PNG=1/.test(pngOffSaid.out) && !readFileSync(`${PKG}/.cloud/png-off-api/vite.config.ts`, "utf8").includes("seoPng"), pngOffSaid.out.slice(-300));
+  {
+    const secretsFile = `${dir}/pb_secrets/secrets.json`; const before = readFileSync(secretsFile, "utf8");
+    writeFileSync(secretsFile, JSON.stringify({ ...(JSON.parse(before) as Record<string, string>), VOIDBASE_SEO_PNG: "1" }));
+    const fromFile = run(["deploy", "--dry-run", "--name", "png-file-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+    writeFileSync(secretsFile, before);
+    check("VOIDBASE_SEO_PNG in pb_secrets/secrets.json does the same, the way VOIDBASE_AI is read", fromFile.code === 0 && readFileSync(`${PKG}/.cloud/png-file-api/vite.config.ts`, "utf8").includes("seoPng: true") && /^VOIDBASE_SEO_PNG=1$/m.test(readFileSync(`${PKG}/.cloud/png-file-api/.env`, "utf8")), fromFile.out.slice(-200));
+  }
+  const pngBad = run(["deploy", "--dry-run", "--name", "png-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_SEO_PNG: "maybe" });
+  check("a VOIDBASE_SEO_PNG that is neither on nor off is refused before anything is touched", pngBad.code === 1 && /VOIDBASE_SEO_PNG=maybe is neither on nor off/.test(pngBad.out), pngBad.out.slice(-200));
+
   // a sending domain: the send_email binding, the domain baked as a var, and what the token could see on the account
   const mailOn = run(["deploy", "--dry-run", "--name", "mail-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_MAIL_DOMAIN: "Example.com" });
   const mailCfg = readFileSync(`${PKG}/.cloud/mail-api/wrangler.jsonc`, "utf8"); const mailEnv = readFileSync(`${PKG}/.cloud/mail-api/.env`, "utf8");

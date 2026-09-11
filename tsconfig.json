@@ -33,6 +33,7 @@
     "src/adapter/index.ts",
     "src/adapter/plugin.ts",
     "src/adapter/scan.ts",
+    "src/adapter/seo-redirects.ts",
     "src/node",
     "src/platform/node",
     "surface",

@@ -184,16 +184,24 @@ async function staticFile(c: Context<AppEnv>): Promise<Response | null> {
   } catch { return null; }
 }
 
+import { SEO_API } from "./seo-paths";
 const CACHE = "public, max-age=300";
+export { SEO_API, SEO_FILES, seoRedirectLines } from "./seo-paths";
 function mountRoutes(app: Hono<AppEnv>, source: SeoSource) {
-  const serve = (path: string, type: string, body: (c: Context<AppEnv>, site: string) => Promise<string> | string) =>
-    app.get(path, async (c: Context<AppEnv>) => {
+  // each file at its own path (Bun, where the app runs before the static fallback) and under /api/seo, the path a
+  // deployed Worker is reached at: the adapter writes a _redirects rule from the one to the other (SEO_REDIRECTS),
+  // so the asset layer, which answers everything outside /api on Cloudflare, sends crawlers to the Worker
+  const serve = (path: string, type: string, body: (c: Context<AppEnv>, site: string) => Promise<string> | string) => {
+    const handler = async (c: Context<AppEnv>) => {
       const file = await staticFile(c);
       if (file) return file;
       c.header("Content-Type", type);
       c.header("Cache-Control", CACHE);
       return c.body(await body(c, siteUrlOf(c)));
-    });
+    };
+    app.get(path, handler);
+    app.get(`${SEO_API}${path}`, handler);
+  };
   serve("/robots.txt", "text/plain; charset=utf-8", (c, site) => buildRobots(c, site));
   serve("/sitemap.xml", "application/xml; charset=utf-8", (c, site) => buildSitemap(c, source, site));
   serve("/llms.txt", "text/plain; charset=utf-8", (c, site) => buildLlms(c, source, site));

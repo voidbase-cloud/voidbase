@@ -16,6 +16,7 @@ import { bundleHookApp, bundleWorkflow } from "./bundle";
 import { generateHookWrapper, hasServerCode, writeVoidbaseApp, type GenerateOptions } from "./codegen";
 import { scanVoidApp, SECRETS_DIR, type VoidManifest } from "./scan";
 import { loadDefinition, readSecretsValues } from "../node/secrets";
+import { writeSeoRedirects } from "./seo-redirects";
 
 export interface AdapterOptions extends GenerateOptions {
   /** where the built site goes inside the generated app; voidbase serves it at `/` */
@@ -81,6 +82,8 @@ function syncPublic(from: string, to: string): number {
   // falls back to index.html. Copying one to the other keeps a deep link behaving the same on both.
   const index = join(to, "index.html");
   if (existsSync(index) && !existsSync(join(to, "404.html"))) cpSync(index, join(to, "404.html"));
+  // and the seo plugin's files reach the Worker through /api/seo: a _redirects rule per file the build lacks
+  writeSeoRedirects(to);
   return copied;
 }
 

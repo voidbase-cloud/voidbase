@@ -102,6 +102,8 @@ try {
   const migration = readFileSync(`${WORK}/.voidbase/pb_migrations/0001_outbox.void.js`, "utf8");
   check("a Drizzle migration becomes a PocketBase migration, split on its statement markers", /CREATE TABLE/.test(migration) && /CREATE INDEX/.test(migration) && (migration.match(/execSQL/g) ?? []).length === 2, migration.slice(0, 160));
   check("the static build lands in .voidbase/pb_public, with a 404 shell for the asset layer", existsSync(`${WORK}/.voidbase/pb_public/index.html`) && existsSync(`${WORK}/.voidbase/pb_public/robots.txt`) && existsSync(`${WORK}/.voidbase/pb_public/404.html`), readdirSync(`${WORK}/.voidbase/pb_public`).join(" "));
+  const redirects = existsSync(`${WORK}/.voidbase/pb_public/_redirects`) ? readFileSync(`${WORK}/.voidbase/pb_public/_redirects`, "utf8") : "";
+  check("the seo files the build does not carry are redirected to /api/seo in _redirects; the app's own robots.txt keeps the path", /^\/sitemap\.xml \/api\/seo\/sitemap\.xml 302$/m.test(redirects) && /^\/llms\.txt \/api\/seo\/llms\.txt 302$/m.test(redirects) && !/robots/.test(redirects), redirects);
   check("void/db and void/queues get runtime shims, because Void maps them to declaration files", existsSync(`${WORK}/.voidbase/shim-db.ts`) && existsSync(`${WORK}/.voidbase/shim-queues.ts`) && /shim-queues/.test(readFileSync(`${WORK}/.voidbase/tsconfig.json`, "utf8")), "");
 
   // a second pass must not duplicate or drift

@@ -9,6 +9,7 @@ const PLATFORM_MODULES = ["env", "log", "sse", "sockets", "hooks", "migrations",
 import ts from "typescript";
 import type { Plugin } from "vite";
 import { pluginsModuleSource, providedImport } from "./src/node/installed";
+import { writeSeoRedirects } from "./src/adapter/seo-redirects";
 import pkg from "./package.json" with { type: "json" };
 
 const VIRTUAL = "virtual:voidbase-hooks";
@@ -234,7 +235,7 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; p
     // "404-page"` (void.json routing.notFound): the nearest 404.html is served with status 404, so the SPA shell and the
     // panel's index are copied to 404.html at build time. Unknown /api paths keep their JSON 404 (the binding returns a
     // 404 for them, which Void's entry only swaps for the HTML page on browser navigations).
-    closeBundle() { writeNotFoundShells(clientOut); },
+    closeBundle() { writeNotFoundShells(clientOut); writeSeoRedirects(clientOut); },
     transform(code, id) {
       if (id.replace(/\\/g, "/").endsWith("/.void/entry.ts")) {
         // the instance's Durable Object class, and the project's Workflow classes, exported from Void's entry

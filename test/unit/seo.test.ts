@@ -6,7 +6,7 @@ import type { Collection } from "../../src/server/collections/model";
 import { ApiError } from "../../src/server/errors";
 import { createKernel, load } from "../../src/server/kernel";
 import { auth, provider } from "../../src/server/plugins/auth";
-import { locOf, parseSitemap, seo, seoWith, type SeoSource } from "../../src/server/plugins/seo";
+import { locOf, parseSitemap, seo, seoRedirectLines, seoWith, type SeoSource } from "../../src/server/plugins/seo";
 import type { AppEnv, Bindings } from "../../src/server/types";
 
 // the collections: a public one with a slug and updated, a locked one, a view with a public list rule
@@ -163,6 +163,23 @@ describe("llms.txt", () => {
     const { text } = await get("/llms.txt");
     expect(text.startsWith("# voidbase\n")).toBe(true);
     expect(text.endsWith("## Notes\n\nAsk before scraping the gallery.\n")).toBe(true);
+  });
+});
+
+describe("the /api/seo aliases", () => {
+  test("each file answers under /api/seo too, the path a deployed Worker is reached at", async () => {
+    const { get } = await appWith({ VOIDBASE_SITEMAP: "posts:/blog/{slug}" });
+    const robots = await get("/api/seo/robots.txt");
+    expect(robots.r.status).toBe(200);
+    expect(robots.text).toContain("Sitemap: http://shop.example/sitemap.xml");
+    const sitemap = await get("/api/seo/sitemap.xml");
+    expect(sitemap.r.headers.get("content-type")).toContain("application/xml");
+    expect(sitemap.text).toContain("/blog/hello-world");
+    expect((await get("/api/seo/llms.txt")).r.status).toBe(200);
+  });
+  test("seoRedirectLines writes one rule per file the static build lacks", () => {
+    expect(seoRedirectLines((p) => p === "/robots.txt")).toEqual(["/sitemap.xml /api/seo/sitemap.xml 302", "/llms.txt /api/seo/llms.txt 302"]);
+    expect(seoRedirectLines(() => true)).toEqual([]);
   });
 });
 

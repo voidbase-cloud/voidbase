@@ -274,11 +274,14 @@ answer is served with `Cache-Control: public, max-age=300`. A file in the static
 generated answer: the route asks the static layer (`env.ASSETS`) for its own path first and answers only when there
 is no real file there (an HTML shell answering a miss does not count). That check is what makes the file win on Bun,
 where the app runs before the static fallback (`src/node/serve.ts`); on Cloudflare the asset layer answers before
-the Worker for any path outside `/api`, so a file wins there without the plugin being asked. One limit on
-Cloudflare today: the Worker Void generates for voidbase forwards `/api/*` to the Hono app and nothing else
-(`routes/api/[...path].ts`), so a deployed Worker only reaches these routes once the deploy routes them; a Void
-route outside `/api` is not added here because Void then puts the Worker in front of every asset
-(`run_worker_first: /**`, docs/platform.md item 1). The knobs are read from the request's env first, then the
+the Worker for any path outside `/api`, so a file wins there without the plugin being asked. That same rule is why
+the three are also mounted under `/api/seo` (`/api/seo/sitemap.xml` and so on): the Worker Void generates for
+voidbase forwards `/api/*` to the Hono app and nothing else, and a Void route outside `/api` would put the Worker
+back in front of every asset (`run_worker_first: /**`, docs/platform.md item 1). So the adapter writes, at build
+time, a `_redirects` rule per file the static build does not carry (`/robots.txt /api/seo/robots.txt 302`, and the
+two others; `writeSeoRedirects` in hooks-plugin.ts, appended to the app's own `_redirects` when it has one). The
+asset layer evaluates those at the edge, crawlers follow the redirect (Google follows several hops for robots.txt
+and sitemaps), and the Worker answers. The knobs are read from the request's env first, then the
 runtime's, like hardening's. The plugin takes an injectable source for tests, `seoWith({ collections, appName,
 records })` (`test/unit/seo.test.ts`). Not here, and said so on purpose: JSON-LD, OpenGraph and Twitter tags,
 canonical URLs, share images rendered on request, and deployment skew, which are the roadmap entry's other half.

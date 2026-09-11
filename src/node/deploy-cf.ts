@@ -10,10 +10,12 @@ import { pathToFileURL } from "node:url";
 import { loadEnv } from "./serve";
 import { STORE_KEYS_VAR } from "../server/secrets-store";
 import { deleteWorkerSecrets, loadSecrets, putStoreSecrets, readSecretsValues, SECRETS_DIR, STORE_KNOB, storeBindings, storeSecretName, storeSecrets, workerSecretNames, type LoadedSecrets, putWorkerSecrets } from "./secrets";
-import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
+import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findQueue, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
 import { ensureFlags, ensureFlagshipApp, FLAGS_BINDING, FLAGS_VAR } from "./flagship";
 import { MAIL_BINDING, MAIL_DOMAIN_VAR } from "../server/plugins/mail-binding";
 import { AI_BINDING, AI_VAR, aiModelOf } from "../server/plugins/ai-binding";
+import { discoverDeployPlugins, runDeployHooks } from "./deploy-plugins";
+import type { DeployContext } from "./deploy-plugin";
 
 const API = (process.env.CLOUDFLARE_API_BASE ?? "https://api.cloudflare.com/client/v4").replace(/\/$/, "");
 export const TOKEN_ENV = "VOIDBASE_DEPLOY_CF_API_KEY";
@@ -213,7 +215,12 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     const stem = f.replace(/\.js$/, "");
     return { file: resolve(workflowsDir, f), className, stem, binding: `WORKFLOW_${stem.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`, workflowName: `${name}-${stem}` };
   }) : [];
-  writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), pluginsDir: resolve(consumer, process.env.VOIDBASE_PLUGINS_DIR || "pb_plugins"), entry, queue, hub , workflows: workflows.map((w) => ({ file: w.file, className: w.className })) });
+  const pluginsDir = resolve(consumer, process.env.VOIDBASE_PLUGINS_DIR || "pb_plugins");
+  // the plugins that act at deploy time (src/node/deploy-plugins.ts): the shipped ones first, then the installed
+  // ones that carry a deploy.js; their hooks run before the upload, after it, and on --remove
+  const deployPlugins = await discoverDeployPlugins(pluginsDir);
+  if (deployPlugins.length) log(`deploy plugins: ${deployPlugins.map((p) => `${p.name} (${p.origin})`).join(", ")}`);
+  writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), pluginsDir, entry, queue, hub , workflows: workflows.map((w) => ({ file: w.file, className: w.className })) });
   if (!queue) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/queues`, { recursive: true, force: true }); }
   if (!cron) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/crons`, { recursive: true, force: true }); log("cron trigger disabled (VOIDBASE_DEPLOY_CRON=0 / --no-cron): maintenance runs lazily in requests"); }
     log(observability ? "observability: invocation logs kept for the dashboard" : "observability off (VOIDBASE_DEPLOY_OBSERVABILITY=0)");
@@ -278,6 +285,11 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
       log(`flags: ${flagKeys.join(", ")} keep their defaults: ${err instanceof Error ? err.message.split("\n")[0] : err} (Flagship needs "Flagship: Write" on the deploy token)`);
     }
   }
+  // the deploy plugins' `before`: the config and the vars are theirs to change here, and a plugin may claim the
+  // URL (a custom domain); the config is written again once they ran. `env` is read the way the deploy's own knobs
+  // are: the shell and the .env files first, then pb_secrets/secrets.json; --domain is the knob's flag form.
+  const hookCtx: DeployContext = { name, account: { id: account.id }, api, env: hookEnv(secretsDir, opts.domain ? { VOIDBASE_DEPLOY_DOMAIN: opts.domain } : {}), config: workerConfig, vars: baked, url: null, log, local, dryRun: !!opts.dryRun };
+  await runDeployHooks("before", deployPlugins, hookCtx); writeWorkerConfig();
   if (mailDomain) log(await mailDomainReport(api, account.id, mailDomain));
   log(`project: ${cloud}`);
 
@@ -352,12 +364,13 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     log(`secrets store ${store}: ${secrets.length ? `${opts.dryRun ? "would store" : "storing"} ${secrets.map(([k]) => k).join(", ")}` : "nothing to store"}; bound by name: ${storeKeys.join(", ") || "none"}${retire.length ? `; ${opts.dryRun ? "would retire" : "retiring"} ${retire.join(", ")} from the Worker's own secrets` : ""}`);
   }
 
-  const url = !api ? null : domain ? `https://${domain}` : await workersSubdomain(api, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null));
+  const url = !api ? null : hookCtx.url ?? (domain ? `https://${domain}` : await workersSubdomain(api, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null)));
+  hookCtx.url = url;
   if (domain && local) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")}: nothing to attach on this machine`);
   else if (domain) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")} (workers.dev off): attached through the Workers Custom Domains API after the upload (Cloudflare adds the DNS record and certificate)`);
   if (workflows.length) log(`workflows: ${workflows.map((w) => `${w.stem} (${w.className}) bound as ${w.binding}`).join(", ")}`);
   log(`bindings: D1, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${mailDomain ? `, Email Sending (${MAIL_BINDING})` : ""}${aiModel ? `, Workers AI (${AI_BINDING}, ${aiModel})` : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
-  if (opts.dryRun) { log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put ${secrets.length} secrets (${secrets.map(([k]) => k).join(", ")}) and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud }; }
+  if (opts.dryRun) { await runDeployHooks("after", deployPlugins, hookCtx); log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put ${secrets.length} secrets (${secrets.map(([k]) => k).join(", ")}) and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud }; }
 
   // the toolchain comes with the voidbase package (void, and wrangler through void)
   const voidDir = resolve(Bun.resolveSync("void/package.json", PKG), "..");
@@ -380,7 +393,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     if (pathRedirects.length) writeFileSync(`${cloud}/public/_redirects`, pathRedirects.map((r) => `${r.path} ${r.to} ${r.status}`).join("\n") + "\n");
   }
   // a local run stops here: the project is complete, and src/node/serve-workers.ts starts Void's dev server in it
-  if (!api) return { name, account: "", url: null, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud, superuser: { email, password, file: credFile, source: superuserSource }, vars: [...Object.keys(baked), ...secrets.map(([k]) => k)] };
+  if (!api) { await runDeployHooks("after", deployPlugins, hookCtx); return { name, account: "", url: null, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud, superuser: { email, password, file: credFile, source: superuserSource }, vars: [...Object.keys(baked), ...secrets.map(([k]) => k)] }; }
   if (secrets.length && !store) log(`secrets: storing ${secrets.map(([k]) => k).join(", ")} on the Worker`);
   // Through the Workers API when the Worker exists, which is every deploy but the first: `wrangler secret put` reads
   // the value from stdin and, on Cloudflare's build machines, sometimes never sees the end of it and waits forever
@@ -397,11 +410,45 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     log(`custom domain ${d.hostname} ${d.created ? "attached" : "already attached"} (zone ${d.zone_id}); the certificate can take a minute`);
   }
   if (hostRedirects.length) await applyZoneRedirects(api, account.id, name, hostRedirects, log);
+  // the deploy plugins' `after`: the Worker is up, the account is theirs to act on
+  await runDeployHooks("after", deployPlugins, hookCtx);
   if (url) {
     const ok = await fetch(`${url}/api/health`).then((r) => r.status).catch(() => 0);
     log(`\nlive: ${url}  (health ${ok || "not reachable yet"})\n├─ REST API:  ${url}/api/\n└─ Dashboard: ${url}/_/   sign in as ${keepSuperuser ? "the superuser the Worker already had" : `${email} (password in ${credFile})`}`);
   } else log("deployed; workers.dev subdomain not enabled on this account, add a route or enable it in the dashboard (or VOIDBASE_DEPLOY_DOMAIN=<host> / --domain)");
   return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud };
+}
+
+/** the environment a deploy plugin reads: pb_secrets/secrets.json under the shell and the .env files, plus what a flag says */
+function hookEnv(secretsDir: string, extra: Record<string, string> = {}): Record<string, string> {
+  return { ...(readSecretsValues(secretsDir) ?? {}), ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")), ...extra };
+}
+
+/**
+ * `voidbase deploy --remove`: the deploy plugins undo their part (`remove` hooks), then the Worker is deleted. Its
+ * database, bucket and queue stay, with the data in them: `voidbase destroy` is the command that removes those.
+ */
+export async function removeDeployment(opts: Pick<DeployOptions, "name" | "account" | "dryRun" | "log"> = {}): Promise<{ name: string; deleted: boolean; hooks: string[] }> {
+  const log = opts.log ?? ((l: string) => console.log(l));
+  const { api, account, name, secretsDir } = await deployTarget(opts);
+  log(`account ${account.name} (${account.id}), worker "${name}"`);
+  const deployPlugins = await discoverDeployPlugins(resolve(".", process.env.VOIDBASE_PLUGINS_DIR || "pb_plugins"));
+  if (deployPlugins.length) log(`deploy plugins: ${deployPlugins.map((p) => `${p.name} (${p.origin})`).join(", ")}`);
+  const ctx: DeployContext = { name, account: { id: account.id }, api, env: hookEnv(secretsDir), config: {}, vars: {}, url: null, log, local: false, dryRun: !!opts.dryRun };
+  const hooks = await runDeployHooks("remove", deployPlugins, ctx);
+  const stays = `its database, bucket and queue stay (voidbase destroy ${name} removes those)`;
+  if (opts.dryRun) { log(`dry run: would delete the Worker ${name}; ${stays}`); return { name, deleted: false, hooks }; }
+  if (!(await workerExists(api, account.id, name))) { log(`worker ${name}: not on the account; ${stays}`); return { name, deleted: false, hooks }; }
+  // Cloudflare refuses to delete a Worker that consumes a queue (10064): the consumer goes first, the queue stays
+  const q = await findQueue(api, account.id, `${name}-jobs`);
+  if (q) {
+    const consumers = await api.json<{ consumer_id?: string; id?: string; script?: string; script_name?: string }[]>("GET", `/accounts/${account.id}/queues/${q.id}/consumers`);
+    for (const c of consumers.result ?? []) if ((c.script ?? c.script_name) === name) await api.json("DELETE", `/accounts/${account.id}/queues/${q.id}/consumers/${c.consumer_id ?? c.id}`);
+  }
+  const r = await api.raw("DELETE", `/accounts/${account.id}/workers/scripts/${name}?force=true`); const body = await r.text();
+  if (!r.ok && r.status !== 404) throw new Error(`deleting the Worker ${name}: HTTP ${r.status} ${body.slice(0, 200)}`);
+  log(`worker ${name} deleted; ${stays}`);
+  return { name, deleted: true, hooks };
 }
 
 // ---- host-scoped redirects as zone Redirect Rules (Rulesets API, phase http_request_dynamic_redirect) --------------

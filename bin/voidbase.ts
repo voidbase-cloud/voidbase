@@ -56,6 +56,10 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      go live on your Cloudflare account with VOIDBASE_DEPLOY_CF_API_KEY: creates the D1
                                      database and R2 bucket, writes cloud/ (voidbase cloud init) with wrangler.jsonc,
                                      stores the superuser as worker secrets and runs void deploy --backend cloudflare
+  deploy --remove [--name worker] [--yes] [--dry-run]
+                                     take the Worker down: the deploy plugins undo their part (custom domains and
+                                     their redirect rules), then the Worker is deleted; the database, the bucket
+                                     and the queue stay (voidbase destroy removes those). Asks first unless --yes
   deploy --void                      deploy to the Void platform instead (void auth login first)
   sync [dir] [--repo owner/name] [--branch main] [--no-build] [--ci] [--no-ci] [--dry-run]
                                      the instance and its pipeline: deploy (a Void app is built first and deployed from
@@ -578,6 +582,19 @@ switch (cmd) {
   }
   case "deploy": {
     if (flags.void) { await run("./node_modules/.bin/void", ["deploy"]); break; } // the Void platform (void auth login first)
+    if (flags.remove) {
+      const { deployTarget, removeDeployment } = await import("../src/node/deploy-cf");
+      // a destructive command says what it will do and waits, unless the caller has already decided
+      if (!flags["dry-run"] && !("yes" in flags)) {
+        if (!process.stdin.isTTY) { console.error("refusing to delete the Worker without a confirmation: rerun with --yes"); process.exit(1); }
+        const { name } = await deployTarget({ name: flags.name, account: flags.account, log: () => undefined });
+        process.stdout.write(`This deletes the Worker ${name} after its deploy plugins undo their part (custom domains, redirect rules).\nIts database, bucket and queue stay. Type the worker name to confirm: `);
+        const typed = (await new Promise<string>((r) => { process.stdin.once("data", (d: Buffer) => r(d.toString().trim())); })).trim();
+        if (typed !== name) { console.error(`"${typed}" is not "${name}": nothing deleted`); process.exit(1); }
+      }
+      await removeDeployment({ name: flags.name, account: flags.account, dryRun: !!flags["dry-run"] });
+      break;
+    }
     const { deployToCloudflare } = await import("../src/node/deploy-cf");
     await deployToCloudflare({ name: flags.name, account: flags.account, dir: flags.dir, publicDir: flags["public-dir"] ?? flags.publicDir, dryRun: !!flags["dry-run"], regenerate: !!flags.regenerate, queue: flags["no-queue"] ? false : undefined, cron: flags["no-cron"] ? false : undefined, domain: flags.domain as string | undefined, analytics: flags.analytics ? true : undefined, rateLimit: flags["rate-limit"], hub: flags["no-hub"] ? false : undefined });
     break;

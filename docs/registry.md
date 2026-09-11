@@ -16,6 +16,7 @@ Use the fixture as the reference: if your marketplace serves what it serves, an 
 | `GET <base>/registry/v1/index.json` | everything the marketplace lists: its name, its plugins with every version each has, and its templates |
 | `GET <base>/registry/v1/plugins/<name>/<version>.json` | one version record, the same object the index carries |
 | `GET <base>/registry/v1/plugins/<name>/<version>/bundle.js` | the bundle, one ES module (the `bundle` field names it; a relative URL is relative to the index) |
+| `GET <base>/registry/v1/plugins/<name>/<version>/deploy.js` | optional: the plugin's deploy-time half (docs/plugins.md, "What a plugin does at deploy time"), named with its integrity by the version record's `deploy: { file, integrity }`; installed beside the bundle and pinned by the lockfile the same way |
 
 A marketplace is named by its base URL. Everything under `registry/v1/` is public and needs no account; the index
 may change, a version record and its bundle never do once published (a change is a new version).

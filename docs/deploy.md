@@ -88,6 +88,20 @@ which builds, applies the D1 migrations and uploads the Worker with its cron tri
 `https://<name>.<your-subdomain>.workers.dev` URL and a health check. Re-running is idempotent: existing resources
 and credentials are reused. `--dry-run` does everything except install, secrets and the upload.
 
+Plugins take part in a deploy through the deploy-time surface (docs/plugins.md, "What a plugin does at deploy
+time"): a shipped plugin's deploy module, or an installed plugin's `pb_plugins/<name>/deploy.js`, runs its `before`
+hook once the Worker config is composed (it may change the config and the baked vars, or claim the URL), its
+`after` hook once the Worker is up (it acts on the account), and its `remove` hook on `--remove`. The deploy prints
+the deploy plugins it found (`deploy plugins: domains (shipped), ...`) and stops with the plugin named when a hook
+fails; a dry run calls the hooks too, as a dry run, so the printed plan is the whole plan.
+
+### Taking the Worker down: `voidbase deploy --remove`
+
+`voidbase deploy --remove` (with `--name` / `--account` as for a deploy; `--yes` when nobody can be asked, `--dry-run`
+to see the plan) runs every deploy plugin's `remove` hook, then deletes the Worker (its queue consumer first, which
+Cloudflare requires). The database, the bucket and the queue stay, with everything in them: a deploy afterwards
+finds them again, and `voidbase destroy <name>` is the command that removes them.
+
 Quotas to know: the Workers Free plan allows 10 D1 databases per account (paid plans 50,000) and 5 cron
 triggers per worker; voidbase needs one database, one bucket, one queue and the triggers its hooks declare (an
 hourly tick without any). Cloudflare's own permission reference is at

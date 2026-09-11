@@ -165,5 +165,30 @@ try {
   check("a domain with no zone on the account: bound anyway, and told to add the domain to Cloudflare first", mailNoZone.code === 0 && /mail: mail\.example\.org bound as SEND_EMAIL, but no zone on account acc123 covers it: add the domain to Cloudflare first, then onboard/.test(mailNoZone.out), mailNoZone.out.split("\n").filter((l) => /^mail:/.test(l)).join(" | "));
   const mailAddress = run(["deploy", "--dry-run", "--name", "mail-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_MAIL_DOMAIN: "noreply@example.com" });
   check("an address instead of a domain is refused before anything is touched", mailAddress.code === 1 && /VOIDBASE_MAIL_DOMAIN=noreply@example\.com is not a domain name/.test(mailAddress.out), mailAddress.out.slice(-200));
-} finally { rmSync(root, { recursive: true, force: true }); for (const d of ["my-shop-api", "noqueue-api", "bare-api", "mail-api", "ai-api"]) rmSync(`${PKG}/.cloud/${d}`, { recursive: true, force: true }); rmSync(PROJECT, { recursive: true, force: true }); }
+  // a deploy-time plugin (src/node/deploy-plugins.ts): an installed plugin's deploy.js, pinned by the lock beside its
+  // bundle, runs before the upload (the config and the vars are its to change), after it (the URL), and on --remove
+  {
+    const { integrityOf } = await import("../src/node/registry");
+    const sri = async (s: string) => integrityOf(new TextEncoder().encode(s));
+    const bundle = `export default { manifest: { name: "greeter", version: "0.1.0", tier: "community", voidbase: "*" } };\n`;
+    const deployJs = `export default { name: "greeter", manifest: { name: "greeter", version: "0.1.0", tier: "community", voidbase: "*" }, deploy: { async before(ctx) { ctx.config.greeter = { worker: ctx.name, account: ctx.account.id }; ctx.vars.GREETER_SAYS = ctx.dryRun ? "dry" : "hello"; ctx.log("greeter before: " + (ctx.api ? "api" : "no api")); }, async after(ctx) { ctx.log("greeter after: " + ctx.url + (ctx.dryRun ? " (dry run)" : "")); }, async remove(ctx) { ctx.log("greeter remove: " + ctx.name); } } };\n`;
+    const lockWith = async (deploy: string) => writeFileSync(`${dir}/voidbase.lock`, JSON.stringify({ lockfileVersion: 1, marketplaces: [], plugins: { greeter: { version: "0.1.0", integrity: await sri(bundle), deploy: await sri(deploy), marketplace: "https://m.example", source: { repository: "x/y", commit: "0" }, installedOn: "2026-09-11" } }, disabled: [] }));
+    mkdirSync(`${dir}/pb_plugins/greeter`, { recursive: true }); writeFileSync(`${dir}/pb_plugins/greeter/bundle.js`, bundle); writeFileSync(`${dir}/pb_plugins/greeter/deploy.js`, deployJs); await lockWith(deployJs);
+    const hooked = run(["deploy", "--dry-run", "--name", "hooked-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+    const hookedCfg = existsSync(`${PKG}/.cloud/hooked-api/wrangler.jsonc`) ? readFileSync(`${PKG}/.cloud/hooked-api/wrangler.jsonc`, "utf8") : ""; const hookedEnv = existsSync(`${PKG}/.cloud/hooked-api/.env`) ? readFileSync(`${PKG}/.cloud/hooked-api/.env`, "utf8") : "";
+    check("an installed plugin's deploy.js is discovered; before changes the config and the vars, after sees the URL, and a dry run reaches both as a dry run", hooked.code === 0 && /deploy plugins: greeter \(https:\/\/m\.example 0\.1\.0\)/.test(hooked.out) && /greeter before: api/.test(hooked.out) && /greeter after: https:\/\/hooked-api\.testsub\.workers\.dev \(dry run\)/.test(hooked.out) && /"greeter": \{\s*"worker": "hooked-api",\s*"account": "acc123"/.test(hookedCfg) && /^GREETER_SAYS=dry$/m.test(hookedEnv), `${hooked.out.slice(-400)} :: ${hookedEnv}`);
+    const removeDry = run(["deploy", "--remove", "--dry-run", "--name", "hooked-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+    check("deploy --remove --dry-run runs the remove hooks and says what it would delete and what stays", removeDry.code === 0 && /greeter remove: hooked-api/.test(removeDry.out) && /would delete the Worker hooked-api; its database, bucket and queue stay \(voidbase destroy hooked-api removes those\)/.test(removeDry.out), removeDry.out.slice(-300));
+    const removeNo = run(["deploy", "--remove", "--name", "hooked-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+    check("deploy --remove without --yes refuses when nobody can be asked", removeNo.code === 1 && /refusing to delete the Worker without a confirmation/.test(removeNo.out), removeNo.out.slice(-200));
+    const broken = deployJs.replace('ctx.log("greeter before: " + (ctx.api ? "api" : "no api"));', 'throw new Error("no zone covers it");');
+    writeFileSync(`${dir}/pb_plugins/greeter/deploy.js`, broken);
+    const tampered = run(["deploy", "--dry-run", "--name", "hooked-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+    check("a deploy.js that is not the bytes the lock pins is refused before any hook runs", tampered.code === 1 && /pb_plugins\/greeter\/deploy\.js is not the bytes voidbase\.lock promises/.test(tampered.out) && !/greeter before/.test(tampered.out), tampered.out.slice(-300));
+    await lockWith(broken);
+    const failed = run(["deploy", "--dry-run", "--name", "hooked-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+    check("a hook that throws fails the deploy with the plugin, its origin and the phase named", failed.code === 1 && /deploy plugin greeter \(https:\/\/m\.example 0\.1\.0\) failed in before: no zone covers it/.test(failed.out), failed.out.slice(-300));
+    rmSync(`${dir}/pb_plugins`, { recursive: true, force: true }); rmSync(`${dir}/voidbase.lock`, { force: true });
+  }
+} finally { rmSync(root, { recursive: true, force: true }); for (const d of ["my-shop-api", "noqueue-api", "bare-api", "mail-api", "ai-api", "hooked-api"]) rmSync(`${PKG}/.cloud/${d}`, { recursive: true, force: true }); rmSync(PROJECT, { recursive: true, force: true }); }
 console.log(`\n${pass} pass, ${fail} fail`); process.exit(fail ? 1 : 0);

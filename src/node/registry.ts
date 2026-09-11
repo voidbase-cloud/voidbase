@@ -40,6 +40,8 @@ export interface PluginVersion {
   /** the bundle's URL, absolute or relative to the index */
   bundle: string;
   bytes: number;
+  /** the plugin's deploy-time half (docs/plugins.md, "What a plugin does at deploy time"): its URL like `bundle`, and its SRI */
+  deploy?: { file: string; integrity: string };
   source: { repository: string; commit: string };
   publishedOn: string;
   /** what the marketplace checked, so a reader can disagree with any single check */

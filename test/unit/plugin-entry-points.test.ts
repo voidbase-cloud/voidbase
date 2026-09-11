@@ -14,6 +14,7 @@ const exportsMap = pkg.exports as Record<string, string>;
 const expected: Record<string, string[]> = {
   "./kernel": ["createKernel", "load", "serve", "using", "whatLoaded", "onBootstrap", "runBootstraps"],
   "./plugins": ["checkManifest"],
+  "./deploy-plugin": [], // types only: DeployPlugin, DeployContext
   "./interfaces": ["KNOWN"],
   "./plugins/auth": ["auth", "provider"],
   "./plugins/backups": ["backups"],

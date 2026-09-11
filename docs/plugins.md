@@ -156,6 +156,52 @@ plugin's name replaces it. That, and the open registry protocol, is what keeps a
 and of our plugins. `voidbase update` names the installed plugins whose range excludes the target before it changes
 anything.
 
+A plugin with a deploy-time half (next section) ships it as `deploy.js` beside its `bundle.js`: the marketplace
+record names the file and its integrity (`deploy: { file, integrity }`, docs/registry.md), `voidbase plugins add`
+downloads it with the bundle, and the lockfile pins its bytes too (`deploy` next to `integrity`), so a changed
+`deploy.js` refuses the deploy the way a changed bundle refuses the build.
+
+## What a plugin does at deploy time
+
+A runtime plugin lives inside the instance and answers requests. Some of what a plugin is about happens around a
+deploy instead, as an account-level action: attaching a hostname, scheduling a backup, turning an observability
+setting on, creating a preview instance. Those are one shape, and the shape is a second object a plugin may export
+beside its `Plugin`, typed by `src/node/deploy-plugin.ts`:
+
+```ts
+import type { DeployPlugin } from "@voidbase-cloud/voidbase/deploy-plugin";
+
+export const domainsDeploy: DeployPlugin = {
+  name: "domains",
+  manifest: domains.manifest,
+  deploy: {
+    async before(ctx) { /* the config and the vars are yours to change; claim ctx.url; throw to refuse the deploy */ },
+    async after(ctx) { /* the Worker is up: act on the account with ctx.api */ },
+    async remove(ctx) { /* voidbase deploy --remove: undo what after did, before the Worker is deleted */ },
+  },
+};
+```
+
+Every hook gets the same `ctx`: `name` (the Worker), `account: { id }`, `api` (the Cloudflare API client the
+deploy uses, `voidbase/cloud`'s `CfApi`, or `null` on `voidbase serve --workers`, where nothing reaches Cloudflare),
+`env` (the resolved deploy environment: the shell, the `.env` files and `pb_secrets/secrets.json`, read the way the
+deploy's own knobs are), `config` (the Worker config as composed, mutable in `before` and written to
+`wrangler.jsonc` once the `before` hooks ran), `vars` (the non-secret vars the deploy bakes into the Worker,
+mutable in `before`), `url` (null in `before` unless a plugin claims it, which makes the deploy report that address
+instead of workers.dev; the reported URL in `after`), `log`, `local` and `dryRun`. With `dryRun` a hook says what
+it would do and touches nothing; the deploy calls the hooks either way, so a dry run shows the whole plan.
+
+`voidbase deploy` finds deploy plugins in two places and runs them in one order: the shipped plugins first, in
+`SHIPPED` order, from the static registry in `src/node/deploy-plugins.ts` (a shipped name mapped to its deploy
+module under `src/node/plugins/`, imported only when the deploy runs, so the Workers build never sees Node code),
+then the installed plugins whose `pb_plugins/<name>/deploy.js` exists, in the lockfile's order. A shipped plugin
+the project turned off, or shadowed by installing one of the same name, is skipped here as it is at runtime.
+`before` hooks run after the config is composed and before the upload; `after` hooks after the upload and the
+deploy's own post-steps (secrets, the `_redirects` zone rules); `remove` hooks on `voidbase deploy --remove`,
+before the Worker is deleted. A hook that throws fails the deploy with the plugin, its origin and the phase named,
+and the hooks after it do not run. `test/unit/deploy-plugins.test.ts` measures the discovery and the ordering with
+fake plugins; `test/deploy-cf.ts` runs an installed `deploy.js` through the CLI against the mock API.
+
 ## Changing an instance's plugins: the installer
 
 `installer` is a shipped plugin, and it is how an instance changes its own plugins: `POST /api/plugins/install`

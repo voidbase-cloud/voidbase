@@ -43,6 +43,7 @@
     "./kernel": "./src/server/kernel.ts",
     "./interfaces": "./src/server/interfaces/index.ts",
     "./plugins": "./src/server/plugins/manifest.ts",
+    "./deploy-plugin": "./src/node/deploy-plugin.ts",
     "./plugins/auth": "./src/server/plugins/auth.ts",
     "./plugins/backups": "./src/server/plugins/backups.ts",
     "./plugins/realtime": "./src/server/plugins/realtime.ts",

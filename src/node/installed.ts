@@ -19,6 +19,8 @@ export interface LockEntry {
   version: string;
   /** SRI of pb_plugins/<name>/bundle.js, recomputed before anything loads */
   integrity: string;
+  /** SRI of pb_plugins/<name>/deploy.js, the plugin's deploy-time half, when it has one (docs/plugins.md) */
+  deploy?: string;
   /** the marketplace it came from, which is where `update` looks */
   marketplace: string;
   source: { repository: string; commit: string };
@@ -60,20 +62,27 @@ export function marketplacesFor(lock: Lock, env: Record<string, string | undefin
   return fromEnv.length ? fromEnv : lock.marketplaces;
 }
 
-export interface Installed { name: string; version: string; marketplace: string; integrity: string; file: string; record?: PluginVersion }
+export interface Installed { name: string; version: string; marketplace: string; integrity: string; file: string; record?: PluginVersion;
+  /** pb_plugins/<name>/deploy.js, when the lock pins one (src/node/deploy-plugins.ts runs it at deploy time) */
+  deploy?: string }
 
 /** every installed plugin, checked against the lockfile: the bytes on disk are the bytes it promised, or nothing loads */
 export async function verifyInstalled(root: string): Promise<{ installed: Installed[]; disabled: string[] }> {
   const lock = readLock(root);
   const installed: Installed[] = [];
-  for (const [name, e] of Object.entries(lock.plugins)) {
-    const file = join(pluginsDirOf(root), name, "bundle.js");
-    if (!existsSync(file)) throw new Error(`voidbase.lock lists ${name} ${e.version} but pb_plugins/${name}/bundle.js is missing: voidbase plugins update ${name}, or voidbase plugins remove ${name}`);
+  const check = async (name: string, e: LockEntry, what: "bundle" | "deploy", locked: string): Promise<string> => {
+    const file = join(pluginsDirOf(root), name, `${what}.js`);
+    if (!existsSync(file)) throw new Error(`voidbase.lock lists ${name} ${e.version} but pb_plugins/${name}/${what}.js is missing: voidbase plugins update ${name}, or voidbase plugins remove ${name}`);
     const actual = await integrityOf(new Uint8Array(readFileSync(file)));
-    if (actual !== e.integrity) throw new Error(`pb_plugins/${name}/bundle.js is not the bytes voidbase.lock promises for ${name} ${e.version} (${actual} on disk, ${e.integrity} locked): reinstall it, or remove it`);
+    if (actual !== locked) throw new Error(`pb_plugins/${name}/${what}.js is not the bytes voidbase.lock promises for ${name} ${e.version} (${actual} on disk, ${locked} locked): reinstall it, or remove it`);
+    return file;
+  };
+  for (const [name, e] of Object.entries(lock.plugins)) {
+    const file = await check(name, e, "bundle", e.integrity);
+    const deploy = e.deploy ? await check(name, e, "deploy", e.deploy) : undefined;
     const recordPath = join(pluginsDirOf(root), name, "release.json");
     const record = existsSync(recordPath) ? (JSON.parse(readFileSync(recordPath, "utf8")) as PluginVersion) : undefined;
-    installed.push({ name, version: e.version, marketplace: e.marketplace, integrity: e.integrity, file, record });
+    installed.push({ name, version: e.version, marketplace: e.marketplace, integrity: e.integrity, file, record, ...(deploy ? { deploy } : {}) });
   }
   return { installed, disabled: lock.disabled };
 }
@@ -123,8 +132,14 @@ export async function addPlugin(root: string, spec: string, o: AddOptions): Prom
   const dir = join(pluginsDirOf(root), name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "bundle.js"), got.bytes);
+  // the deploy-time half, when the record names one: beside the bundle, verified and pinned the same way
+  if (v.deploy) {
+    const d = await download(found.indexUrl, { ...v, bundle: v.deploy.file, integrity: v.deploy.integrity }, o.fetchImpl ?? fetch);
+    if (!d.verified) throw new Error(`${d.url} is not the bytes ${found.marketplace} promised for ${name}'s deploy.js (${v.deploy.integrity}); nothing was installed`);
+    writeFileSync(join(dir, "deploy.js"), d.bytes);
+  } else rmSync(join(dir, "deploy.js"), { force: true });
   writeFileSync(join(dir, "release.json"), `${JSON.stringify(v, null, 2)}\n`);
-  lock.plugins[name] = { version: v.version, integrity: v.integrity, marketplace: found.marketplace, source: v.source, installedOn: new Date().toISOString().slice(0, 10) };
+  lock.plugins[name] = { version: v.version, integrity: v.integrity, ...(v.deploy ? { deploy: v.deploy.integrity } : {}), marketplace: found.marketplace, source: v.source, installedOn: new Date().toISOString().slice(0, 10) };
   lock.disabled = lock.disabled.filter((d) => d !== name);
   writeLock(root, lock);
   return { name, version: v.version, marketplace: found.marketplace, previous: have?.version, shadows: isShipped(name) };

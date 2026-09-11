@@ -456,6 +456,79 @@ its fallback, the marker, the single lookup, the reports, the untouched collecti
 over the table the definition creates. Not here: a locale in the route, `hreflang` and canonical tags (the seo
 plugin's other half), a panel screen over the reports, and the interface strings.
 
+## Taking money: stripe
+
+`stripe` is a shipped plugin (tier `official`, `src/server/plugins/stripe.ts`) that provides `payments@1` against
+Stripe's REST API with `fetch` alone: form-encoded bodies (`line_items[0][price]`), `Authorization: Bearer`, and
+`Stripe-Version` pinned to `2025-08-27.basil`, so a change on Stripe's side arrives when that line changes and not
+before. No Stripe SDK. It is the roadmap's "Payment providers, as official plugins", first of the three it names.
+
+**The knobs.** `STRIPE_SECRET_KEY` (`sk_test_...` or `sk_live_...`) and `STRIPE_WEBHOOK_SECRET` (the `whsec_...`
+of the endpoint registered in Stripe's dashboard). Both are secrets: declare them with `secret(...)` in `env.ts`
+so they live in `pb_secrets`/`vb_secrets` and reach the Worker as encrypted secrets, never as vars. The plugin reads
+them from the request env first and the runtime env second, like mail's domain. Without the key the plugin is
+loaded and idle: `payments@1` is provided, `route(env)` is null, every route answers 503 naming the knob, the three
+collections are not created, and `GET /api/plugins` says `payments: { via: "none" }`. With it:
+`payments: { via: "stripe", webhook: "/api/payments/stripe/webhook", livemode: true|false }`, livemode read off the
+key's prefix.
+
+**The interface.** `payments@1` was reshaped for this plugin (2026-09-11) the way mail was: the key arrives with the
+request, so every method takes the env. `route(env)`, `checkout(env, { customer, items, success, cancel, mode? })`,
+`portal(env, { customer, return })`, `webhook(env, request)` and `cancel(env, subscription, { now? })`. `customer`
+and `subscription` are ids of the plugin's own rows, never Stripe's ids: the app talks about its rows and the plugin
+translates. The routes below call the same code.
+
+**The collections it owns**, created on the first request that carries the key (`ensureCollections`, kernel
+onBootstrap), each with `created` and `updated` autodates and a unique index on the provider id:
+
+- `customers`: `user` (relation to `users`, optional), `provider` (text, `"stripe"`), `providerId` (text, `cus_...`),
+  `email` (text). Rules: list and view `user = @request.auth.id`; create, update and delete superuser only.
+- `subscriptions`: `customer` (relation), `providerId` (`sub_...`), `status` (select: `incomplete`,
+  `incomplete_expired`, `trialing`, `active`, `past_due`, `canceled`, `unpaid`, `paused`), `price` (text, the
+  price id), `currentPeriodEnd` (date), `cancelAtPeriodEnd` (bool). Rules: list and view
+  `customer.user = @request.auth.id`; writes superuser only.
+- `payments`: `customer` (relation), `providerId` (`pi_...`, or the invoice id when there is no payment intent yet),
+  `amount` (number, the minor unit), `currency` (text), `status` (select: `pending`, `succeeded`, `failed`,
+  `refunded`, `canceled`), `subscription` (relation, optional), `raw` (json, the Stripe object). Same rules as
+  subscriptions.
+
+So a signed-in user reads their own rows through the records API and realtime like any other collection, and
+nothing writes them but the plugin, through the records service as a superuser, so hooks fire and the rows look
+like the panel wrote them.
+
+**The routes**, all under `/api/payments/stripe/`:
+
+- `POST checkout`, signed-in user. Body `{ items: [{ price, quantity }], success, cancel, mode?: "payment" |
+  "subscription" }` (`mode` defaults to `payment`). Finds the user's `customers` row or creates the customer at
+  Stripe (`POST /v1/customers` with the email and `metadata[voidbase_user]`) and the row, then creates a Checkout
+  Session with `client_reference_id` and `metadata[voidbase_customer]` set to the row id. Answers `{ url }`.
+- `POST portal`, signed-in user. Body `{ return }`. A billing portal session for the user's customer. `{ url }`.
+- `POST cancel`, the subscription's owner or a superuser. Body `{ subscription, now? }` (a `subscriptions` row
+  id). Cancels at the period's end by default (`cancel_at_period_end=true`); `now: true` deletes the subscription
+  at Stripe. The row follows at once; the webhook confirms later. Answers `{ subscription, status,
+  cancelAtPeriodEnd }`.
+- `POST webhook`, no auth. Register `https://<instance>/api/payments/stripe/webhook` in Stripe's dashboard
+  (Developers > Webhooks) and put its signing secret in `STRIPE_WEBHOOK_SECRET`. The `Stripe-Signature` header is
+  verified as HMAC SHA-256 over `t.payload` against the secret, with a five-minute tolerance on `t` and a
+  constant-time compare; a bad or stale signature is 400 and nothing is read. Then `checkout.session.completed`
+  (the customer, and in payment mode the payment), `customer.subscription.created|updated|deleted` (the
+  subscription row, `deleted` as status `canceled`), `invoice.paid` and `invoice.payment_failed` (a payment linked
+  to its subscription), `payment_intent.succeeded|payment_failed` (the payment) are written as upserts by
+  `providerId`, so Stripe's retries and a replay change nothing. Any other event is 200 and ignored
+  (`{ received: true, handled: false }`). Both invoice shapes are read: the 2025 versions moved a subscription's
+  period onto its items and an invoice's subscription and payment intent under `parent` and `payments`.
+
+A Stripe error comes back as 400 with Stripe's message (`Stripe answered 402: Your card was declined`), a Stripe
+outage as 502. `test/unit/stripe-plugin.test.ts` measures the signature check, the encoding, the three routes
+against a fake `fetch`, every event against in-memory rows, the replay, and the no-key state; nothing calls Stripe.
+
+**What Polar and Lemon Squeezy would share.** The interface, the three collections and their rules, the
+`/api/payments/<provider>/` prefix, the upsert-by-`providerId` discipline, `route(env)` for `/api/plugins`, and
+the test shape (a fake fetch, in-memory rows). What each brings: its own signature scheme (Polar signs with
+Standard Webhooks, Lemon Squeezy with `X-Signature` HMAC over the raw body), its own event names mapped onto the
+same six effects, and its own `customer`/`subscription`/`order` objects read into the same fields. Changing
+provider is removing one plugin and installing another; the rows keep their shape, with `provider` saying which.
+
 ## Auth is the core plugin
 
 Auth left the core on 2026-09-09 (plan.md, decision 0.3): `src/server/plugins/auth.ts` is a plugin of tier `core`

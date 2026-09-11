@@ -48,14 +48,26 @@ export interface Auth {
  * Taking money. One plugin per provider, all of them providing this, which is the roadmap's own worked example and
  * the first real test of the mechanism: swapping Stripe for Polar is removing one plugin and installing another,
  * and nothing that required `payments@1` changes or is aware.
+ *
+ * A provider's key and webhook secret are secrets, and secrets arrive with the request rather than at module scope,
+ * so this is answered per env the way mail is (reshaped 2026-09-11 with the stripe plugin): `route(env)` says where
+ * payments go with these bindings and which webhook URL to register, or null when the provider has no key here, in
+ * which case every other call refuses with the knob's name. `customer` and `subscription` are ids of the rows in the
+ * collections the provider owns (`customers`, `subscriptions`, `payments`), never the provider's own ids: the app
+ * talks about its rows and the plugin translates.
  */
+export interface PaymentsRoute { via: string; webhook: string; livemode: boolean }
 export interface Payments {
-  /** start a checkout and return where to send the customer */
-  checkout(o: { customer: string; items: { price: string; quantity: number }[]; success: string; cancel: string }): Promise<{ url: string }>;
-  /** verify and interpret a provider's webhook; the route belongs to the provider's own plugin */
-  webhook(request: Request): Promise<{ kind: string; customer?: string; subscription?: string; raw: Row } | null>;
-  /** stop a subscription */
-  cancel(subscription: string): Promise<void>;
+  /** where payments go with these bindings, for /api/plugins; null means this provider has no key here */
+  route(env: Bindings): PaymentsRoute | null;
+  /** start a checkout for a customers row and return where to send the customer */
+  checkout(env: Bindings, o: { customer: string; items: { price: string; quantity: number }[]; success: string; cancel: string; mode?: "payment" | "subscription" }): Promise<{ url: string }>;
+  /** where a customer manages their own billing, when the provider hosts such a page */
+  portal(env: Bindings, o: { customer: string; return: string }): Promise<{ url: string }>;
+  /** verify and interpret a provider's webhook and write what it says into the collections; the route belongs to the provider's own plugin */
+  webhook(env: Bindings, request: Request): Promise<{ kind: string; customer?: string; subscription?: string; payment?: string; raw: Row } | null>;
+  /** stop a subscriptions row: at the period's end by default, or now */
+  cancel(env: Bindings, subscription: string, o?: { now?: boolean }): Promise<void>;
 }
 
 /**

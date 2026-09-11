@@ -488,7 +488,9 @@ voidbase stack semantics into voidbase project semantics, so a stack app is host
 like any project, and (2026-09-11) its `pwa` option makes a stack app installable: the manifest, the icon set and
 a service worker written from what the app declares, with the client half in `@voidbase-cloud/sdk/pwa`. What
 exists: the executable, the package on Bun, Cloudflare all three ways, both modes in shape,
-`voidbase sync`, the adapter, and (2026-09-10) the installer: an instance changes its own plugins (`installer`, a
+`voidbase sync`, the adapter, (2026-09-11) the first payment provider: `stripe`, a shipped plugin providing
+`payments@1` over fetch alone, owning `customers`, `subscriptions` and `payments` and its own signed webhook, so
+Polar and Lemon Squeezy are the same shape with a different signature; and (2026-09-10) the installer: an instance changes its own plugins (`installer`, a
 shipped plugin: on disk on Bun, as a commit to the repository it deploys from on Workers), so nobody builds a
 release for a customer's instance; voidbase.cloud wraps voidbase and the user's Cloudflare account, plus the
 GitHub connection for templates and pipelines (Mahmood, 2026-09-10: "that shouldn't be us, it should be the user

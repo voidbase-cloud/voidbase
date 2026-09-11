@@ -53,6 +53,7 @@
     "./plugins/mail": "./src/server/plugins/mail.ts",
     "./plugins/ai": "./src/server/plugins/ai.ts",
     "./plugins/translations": "./src/server/plugins/translations.ts",
+    "./plugins/stripe": "./src/server/plugins/stripe.ts",
     "./plugins/collections": "./src/server/plugins/collections.ts",
     "./registry": "./src/node/registry.ts",
     "./secrets": "./src/env/define.ts"

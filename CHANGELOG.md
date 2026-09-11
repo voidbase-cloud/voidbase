@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.32](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.31...v0.9.0-beta.32) (2026-09-11)
+
+* docs(deploy): the Durable Object database, the knob, the ceilings that stay, the migration path
+
 ## [0.9.0-beta.31](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.30...v0.9.0-beta.31) (2026-09-11)
 
 * feat(plugin): polar and lemonsqueezy, two more providers of payments@1

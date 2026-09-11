@@ -489,8 +489,9 @@ builder trigger, the instance-build workflow and the per-instance releases went 
 does its work in the browser (Mahmood, 2026-09-10: "voidbase cloud does not need any server capabilities really"):
 the site keeps sign-in, sealed tokens, rows and two pass-throughs to Cloudflare's and GitHub's APIs; the page
 provisions, upgrades and deletes in the user's account with voidbase's REST code, links repositories, and changes
-plugins through the instance's installer. What does not exist: miniflare for the package, the tunnel flag, the
-migration command.
+plugins through the instance's installer. And (2026-09-11) the migration command: `voidbase migrate <from> <to>` is a
+backup on the source restored on the target through the backups API over HTTP, so it moves data between any two
+running instances in either direction. What does not exist: miniflare for the package, the tunnel flag.
 
 ## What to correct on the site when this lands
 

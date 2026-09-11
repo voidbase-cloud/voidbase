@@ -82,6 +82,14 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      pb_data first), a global install reinstalls, a project's dependency is bumped
                                      and installed. --check changes nothing and exits 1 when behind, 2 when it
                                      could not find out, which is what a pipeline reads
+  migrate <from-url> <to-url> --from-email a@b --from-password p --to-email a@b --to-password p [--keep] [--dry-run]
+                                     move an instance's data to another running instance, whichever way each runs
+                                     (executable, npm package, Cloudflare) and in either direction: a backup taken
+                                     on the source and restored on the target through the backups API. The target's
+                                     collections, records, files, settings and superusers become the source's.
+                                     --from-token / --to-token take an existing superuser token instead of a sign-in
+                                     (env: VOIDBASE_MIGRATE_FROM_EMAIL/_PASSWORD/_TOKEN and _TO_*); --keep leaves the
+                                     migration archive on both sides; --dry-run signs in, says what would happen, stops
   version                            print the version
   bundle [--out dir] [--version v]   build the generic Worker + panel as a release directory (default .cloud/releases/<v>);
          [--plugins-dir pb_plugins]     --plugins-dir bakes a project's installed plugins (voidbase.lock beside them) into the Worker
@@ -177,6 +185,20 @@ switch (cmd) {
     if (code !== 0) { console.error(`\n${argv[0]} exited ${code}: nothing was changed by voidbase itself`); process.exit(code); }
     console.log(`\nvoidbase ${latest} installed.`);
     if (install.shape === "project") console.log("Your instance keeps running the version you last deployed. Deploy to put this one live:\n  voidbase deploy        (or push, if the repository deploys itself)");
+    break;
+  }
+  case "migrate": {
+    // Between two running instances, over HTTP only (src/node/migrate.ts): a backup on the source, restored on the
+    // target. Works from the executable too, since nothing here needs the toolchain.
+    const from = sub, to = rest[0];
+    if (!from || !to) { console.error("usage: voidbase migrate <from-url> <to-url> --from-email a@b --from-password p --to-email a@b --to-password p [--from-token t] [--to-token t] [--keep] [--dry-run]"); process.exit(1); }
+    const { migrate } = await import("../src/node/migrate");
+    const side = (which: "from" | "to") => { const E = `VOIDBASE_MIGRATE_${which.toUpperCase()}_`; return { url: which === "from" ? from : to, email: flags[`${which}-email`] ?? process.env[`${E}EMAIL`], password: flags[`${which}-password`] ?? process.env[`${E}PASSWORD`], token: flags[`${which}-token`] ?? process.env[`${E}TOKEN`] }; };
+    let step = 0;
+    try {
+      const r = await migrate({ from: side("from"), to: side("to"), keep: "keep" in flags, dryRun: "dry-run" in flags, timeoutMs: flags.timeout ? Number(flags.timeout) * 1000 : undefined, log: (l) => console.log(l.startsWith("  ") || l.startsWith("dry run") ? l : `${++step}. ${l}`) });
+      if (!r.dryRun) console.log(`\nmigrated ${from} -> ${to} (${r.collections.length} collections)`);
+    } catch (err) { console.error(`\nmigration failed: ${err instanceof Error ? err.message : String(err)}`); process.exit(1); }
     break;
   }
   case "secrets": {

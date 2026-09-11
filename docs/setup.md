@@ -124,6 +124,15 @@ project whose `package.json` depends on voidbase is updated as a dependency, a g
 the executable replaces itself as above. Updating a project changes what your next deploy will carry, not what is
 serving right now.
 
+`voidbase migrate <from-url> <to-url>` moves an instance's data to another running instance, whichever way each one
+runs (the executable, the npm package, Cloudflare) and in either direction. It is a backup taken on the source and
+restored on the target through the backups API over HTTP, so it works from the executable and needs nothing but the
+two URLs and a superuser on each side (`--from-email` / `--from-password`, `--to-email` / `--to-password`, or
+`--from-token` / `--to-token`). Every step is printed. The target's collections, records, files, settings and
+superusers become the source's, which is what a move means; `--dry-run` signs in on both sides and says what would
+happen without doing it, and `--keep` leaves the migration archive on both sides instead of deleting it once the
+target is verified.
+
 To add server-side behaviour, put JavaScript in `pb_hooks/` beside the executable. The
 [directories section](#what-the-directories-are) below explains each one, and they mean the same thing here.
 

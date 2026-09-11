@@ -15,6 +15,7 @@ import type { MiddlewareHandler } from "hono";
 import type { AppEnv, AuthRecord, Bindings, Row } from "../types";
 import type { Field } from "../collections/fields";
 import type { ResponsePolicy } from "../response-policy";
+import type { MailMessage } from "../mail/message";
 
 /**
  * Authentication. Three parts, not one (plan.md, decision 0.3, taken 2026-09-09).
@@ -100,9 +101,20 @@ export interface Hardening {
   policy(env?: object): ResponsePolicy;
 }
 
-/** Sending mail. The core sends it; which service carries it is a plugin's business. */
+/**
+ * Sending mail. The core builds every message and decides when it goes (src/server/mail); which service carries it
+ * is a plugin's business. Bindings arrive with the request, so the provider answers per env like realtime does:
+ * `carrier(env)` names where mail goes with these bindings, or null when it has nothing to send with, in which case
+ * the core uses what it had (the HTTP provider, the SMTP settings, a log line). A provider tied to one domain
+ * declines another sender in `refuses`, with the reason the core shows when no other transport can take the message.
+ */
 export interface Mail {
-  send(m: { to: string; subject: string; html: string; text?: string }): Promise<void>;
+  /** where mail goes with these bindings, for the log and /api/plugins; null means this provider cannot carry it here */
+  carrier(env: Bindings): string | null;
+  /** why this sender cannot leave through this provider, or null when it can */
+  refuses(from: string, env: Bindings): string | null;
+  /** deliver one message; `text` is the plain part beside the html */
+  send(env: Bindings, m: MailMessage, text: string): Promise<void>;
 }
 
 /** every interface this voidbase defines, and the type behind each */

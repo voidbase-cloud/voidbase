@@ -27,18 +27,19 @@ import { installer as installerPlugin, installerInfo } from "./plugins/installer
 import { openapi as openapiPlugin } from "./plugins/openapi";
 import { mcp as mcpPlugin } from "./plugins/mcp";
 import { seo as seoPlugin } from "./plugins/seo";
+import { mail as mailPlugin } from "./plugins/mail";
 import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
 import { SHIPPED } from "./plugins/shipped";
 import { disabled as disabledPlugins, installed as installedPlugins } from "#platform/plugins";
-import type { Auth, Hardening, Realtime } from "./interfaces";
+import type { Auth, Hardening, Mail, Realtime } from "./interfaces";
 import { VERSION } from "./version";
 import { mountSqlApi } from "./sql";
 import { realIPWith } from "./hardening";
 import { backupActive } from "./backups";
 import { maintenanceIfDue } from "./crons";
 import { attachJobs } from "./jobs";
-import { sendMail } from "./mail";
+import { mailRoute, provideMailLookup, sendMail } from "./mail";
 import { s3Bucket } from "./storage/s3";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
@@ -511,7 +512,7 @@ mountCronsApi(app);
 export const kernel = createKernel(app);
 // What ships, minus what the project turned off, minus what an installed plugin shadows by name; then what the
 // project installed (pb_plugins, verified against voidbase.lock by the platform module). One graph, resolved once.
-const shipped = [authPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION), openapiPlugin, mcpPlugin, seoPlugin];
+const shipped = [authPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION), openapiPlugin, mcpPlugin, seoPlugin, mailPlugin];
 if (shipped.map((p) => p.manifest.name).join() !== SHIPPED.join()) throw new Error("voidbase: src/server/plugins/shipped.ts disagrees with the plugins app.ts loads");
 const shadowed = new Set(installedPlugins.map((p) => p.name));
 const active = shipped.filter((p) => !disabledPlugins.includes(p.manifest.name) && !shadowed.has(p.manifest.name));
@@ -522,12 +523,14 @@ await load(kernel, [...active, ...installedPlugins.map((p) => p.plugin)], VERSIO
 // from here on the core asks whoever provides auth@1 who is signed in and what a superuser is (auth-slot.ts); looked
 // up on every question rather than kept, because a provider can be replaced while the instance runs
 provideAuthLookup(() => using<Auth | undefined>(kernel, "auth@1"));
+// and where outbound mail goes: whoever provides mail@1 carries it when its binding is there (src/server/mail)
+provideMailLookup(() => using<Mail | undefined>(kernel, "mail@1"));
 
 // What this instance is running, which is the question a bare instance has to be able to answer about itself. For
 // the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface.
-app.get("/api/plugins", (c) => {
+app.get("/api/plugins", async (c) => {
   requireSuperuser(c);
-  return c.json({ ...whatLoaded(kernel), installer: installerInfo(c.env) });
+  return c.json({ ...whatLoaded(kernel), installer: installerInfo(c.env), mail: await mailRoute(c.env) });
 });
 mountSqlApi(app);
 

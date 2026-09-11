@@ -12,6 +12,7 @@ import { STORE_KEYS_VAR } from "../server/secrets-store";
 import { deleteWorkerSecrets, loadSecrets, putStoreSecrets, readSecretsValues, SECRETS_DIR, STORE_KNOB, storeBindings, storeSecretName, storeSecrets, workerSecretNames, type LoadedSecrets, putWorkerSecrets } from "./secrets";
 import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
 import { ensureFlags, ensureFlagshipApp, FLAGS_BINDING, FLAGS_VAR } from "./flagship";
+import { MAIL_BINDING, MAIL_DOMAIN_VAR } from "../server/plugins/mail-binding";
 
 const API = (process.env.CLOUDFLARE_API_BASE ?? "https://api.cloudflare.com/client/v4").replace(/\/$/, "");
 export const TOKEN_ENV = "VOIDBASE_DEPLOY_CF_API_KEY";
@@ -75,7 +76,7 @@ function projectName(): string {
 const randomPassword = () => { const a = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const b = crypto.getRandomValues(new Uint8Array(20)); return Array.from(b, (x) => a[x % a.length]).join(""); };
 
 // Bun only loads the .env of the working directory; the starter keeps its PB_* and deploy variables one level up.
-const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
+const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", MAIL_DOMAIN_VAR, "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
 export function loadEnvFiles(files = [".env", ".env.local", "../.env", "../.env.local"]): string[] {
   const loaded: string[] = [];
   for (const f of files) {
@@ -166,6 +167,10 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   const domain = domains[0] ?? "";
   // the static site next to the API: --public-dir, VOIDBASE_DEPLOY_PUBLIC_DIR, or ./pb_public when it exists (PocketBase's default)
   const publicDir = opts.publicDir || process.env.VOIDBASE_DEPLOY_PUBLIC_DIR || (existsSync(resolve("pb_public")) ? "pb_public" : undefined);
+  // the sending domain for Cloudflare Email Service (VOIDBASE_MAIL_DOMAIN, from the environment or secrets.json): the
+  // Worker gets the send_email binding and the domain as a var; the mail plugin holds the From to it (docs/deploy.md)
+  const mailDomain = String(process.env[MAIL_DOMAIN_VAR] || readSecretsValues(secretsDir)?.[MAIL_DOMAIN_VAR] || "").trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase();
+  if (mailDomain && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(mailDomain)) throw new Error(`${MAIL_DOMAIN_VAR}=${mailDomain} is not a domain name (a domain, not an address)`);
   if (publicDir && !existsSync(resolve(publicDir, "index.html"))) throw new Error(`public dir ${resolve(publicDir)} has no index.html (build the site first)`);
   // <public dir>/_redirects, Netlify/Pages syntax. Path-only lines go to the assets as Cloudflare's own _redirects (it
   // only accepts relative sources); host-scoped lines (`https://api.example.com/ /_/ 302`) become zone Redirect Rules
@@ -223,6 +228,9 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     // the realtime hub: a SQLite-backed Durable Object class exported from this Worker (free plan included), one per instance
     ...(hub ? { durable_objects: { bindings: [{ name: "HUB", class_name: "VoidbaseHub" }] }, migrations: [{ tag: "voidbase-hub-v1", new_sqlite_classes: ["VoidbaseHub"] }] } : {}),
     ...(workflows.length ? { workflows: workflows.map((w) => ({ name: w.workflowName, binding: w.binding, class_name: w.className })) } : {}),
+    // Cloudflare Email Service: the binding sends from any domain onboarded on the account (the plugin holds the
+    // From to VOIDBASE_MAIL_DOMAIN) to any recipient once the domain is onboarded, else to verified addresses only
+    ...(mailDomain ? { send_email: [{ name: MAIL_BINDING }] } : {}),
   };
   const configHeader = api ? `// written by voidbase deploy; ids are real resources on account ${account.id}` : "// written by voidbase serve --workers; local ids for Cloudflare's local runtime, nothing here exists on an account";
   const writeWorkerConfig = () => writeFileSync(`${cloud}/wrangler.jsonc`, `${configHeader}\n${JSON.stringify(workerConfig, null, 2)}\n`);
@@ -233,6 +241,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   const extraVars = listed("VOIDBASE_DEPLOY_VARS"), extraSecrets = listed("VOIDBASE_DEPLOY_SECRETS");
   const baked: Record<string, string> = { VOIDBASE_WORKER_NAME: name, ...(api ? { VOIDBASE_ACCOUNT_ID: account.id } : {}) };
   for (const k of ["AUDITLOG", ...extraVars]) if (process.env[k]) baked[k] = process.env[k]!;
+  if (mailDomain) baked[MAIL_DOMAIN_VAR] = mailDomain;
   // the declared server and public values, parsed (defaults filled in): a var is the code's to set on every deploy
   const definition = pbSecrets.state.definition;
   const plainKeys = definition ? definition.of("server", "public", "flag") : [];
@@ -261,6 +270,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
       log(`flags: ${flagKeys.join(", ")} keep their defaults: ${err instanceof Error ? err.message.split("\n")[0] : err} (Flagship needs "Flagship: Write" on the deploy token)`);
     }
   }
+  if (mailDomain) log(await mailDomainReport(api, account.id, mailDomain));
   log(`project: ${cloud}`);
 
   // superuser: from the environment (PB_* is what the starter's entrypoint uses) or generated once and kept in pb_data
@@ -338,7 +348,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   if (domain && local) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")}: nothing to attach on this machine`);
   else if (domain) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")} (workers.dev off): attached through the Workers Custom Domains API after the upload (Cloudflare adds the DNS record and certificate)`);
   if (workflows.length) log(`workflows: ${workflows.map((w) => `${w.stem} (${w.className}) bound as ${w.binding}`).join(", ")}`);
-  log(`bindings: D1, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
+  log(`bindings: D1, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${mailDomain ? `, Email Sending (${MAIL_BINDING})` : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
   if (opts.dryRun) { log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put ${secrets.length} secrets (${secrets.map(([k]) => k).join(", ")}) and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud }; }
 
   // the toolchain comes with the voidbase package (void, and wrangler through void)
@@ -392,6 +402,29 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
 // token ("Dynamic URL Redirects Write" in the API's permission listing, next to the DNS permission the token may already
 // carry for the zone). Without it the deploy logs the rules to create by hand and carries on.
 const quote = (v: string) => JSON.stringify(v);
+// The sending domain's standing on the account, as far as the token can see. The binding needs the domain onboarded
+// for Email Sending (Cloudflare writes the SPF, DKIM and DMARC records itself), which is a dashboard step or the
+// zone's email/sending API; the deploy token has neither zone permission, so this checks what it can and says the
+// rest. Read with the zone's sending-subdomains list when the token happens to allow it (checked 2026-09-11 against
+// developers.cloudflare.com/api/resources/email_sending: the list carries `name` and `enabled`).
+export async function mailDomainReport(api: CfApi | null, account: string, domain: string): Promise<string> {
+  const onboard = `onboard ${domain} for Email Sending once in the dashboard (Email > Email Sending > add a domain: Cloudflare writes the SPF, DKIM and DMARC records itself); until then the binding delivers only to the account's verified destination addresses`;
+  if (!api) return `mail: ${domain} would send through Cloudflare Email Service as ${MAIL_BINDING}; nothing to check from this machine`;
+  let zone: { id: string; name: string } | null | undefined;
+  try { zone = await findZone(api, domain, account); } catch { zone = undefined; }
+  if (zone === undefined) return `mail: ${domain} bound as ${MAIL_BINDING}; the token cannot list zones, so whether its zone is on the account was not checked: ${onboard}`;
+  if (!zone) return `mail: ${domain} bound as ${MAIL_BINDING}, but no zone on account ${account} covers it: add the domain to Cloudflare first, then ${onboard}`;
+  try {
+    const r = await api.raw("GET", `/zones/${zone.id}/email/sending/subdomains`);
+    if (r.ok) {
+      const list = ((JSON.parse(await r.text()) as { result?: { name?: string; enabled?: boolean }[] }).result ?? []);
+      if (list.some((s) => s.name === domain && s.enabled)) return `mail: ${domain} bound as ${MAIL_BINDING}; the domain is onboarded for Email Sending on zone ${zone.name}`;
+      return `mail: ${domain} bound as ${MAIL_BINDING}; zone ${zone.name} is on the account but the domain is not onboarded for Email Sending yet: ${onboard}`;
+    }
+  } catch { /* the token cannot read the zone's email settings, which is the expected case */ }
+  return `mail: ${domain} bound as ${MAIL_BINDING} (zone ${zone.name} is on the account; the token cannot read its Email Sending state): ${onboard}`;
+}
+
 export function redirectRule(worker: string, r: RedirectEntry): Record<string, unknown> {
   const wildcard = r.path.endsWith("/*"); const prefix = wildcard ? r.path.slice(0, -1) : r.path; // "/docs/*" -> "/docs/"
   const expression = wildcard ? (prefix === "/" ? `(http.host eq ${quote(r.host!)})` : `(http.host eq ${quote(r.host!)} and starts_with(http.request.uri.path, ${quote(prefix)}))`) : `(http.host eq ${quote(r.host!)} and http.request.uri.path eq ${quote(r.path)})`;

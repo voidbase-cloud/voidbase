@@ -50,6 +50,7 @@
     "./plugins/openapi": "./src/server/plugins/openapi.ts",
     "./plugins/mcp": "./src/server/plugins/mcp.ts",
     "./plugins/seo": "./src/server/plugins/seo.ts",
+    "./plugins/mail": "./src/server/plugins/mail.ts",
     "./plugins/collections": "./src/server/plugins/collections.ts",
     "./registry": "./src/node/registry.ts",
     "./secrets": "./src/env/define.ts"
@@ -70,6 +71,10 @@
     "#platform/sockets": {
       "workerd": "./src/platform/workers/sockets.ts",
       "default": "./src/platform/node/sockets.ts"
+    },
+    "#platform/email": {
+      "workerd": "./src/platform/workers/email.ts",
+      "default": "./src/platform/node/email.ts"
     },
     "#platform/hooks": {
       "workerd": "./src/platform/workers/hooks.ts",

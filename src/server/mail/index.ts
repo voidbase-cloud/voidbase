@@ -1,7 +1,9 @@
 // Outbound mail: PocketBase's record emails (verification, password reset, email change, OTP, auth alert) and the
-// generic mailer used by $app.newMailClient(). Delivery goes through the SMTP settings when enabled; otherwise the
-// message is logged (PocketBase would hand it to sendmail, which a Worker does not have). System emails leave through
-// the jobs queue when the deploy has one (src/server/jobs.ts), so the request never waits on SMTP.
+// generic mailer used by $app.newMailClient(). Delivery goes to whoever provides mail@1 when its binding is there
+// (the shipped `mail` plugin: Cloudflare Email Service from the instance's own domain), else an HTTP mail API when
+// configured, else the SMTP settings when enabled; otherwise the message is logged (PocketBase would hand it to
+// sendmail, which a Worker does not have). System emails leave through the jobs queue when the deploy has one
+// (src/server/jobs.ts), so the request never waits on the transport.
 import type { Collection } from "../collections/model";
 import { signJWT } from "../jwt";
 import { env as voidEnv } from "#platform/env";
@@ -9,6 +11,7 @@ import { loadSettings } from "../settings";
 import type { Row } from "../types";
 import { trigger } from "../hooks/runtime";
 import { HookRecord } from "../hooks/record";
+import type { Mail } from "../interfaces";
 import { buildMime, htmlToText, type MailMessage } from "./message";
 import { sendSMTP } from "./smtp";
 import { dispatch, registerJobHandler } from "../jobs";
@@ -32,12 +35,48 @@ async function sendHTTP(m: MailMessage, text: string): Promise<void> {
 
 export interface SendOptions { inline?: boolean } // inline: deliver now and surface transport errors to the caller
 
-// The transport step: an HTTP mail API when configured, else the SMTP settings, else a log line. On Cloudflare it
-// runs from the jobs queue (retries, no request time spent on SMTP); inline for the panel's test email and hooks.
+// Whoever provides mail@1, looked up on every message the way auth-slot.ts looks up auth, because a provider can be
+// replaced while the instance runs. app.ts hands the kernel's lookup in once the plugins are loaded; before that, and
+// in an instance without a provider, mail goes where it always went.
+let lookup: () => Mail | undefined = () => undefined;
+/** app.ts: how to reach whoever provides mail@1 now */
+export function provideMailLookup(fn: () => Mail | undefined): void { lookup = fn; }
+
+/** the provider's answer for these bindings and this sender: where it would carry the mail, or why it will not */
+function providerRoute(env: Bindings, from: string, provider = lookup()): { carrier: string | null; refused: string | null } {
+  const carrier = provider?.carrier(env) ?? null;
+  const refused = carrier && from ? provider!.refuses(from, env) : null;
+  return { carrier, refused };
+}
+
+/** where a message leaves this instance; `refused` is the provider's reason when nothing else could take it */
+export type MailRoute = { via: "plugin"; carrier: string } | { via: "http"; host: string } | { via: "smtp"; host: string } | { via: "log"; refused?: string };
+export function routeMail(env: Bindings, from: string, smtp: { enabled: boolean; host: string }, provider = lookup()): MailRoute {
+  const { carrier, refused } = providerRoute(env, from, provider);
+  if (carrier && !refused) return { via: "plugin", carrier };
+  if (httpMail.url) return { via: "http", host: new URL(httpMail.url).host };
+  if (smtp.enabled) return { via: "smtp", host: smtp.host };
+  return { via: "log", ...(refused ? { refused } : {}) };
+}
+
+/** for /api/plugins: where this instance's own mail (the settings' sender) goes with these bindings */
+export async function mailRoute(env: Bindings): Promise<MailRoute & { sender?: string }> {
+  const settings = await loadSettings(env.DB).catch(() => null);
+  const sender = settings?.meta.senderAddress || undefined;
+  return { ...routeMail(env, sender ?? "", settings?.smtp ?? { enabled: false, host: "" }), ...(sender ? { sender } : {}) };
+}
+
+// The transport step: the mail@1 provider when its binding is there and it takes the sender, else an HTTP mail API
+// when configured, else the SMTP settings, else a log line. On Cloudflare it runs from the jobs queue (retries, no
+// request time spent on the transport); inline for the panel's test email and hooks.
 export async function deliverMail(env: Bindings, m: MailMessage, text: string): Promise<void> {
+  const provider = lookup();
+  const { carrier, refused } = providerRoute(env, m.from.address, provider);
+  if (carrier && !refused) { await provider!.send(env, m, text); return; }
   if (httpMail.url) { await sendHTTP(m, text); return; }
   const settings = await loadSettings(env.DB);
   if (!settings.smtp.enabled) {
+    if (refused) throw new Error(`${refused}; SMTP is disabled, so the message was not sent`);
     console.log(`voidbase: mail not delivered (SMTP disabled): "${m.subject}" -> ${m.to.map((t) => t.address).join(", ")}`);
     return;
   }

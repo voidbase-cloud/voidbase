@@ -13,8 +13,8 @@ working plan. What is here is what a contributor needs to touch it.
 | `src/server/plugins/manifest.ts` | the manifest format (`name`, `version`, `tier`, `voidbase` range, `provides`, `requires`, `collections`, `extends`) and `checkManifest()`. Data only. |
 | `src/server/plugins/resolve.ts` | the whole graph checked before a single plugin is applied: unknown interface names, version ranges, two providers of one interface, collection ownership, missing requirements, cycles. Everything wrong is reported at once. |
 | `src/server/interfaces/index.ts` | the interfaces a plugin may provide or require, versioned in the name (`auth@1`, `payments@1`, `realtime@1`, `hardening@1`, `mail@1`) and the closed `KNOWN` list. |
-| `src/server/plugins/*.ts` | the plugins voidbase ships with today: `auth`, `realtime`, `hardening`, `backups`, `installer`, `openapi`, `mcp`, `seo`. |
-| `GET /api/plugins` | what this instance loaded: names, providers, tiers, and any core interface nobody provides. Superuser only. |
+| `src/server/plugins/*.ts` | the plugins voidbase ships with today: `auth`, `realtime`, `hardening`, `backups`, `installer`, `openapi`, `mcp`, `seo`, `mail`. |
+| `GET /api/plugins` | what this instance loaded: names, providers, tiers, any core interface nobody provides, and `mail`, where this instance's mail goes. Superuser only. |
 
 ## The entry points a plugin package uses
 
@@ -22,7 +22,7 @@ The package exposes the plugin API and the plugins it ships, so a plugin can liv
 against this voidbase: `@voidbase-cloud/voidbase/kernel` (`createKernel`, `load`, `serve`, `using`, `whatLoaded`,
 `Kernel`), `@voidbase-cloud/voidbase/plugins` (`Plugin`, `PluginManifest`, `checkManifest`),
 `@voidbase-cloud/voidbase/interfaces` (the interface types and `KNOWN`), and `@voidbase-cloud/voidbase/plugins/backups`,
-`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening`, `/plugins/openapi`, `/plugins/mcp`, `/plugins/seo` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
+`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening`, `/plugins/openapi`, `/plugins/mcp`, `/plugins/seo`, `/plugins/mail` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
 the map honest. The official plugin packages (`@voidbase-cloud/plugin-*`, one repository each) re-export the shipped
 objects through these entry points: the code lives here once, and the package is the plugin's name, manifest and
 version as the marketplace lists it.
@@ -285,6 +285,53 @@ and sitemaps), and the Worker answers. The knobs are read from the request's env
 runtime's, like hardening's. The plugin takes an injectable source for tests, `seoWith({ collections, appName,
 records })` (`test/unit/seo.test.ts`). Not here, and said so on purpose: JSON-LD, OpenGraph and Twitter tags,
 canonical URLs, share images rendered on request, and deployment skew, which are the roadmap entry's other half.
+
+## Mail from the instance's domain: mail
+
+`mail` is a shipped plugin (tier `official`, `src/server/plugins/mail.ts`) that provides `mail@1`: outbound mail
+from the instance's own domain through Cloudflare's Email Service, with SMTP staying the fallback. It answers the
+roadmap's "Email from that domain": the domain the previous item put on the account is the one the mail can now
+leave from, with the SPF, DKIM and DMARC records Cloudflare writes when the domain is onboarded, so the deliverability
+problem is solved by the thing that has the authority to solve it.
+
+**What Cloudflare offers (checked 2026-09-11 against developers.cloudflare.com, whose Email Service pages were last
+updated 2026-06-09).** Email Sending is a beta on the Workers Paid plan; sending to the account's verified destination
+addresses is free on every plan. A Worker gets it as a `send_email` binding in its config:
+`send_email: [{ name: "SEND_EMAIL" }]`, optionally with `destination_address` (one fixed recipient),
+`allowed_destination_addresses` (an allowlist) or `allowed_sender_addresses` (which senders the binding may use).
+`env.SEND_EMAIL.send()` takes either the structured message (`{ from, to, subject, html, text, cc, bcc, headers,
+attachments }`) or the older `EmailMessage(from, to, raw)` from `cloudflare:email`, where `raw` is the RFC 5322 text;
+the older form remains supported and is what this plugin uses. Every sender address must belong to a domain
+onboarded to Email Sending on the account (the binding answers `E_SENDER_NOT_VERIFIED` otherwise); before a sending
+domain is onboarded a binding may deliver only to the account's verified destination addresses, and once one is
+onboarded it may send to any recipient. Onboarding a domain is a dashboard step (Email > Email Sending > add a
+domain) or the zone's `email/sending/subdomains` API: Cloudflare writes MX, SPF, DKIM (selector `cf-bounce`) and
+DMARC records under a `cf-bounce` subdomain of the zone, so the zone has to be on the account with Cloudflare
+running its DNS. Limits: 50 recipients across to, cc and bcc, 32 attachments, 5 MiB per message, a daily quota that
+starts conservative and grows with the account's standing. This replaced the earlier route, Email Routing's
+"send email from Workers", which could send only to verified destination addresses.
+
+**The knob.** `VOIDBASE_MAIL_DOMAIN=example.com` (a domain, not an address; from the environment or
+`pb_secrets/secrets.json`). With it, `voidbase deploy` adds the binding to `workerConfig` as `SEND_EMAIL`, bakes the
+domain as a var of the same name, checks that a zone on the account covers the domain, reads the zone's Email
+Sending state when the token happens to allow it (the deploy token's permissions do not include it), and prints one
+line saying either that the domain is onboarded or what to do in the dashboard. Without the knob nothing changes:
+no binding, and mail goes where it went before.
+
+**At run time.** The plugin provides `mail@1` as a factory over the request's bindings, like realtime: `carrier(env)`
+names where mail goes when `env.SEND_EMAIL` and the domain are there, and is null otherwise, in which case the core
+uses what it had. The core's transport (`deliverMail` in `src/server/mail/index.ts`) asks the provider first: a
+message whose From is on `VOIDBASE_MAIL_DOMAIN` is built as the same RFC 5322 text the SMTP path sends
+(`multipart/alternative` with a text and an html part, UTF-8, base64 where needed, From, To, Cc, Subject, Date,
+Message-ID and MIME-Version; Bcc never in the headers) and handed to the binding as one `EmailMessage(from, to, raw)`
+per recipient, to, cc and bcc alike. A From on any other domain is refused with a message naming the sender, the
+domain and the knob; if `VOIDBASE_MAIL_HTTP_URL` is set the HTTP provider takes it, else if SMTP is enabled in the
+settings the SMTP transport takes it, else the refusal is the error (the panel's test email shows it; a queued job
+retries and alerts as any failed job does). The panel's SMTP settings, the HTTP provider and the log line are
+untouched. `GET /api/plugins` says where this instance's own mail (the settings' sender) goes in its `mail` field:
+`{ via: "plugin", carrier: "Cloudflare Email Service, from example.com", sender }`, or `via: "http"` or `"smtp"` with
+the host, or `via: "log"` with `refused` carrying the reason when the sender is off the domain and nothing else can
+take it. `test/unit/mail-plugin.test.ts` measures the MIME, the domain rule, the fake binding and the fallback.
 
 ## Auth is the core plugin
 

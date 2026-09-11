@@ -29,10 +29,12 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      https://<words>.trycloudflare.com address, with cloudflared from VOIDBASE_CLOUDFLARED,
                                      PATH or a download into ~/.cache/voidbase; --entry runs your own main.ts, the
                                      counterpart of a custom PocketBase build)
-  serve --workers [--name worker] [--no-queue] [--no-hub]
+  serve --workers [--name worker] [--no-queue] [--no-hub] [--database durable]
                                      the same instance on Cloudflare's local runtime (workerd): generates the project
                                      "voidbase deploy" would upload, under .cloud/<name>, and runs it with Void's dev
                                      server; D1, R2, the queue and the hub are Miniflare's, kept in .cloud/<name>/.void.
+                                     --database durable (or VOIDBASE_DATABASE=durable) keeps the data in the database
+                                     Durable Object instead of D1, as the same knob does on a deploy (docs/platform.md).
                                      Nothing reaches Cloudflare: no token, no account (also: voidbase dev --workers)
   superuser upsert <email> <password>  create or update a superuser: on the local data directory (--dir) or on a running
                                      instance (--url, --admin email:pass)
@@ -51,7 +53,7 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   templates [--marketplace url]      the templates the marketplace lists: name, title, summary, repository
   dev [--port 5180]                  start the Void dev server (vp dev)
   build | preview [--port 5181]      production build / run the built Worker locally (vp build / vp preview)
-  deploy [--name worker] [--account id] [--domain example.com,api.example.com] [--public-dir pb_public] [--dry-run] [--no-queue] [--no-hub] [--no-cron]
+  deploy [--name worker] [--account id] [--domain example.com,api.example.com] [--public-dir pb_public] [--dry-run] [--no-queue] [--no-hub] [--no-cron] [--database durable]
          [--analytics] [--rate-limit 300/10] [--preview <branch>]
                                      go live on your Cloudflare account with VOIDBASE_DEPLOY_CF_API_KEY: creates the D1
                                      database and R2 bucket, writes cloud/ (voidbase cloud init) with wrangler.jsonc,
@@ -178,7 +180,7 @@ async function login(): Promise<string> {
 async function serveOnWorkers(): Promise<never> {
   if (isExecutable()) { console.error(`"${cmd} --workers" needs the Cloudflare toolchain, which comes with the npm package, not the prebuilt executable:\n  bunx @voidbase-cloud/voidbase ${argv.join(" ")}`); process.exit(1); }
   const { serveWorkers } = await import("../src/node/serve-workers");
-  const s = await serveWorkers({ ...serveOpts(), name: flags.name, queue: flags["no-queue"] ? false : undefined, hub: flags["no-hub"] ? false : undefined });
+  const s = await serveWorkers({ ...serveOpts(), name: flags.name, queue: flags["no-queue"] ? false : undefined, hub: flags["no-hub"] ? false : undefined, database: flags.database });
   const bye = () => { void s.stop().then(() => process.exit(0)); };
   process.on("SIGINT", bye); process.on("SIGTERM", bye);
   process.exit(await s.exited);
@@ -609,7 +611,7 @@ switch (cmd) {
     if (flags.void) { await run("./node_modules/.bin/void", ["deploy"]); break; } // the Void platform (void auth login first)
     if (flags.remove) { await removeWorker(flags.preview); break; }
     const { deployToCloudflare } = await import("../src/node/deploy-cf");
-    await deployToCloudflare({ name: flags.name, account: flags.account, dir: flags.dir, publicDir: flags["public-dir"] ?? flags.publicDir, dryRun: !!flags["dry-run"], regenerate: !!flags.regenerate, queue: flags["no-queue"] ? false : undefined, cron: flags["no-cron"] ? false : undefined, domain: flags.domain as string | undefined, analytics: flags.analytics ? true : undefined, rateLimit: flags["rate-limit"], hub: flags["no-hub"] ? false : undefined, preview: flags.preview });
+    await deployToCloudflare({ name: flags.name, account: flags.account, dir: flags.dir, publicDir: flags["public-dir"] ?? flags.publicDir, dryRun: !!flags["dry-run"], regenerate: !!flags.regenerate, queue: flags["no-queue"] ? false : undefined, cron: flags["no-cron"] ? false : undefined, domain: flags.domain as string | undefined, analytics: flags.analytics ? true : undefined, rateLimit: flags["rate-limit"], hub: flags["no-hub"] ? false : undefined, preview: flags.preview, database: flags.database });
     break;
   }
   case "previews": {

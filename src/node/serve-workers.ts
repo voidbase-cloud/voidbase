@@ -18,6 +18,8 @@ import { deployToCloudflare, type DeployOptions } from "./deploy-cf";
 export interface ServeWorkersOptions {
   http?: string; dir?: string; hooksDir?: string; migrationsDir?: string; pluginsDir?: string; secretsDir?: string; publicDir?: string;
   name?: string; queue?: boolean; hub?: boolean; log?: (line: string) => void;
+  /** `durable`: the data in the database Durable Object instead of Miniflare's D1 (--database, or VOIDBASE_DATABASE) */
+  database?: string;
   /** how long to wait for the first /api/health 200 before giving up (ms); the first workerd start can take a while */
   timeout?: number;
 }
@@ -41,7 +43,7 @@ export async function serveWorkers(opts: ServeWorkersOptions = {}): Promise<Work
   const port = Number(portStr ?? 8090);
   if (!Number.isInteger(port) || port <= 0) throw new Error(`voidbase: --http ${opts.http}: not a host:port`);
 
-  const gen: DeployOptions = { local: true, name: opts.name, publicDir: opts.publicDir, queue: opts.queue, hub: opts.hub, log };
+  const gen: DeployOptions = { local: true, name: opts.name, publicDir: opts.publicDir, queue: opts.queue, hub: opts.hub, database: opts.database, log };
   const r = await deployToCloudflare(gen);
   const cloud = r.project;
   const state = resolve(cloud, ".void");
@@ -84,7 +86,7 @@ export async function serveWorkers(opts: ServeWorkersOptions = {}): Promise<Work
   const su = r.superuser;
   const where = su?.source === "generated" || su?.source === "file" ? `password in ${su.file}` : "password from VOIDBASE_SUPERUSER_PASSWORD";
   log(`\nvoidbase on Cloudflare's local runtime (workerd via Void dev; data: ${state}, hooks: ${process.env.VOIDBASE_HOOKS_DIR || resolve("pb_hooks")})`);
-  log(`  D1 ${r.name}-db, R2 ${r.name}-storage${opts.queue === false ? "" : `, queue ${r.name}-jobs`}${opts.hub === false ? "" : ", realtime hub"}: Miniflare's, in ${state}`);
+  log(`  ${r.database === "durable" ? "database: Durable Object (SQLite)" : `D1 ${r.name}-db`}, R2 ${r.name}-storage${opts.queue === false ? "" : `, queue ${r.name}-jobs`}${opts.hub === false ? "" : ", realtime hub"}: Miniflare's, in ${state}`);
   log(`  project: ${cloud} (what voidbase deploy would upload; regenerated on every start)`);
   log(`  cron triggers do not tick here: maintenance runs lazily in requests (Void prints how to fire a trigger by hand)`);
   log(`Server started at ${url}\n├─ REST API:  ${url}/api/\n└─ Dashboard: ${url}/_/   sign in as ${su?.email ?? "the superuser"} (${where})`);

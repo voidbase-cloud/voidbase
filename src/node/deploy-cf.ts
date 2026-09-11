@@ -17,6 +17,7 @@ import { PREVIEW_OF_VAR, PREVIEW_VAR, previewWorkerName } from "../server/plugin
 import { ensureFlags, ensureFlagshipApp, FLAGS_BINDING, FLAGS_VAR } from "./flagship";
 import { MAIL_BINDING, MAIL_DOMAIN_VAR } from "../server/plugins/mail-binding";
 import { AI_BINDING, AI_VAR, aiModelOf } from "../server/plugins/ai-binding";
+import { DATABASE_VAR, DB_OBJECT_BINDING, DB_OBJECT_CLASS, DB_OBJECT_MIGRATION_TAG, databaseKind, type DatabaseKind } from "../server/durable-d1";
 import { discoverDeployPlugins, runDeployHooks } from "./deploy-plugins";
 import type { DeployContext } from "./deploy-plugin";
 
@@ -59,10 +60,15 @@ export interface DeployOptions { cron?: boolean; domain?: string; name?: string;
    * plugin (src/node/plugins/previews.ts). `name` stays the production Worker's name.
    */
   preview?: string;
+  /** `d1` (the default) or `durable`: the instance's data in its own SQLite-backed Durable Object instead of a D1
+   *  database (--database, VOIDBASE_DATABASE from the environment or pb_secrets/secrets.json; docs/platform.md) */
+  database?: string;
 }
 
 export interface DeployResult {
   name: string; account: string; url: string | null; wranglerConfig: string; project: string;
+  /** what holds the data: D1, or the database Durable Object */
+  database: DatabaseKind;
   /** the superuser the project was generated with (a local run seeds it through the project's .env) */
   superuser?: { email: string; password: string; file: string; source: "env" | "file" | "generated" };
   /** the keys written to the project's .env: a local run keeps them out of the dev server's shell (Void strips a key the shell also exports) */
@@ -88,7 +94,7 @@ function projectName(): string {
 const randomPassword = () => { const a = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const b = crypto.getRandomValues(new Uint8Array(20)); return Array.from(b, (x) => a[x % a.length]).join(""); };
 
 // Bun only loads the .env of the working directory; the starter keeps its PB_* and deploy variables one level up.
-const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DOMAINS", "VOIDBASE_PREVIEW_SEED", "VOIDBASE_PREVIEW_SOURCE_URL", "VOIDBASE_GH_TOKEN", "VOIDBASE_PROJECT_REPO", "VOIDBASE_DEPLOY_DOMAIN", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", MAIL_DOMAIN_VAR, AI_VAR, "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
+const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DOMAINS", "VOIDBASE_PREVIEW_SEED", "VOIDBASE_PREVIEW_SOURCE_URL", "VOIDBASE_GH_TOKEN", "VOIDBASE_PROJECT_REPO", "VOIDBASE_DEPLOY_DOMAIN", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", MAIL_DOMAIN_VAR, AI_VAR, DATABASE_VAR, "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
 export function loadEnvFiles(files = [".env", ".env.local", "../.env", "../.env.local"]): string[] {
   const loaded: string[] = [];
   for (const f of files) {
@@ -172,11 +178,16 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   const { api, token, account, name, production, preview, secretsDir, secrets: pbSecrets } = local ? await localTarget(opts) : await deployTarget(opts);
   if (api) log(`account ${account.name} (${account.id}), worker "${name}"${preview ? ` (a preview of ${production} for branch ${preview})` : ""}`);
   else log(`worker "${name}" on Cloudflare's local runtime (this machine): no token, no account, nothing reaches Cloudflare`);
+  // the database: D1 (the default), or the instance's own SQLite-backed Durable Object (VOIDBASE_DATABASE=durable from
+  // the environment or pb_secrets/secrets.json, --database durable; src/server/durable-db.ts): then no D1 is created or bound
+  const database = databaseKind(opts.database ?? (process.env[DATABASE_VAR] || readSecretsValues(secretsDir)?.[DATABASE_VAR]));
+  const durable = database === "durable";
   // the local ids: "local" is what Void's dev server names its Miniflare D1, and where it applies db/migrations
-  const db = api ? await ensureD1(api, account.id, `${name}-db`) : { uuid: "local", created: false };
+  const db = durable ? null : api ? await ensureD1(api, account.id, `${name}-db`) : { uuid: "local", created: false };
   const bucket = api ? await ensureR2(api, account.id, `${name}-storage`) : { created: false };
-  if (api) { log(`D1 ${name}-db ${db.created ? "created" : "exists"} (${db.uuid})`); log(`R2 ${name}-storage ${bucket.created ? "created" : "exists"}`); }
-  else log(`D1 ${name}-db and R2 ${name}-storage: Miniflare's, kept under the project's .void/`);
+  if (durable) log(`database: Durable Object (SQLite): ${DB_OBJECT_CLASS} in this Worker, bound as ${DB_OBJECT_BINDING}; no D1 is created or bound (${DATABASE_VAR}=durable)`);
+  if (api) { if (db) log(`D1 ${name}-db ${db.created ? "created" : "exists"} (${db.uuid})`); log(`R2 ${name}-storage ${bucket.created ? "created" : "exists"}`); }
+  else log(`${db ? `D1 ${name}-db and ` : ""}R2 ${name}-storage: Miniflare's, kept under the project's .void/`);
   const off = (v: string | undefined) => v !== undefined && ["0", "false", "off", "no"].includes(v.trim().toLowerCase());
   const wantQueue = opts.queue ?? !off(process.env.VOIDBASE_DEPLOY_QUEUE);
   const on = (v: string | undefined) => v !== undefined && ["1", "true", "on", "yes"].includes(v.trim().toLowerCase());
@@ -240,24 +251,27 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   // ones that carry a deploy.js; their hooks run before the upload, after it, and on --remove
   const deployPlugins = await discoverDeployPlugins(pluginsDir);
   if (deployPlugins.length) log(`deploy plugins: ${deployPlugins.map((p) => `${p.name} (${p.origin})`).join(", ")}`);
-  writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), pluginsDir, entry, queue, hub , workflows: workflows.map((w) => ({ file: w.file, className: w.className })) });
+  writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), pluginsDir, entry, queue, hub, database, workflows: workflows.map((w) => ({ file: w.file, className: w.className })) });
   if (!queue) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/queues`, { recursive: true, force: true }); }
   if (!cron) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/crons`, { recursive: true, force: true }); log("cron trigger disabled (VOIDBASE_DEPLOY_CRON=0 / --no-cron): maintenance runs lazily in requests"); }
     log(observability ? "observability: invocation logs kept for the dashboard" : "observability off (VOIDBASE_DEPLOY_OBSERVABILITY=0)");
   // Smart Placement runs the Worker next to its D1 database: PocketBase-shaped requests are several dependent queries.
   // The rate-limit binding is an exact per-location ceiling per IP on top of the settings' rules (which count per
   // isolate); the Analytics Engine dataset takes one data point per request at any log level.
+  // the SQLite-backed Durable Object classes exported from this Worker (free plan included), one of each per instance: the
+  // realtime hub, and with the knob the database, each under its own migration tag (a Worker already at the hub's tag
+  // gets only the database's step)
+  const doClasses = [...(hub ? [{ binding: "HUB", className: "VoidbaseHub", tag: "voidbase-hub-v1" }] : []), ...(durable ? [{ binding: DB_OBJECT_BINDING, className: DB_OBJECT_CLASS, tag: DB_OBJECT_MIGRATION_TAG }] : [])];
   const workerConfig: Record<string, unknown> = {
     name, ...(api ? { account_id: account.id } : {}), placement: { mode: "smart" },
-    d1_databases: [{ binding: "DB", database_name: `${name}-db`, database_id: db.uuid, migrations_dir: "./db/migrations" }],
+    ...(db ? { d1_databases: [{ binding: "DB", database_name: `${name}-db`, database_id: db.uuid, migrations_dir: "./db/migrations" }] } : {}),
     r2_buckets: [{ binding: "STORAGE", bucket_name: `${name}-storage` }],
     ...(rateLimit ? { ratelimits: [{ name: "RATE_LIMITER", namespace_id: rateLimitNamespace(name), simple: { limit: rateLimit.limit, period: rateLimit.period } }] } : {}),
     ...(analytics ? { analytics_engine_datasets: [{ binding: "LOGS_ANALYTICS", dataset: `${name.replace(/-/g, "_")}_requests` }] } : {}),
       // Workers Observability: the platform keeps invocation logs for the dashboard without the code doing anything.
       // Traces stay off, because they are the expensive half and nothing here reads them yet.
       ...(observability ? { observability: { logs: { enabled: true, invocation_logs: true } } } : {}),
-    // the realtime hub: a SQLite-backed Durable Object class exported from this Worker (free plan included), one per instance
-    ...(hub ? { durable_objects: { bindings: [{ name: "HUB", class_name: "VoidbaseHub" }] }, migrations: [{ tag: "voidbase-hub-v1", new_sqlite_classes: ["VoidbaseHub"] }] } : {}),
+    ...(doClasses.length ? { durable_objects: { bindings: doClasses.map((d) => ({ name: d.binding, class_name: d.className })) }, migrations: doClasses.map((d) => ({ tag: d.tag, new_sqlite_classes: [d.className] })) } : {}),
     ...(workflows.length ? { workflows: workflows.map((w) => ({ name: w.workflowName, binding: w.binding, class_name: w.className })) } : {}),
     // Cloudflare Email Service: the binding sends from any domain onboarded on the account (the plugin holds the
     // From to VOIDBASE_MAIL_DOMAIN) to any recipient once the domain is onboarded, else to verified addresses only
@@ -387,8 +401,8 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   const url = !api ? null : hookCtx.url ?? (workerConfig.workers_dev === false ? null : await workersSubdomain(api, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null)));
   hookCtx.url = url;
   if (workflows.length) log(`workflows: ${workflows.map((w) => `${w.stem} (${w.className}) bound as ${w.binding}`).join(", ")}`);
-  log(`bindings: D1, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${mailDomain ? `, Email Sending (${MAIL_BINDING})` : ""}${aiModel ? `, Workers AI (${AI_BINDING}, ${aiModel})` : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
-  if (opts.dryRun) { await runDeployHooks("after", deployPlugins, hookCtx); log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put ${secrets.length} secrets (${secrets.map(([k]) => k).join(", ")}) and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud }; }
+  log(`bindings: ${durable ? "database (Durable Object, SQLite)" : "D1"}, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${mailDomain ? `, Email Sending (${MAIL_BINDING})` : ""}${aiModel ? `, Workers AI (${AI_BINDING}, ${aiModel})` : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
+  if (opts.dryRun) { await runDeployHooks("after", deployPlugins, hookCtx); log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put ${secrets.length} secrets (${secrets.map(([k]) => k).join(", ")}) and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud, database }; }
 
   // the toolchain comes with the voidbase package (void, and wrangler through void)
   const voidDir = resolve(Bun.resolveSync("void/package.json", PKG), "..");
@@ -411,7 +425,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     if (pathRedirects.length) writeFileSync(`${cloud}/public/_redirects`, pathRedirects.map((r) => `${r.path} ${r.to} ${r.status}`).join("\n") + "\n");
   }
   // a local run stops here: the project is complete, and src/node/serve-workers.ts starts Void's dev server in it
-  if (!api) { await runDeployHooks("after", deployPlugins, hookCtx); return { name, account: "", url: null, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud, superuser: { email, password, file: credFile, source: superuserSource }, vars: [...Object.keys(baked), ...secrets.map(([k]) => k)] }; }
+  if (!api) { await runDeployHooks("after", deployPlugins, hookCtx); return { name, account: "", url: null, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud, database, superuser: { email, password, file: credFile, source: superuserSource }, vars: [...Object.keys(baked), ...secrets.map(([k]) => k)] }; }
   if (secrets.length && !store) log(`secrets: storing ${secrets.map(([k]) => k).join(", ")} on the Worker`);
   // Through the Workers API when the Worker exists, which is every deploy but the first: `wrangler secret put` reads
   // the value from stdin and, on Cloudflare's build machines, sometimes never sees the end of it and waits forever
@@ -430,7 +444,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     const ok = await fetch(`${url}/api/health`).then((r) => r.status).catch(() => 0);
     log(`\nlive: ${url}  (health ${ok || "not reachable yet"})\n├─ REST API:  ${url}/api/\n└─ Dashboard: ${url}/_/   sign in as ${keepSuperuser ? "the superuser the Worker already had" : `${email} (password in ${credFile})`}`);
   } else log("deployed; workers.dev subdomain not enabled on this account, add a route or enable it in the dashboard (or VOIDBASE_DOMAINS=<host> / --domain)");
-  return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud };
+  return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud, database };
 }
 
 /** the environment a deploy plugin reads: pb_secrets/secrets.json under the shell and the .env files, plus what a flag says */

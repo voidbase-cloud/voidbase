@@ -214,15 +214,17 @@ export function writeNotFoundShells(dir: string): string[] {
   return written;
 }
 
-export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; pluginsDir?: string; hubEntry?: string; workflows?: { file: string; className: string }[] } = {}): Plugin {
+export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; pluginsDir?: string; hubEntry?: string; databaseEntry?: string; workflows?: { file: string; className: string }[] } = {}): Plugin {
   const dir = resolve(options.dir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks");
   const migrationsDir = resolve(options.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations");
   const pluginsDir = resolve(options.pluginsDir ?? process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins");
   // hubEntry: the module exporting VoidbaseHub (src/server/hub.ts). Void generates the Worker entry (.void/entry.ts)
   // and exports only its own classes, so the instance's Durable Object class is appended to that entry at bundle time;
-  // wrangler.jsonc declares the binding (HUB) and the new_sqlite_classes migration.
+  // wrangler.jsonc declares the binding (HUB) and the new_sqlite_classes migration. databaseEntry: the same for the
+  // database object (src/server/durable-db.ts VoidbaseDatabase, bound as DB_OBJECT with VOIDBASE_DATABASE=durable).
   // a path is resolved here; a bare specifier (a visible project imports the package by name) is left to Vite
-  const hubEntry = options.hubEntry ? (/^[./]/.test(options.hubEntry) || /^[A-Za-z]:[\\/]/.test(options.hubEntry) ? resolve(options.hubEntry) : options.hubEntry) : "";
+  const entryOf = (e?: string) => (e ? (/^[./]/.test(e) || /^[A-Za-z]:[\\/]/.test(e) ? resolve(e) : e) : "");
+  const hubEntry = entryOf(options.hubEntry); const databaseEntry = entryOf(options.databaseEntry);
   const here = resolve(fileURLToPath(new URL(".", import.meta.url)));
   let clientOut = "";
   return {
@@ -238,9 +240,10 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; p
     closeBundle() { writeNotFoundShells(clientOut); writeSeoRedirects(clientOut); },
     transform(code, id) {
       if (id.replace(/\\/g, "/").endsWith("/.void/entry.ts")) {
-        // the instance's Durable Object class, and the project's Workflow classes, exported from Void's entry
+        // the instance's Durable Object classes (the hub, the database), and the project's Workflow classes, exported from Void's entry
         const extra = [
           ...(hubEntry ? [`export { VoidbaseHub } from ${JSON.stringify(hubEntry)};`] : []),
+          ...(databaseEntry ? [`export { VoidbaseDatabase } from ${JSON.stringify(databaseEntry)};`] : []),
           ...(options.workflows ?? []).map((w) => `export { default as ${w.className} } from ${JSON.stringify(resolve(w.file))};`),
         ];
         if (extra.length) return { code: `${code}\n${extra.join("\n")}\n`, map: null };

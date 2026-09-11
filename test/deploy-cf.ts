@@ -157,6 +157,26 @@ try {
   check("VOIDBASE_DEPLOY_QUEUE/ANALYTICS/RATE_LIMIT=0 leave only D1 and R2", noExtras.code === 0 && !existsSync(`${PKG}/.cloud/bare-api/queues`) && !bareCfg.includes("ratelimits") && !bareCfg.includes("analytics_engine_datasets") && !bareCfg.includes("durable_objects") && !readFileSync(`${PKG}/.cloud/bare-api/vite.config.ts`, "utf8").includes("hubEntry") && bareCfg.includes("d1_databases"), noExtras.out.slice(-200));
   check("without VOIDBASE_MAIL_DOMAIN there is no send_email binding", !bareCfg.includes("send_email") && !cfg.includes("send_email"), bareCfg.slice(0, 200));
   check("without VOIDBASE_AI there is no ai binding and no VOIDBASE_AI var", !/"ai":/.test(bareCfg) && !/"ai":/.test(cfg) && !readFileSync(`${PKG}/.cloud/bare-api/.env`, "utf8").includes("VOIDBASE_AI"), bareCfg.slice(0, 200));
+  // VOIDBASE_DATABASE=durable: the instance's data in its own SQLite-backed Durable Object (src/server/durable-db.ts):
+  // no D1 is created or bound, the class is bound as DB_OBJECT under its own migration tag beside the hub, the project
+  // exports it from the entry and carries no D1 schema; without the knob nothing changes (the mock's state is not
+  // reset here: the runs after this one build on it, so the D1 calls are checked by the worker's name instead)
+  const durable = run(["deploy", "--dry-run", "--name", "durable-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_DATABASE: "durable" });
+  const durableDir = `${PKG}/.cloud/durable-api`;
+  const durableCfg = existsSync(`${durableDir}/wrangler.jsonc`) ? readFileSync(`${durableDir}/wrangler.jsonc`, "utf8") : "";
+  const durableCalls = (await (await fetch(`${MOCK}/__calls`)).json()) as string[];
+  check("VOIDBASE_DATABASE=durable: DB_OBJECT bound to VoidbaseDatabase under its own sqlite migration tag beside the hub, no d1_databases, no D1 call, the log says so", durable.code === 0 && !durableCfg.includes("d1_databases") && /"name": "DB_OBJECT",\s*"class_name": "VoidbaseDatabase"/.test(durableCfg) && /"tag": "voidbase-database-v1",\s*"new_sqlite_classes": \[\s*"VoidbaseDatabase"\s*\]/.test(durableCfg) && /"class_name": "VoidbaseHub"/.test(durableCfg) && !durableCalls.some((c) => c.includes("/d1/database?name=durable-api-db")) && durable.out.includes("database: Durable Object (SQLite)") && durable.out.includes("bindings: database (Durable Object, SQLite), R2"), `${durable.code} calls=${durableCalls.filter((c) => c.includes("durable-api")).join(",")} ${durable.out.slice(-300)}`);
+  check("the durable project exports the class from the entry, carries no D1 schema, and tells Void not to infer a D1", durableCfg !== "" && readFileSync(`${durableDir}/vite.config.ts`, "utf8").includes("databaseEntry") && !existsSync(`${durableDir}/db`) && (JSON.parse(readFileSync(`${durableDir}/void.json`, "utf8")) as { inference: { bindings: { db: boolean } } }).inference.bindings.db === false, durableDir);
+  // the knob from pb_secrets/secrets.json, the way VOIDBASE_AI is read; the file is put back for the runs after this one
+  const secretsFile = `${dir}/pb_secrets/secrets.json`; const secretsBefore = readFileSync(secretsFile, "utf8");
+  writeFileSync(secretsFile, JSON.stringify({ ...(JSON.parse(secretsBefore) as Record<string, string>), VOIDBASE_DATABASE: "durable" }));
+  const durableFromFile = run(["deploy", "--dry-run", "--name", "durable-file-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+  writeFileSync(secretsFile, secretsBefore);
+  const durableFileCfg = existsSync(`${PKG}/.cloud/durable-file-api/wrangler.jsonc`) ? readFileSync(`${PKG}/.cloud/durable-file-api/wrangler.jsonc`, "utf8") : "";
+  check("VOIDBASE_DATABASE=durable in pb_secrets/secrets.json does the same", durableFromFile.code === 0 && !durableFileCfg.includes("d1_databases") && durableFileCfg.includes('"class_name": "VoidbaseDatabase"'), durableFromFile.out.slice(-200));
+  const badKnob = run(["deploy", "--dry-run", "--name", "bad-db-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_DATABASE: "postgres" });
+  check("an unknown VOIDBASE_DATABASE is refused before anything is created", badKnob.code === 1 && /VOIDBASE_DATABASE=postgres: expected d1 or durable/.test(badKnob.out), badKnob.out.slice(-200));
+  check("without the knob nothing changes: D1 bound and created, no DB_OBJECT, no database class in the built Worker, the D1 schema in the project", cfg.includes("d1_databases") && !cfg.includes("DB_OBJECT") && !bareCfg.includes("DB_OBJECT") && !readFileSync(`${PROJECT}/vite.config.ts`, "utf8").includes("databaseEntry") && existsSync(`${PROJECT}/db/migrations`) && !builtWorker.includes("VoidbaseDatabase") && !builtConfig.includes("DB_OBJECT"), "");
   // Workers AI: the ai binding, the model baked as a var, the plan names it; config only, nothing created on the account
   const aiOn = run(["deploy", "--dry-run", "--name", "ai-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_AI: "1" });
   const aiCfg = readFileSync(`${PKG}/.cloud/ai-api/wrangler.jsonc`, "utf8"); const aiEnv = readFileSync(`${PKG}/.cloud/ai-api/.env`, "utf8");
@@ -288,5 +308,5 @@ try {
     const noPrune = run(["deploy", "--dry-run", "--name", "shop"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", ...ghEnv });
     check("without the knob a production deploy leaves the previews alone", noPrune.code === 0 && !/would remove the preview/.test(noPrune.out), noPrune.out.slice(-300));
   }
-} finally { rmSync(root, { recursive: true, force: true }); if (existsSync(`${PKG}/.cloud`)) for (const d of readdirSync(`${PKG}/.cloud`).filter((d) => d.startsWith("shop-pr-") || d === "shop")) rmSync(`${PKG}/.cloud/${d}`, { recursive: true, force: true }); for (const d of ["my-shop-api", "noqueue-api", "bare-api", "mail-api", "ai-api", "hooked-api", "site-demo", "api-demo", "public-demo"]) rmSync(`${PKG}/.cloud/${d}`, { recursive: true, force: true }); rmSync(PROJECT, { recursive: true, force: true }); }
+} finally { rmSync(root, { recursive: true, force: true }); if (existsSync(`${PKG}/.cloud`)) for (const d of readdirSync(`${PKG}/.cloud`).filter((d) => d.startsWith("shop-pr-") || d === "shop")) rmSync(`${PKG}/.cloud/${d}`, { recursive: true, force: true }); for (const d of ["my-shop-api", "noqueue-api", "bare-api", "durable-api", "durable-file-api", "bad-db-api", "mail-api", "ai-api", "hooked-api", "site-demo", "api-demo", "public-demo"]) rmSync(`${PKG}/.cloud/${d}`, { recursive: true, force: true }); rmSync(PROJECT, { recursive: true, force: true }); }
 console.log(`\n${pass} pass, ${fail} fail`); process.exit(fail ? 1 : 0);

@@ -737,6 +737,27 @@ and R2, verification catching a corrupted and a missing entry, each restore with
 signer against AWS's published SigV4 example, and a failed copy leaving the backup intact; the conformance suite
 (`test/conformance/backups.ts`) still runs the PocketBase contract against a live server.
 
+## Where an instance answers: domains
+
+`domains` is the first plugin whose work is at deploy time (the section above): where an instance answers is a
+decision about DNS, certificates and which of several names is the real one, and the core has no business holding
+an opinion about any of it. The runtime half (`src/server/plugins/domains.ts`) provides nothing and reports
+`domains: { hostnames, canonical }` on `/api/plugins` from the two vars the deploy baked; the deploy half
+(`src/node/plugins/domains.ts`) does the rest. `VOIDBASE_DOMAINS` (or `VOIDBASE_DEPLOY_DOMAIN`, the older name, or
+`voidbase deploy --domain`) lists the hostnames, comma separated, the first canonical. `before`: the hostnames are
+validated, workers.dev is turned off, `VOIDBASE_DOMAINS` and `VOIDBASE_CANONICAL_DOMAIN` are baked, and the URL is
+claimed, so the deploy reports `https://<canonical>`. `after`: each hostname is attached through the Workers Custom
+Domains API (idempotent: one already attached is left alone), its certificate is polled on the zone's certificate
+packs until it is active or 90 seconds have passed, the status logged either way (a token without SSL and
+Certificates Read is told so and not waited on), then a zone Redirect Rule per non-canonical hostname sends
+everything under it, 301, to the same path on the canonical one, tagged `voidbase:<worker>:@domains:<host>` so a
+redeploy replaces exactly those and a project's `_redirects` rules on the same zone are untouched (the Rulesets
+permission is the one docs/deploy.md names for `_redirects`; without it the rules to create are printed). `remove`
+(`voidbase deploy --remove`): every hostname pointing at the Worker is detached and those rules are deleted.
+`test/unit/domains-plugin.test.ts` measures the pure parts; `test/deploy-cf.ts` runs `after` and `--remove` against
+the mock's domains, certificate packs and rulesets. The deploy itself now knows only whether workers.dev is on and
+which URL to report. The control plane (`src/cloud/client.ts`) still attaches domains for the instances it provisions.
+
 ## Auth is the core plugin
 
 Auth left the core on 2026-09-09 (plan.md, decision 0.3): `src/server/plugins/auth.ts` is a plugin of tier `core`

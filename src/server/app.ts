@@ -31,6 +31,7 @@ import { mail as mailPlugin } from "./plugins/mail";
 import { ai as aiPlugin, aiRoute } from "./plugins/ai";
 import { translations as translationsPlugin, translationsInfo } from "./plugins/translations";
 import { stripe as stripePlugin } from "./plugins/stripe";
+import { domains as domainsPlugin, domainsInfo } from "./plugins/domains";
 import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
 import { SHIPPED } from "./plugins/shipped";
@@ -524,7 +525,7 @@ mountCronsApi(app);
 export const kernel = createKernel(app);
 // What ships, minus what the project turned off, minus what an installed plugin shadows by name; then what the
 // project installed (pb_plugins, verified against voidbase.lock by the platform module). One graph, resolved once.
-const shipped = [authPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION), openapiPlugin, mcpPlugin, seoPlugin, mailPlugin, aiPlugin, translationsPlugin, stripePlugin];
+const shipped = [authPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION), openapiPlugin, mcpPlugin, seoPlugin, mailPlugin, aiPlugin, translationsPlugin, stripePlugin, domainsPlugin];
 if (shipped.map((p) => p.manifest.name).join() !== SHIPPED.join()) throw new Error("voidbase: src/server/plugins/shipped.ts disagrees with the plugins app.ts loads");
 const shadowed = new Set(installedPlugins.map((p) => p.name));
 const active = shipped.filter((p) => !disabledPlugins.includes(p.manifest.name) && !shadowed.has(p.manifest.name));
@@ -542,7 +543,7 @@ provideMailLookup(() => using<Mail | undefined>(kernel, "mail@1"));
 // the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface.
 app.get("/api/plugins", async (c) => {
   requireSuperuser(c);
-  return c.json({ ...whatLoaded(kernel), installer: installerInfo(c.env), mail: await mailRoute(c.env), ai: aiRoute(c.env), translations: translationsInfo(c.env), payments: using<Payments | undefined>(kernel, "payments@1")?.route(c.env) ?? { via: "none" } });
+  return c.json({ ...whatLoaded(kernel), installer: installerInfo(c.env), mail: await mailRoute(c.env), ai: aiRoute(c.env), translations: translationsInfo(c.env), domains: domainsInfo(c.env), payments: using<Payments | undefined>(kernel, "payments@1")?.route(c.env) ?? { via: "none" } });
 });
 mountSqlApi(app);
 

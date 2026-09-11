@@ -12,7 +12,7 @@ mkdirSync(`${dir}/pb_secrets`); writeFileSync(`${dir}/pb_secrets/main.ts`, `impo
 mkdirSync(`${root}/shopdemo/sk/build`, { recursive: true }); writeFileSync(`${root}/shopdemo/sk/build/index.html`, "<title>app</title>"); // a frontend build next door
 writeFileSync(`${dir}/package.json`, JSON.stringify({ name: "vb", private: true, dependencies: { "@voidbase-cloud/voidbase": "link:@voidbase-cloud/voidbase" } }));
 writeFileSync(`${dir}/main.ts`, `export function register(app: { router: unknown; hooks: Record<string, (...a: unknown[]) => unknown> }) { app.hooks.routerAdd!("GET", "/api/ts-hello", (e: { json: (s: number, d: unknown) => unknown }) => e.json(200, { message: "hi" })); }\n`);
-const run = (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawnSync(["bun", BIN, ...args], { cwd: dir, env: { ...process.env, CLOUDFLARE_API_BASE: MOCK, VOIDBASE_DEPLOY_CF_API_KEY: "", CLOUDFLARE_API_TOKEN: "", VOIDBASE_SUPERUSER_EMAIL: "", VOIDBASE_SUPERUSER_PASSWORD: "", PB_SUPERUSER_EMAIL: "", PB_SUPERUSER_PASSWORD: "", VOIDBASE_HOOKS_DIR: "", VOIDBASE_MIGRATIONS_DIR: "", VOIDBASE_MAIL_DOMAIN: "", VOIDBASE_AI: "", ...env } }); return { code: p.exitCode, out: new TextDecoder().decode(p.stdout) + new TextDecoder().decode(p.stderr) }; };
+const run = (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawnSync(["bun", BIN, ...args], { cwd: dir, env: { ...process.env, CLOUDFLARE_API_BASE: MOCK, VOIDBASE_DEPLOY_CF_API_KEY: "", CLOUDFLARE_API_TOKEN: "", VOIDBASE_SUPERUSER_EMAIL: "", VOIDBASE_SUPERUSER_PASSWORD: "", PB_SUPERUSER_EMAIL: "", PB_SUPERUSER_PASSWORD: "", VOIDBASE_HOOKS_DIR: "", VOIDBASE_MIGRATIONS_DIR: "", VOIDBASE_MAIL_DOMAIN: "", VOIDBASE_AI: "", VOIDBASE_DOMAINS: "", VOIDBASE_DEPLOY_DOMAIN: "", ...env } }); return { code: p.exitCode, out: new TextDecoder().decode(p.stdout) + new TextDecoder().decode(p.stderr) }; };
 try {
   await fetch(`${MOCK}/__calls`, { method: "DELETE" });
   const noToken = run(["deploy", "--dry-run"]);
@@ -118,6 +118,13 @@ try {
   rmSync(`${dir}/pb_public`, { recursive: true, force: true });
   const twoDomains = run(["deploy", "--dry-run", "--name", "site-demo", "--domain", "example.com, api.example.com"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
   check("--domain takes a list: the first is the URL, all are attached after the upload", twoDomains.code === 0 && /custom domains example\.com, api\.example\.com \(workers\.dev off\)/.test(twoDomains.out) && /https:\/\/example\.com/.test(twoDomains.out), twoDomains.out.slice(-300));
+  // the domains plugin (src/node/plugins/domains.ts) does that now: the dry run names it, says its plan, and the vars are baked
+  const siteEnv = readFileSync(`${PKG}/.cloud/site-demo/.env`, "utf8");
+  check("the domains plugin is the shipped deploy plugin that does it: the plan names the redirect, the after hook says what it would attach, the vars are baked", /deploy plugins: domains \(shipped\)/.test(twoDomains.out) && /api\.example\.com redirects to example\.com \(301\)/.test(twoDomains.out) && /dry run: would attach example\.com, api\.example\.com to site-demo, wait for each certificate and set 1 redirect rule\(s\) to example\.com/.test(twoDomains.out) && /^VOIDBASE_DOMAINS=example\.com,api\.example\.com$/m.test(siteEnv) && /^VOIDBASE_CANONICAL_DOMAIN=example\.com$/m.test(siteEnv), `${twoDomains.out.slice(-400)} :: ${siteEnv}`);
+  const aliasKnob = run(["deploy", "--dry-run", "--name", "site-demo"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_DOMAINS: "shop.example.com" });
+  check("VOIDBASE_DOMAINS is the knob's name; the older VOIDBASE_DEPLOY_DOMAIN is still read", aliasKnob.code === 0 && /custom domain shop\.example\.com \(workers\.dev off\)/.test(aliasKnob.out) && /https:\/\/shop\.example\.com/.test(aliasKnob.out) && /custom domain example\.com/.test(run(["deploy", "--dry-run", "--name", "site-demo"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_DEPLOY_DOMAIN: "example.com" }).out), aliasKnob.out.slice(-300));
+  const badHost = run(["deploy", "--dry-run", "--name", "site-demo"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_DOMAINS: "not a host" });
+  check("an invalid hostname is refused by the plugin before the upload, with the plugin named", badHost.code === 1 && /deploy plugin domains \(shipped\) failed in before: invalid custom domain "not a host"/.test(badHost.out), badHost.out.slice(-300));
   const withDomain = run(["deploy", "--dry-run", "--name", "api-demo", "--domain", "https://api.example.com/"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
   const domainCfg = JSON.parse(readFileSync(`${PKG}/.cloud/api-demo/wrangler.jsonc`, "utf8").replace(/^\/\/.*\n/, "")) as { workers_dev?: boolean; routes?: { pattern: string; custom_domain: boolean }[] };
   check("--domain: workers.dev off, no wrangler routes (attached via the API after upload), https url from the host", withDomain.code === 0 && domainCfg.workers_dev === false && domainCfg.routes === undefined && withDomain.out.includes("https://api.example.com") && !withDomain.out.includes("workers.dev)"), withDomain.out.slice(-300));
@@ -176,7 +183,7 @@ try {
     mkdirSync(`${dir}/pb_plugins/greeter`, { recursive: true }); writeFileSync(`${dir}/pb_plugins/greeter/bundle.js`, bundle); writeFileSync(`${dir}/pb_plugins/greeter/deploy.js`, deployJs); await lockWith(deployJs);
     const hooked = run(["deploy", "--dry-run", "--name", "hooked-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
     const hookedCfg = existsSync(`${PKG}/.cloud/hooked-api/wrangler.jsonc`) ? readFileSync(`${PKG}/.cloud/hooked-api/wrangler.jsonc`, "utf8") : ""; const hookedEnv = existsSync(`${PKG}/.cloud/hooked-api/.env`) ? readFileSync(`${PKG}/.cloud/hooked-api/.env`, "utf8") : "";
-    check("an installed plugin's deploy.js is discovered; before changes the config and the vars, after sees the URL, and a dry run reaches both as a dry run", hooked.code === 0 && /deploy plugins: greeter \(https:\/\/m\.example 0\.1\.0\)/.test(hooked.out) && /greeter before: api/.test(hooked.out) && /greeter after: https:\/\/hooked-api\.testsub\.workers\.dev \(dry run\)/.test(hooked.out) && /"greeter": \{\s*"worker": "hooked-api",\s*"account": "acc123"/.test(hookedCfg) && /^GREETER_SAYS=dry$/m.test(hookedEnv), `${hooked.out.slice(-400)} :: ${hookedEnv}`);
+    check("an installed plugin's deploy.js is discovered; before changes the config and the vars, after sees the URL, and a dry run reaches both as a dry run", hooked.code === 0 && /deploy plugins: domains \(shipped\), greeter \(https:\/\/m\.example 0\.1\.0\)/.test(hooked.out) && /greeter before: api/.test(hooked.out) && /greeter after: https:\/\/hooked-api\.testsub\.workers\.dev \(dry run\)/.test(hooked.out) && /"greeter": \{\s*"worker": "hooked-api",\s*"account": "acc123"/.test(hookedCfg) && /^GREETER_SAYS=dry$/m.test(hookedEnv), `${hooked.out.slice(-400)} :: ${hookedEnv}`);
     const removeDry = run(["deploy", "--remove", "--dry-run", "--name", "hooked-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
     check("deploy --remove --dry-run runs the remove hooks and says what it would delete and what stays", removeDry.code === 0 && /greeter remove: hooked-api/.test(removeDry.out) && /would delete the Worker hooked-api; its database, bucket and queue stay \(voidbase destroy hooked-api removes those\)/.test(removeDry.out), removeDry.out.slice(-300));
     const removeNo = run(["deploy", "--remove", "--name", "hooked-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
@@ -190,5 +197,39 @@ try {
     check("a hook that throws fails the deploy with the plugin, its origin and the phase named", failed.code === 1 && /deploy plugin greeter \(https:\/\/m\.example 0\.1\.0\) failed in before: no zone covers it/.test(failed.out), failed.out.slice(-300));
     rmSync(`${dir}/pb_plugins`, { recursive: true, force: true }); rmSync(`${dir}/voidbase.lock`, { force: true });
   }
-} finally { rmSync(root, { recursive: true, force: true }); for (const d of ["my-shop-api", "noqueue-api", "bare-api", "mail-api", "ai-api", "hooked-api"]) rmSync(`${PKG}/.cloud/${d}`, { recursive: true, force: true }); rmSync(PROJECT, { recursive: true, force: true }); }
+  // the domains plugin on a live Worker: attach, wait for the certificate, redirect the rest to the canonical name,
+  // keep the _redirects rules of the same zone; then `deploy --remove` detaches, clears its rules, deletes the Worker
+  {
+    const { CfApi } = await import("../src/cloud/rest"); const { domainsDeploy } = await import("../src/node/plugins/domains");
+    const { applyZoneRedirects } = await import("../src/node/zone-redirects"); const { parseRedirects } = await import("../src/node/cloud-init");
+    type Rule = { description: string; expression: string; action_parameters: { from_value: { status_code: number; target_url: { expression?: string; value?: string } } } };
+    type State = { domains: { hostname: string; service: string }[]; rulesets: Record<string, Rule[]>; scripts: Record<string, unknown>; d1: [string, string][] };
+    const state = async () => (await (await fetch(`${MOCK}/__state`)).json()) as State;
+    const api = new CfApi("cf-test-token", MOCK);
+    // the Worker on the account, as the upload leaves it
+    const form = new FormData(); form.append("metadata", new Blob([JSON.stringify({ main_module: "index.js" })], { type: "application/json" }), "metadata"); form.append("index.js", new Blob(["export default {}"], { type: "application/javascript+module" }), "index.js");
+    await api.form("PUT", "/accounts/acc123/workers/scripts/site-demo", form);
+    const lines: string[] = [];
+    const ctx = { name: "site-demo", account: { id: "acc123" }, api, env: { VOIDBASE_DOMAINS: "example.com, www.example.com" }, config: {}, vars: {}, url: "https://example.com", log: (l: string) => lines.push(l), local: false, dryRun: false };
+    await domainsDeploy.deploy!.after!(ctx);
+    const own = (r: Rule) => r.description.startsWith("voidbase:site-demo:@domains:");
+    const s1 = await state(); const attached = (s: State) => s.domains.filter((d) => d.service === "site-demo").map((d) => d.hostname).sort().join();
+    const www = (s1.rulesets.zone123 ?? []).find((r) => r.description === "voidbase:site-demo:@domains:www.example.com");
+    check("after: both hostnames attached, each certificate polled until active, www sent to the apex by a 301 zone rule tagged as the plugin's", attached(s1) === "example.com,www.example.com" && lines.some((l) => /custom domain example\.com attached \(zone zone123\)/.test(l)) && lines.some((l) => /certificate for example\.com: active/.test(l)) && lines.some((l) => /certificate for www\.example\.com: active/.test(l)) && !!www && www.expression === '(http.host eq "www.example.com")' && www.action_parameters.from_value.status_code === 301 && www.action_parameters.from_value.target_url.expression === 'concat("https://example.com", http.request.uri.path)' && lines.some((l) => /zone example\.com: 1 redirect rule\(s\) set \(www\.example\.com\)/.test(l)), `${lines.join(" | ")} :: ${JSON.stringify(s1.rulesets)}`);
+    lines.length = 0; await domainsDeploy.deploy!.after!(ctx);
+    const s2 = await state();
+    check("after again: idempotent, already attached, still one rule of its own", attached(s2) === "example.com,www.example.com" && lines.filter((l) => /already attached/.test(l)).length === 2 && (s2.rulesets.zone123 ?? []).filter(own).length === 1, lines.join(" | "));
+    // a project's _redirects host rule on the same zone is another set: each pass replaces its own and keeps the other's
+    await applyZoneRedirects(api, "acc123", "site-demo", parseRedirects("https://api.example.com/  /_/  302\n"), () => undefined);
+    lines.length = 0; await domainsDeploy.deploy!.after!(ctx);
+    const s3 = await state(); const apiRule = (s: State) => (s.rulesets.zone123 ?? []).filter((r) => r.description === "voidbase:site-demo:https://api.example.com/").length;
+    check("the _redirects rules and the plugin's rules are two sets on one zone, and neither pass replaces the other's", apiRule(s3) === 1 && (s3.rulesets.zone123 ?? []).filter(own).length === 1 && (s3.rulesets.zone123 ?? []).length === 2, JSON.stringify(s3.rulesets));
+    // --remove through the CLI: the plugin detaches and clears its set, then the Worker goes; the data stays
+    const removed = run(["deploy", "--remove", "--yes", "--name", "site-demo"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_DOMAINS: "example.com,www.example.com" });
+    const s4 = await state();
+    check("deploy --remove --yes: hostnames detached, the plugin's rules removed, the _redirects rule left, the Worker deleted, the database kept", removed.code === 0 && /deploy plugins: domains \(shipped\)/.test(removed.out) && /custom domain example\.com detached/.test(removed.out) && /custom domain www\.example\.com detached/.test(removed.out) && /zone example\.com: 1 redirect rule\(s\) removed/.test(removed.out) && /worker site-demo deleted; its database, bucket and queue stay/.test(removed.out) && attached(s4) === "" && (s4.rulesets.zone123 ?? []).filter(own).length === 0 && apiRule(s4) === 1 && !("site-demo" in s4.scripts) && s4.d1.some(([n]) => n === "site-demo-db"), `${removed.out.slice(-500)} :: ${JSON.stringify(s4.rulesets)}`);
+    const removedAgain = run(["deploy", "--remove", "--yes", "--name", "site-demo"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_DOMAINS: "example.com,www.example.com" });
+    check("removing again: nothing attached, nothing to detach, the Worker is not there, and it says so", removedAgain.code === 0 && !/detached/.test(removedAgain.out) && /worker site-demo: not on the account/.test(removedAgain.out), removedAgain.out.slice(-300));
+  }
+} finally { rmSync(root, { recursive: true, force: true }); for (const d of ["my-shop-api", "noqueue-api", "bare-api", "mail-api", "ai-api", "hooked-api", "site-demo", "api-demo", "public-demo"]) rmSync(`${PKG}/.cloud/${d}`, { recursive: true, force: true }); rmSync(PROJECT, { recursive: true, force: true }); }
 console.log(`\n${pass} pass, ${fail} fail`); process.exit(fail ? 1 : 0);

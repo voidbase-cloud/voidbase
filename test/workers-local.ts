@@ -32,7 +32,7 @@ const env: Record<string, string> = {
   VOIDBASE_SUPERUSER_EMAIL: EMAIL, VOIDBASE_SUPERUSER_PASSWORD: PASSWORD,
   // nothing may reach Cloudflare: a token that must not be used, and an API base nothing listens on
   VOIDBASE_DEPLOY_CF_API_KEY: "must-never-be-used", CLOUDFLARE_API_BASE: "http://127.0.0.1:9",
-  VOIDBASE_DEPLOY_NAME: "", VOIDBASE_DEPLOY_DOMAIN: "", VOIDBASE_HOOKS_DIR: "", VOIDBASE_MIGRATIONS_DIR: "", VOIDBASE_PLUGINS_DIR: "", VOIDBASE_SECRETS_DIR: "", VOIDBASE_DATA_DIR: "", VOIDBASE_PERSIST_TO: "",
+  VOIDBASE_DEPLOY_NAME: "", VOIDBASE_DEPLOY_DOMAIN: "", VOIDBASE_DOMAINS: "", VOIDBASE_HOOKS_DIR: "", VOIDBASE_MIGRATIONS_DIR: "", VOIDBASE_PLUGINS_DIR: "", VOIDBASE_SECRETS_DIR: "", VOIDBASE_DATA_DIR: "", VOIDBASE_PERSIST_TO: "",
 };
 // setsid: the CLI spawns vp, which spawns vite and workerd; the process group takes them all down at the end
 const server = Bun.spawn(["setsid", "bun", BIN, "serve", "--workers", "--http", `127.0.0.1:${port}`], { cwd: root, env, stdin: "ignore", stdout: Bun.file(logPath), stderr: Bun.file(logPath) });

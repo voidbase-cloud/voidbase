@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { parseRedirects } from "../../src/node/cloud-init";
-import { redirectRule } from "../../src/node/deploy-cf";
+import { redirectRule } from "../../src/node/zone-redirects";
 
 const file = `# roles per hostname
 https://www.example.com/*   https://example.com/:splat   301!

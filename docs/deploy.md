@@ -109,15 +109,25 @@ https://developers.cloudflare.com/fundamentals/api/reference/permissions/ should
 stop matching (the token then needs those permissions, picked by hand at
 https://dash.cloudflare.com/?to=/:account/api-tokens).
 
-### A custom domain
+### A custom domain: the `domains` plugin
 
-`voidbase deploy --domain api.example.com` (or `VOIDBASE_DEPLOY_DOMAIN`; several hostnames comma separated, the first is
-the URL the deploy reports) turns workers.dev off for the Worker and attaches each hostname through the Workers Custom
-Domains API after the upload: Cloudflare creates the DNS record and the
-certificate (a minute or two), and the token needs nothing beyond Workers Scripts edit, provided the zone is on the same
-account. Cloudflare still requires the account to have a workers.dev subdomain before it accepts any upload (error
-10063): open Workers & Pages once, or `PUT /accounts/<id>/workers/subdomain {"subdomain": "<name>"}`.
-`destroyInstance` in `voidbase/cloud` detaches custom domains before deleting the Worker.
+Where the instance answers is the `domains` plugin's decision, not the deploy's (docs/plugins.md, "Where an
+instance answers: domains"). `VOIDBASE_DOMAINS=example.com,www.example.com` (`--domain` on the command line;
+`VOIDBASE_DEPLOY_DOMAIN`, the older name, is still read) lists the hostnames, comma separated, the first being the
+canonical one. Before the upload the plugin validates them, turns workers.dev off for the Worker and bakes the list
+and the canonical name as vars (`VOIDBASE_DOMAINS`, `VOIDBASE_CANONICAL_DOMAIN`, reported on `/api/plugins`), and
+the deploy reports `https://<canonical>` as the URL. After the upload it attaches each hostname through the Workers
+Custom Domains API (Cloudflare creates the DNS record and issues the certificate; the token needs nothing beyond
+Workers Scripts edit, provided the zone is on the same account), waits up to 90 seconds for the certificate to be
+active and says where it got (reading the zone's certificate packs takes SSL and Certificates Read on the token;
+without it the plugin says so and does not wait), then sets a zone Redirect Rule per non-canonical hostname sending
+everything under it, 301, to the same path on the canonical one (the same Rulesets path and permission as the
+`_redirects` rules above; the two sets are tagged apart, `voidbase:<worker>:@domains:<host>` for the plugin's, and
+never replace each other). `voidbase deploy --remove` detaches every hostname pointing at the Worker and deletes
+those rules before the Worker goes. Cloudflare still requires the account to have a workers.dev subdomain before it
+accepts any upload (error 10063): open Workers & Pages once, or
+`PUT /accounts/<id>/workers/subdomain {"subdomain": "<name>"}`. `destroyInstance` in `voidbase/cloud` detaches
+custom domains before deleting the Worker, and the control plane attaches them itself for the instances it provisions.
 
 ### What the deploy wires up, and the knobs
 

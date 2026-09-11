@@ -536,6 +536,11 @@ schema, manifest) or a `data` one (the non-system collections' rows and files), 
 restores each on its own terms (refusing an archive from a newer voidbase, never inventing a collection unasked),
 keeps `VOIDBASE_BACKUP_KEEP` of the scheduled ones and copies every archive to a `VOIDBASE_BACKUP_S3_*` bucket
 outside the account with a SigV4 signature of its own, so losing the account is not losing the data (docs/plugins.md).
+And (2026-09-11) domains left the deploy: `domains` is the first plugin with a deploy-time half, on the new surface
+every plugin may use (`before`, `after` and `remove` hooks around `voidbase deploy`, shipped or installed as
+`deploy.js` beside the bundle), attaching the hostnames, waiting for the certificate, redirecting the rest to the
+canonical one and detaching on `voidbase deploy --remove`, so the deploy uploads a Worker, says where it answers,
+and stops; backups' scheduling, previews and observability's toggles are the same shape and come next (docs/plugins.md).
 
 ## What to correct on the site when this lands
 

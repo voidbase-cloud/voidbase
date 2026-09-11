@@ -15,8 +15,10 @@ import type { DeployContext, DeployPhase, DeployPlugin } from "./deploy-plugin";
 /** a shipped name to the function that loads its deploy half; the import is lazy on purpose */
 export type DeployRegistry = Partial<Record<string, () => Promise<DeployPlugin>>>;
 
-/** the shipped plugins that have a deploy-time half (src/node/plugins/<name>.ts); none yet */
-export const SHIPPED_DEPLOY: DeployRegistry = {};
+/** the shipped plugins that have a deploy-time half (src/node/plugins/<name>.ts) */
+export const SHIPPED_DEPLOY: DeployRegistry = {
+  domains: () => import("./plugins/domains").then((m) => m.domainsDeploy),
+};
 
 export interface DiscoveredDeployPlugin {
   name: string;

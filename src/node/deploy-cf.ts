@@ -5,12 +5,14 @@
 // which builds, applies the D1 migrations and uploads the Worker.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { parseRedirects, writeCloudProject, type RedirectEntry } from "./cloud-init";
+import { parseRedirects, writeCloudProject } from "./cloud-init";
+import { applyZoneRedirects } from "./zone-redirects";
+export { applyZoneRedirects, redirectRule } from "./zone-redirects";
 import { pathToFileURL } from "node:url";
 import { loadEnv } from "./serve";
 import { STORE_KEYS_VAR } from "../server/secrets-store";
 import { deleteWorkerSecrets, loadSecrets, putStoreSecrets, readSecretsValues, SECRETS_DIR, STORE_KNOB, storeBindings, storeSecretName, storeSecrets, workerSecretNames, type LoadedSecrets, putWorkerSecrets } from "./secrets";
-import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findQueue, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
+import { CfApi, ensureD1, ensureQueue, ensureR2, findQueue, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
 import { ensureFlags, ensureFlagshipApp, FLAGS_BINDING, FLAGS_VAR } from "./flagship";
 import { MAIL_BINDING, MAIL_DOMAIN_VAR } from "../server/plugins/mail-binding";
 import { AI_BINDING, AI_VAR, aiModelOf } from "../server/plugins/ai-binding";
@@ -79,7 +81,7 @@ function projectName(): string {
 const randomPassword = () => { const a = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const b = crypto.getRandomValues(new Uint8Array(20)); return Array.from(b, (x) => a[x % a.length]).join(""); };
 
 // Bun only loads the .env of the working directory; the starter keeps its PB_* and deploy variables one level up.
-const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", MAIL_DOMAIN_VAR, AI_VAR, "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
+const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DOMAINS", "VOIDBASE_DEPLOY_DOMAIN", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", MAIL_DOMAIN_VAR, AI_VAR, "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
 export function loadEnvFiles(files = [".env", ".env.local", "../.env", "../.env.local"]): string[] {
   const loaded: string[] = [];
   for (const f of files) {
@@ -163,11 +165,8 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   // Workers Free allows 5 cron triggers per account; without the trigger PocketBase's maintenance runs lazily in requests
   const cron = opts.cron ?? !off(process.env.VOIDBASE_DEPLOY_CRON);
   const observability = opts.observability ?? !off(process.env.VOIDBASE_DEPLOY_OBSERVABILITY);
-  // a custom domain on a zone of the account (wrangler attaches it: DNS record + certificate); workers.dev is then off
-  // several hostnames may be listed (comma separated); the first is the Worker's URL, all are attached
-  const domains = String(opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN || "").split(",").map((d) => d.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase()).filter(Boolean);
-  for (const d of domains) if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)) throw new Error(`invalid custom domain "${d}"`);
-  const domain = domains[0] ?? "";
+  // custom domains are the domains plugin's (src/node/plugins/domains.ts, from VOIDBASE_DOMAINS / --domain): its
+  // `before` turns workers.dev off and claims the URL, its `after` attaches them; the deploy only reports the URL
   // the static site next to the API: --public-dir, VOIDBASE_DEPLOY_PUBLIC_DIR, or ./pb_public when it exists (PocketBase's default)
   const publicDir = opts.publicDir || process.env.VOIDBASE_DEPLOY_PUBLIC_DIR || (existsSync(resolve("pb_public")) ? "pb_public" : undefined);
   // the sending domain for Cloudflare Email Service (VOIDBASE_MAIL_DOMAIN, from the environment or secrets.json): the
@@ -229,7 +228,6 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   // isolate); the Analytics Engine dataset takes one data point per request at any log level.
   const workerConfig: Record<string, unknown> = {
     name, ...(api ? { account_id: account.id } : {}), placement: { mode: "smart" },
-    ...(domain ? { workers_dev: false } : {}), // the custom domain is attached through the API after the upload (see below)
     d1_databases: [{ binding: "DB", database_name: `${name}-db`, database_id: db.uuid, migrations_dir: "./db/migrations" }],
     r2_buckets: [{ binding: "STORAGE", bucket_name: `${name}-storage` }],
     ...(rateLimit ? { ratelimits: [{ name: "RATE_LIMITER", namespace_id: rateLimitNamespace(name), simple: { limit: rateLimit.limit, period: rateLimit.period } }] } : {}),
@@ -364,10 +362,9 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     log(`secrets store ${store}: ${secrets.length ? `${opts.dryRun ? "would store" : "storing"} ${secrets.map(([k]) => k).join(", ")}` : "nothing to store"}; bound by name: ${storeKeys.join(", ") || "none"}${retire.length ? `; ${opts.dryRun ? "would retire" : "retiring"} ${retire.join(", ")} from the Worker's own secrets` : ""}`);
   }
 
-  const url = !api ? null : hookCtx.url ?? (domain ? `https://${domain}` : await workersSubdomain(api, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null)));
+  // the URL: what a plugin claimed (a custom domain), else the workers.dev address unless something turned it off
+  const url = !api ? null : hookCtx.url ?? (workerConfig.workers_dev === false ? null : await workersSubdomain(api, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null)));
   hookCtx.url = url;
-  if (domain && local) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")}: nothing to attach on this machine`);
-  else if (domain) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")} (workers.dev off): attached through the Workers Custom Domains API after the upload (Cloudflare adds the DNS record and certificate)`);
   if (workflows.length) log(`workflows: ${workflows.map((w) => `${w.stem} (${w.className}) bound as ${w.binding}`).join(", ")}`);
   log(`bindings: D1, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${mailDomain ? `, Email Sending (${MAIL_BINDING})` : ""}${aiModel ? `, Workers AI (${AI_BINDING}, ${aiModel})` : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
   if (opts.dryRun) { await runDeployHooks("after", deployPlugins, hookCtx); log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put ${secrets.length} secrets (${secrets.map(([k]) => k).join(", ")}) and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud }; }
@@ -405,17 +402,13 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   } else if (secrets.length && (await workerExists(api, account.id, name))) await putWorkerSecrets(api, account.id, name, Object.fromEntries(secrets));
   else for (const [k, v] of secrets) await sh(["bun", wrangler, "secret", "put", k, "--name", name], v + "\n");
   await sh([voidBin, "deploy", "--backend", "cloudflare"]);
-  for (const host of domains) {
-    const d = await attachCustomDomain(api, account.id, { hostname: host, service: name });
-    log(`custom domain ${d.hostname} ${d.created ? "attached" : "already attached"} (zone ${d.zone_id}); the certificate can take a minute`);
-  }
   if (hostRedirects.length) await applyZoneRedirects(api, account.id, name, hostRedirects, log);
   // the deploy plugins' `after`: the Worker is up, the account is theirs to act on
   await runDeployHooks("after", deployPlugins, hookCtx);
   if (url) {
     const ok = await fetch(`${url}/api/health`).then((r) => r.status).catch(() => 0);
     log(`\nlive: ${url}  (health ${ok || "not reachable yet"})\n├─ REST API:  ${url}/api/\n└─ Dashboard: ${url}/_/   sign in as ${keepSuperuser ? "the superuser the Worker already had" : `${email} (password in ${credFile})`}`);
-  } else log("deployed; workers.dev subdomain not enabled on this account, add a route or enable it in the dashboard (or VOIDBASE_DEPLOY_DOMAIN=<host> / --domain)");
+  } else log("deployed; workers.dev subdomain not enabled on this account, add a route or enable it in the dashboard (or VOIDBASE_DOMAINS=<host> / --domain)");
   return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud };
 }
 
@@ -451,12 +444,6 @@ export async function removeDeployment(opts: Pick<DeployOptions, "name" | "accou
   return { name, deleted: true, hooks };
 }
 
-// ---- host-scoped redirects as zone Redirect Rules (Rulesets API, phase http_request_dynamic_redirect) --------------
-// One rule per `_redirects` line, tagged `voidbase:<worker>:` in its description so a redeploy replaces exactly its own
-// rules and leaves the zone's other redirect rules alone. Needs the zone permission Single Redirect (edit) on the deploy
-// token ("Dynamic URL Redirects Write" in the API's permission listing, next to the DNS permission the token may already
-// carry for the zone). Without it the deploy logs the rules to create by hand and carries on.
-const quote = (v: string) => JSON.stringify(v);
 // The sending domain's standing on the account, as far as the token can see. The binding needs the domain onboarded
 // for Email Sending (Cloudflare writes the SPF, DKIM and DMARC records itself), which is a dashboard step or the
 // zone's email/sending API; the deploy token has neither zone permission, so this checks what it can and says the
@@ -480,35 +467,4 @@ export async function mailDomainReport(api: CfApi | null, account: string, domai
   return `mail: ${domain} bound as ${MAIL_BINDING} (zone ${zone.name} is on the account; the token cannot read its Email Sending state): ${onboard}`;
 }
 
-export function redirectRule(worker: string, r: RedirectEntry): Record<string, unknown> {
-  const wildcard = r.path.endsWith("/*"); const prefix = wildcard ? r.path.slice(0, -1) : r.path; // "/docs/*" -> "/docs/"
-  const expression = wildcard ? (prefix === "/" ? `(http.host eq ${quote(r.host!)})` : `(http.host eq ${quote(r.host!)} and starts_with(http.request.uri.path, ${quote(prefix)}))`) : `(http.host eq ${quote(r.host!)} and http.request.uri.path eq ${quote(r.path)})`;
-  const absolute = (to: string) => (/^https?:\/\//.test(to) ? to : `https://${r.host}${to.startsWith("/") ? "" : "/"}${to}`);
-  const splat = r.to.includes(":splat");
-  const target_url = splat
-    ? { expression: `concat(${quote(absolute(r.to).replace(":splat", "").replace(/\/$/, ""))}, ${prefix === "/" ? "http.request.uri.path" : `substring(http.request.uri.path, ${prefix.length - 1})`})` }
-    : { value: absolute(r.to) };
-  return { description: `voidbase:${worker}:${r.source}`, expression, action: "redirect", action_parameters: { from_value: { status_code: r.status, target_url, preserve_query_string: true } }, enabled: true };
-}
-export async function applyZoneRedirects(api: CfApi, account: string, worker: string, entries: RedirectEntry[], log: (l: string) => void): Promise<void> {
-  const byZone = new Map<string, { zone: { id: string; name: string }; rules: Record<string, unknown>[] }>();
-  for (const r of entries) {
-    const zone = await findZone(api, r.host!, account);
-    if (!zone) { log(`redirect ${r.source}: no zone on the account covers ${r.host}, rule skipped`); continue; }
-    const slot = byZone.get(zone.id) ?? { zone, rules: [] }; slot.rules.push(redirectRule(worker, r)); byZone.set(zone.id, slot);
-  }
-  for (const { zone, rules } of byZone.values()) {
-    const path = `/zones/${zone.id}/rulesets/phases/http_request_dynamic_redirect/entrypoint`;
-    try {
-      const cur = await api.raw("GET", path); const body = await cur.text();
-      if (cur.status === 403 || cur.status === 401) throw new Error("permission");
-      const existing = cur.ok ? ((JSON.parse(body) as { result?: { rules?: Record<string, unknown>[] } }).result?.rules ?? []) : [];
-      const kept = existing.filter((x) => !String(x.description ?? "").startsWith(`voidbase:${worker}:`));
-      await api.json("PUT", path, { rules: [...kept, ...rules] });
-      log(`zone ${zone.name}: ${rules.length} redirect rule(s) set (${rules.map((x) => String(x.description).split(":").slice(2).join(":")).join(", ")})`);
-    } catch (e) {
-      const why = e instanceof Error && e.message === "permission" ? "the token lacks the zone permission Single Redirect > Edit (API name: Dynamic URL Redirects Write) for the zone" : e instanceof Error ? e.message : String(e);
-      log(`zone ${zone.name}: redirect rules not set (${why}). Add that permission to the token and deploy again, or create them under Rules > Redirect Rules:\n${rules.map((x) => `  ${x.expression} -> ${JSON.stringify((x.action_parameters as { from_value: { target_url: unknown } }).from_value.target_url)}`).join("\n")}`);
-    }
-  }
-}
+// the host-scoped redirects as zone Redirect Rules live in src/node/zone-redirects.ts (re-exported above)

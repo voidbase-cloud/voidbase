@@ -173,6 +173,19 @@ run() { step "$@" || exit 1; }
 # maybe <step> <command...>: the step when the plan selects it, else a recorded skip
 maybe() { local name="$1"; shift; if plan_run "step:$name"; then run "$name" "$@"; else skip_step "$name" "$(plan_reason "step:$name")"; fi; }
 run install install
+# hot mode (CI_HOT=1): a push to master is a release, in this build, with nothing in the way: the prerelease number
+# moves, the commit and tag are pushed ([CI Skip], so that push starts no build), the GitHub release is made and
+# npm gets the version. No typecheck, no tests. A normal run (CI_HOT=0) is the full suite, the release PR and the
+# executables. The three apps are their own projects and are moved onto a version by hand (scripts/testbeds.ts).
+hot_release() {
+  local branch; branch="${WORKERS_CI_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null)}"
+  if [ "$branch" != master ]; then echo "hot mode: $branch is not master, nothing to release"; return 0; fi
+  if git log -1 --format=%s | grep -qiE '^chore\(master\): release|\[(ci skip|skip ci|ci-skip|skip-ci|cf-build-skip)\]'; then echo "hot mode: a release commit, nothing to do"; return 0; fi
+  if [ -z "${GH_TOKEN:-}" ] || [ -z "${NPM_TOKEN:-}" ]; then echo "hot mode: GH_TOKEN and NPM_TOKEN are needed to release"; return 1; fi
+  local v; v=$(bun scripts/hot-release.ts | tee /dev/stderr | tail -n 1) || return 1
+  export CI_STEPS_DIR CI_STEPS_TSV; CI_NESTED=1 bash scripts/release.sh --hot --no-pr --tag "v$v"
+}
+if [ "${CI_HOT:-0}" = 1 ]; then run hot-release hot_release; run cache-save cache_save; echo; echo "hot release done"; exit 0; fi
 run cache-restore cache_restore
 run commitlint commitlint_check
 run plan plan

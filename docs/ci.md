@@ -100,11 +100,15 @@ with its own meanings (build the site and typecheck it, deploy the instance, rea
 would deploy with). `voidbase sync` writes these three into the triggers it creates whenever the project has the
 scripts, so a project set up from the CLI and one set up by hand in the dashboard end up saying the same thing.
 
-**One change, one build.** Cloudflare builds every push, so the count is decided by the triggers' branch filters.
-Only master has a trigger, so release-please's own branch (a changelog, a version and a manifest generated from
-commits the master build has already run) builds nowhere. A release is the master build that merged its pull request:
-in hot mode that build publishes to npm and moves the testbeds; with hot mode off it also builds the release's
-executables. So a push to master is one build, a pull request is none until it merges (a push to master), and a release is one.
+**One change, one build.** Cloudflare builds every push to master. In hot mode (`CI_HOT=1`, the setting while
+voidbase is in beta) that build is the release: `scripts/hot-release.ts` moves the prerelease number, writes the
+changelog, commits `chore(master): release <version> [CI Skip]` (so its own push starts no build), tags, pushes,
+creates the GitHub release, and `scripts/release.sh --hot` publishes the version to npm, unchecked. No typecheck,
+no tests, no release pull request: a push is on npm in about two minutes. With hot mode off, the build is the full
+suite, release-please keeps the release pull request, and the merge of that pull request publishes and builds the
+executables. voidbase-site, voidbase-demo and voidbase-marketplace are their own projects: nothing here moves them;
+`bun scripts/testbeds.ts <version>` pins and pushes all three by hand, and their own builds deploy them.
+
 
 None of the three verbs supervises the commands it runs: no deadline, no retry, no watchdog. A build that hangs or
 fails is the build platform's to cut short and to run again -- Cloudflare has a twenty minute limit and a retry
@@ -138,7 +142,7 @@ triggers decide what runs:
 
 | event | build |
 | --- | --- |
-| push to master | the master trigger; the release step of the build then refreshes the release PR for releasable commits, or publishes a merged release PR and moves the testbeds onto it |
+| push to master | the master trigger: in hot mode the build is the release (bump, tag, GitHub release, npm); with hot mode off, the full suite and release-please's pull request |
 | push to any other branch | nothing: only master has a trigger |
 | `bun scripts/cf-builds.ts build --branch <b>` or the dashboard's retry | the same, started by hand |
 
@@ -194,7 +198,7 @@ account (the CI, the site, the demo, the marketplace, the instance builds) waits
    repository, creates the CI Worker with its trigger (every push to master builds)
    (only through the API), sets `BUN_VERSION`, and stores the secrets it finds in the environment: the release
    secrets on the master trigger. The release secrets: `GH_TOKEN` (a fine-grained
-   PAT with contents and pull requests write on this repository and contents write on the testbeds' repositories,
+   PAT with contents and pull requests write on this repository and contents write on the three apps' repositories for `scripts/testbeds.ts` by hand,
    for release-please, the release assets and the testbed bumps), `NPM_TOKEN` (the npm granular token), optionally
    `GH_PACKAGES_TOKEN` (a classic PAT with `write:packages`; fine-grained tokens cannot publish packages, and without
    it the GitHub Packages copy is skipped). The first run stops when the account has no build token yet: open the

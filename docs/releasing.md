@@ -110,7 +110,7 @@ with it, the assets are uploaded with it), `NPM_TOKEN` (an npm granular token wi
 GitHub Packages copy is skipped). `bun scripts/cf-builds.ts setup` stores them from the environment; builds of other
 branches never carry them. GitHub itself holds nothing: there are no Actions, so no Actions secrets or variables.
 release-please's PR needs no organization setting for Actions, since a PAT opens it. `GH_TOKEN` also pushes the
-testbed bumps (`scripts/testbeds.ts`, the last step of a publish), so it needs contents write on
+testbed bumps (`bun scripts/testbeds.ts <version>`, run by hand: the three apps are their own projects), so it needs contents write on
 `voidbase-cloud/voidbase-demo`, `voidbase-marketplace` and `voidbase-site` as well.
 
 Consumers: `bun add @voidbase-cloud/voidbase`; from GitHub Packages instead, `.npmrc` with

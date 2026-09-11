@@ -7,15 +7,13 @@
 #                    GitHub Packages, the tarball on the release
 #   executables      when that release lacks checksums.txt: every platform, the exe smoke, the archives and checksums on
 #                    the release, the notes opened with the `./voidbase update` hint
-#   testbeds         once the version is on npm: the demo, the marketplace and the site are pinned to it and pushed
-#                    (scripts/testbeds.ts), and their Cloudflare builds deploy them
 # Idempotent: a re-run after a partial failure does only what is still missing. Steps are recorded for the status page
 # (ci/public, kind release).
 #   scripts/release.sh [--dry-run] [--tag vX.Y.Z] [--no-pr] [--hot]
 #     --dry-run   everything up to the actions: release-please in dry-run mode, npm publish --dry-run, no uploads
 #     --tag       publish a release cut by hand (skips release-please; the checkout must be that tag)
 #     --no-pr     skip the release PR refresh (nothing releasable in the push)
-#     --hot       hot mode: publish to npm, leave the executables to a later normal run
+#     --hot       hot mode: publish to npm without the checks, leave the executables to a later normal run
 # scripts/ci.sh runs it as the last step of a CI build (CI_NESTED=1: no reset, no cache, no page of its own).
 # Environment: GH_TOKEN (contents + pull requests write on the repository), NPM_TOKEN, GH_PACKAGES_TOKEN (optional: the
 # Actions token or a classic PAT with write:packages; fine-grained tokens cannot publish packages), GITHUB_REPOSITORY.
@@ -57,7 +55,8 @@ has_asset() { printf '%s' "$release_json" | grep -qF "\"$1\""; }
 
 on_npm=0; npm view "$PKG@$VERSION" version >/dev/null 2>&1 && on_npm=1
 publish_npm() {
-  bun run check && bun test && bun test/cloud-rest.ts || return 1
+  # hot mode publishes what master is, unchecked: the point of hot mode is that nothing stands between a push and npm
+  if [ -z "$HOT" ]; then bun run check && bun test && bun test/cloud-rest.ts || return 1; fi
   rm -f voidbase-cloud-voidbase-*.tgz; npm pack || return 1
   local tarball; tarball="$PWD/$(ls voidbase-cloud-voidbase-*.tgz)"; ls -la "$tarball"
   local smoke; smoke=$(mktemp -d)
@@ -89,11 +88,8 @@ if [ "$on_npm" = 1 ] && [ -z "$DRY" ]; then skip_step publish; echo "$PKG@$VERSI
 elif [ -z "${GH_TOKEN:-}" ]; then echo "release $TAG needs publishing but GH_TOKEN is not set"; exit 1
 else step publish publish_npm || exit 1; [ -z "$DRY" ] && outputs "published=true"; fi
 
-# the testbeds run the newest release on purpose (a regression is meant to show up there first): once the version is
-# on npm, the release build moves them onto it. Idempotent: a testbed already there is left alone.
-if [ -n "$DRY" ]; then skip_step testbeds "dry run"
-elif [ "${TESTBEDS:-}" = 0 ]; then skip_step testbeds "TESTBEDS=0"
-else step testbeds bun scripts/testbeds.ts "$VERSION" || exit 1; fi
+# voidbase-site, voidbase-demo and voidbase-marketplace are their own projects and are moved onto a version by hand
+# (`bun scripts/testbeds.ts <version>`), never by this build.
 
 build_executables() {
   . scripts/ci-oracles.sh

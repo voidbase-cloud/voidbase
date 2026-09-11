@@ -235,7 +235,8 @@ export class CloudClient {
       running: () => call<{ names: string[]; origins: Record<string, string>; disabled: string[]; installer: { mode: string; repository?: string; branch?: string; hint?: string } }>("GET", "/api/plugins"),
       available: (marketplace?: string) => call<{ available: { marketplace: string; plugins: { name: string; title: string; summary: string; latest: string }[]; error?: string }[] }>("GET", `/api/plugins/available${marketplace ? `?marketplace=${encodeURIComponent(marketplace)}` : ""}`),
       install: (name: string, o: { version?: string; marketplace?: string } = {}) => call<Record<string, unknown>>("POST", "/api/plugins/install", { name, ...o }),
-      remove: (name: string) => call<Record<string, unknown>>("POST", "/api/plugins/remove", { name }),
+      // the instance answers 409 for a core plugin, or one something else requires, until force says it was meant
+      remove: (name: string, o: { force?: boolean } = {}) => call<Record<string, unknown>>("POST", "/api/plugins/remove", o.force ? { name, force: true } : { name }),
       update: (name?: string) => call<Record<string, unknown>>("POST", "/api/plugins/update", name ? { name } : {}),
     };
   }

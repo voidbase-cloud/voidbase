@@ -14,7 +14,7 @@ working plan. What is here is what a contributor needs to touch it.
 | `src/server/plugins/resolve.ts` | the whole graph checked before a single plugin is applied: unknown interface names, version ranges, two providers of one interface, collection ownership, missing requirements, cycles. Everything wrong is reported at once. |
 | `src/server/interfaces/index.ts` | the interfaces a plugin may provide or require, versioned in the name (`auth@1`, `payments@1`, `realtime@1`, `hardening@1`, `mail@1`) and the closed `KNOWN` list. |
 | `src/server/plugins/*.ts` | the plugins voidbase ships with today: `auth`, `realtime`, `hardening`, `backups`, `installer`, `openapi`, `mcp`, `seo`, `mail`, `translations`. |
-| `GET /api/plugins` | what this instance loaded: names, providers, tiers, any core interface nobody provides, `mail`, where this instance's mail goes, and `translations`, the locales and the declared collections. Superuser only. |
+| `GET /api/plugins` | what this instance loaded: names, providers, tiers, `plugins` (each with its tier, a `core` flag and its `provides`/`requires`), any core interface nobody provides, `mail`, where this instance's mail goes, and `translations`, the locales and the declared collections. Superuser only. |
 
 ## The entry points a plugin package uses
 
@@ -43,9 +43,20 @@ interface from this plugin's own fiber, and `using<T>(ctx, "auth@1")` reads one.
 in `requires` is applied only once a provider exists, and cordis tears it down when that provider goes and
 re-applies it when a replacement arrives (measured in `test/unit/plugins.test.ts`).
 
-The tiers are `core` (the instance is not usable without a provider; the `CORE` list in `resolve.ts` is empty
-until something actually leaves the core, so no instance warns today), `official` (ours, versioned with voidbase,
-opt-in) and `community`.
+The tiers are `core` (the instance is not usable without a provider; `CORE` in `resolve.ts` lists `auth@1` since
+auth left the core), `official` (ours, versioned with voidbase, opt-in) and `community`.
+
+Removing a core plugin stays possible and is now deliberate rather than accidental. `voidbase plugins remove auth`
+refuses without `--yes` and prints what stops working: the core interface it provides, what the instance does
+without a provider (it loads, and runs with nobody signed in), and that it reports the gap on `/api/plugins` and
+warns once in its log at boot. With `--yes` it goes through and prints the same warning as a line.
+`POST /api/plugins/remove` answers `409` with `{ message, core, provides, dependents }` carrying that text, and
+proceeds when the body says `"force": true`. The same refusal guards a plugin whose interface another installed
+plugin requires (`polar requires payments@1, and only stripe provides it`), naming the dependents. What the check
+reads is the graph itself: `/api/plugins` carries `plugins`, each with its `name`, `tier`, a `core` flag and its
+`provides` and `requires`, so a panel can say so before it asks. On disk the same answer comes from
+`SHIPPED_FACTS` in `plugins/shipped.ts` (the shipped manifests as data, checked against the real ones at boot) and
+from each installed plugin's `release.json`.
 
 ## The three shapes a feature has taken so far
 
@@ -975,7 +986,8 @@ answers to in a rule, which `filter/compile.ts` asks for instead of keeping a li
 the provider through `src/server/auth-slot.ts` and imports none of the implementation, so replacing auth is
 providing `auth@1` from another plugin. `CORE` lists `auth@1`: an instance running without a provider loads, runs
 with nobody signed in and every superuser route answering 401, and says what it is missing at boot and on
-`/api/plugins`. `voidbase plugins remove auth` is that instance. Still in the core: the bootstrap creates the auth
+`/api/plugins`. `voidbase plugins remove auth --yes` is that instance, and the `--yes` is the point: without it the
+command prints what stops working and does nothing. Still in the core: the bootstrap creates the auth
 collections; the manifest owns them, and handing their creation over is next.
 
 ## What is not built

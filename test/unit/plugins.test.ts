@@ -6,7 +6,7 @@
 // handed to a container.
 import { describe, expect, test } from "bun:test";
 import { checkManifest, type Plugin, type PluginManifest } from "../../src/server/plugins/manifest";
-import { CORE, resolve, satisfies } from "../../src/server/plugins/resolve";
+import { CORE, refusal, removalCost, resolve, satisfies, type PluginFacts } from "../../src/server/plugins/resolve";
 import { Hono } from "hono";
 import { createKernel, load, serve, using, whatLoaded } from "../../src/server/kernel";
 
@@ -203,6 +203,52 @@ describe("the tier that is not optional", () => {
     expect(problems).toEqual([]);
     expect(order.map((p) => p.manifest.name)).toEqual(["backups"]);
     expect(missingCore).toEqual(["auth@1"]);
+  });
+
+  test("what this instance loaded says the tier and the core flag of each plugin, not only the names", async () => {
+    const kernel = createKernel(new Hono() as never);
+    await load(kernel, [plugin({ name: "auth", tier: "core", provides: ["auth@1"] }), plugin({ name: "backups" })], "0.9.0");
+    expect(whatLoaded(kernel).plugins).toEqual([
+      { name: "auth", tier: "core", core: true, provides: ["auth@1"], requires: [] },
+      { name: "backups", tier: "community", core: false, provides: [], requires: [] },
+    ]);
+  });
+});
+
+describe("what removing a plugin costs, which is what makes it deliberate", () => {
+  const facts = (name: string, tier: string, provides: string[] = [], requires: string[] = []): PluginFacts =>
+    ({ name, tier, provides: provides as PluginFacts["provides"], requires: requires as PluginFacts["requires"] });
+  const instance = [facts("auth", "core", ["auth@1"]), facts("backups", "official"), facts("stripe", "official", ["payments@1"]), facts("polar", "official", [], ["payments@1"])];
+
+  test("a core plugin names the interface, what the instance does without a provider, and where it says so", () => {
+    const cost = removalCost(instance, "auth")!;
+    expect(cost.core).toBe(true);
+    expect(cost.provides).toEqual(["auth@1"]);
+    expect(cost.dependents).toEqual([]);
+    expect(cost.reason).toContain("auth is a core plugin: it provides auth@1");
+    expect(cost.reason).toContain("runs with nobody signed in");
+    expect(cost.reason).toContain("/api/plugins");
+    expect(refusal(cost, "To go ahead: voidbase plugins remove auth --yes")).toEndWith("To go ahead: voidbase plugins remove auth --yes");
+  });
+
+  test("a plugin whose interface somebody requires names the dependents", () => {
+    const cost = removalCost(instance, "stripe")!;
+    expect(cost.core).toBe(false);
+    expect(cost.dependents).toEqual(["polar"]);
+    expect(cost.reason).toContain("polar requires payments@1, and only stripe provides it");
+  });
+
+  test("a plugin nothing depends on costs nothing, and a second provider means the interface does not leave", () => {
+    expect(removalCost(instance, "backups")).toBeNull();
+    expect(removalCost(instance, "not-installed")).toBeNull();
+    expect(removalCost([...instance, facts("lemonsqueezy", "official", ["payments@1"])], "stripe")).toBeNull();
+    expect(removalCost([...instance, facts("better-auth", "community", ["auth@1"])], "auth")!.reason).toContain("core plugin");
+  });
+
+  test("the last provider of a core interface is guarded whatever tier it calls itself", () => {
+    const cost = removalCost([facts("better-auth", "community", ["auth@1"]), facts("backups", "official")], "better-auth")!;
+    expect(cost.core).toBe(true);
+    expect(cost.reason).toContain("auth@1");
   });
 });
 

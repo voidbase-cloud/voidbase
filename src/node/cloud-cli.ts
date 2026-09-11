@@ -30,7 +30,7 @@ export const USAGE = `usage: voidbase cloud <verb>
   login --token <token> [--url ${DEFAULT_URL}]     logout     whoami
   instances [ls] | create <name> [--account id] [--email superuser@] | upgrade <name> | delete <name> [--yes]
   repos [ls] | create <instance> --template <name> --name <repo> [--private] [--inputs k=v,k=v] | link <instance> <owner/name> [--template name] | unlink <owner/name>
-  plugins <instance> [ls | install <name>[@version] [--marketplace url] | remove <name> | update [name]] --email .. --password ..
+  plugins <instance> [ls | install <name>[@version] [--marketplace url] | remove <name> [--yes] | update [name]] --email .. --password ..
   every verb takes --json (the raw result); an instance is named by its name or its id`;
 
 /** what a verb refuses with: the message is printed, the code is the exit code (2: usage or not signed in) */
@@ -200,7 +200,7 @@ export async function runCloud(sub: string | undefined, rest: string[], flags: R
         throw new CliError(`unknown repos verb "${action}"\n${USAGE}`, 2);
       }
       case "plugins": {
-        const s = session(flags); const usage = "usage: voidbase cloud plugins <instance> [ls | install <name>[@version] [--marketplace url] | remove <name> | update [name]] --email superuser@ --password ..";
+        const s = session(flags); const usage = "usage: voidbase cloud plugins <instance> [ls | install <name>[@version] [--marketplace url] | remove <name> [--yes] | update [name]] --email superuser@ --password ..";
         if (!rest[0]) throw new CliError(usage, 2);
         const inst = pickInstance(await instances(s), rest[0]);
         if (!inst.url) throw new CliError(`${inst.name} has no URL yet (status ${inst.status}): nothing to sign in to`);
@@ -219,7 +219,7 @@ export async function runCloud(sub: string | undefined, rest: string[], flags: R
         }
         const after = (r: Record<string, unknown>) => [String(r.message ?? r.applied ?? "done"), ...(r.committed ? [`  commit: ${(r.committed as { url?: string; sha?: string }).url ?? (r.committed as { sha?: string }).sha ?? ""}`] : [])];
         if (action === "install" || action === "add") { if (!rest[2]) throw new CliError(usage, 2); const spec = parseSpec(rest[2]); const r = await api.install(spec.name, { version: spec.version, marketplace: flags.marketplace }); emit(r, () => [`installed ${spec.name}${spec.version ? ` ${spec.version}` : ""} on ${inst.name}: ${after(r).join(" ")}`]); return 0; }
-        if (action === "remove" || action === "rm") { if (!rest[2]) throw new CliError(usage, 2); const r = await api.remove(rest[2]); emit(r, () => [`removed ${rest[2]} from ${inst.name}: ${after(r).join(" ")}`]); return 0; }
+        if (action === "remove" || action === "rm") { if (!rest[2]) throw new CliError(usage, 2); const r = await api.remove(rest[2], { force: "yes" in flags }); emit(r, () => [`removed ${rest[2]} from ${inst.name}: ${after(r).join(" ")}`]); return 0; }
         if (action === "update") { const r = await api.update(rest[2]); emit(r, () => [`updated ${rest[2] ?? "the installed plugins"} on ${inst.name}: ${after(r).join(" ")}`]); return 0; }
         throw new CliError(`unknown plugins verb "${action}"\n${usage}`, 2);
       }

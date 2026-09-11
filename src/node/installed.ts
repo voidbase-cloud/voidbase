@@ -7,8 +7,8 @@
 // instance free of our own plugins, not only of our marketplace. Nothing in this file runs a plugin.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { satisfies } from "../server/plugins/resolve";
-import { SHIPPED } from "../server/plugins/shipped";
+import { refusal, removalCost, satisfies, type PluginFacts, type RemovalCost } from "../server/plugins/resolve";
+import { SHIPPED, SHIPPED_FACTS } from "../server/plugins/shipped";
 import { compareVersions, download, fetchIndex, integrityOf, pick, type PluginVersion, type RegistryIndex } from "./registry";
 
 export const DEFAULT_MARKETPLACES = ["https://marketplace.voidbase.cloud"];
@@ -145,8 +145,43 @@ export async function addPlugin(root: string, spec: string, o: AddOptions): Prom
   return { name, version: v.version, marketplace: found.marketplace, previous: have?.version, shadows: isShipped(name) };
 }
 
-/** an installed plugin is deleted; a shipped one is turned off, which is the same thing from the instance's side */
-export function removePlugin(root: string, name: string): "removed" | "disabled" | "already-disabled" {
+/**
+ * The plugin graph as this project stands: what ships and is still on, minus what an installed plugin shadows by
+ * name, plus what is installed. A shipped plugin's manifest is read from the data table rather than by importing
+ * it; an installed one's is the release.json the marketplace served, which is beside its bundle.
+ */
+export function pluginFacts(root: string): PluginFacts[] {
+  const lock = readLock(root);
+  const installed = Object.keys(lock.plugins);
+  const facts: PluginFacts[] = [];
+  for (const name of SHIPPED) {
+    if (lock.disabled.includes(name) || installed.includes(name)) continue;
+    const f = SHIPPED_FACTS[name];
+    facts.push({ name, tier: f.tier, provides: [...(f.provides ?? [])], requires: [...(f.requires ?? [])] });
+  }
+  for (const name of installed) {
+    const recordPath = join(pluginsDirOf(root), name, "release.json");
+    const m = existsSync(recordPath) ? (JSON.parse(readFileSync(recordPath, "utf8")) as PluginVersion).manifest : undefined;
+    facts.push({ name, tier: m?.tier ?? "community", provides: [...(m?.provides ?? [])], requires: [...(m?.requires ?? [])] });
+  }
+  return facts;
+}
+
+/** what removing this plugin costs this project, or null when nothing worth stopping for stops working */
+export const removalCostFor = (root: string, name: string): RemovalCost | null => removalCost(pluginFacts(root), name);
+
+/**
+ * An installed plugin is deleted; a shipped one is turned off, which is the same thing from the instance's side.
+ *
+ * Both are the deliberate act the tiers exist for, so a core plugin, or the only provider of something else's
+ * requirement, is refused here rather than in the caller: this function is what writes voidbase.lock, and a guard
+ * anywhere else is a guard something can be written around. `force` is the caller's `--yes`.
+ */
+export function removePlugin(root: string, name: string, o: { force?: boolean } = {}): "removed" | "disabled" | "already-disabled" {
+  if (!o.force) {
+    const cost = removalCostFor(root, name);
+    if (cost) throw new Error(refusal(cost, `To go ahead: voidbase plugins remove ${name} --yes`));
+  }
   const lock = readLock(root);
   if (lock.plugins[name]) {
     delete lock.plugins[name];

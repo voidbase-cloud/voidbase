@@ -15,6 +15,7 @@ import { filesystem as platformFilesystem } from "#platform/plugins";
 import { requireSuperuser } from "../auth-slot";
 import { badRequest } from "../errors";
 import type { Kernel } from "../kernel";
+import { refusal, removalCost, type PluginFacts } from "./resolve";
 import { download, fetchIndex, pick, type PluginVersion } from "../../node/registry";
 import { commitPlugins, lockOf, type PluginChange, type Repo } from "../project-sync";
 import type { AppEnv, Bindings } from "../types";
@@ -29,7 +30,7 @@ export interface FilesystemInstaller {
   root: string;
   list(): { installed: { name: string; version: string; marketplace: string }[]; disabled: string[]; marketplaces: string[] };
   add(spec: string, o: { marketplace?: string; voidbaseVersion: string }): Promise<{ name: string; version: string; marketplace: string; previous?: string; unchanged?: boolean }>;
-  remove(name: string): "removed" | "disabled" | "already-disabled";
+  remove(name: string, o?: { force?: boolean }): "removed" | "disabled" | "already-disabled";
   update(name: string | undefined, o: { voidbaseVersion: string }): Promise<{ updated: { name: string; from: string; to: string; marketplace: string }[]; current: string[] }>;
 }
 
@@ -47,7 +48,7 @@ export function installerInfo(env: Bindings, filesystem: FilesystemInstaller | n
   return { mode: "fixed", hint: "This instance's plugins were fixed when its Worker was built. Deploy it from a repository and set VOIDBASE_PROJECT_REPO and VOIDBASE_GH_TOKEN on it, and a change here becomes a commit that the repository's build deploys." };
 }
 
-interface Body { name?: unknown; version?: unknown; marketplace?: unknown }
+interface Body { name?: unknown; version?: unknown; marketplace?: unknown; force?: unknown }
 const readBody = async (c: Context<AppEnv>): Promise<Body> => { try { return (await c.req.json()) as Body; } catch { return {}; } };
 const nameOf = (b: Body): string => { const n = String(b.name ?? "").trim(); if (!NAME.test(n)) throw badRequest(`${JSON.stringify(n)} is not a plugin name.`); return n; };
 const marketplaceOf = (b: Body): string | undefined => { const m = b.marketplace ? String(b.marketplace).trim().replace(/\/+$/, "") : undefined; if (m && !MARKETPLACE.test(m)) throw badRequest(`${JSON.stringify(m)} is not a marketplace URL.`); return m; };
@@ -84,7 +85,7 @@ async function onRepository(repo: Repo, o: { add?: { name: string; version?: str
   return { committed: { sha: committed.sha, url: committed.url, branch: committed.branch, repository: repo.fullName }, added: change.add.map((a) => ({ name: a.name, version: a.version.version, marketplace: a.marketplace })), removed: change.remove };
 }
 
-function mountRoutes(app: Hono<AppEnv>, voidbaseVersion: string, filesystem: FilesystemInstaller | null) {
+function mountRoutes(app: Hono<AppEnv>, voidbaseVersion: string, filesystem: FilesystemInstaller | null, graph: () => PluginFacts[]) {
   const restart = "An instance loads plugins when it starts: restart it to load the change.";
   const modeOf = (c: Context<AppEnv>) => { requireSuperuser(c); const info = installerInfo(c.env, filesystem); if (info.mode === "fixed") throw badRequest(info.hint!); return info; };
   app.get("/api/plugins/available", async (c) => {
@@ -101,8 +102,12 @@ function mountRoutes(app: Hono<AppEnv>, voidbaseVersion: string, filesystem: Fil
     return c.json({ applied: "repository", ...r, message: r.unchanged ? `${name} is already installed at that version.` : `Committed to ${info.repository}; its build deploys it.` });
   });
   app.post("/api/plugins/remove", async (c) => {
-    const info = modeOf(c); const name = nameOf(await readBody(c));
-    if (info.mode === "filesystem") { const r = filesystem!.remove(name); return c.json({ applied: "filesystem", result: r, message: r === "removed" ? `Removed ${name}. ${restart}` : r === "disabled" ? `${name} ships with voidbase; it is now turned off for this project. ${restart}` : `${name} was already turned off.` }); }
+    const info = modeOf(c); const b = await readBody(c); const name = nameOf(b); const force = b.force === true;
+    // A core plugin, or the only provider of something else's requirement, goes on purpose or not at all. The
+    // instance answers what stops working rather than doing it, and `force: true` is the saying-so.
+    const cost = force ? null : removalCost(graph(), name);
+    if (cost) return c.json({ message: refusal(cost, 'To go ahead, send this again with "force": true.'), core: cost.core, provides: cost.provides, dependents: cost.dependents }, 409);
+    if (info.mode === "filesystem") { const r = filesystem!.remove(name, { force: true }); return c.json({ applied: "filesystem", result: r, message: r === "removed" ? `Removed ${name}. ${restart}` : r === "disabled" ? `${name} ships with voidbase; it is now turned off for this project. ${restart}` : `${name} was already turned off.` }); }
     const r = await onRepository(repoOf(c.env)!, { remove: name }, voidbaseVersion);
     return c.json({ applied: "repository", ...r, message: `Committed to ${info.repository}; its build deploys it.` });
   });
@@ -114,7 +119,12 @@ function mountRoutes(app: Hono<AppEnv>, voidbaseVersion: string, filesystem: Fil
   });
 }
 
-export const installer = (voidbaseVersion: string, filesystem: FilesystemInstaller | null = platformFilesystem): Plugin => ({
+/**
+ * `graph` is what this instance loaded, asked at request time rather than held: the removal check needs the tiers
+ * and the requires of the whole set, and the kernel knows them only once it has loaded them (app.ts passes
+ * `() => whatLoaded(kernel).plugins`). Without one nothing is guarded, which is what a bare test app wants.
+ */
+export const installer = (voidbaseVersion: string, filesystem: FilesystemInstaller | null = platformFilesystem, graph: () => PluginFacts[] = () => []): Plugin => ({
   manifest: { name: "installer", version: "0.1.0", tier: "official", voidbase: "*" },
-  apply(ctx: Kernel) { mountRoutes(ctx.app, voidbaseVersion, filesystem); },
+  apply(ctx: Kernel) { mountRoutes(ctx.app, voidbaseVersion, filesystem, graph); },
 });

@@ -95,6 +95,6 @@ export const filesystem: FilesystemInstaller = {
   root: projectRoot,
   list: () => { const l = listPlugins(projectRoot); return { installed: l.installed.map((p) => ({ name: p.name, version: p.version, marketplace: p.marketplace })), disabled: l.shipped.filter((p) => p.state !== "active").map((p) => p.name), marketplaces: l.marketplaces }; },
   add: (spec, o) => addPlugin(projectRoot, spec, o),
-  remove: (name) => removePlugin(projectRoot, name),
+  remove: (name, o) => removePlugin(projectRoot, name, o),
   update: (name, o) => updatePlugins(projectRoot, name, o),
 };

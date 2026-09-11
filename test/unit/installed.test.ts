@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { addPlugin, enablePlugin, listPlugins, locate, outsideRange, pluginsModuleSource, providedImport, readLock, removePlugin, updatePlugins, verifyInstalled } from "../../src/node/installed";
+import { addPlugin, enablePlugin, listPlugins, locate, outsideRange, pluginFacts, pluginsModuleSource, providedImport, readLock, removalCostFor, removePlugin, updatePlugins, verifyInstalled } from "../../src/node/installed";
 import { integrityOf } from "../../src/node/registry";
 import { loadInstalled } from "../../src/platform/node/plugins";
 import { createKernel, load, whatLoaded } from "../../src/server/kernel";
@@ -143,11 +143,40 @@ describe("remove, enable, update", () => {
     expect(readLock(root).plugins.echo).toBeUndefined();
     expect(removePlugin(root, "hardening")).toBe("disabled");
     expect(removePlugin(root, "hardening")).toBe("already-disabled");
+    expect(pluginFacts(root).find((p) => p.name === "hardening")).toBeUndefined();
     expect(listPlugins(root).shipped.find((p) => p.name === "hardening")?.state).toBe("disabled");
     expect(enablePlugin(root, "hardening")).toBe("enabled");
     expect(enablePlugin(root, "hardening")).toBe("not-disabled");
     expect(() => removePlugin(root, "nothing")).toThrow("nothing is not installed and does not ship with voidbase");
     expect(() => enablePlugin(root, "echo")).toThrow("echo does not ship with voidbase");
+  });
+
+  test("a core plugin is refused without --yes, and the refusal says what stops working", () => {
+    // the one removal the tiers exist to make deliberate: it is allowed, and it is not allowed by accident
+    const cost = removalCostFor(root, "auth")!;
+    expect(cost.core).toBe(true);
+    expect(cost.provides).toEqual(["auth@1"]);
+    expect(() => removePlugin(root, "auth")).toThrow("auth is a core plugin: it provides auth@1");
+    expect(() => removePlugin(root, "auth")).toThrow("runs with nobody signed in");
+    expect(() => removePlugin(root, "auth")).toThrow("voidbase plugins remove auth --yes");
+    expect(listPlugins(root).shipped.find((p) => p.name === "auth")?.state).toBe("active");
+    // and with it, the same removal goes through: a shipped plugin is turned off for this project
+    expect(removePlugin(root, "auth", { force: true })).toBe("disabled");
+    expect(listPlugins(root).shipped.find((p) => p.name === "auth")?.state).toBe("disabled");
+    expect(removalCostFor(root, "auth")).toBeNull();
+  });
+
+  test("a plugin another installed plugin requires is refused too, and the dependent is named", () => {
+    // an installed plugin's manifest is the release.json beside its bundle, which is where its requires come from
+    mkdirSync(join(root, "pb_plugins/receipts"), { recursive: true });
+    writeFileSync(join(root, "pb_plugins/receipts/release.json"), JSON.stringify({ version: "0.1.0", manifest: { name: "receipts", version: "0.1.0", tier: "community", voidbase: "*", requires: ["mail@1"] } }));
+    writeFileSync(join(root, "voidbase.lock"), JSON.stringify({ lockfileVersion: 1, marketplaces: [], disabled: [], plugins: { receipts: { version: "0.1.0", integrity: "sha256-x", marketplace: "http://m", source: { repository: "a/b", commit: "0123456" }, installedOn: "2026-09-11" } } }));
+    expect(pluginFacts(root).find((p) => p.name === "receipts")).toEqual({ name: "receipts", tier: "community", provides: [], requires: ["mail@1"] });
+    const cost = removalCostFor(root, "mail")!;
+    expect(cost.core).toBe(false);
+    expect(cost.dependents).toEqual(["receipts"]);
+    expect(() => removePlugin(root, "mail")).toThrow("receipts requires mail@1, and only mail provides it");
+    expect(removePlugin(root, "mail", { force: true })).toBe("disabled");
   });
 
   test("an installed plugin with a shipped plugin's name shadows it, which the listing says", async () => {

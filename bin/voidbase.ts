@@ -92,7 +92,9 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      VOIDBASE_PLUGIN_MARKETPLACES): the bundle goes into pb_plugins/<name>, verified
                                      against the marketplace's hash, and is pinned in voidbase.lock. A name served
                                      by two marketplaces is refused until --marketplace says which
-  plugins remove <name>              uninstall it; for a plugin voidbase ships, turn it off for this project
+  plugins remove <name> [--yes]      uninstall it; for a plugin voidbase ships, turn it off for this project. A
+                                     core plugin, or the only provider of an interface another installed plugin
+                                     requires, needs --yes: without it the command prints what stops working
   plugins enable <name>              turn a shipped plugin back on
   plugins update [name]              bring installed plugins to the latest their own marketplace serves
                                      (--dir <project> or --name <local instance> picks the project; default: here)
@@ -159,7 +161,7 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   cloud repos link <instance> <owner/name> [--template name]
                                      link a repository you already have; unlink <owner/name> forgets it (the
                                      repository stays on GitHub)
-  cloud plugins <instance> [ls | install <name>[@version] [--marketplace url] | remove <name> | update [name]] --email .. --password ..
+  cloud plugins <instance> [ls | install <name>[@version] [--marketplace url] | remove <name> [--yes] | update [name]] --email .. --password ..
                                      the instance's own installer, with its superuser (an instance by name or id;
                                      every cloud verb takes --json for the raw result)
   panel sync [--brand <dir>]         copy PocketBase's ui/dist into public/_ (POCKETBASE_UI_DIST), optional branding
@@ -470,7 +472,7 @@ switch (cmd) {
     if (!root) { console.error(`no local instance called ${flags.name} (voidbase local ls)`); process.exit(1); }
     const voidbaseVersion = await currentVersion();
     const restart = "\nAn instance loads plugins when it starts: restart it, or deploy (voidbase deploy, or push).";
-    const usage = "usage: voidbase plugins [ls] | add <name>[@version] [--marketplace url] [--force] | remove <name> | enable <name> | update [name]";
+    const usage = "usage: voidbase plugins [ls] | add <name>[@version] [--marketplace url] [--force] | remove <name> [--yes] | enable <name> | update [name]";
     try {
       switch (sub ?? "ls") {
         case "ls": case "list": {
@@ -489,7 +491,11 @@ switch (cmd) {
         }
         case "remove": case "rm": {
           if (!rest[0]) { console.error(usage); process.exit(1); }
-          const r = I.removePlugin(root, rest[0]);
+          // A core plugin, or the only provider of something another installed plugin requires, goes on purpose:
+          // removePlugin refuses without --yes and says what stops working. With it, the same warning is a line.
+          const yes = "yes" in flags;
+          if (yes) { const cost = I.removalCostFor(root, rest[0]); if (cost) console.log(cost.reason); }
+          const r = I.removePlugin(root, rest[0], { force: yes });
           console.log(r === "removed" ? `removed ${rest[0]}${restart}` : r === "disabled" ? `${rest[0]} ships with voidbase; it is now turned off for this project (voidbase plugins enable ${rest[0]} turns it back on)${restart}` : `${rest[0]} is already turned off`);
           break;
         }

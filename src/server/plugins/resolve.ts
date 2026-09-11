@@ -205,3 +205,72 @@ function parse(s: string): number[] | null {
 
 const compare = (a: number[], b: number[]): number =>
   a[0]! - b[0]! || a[1]! - b[1]! || a[2]! - b[2]!;
+
+// --- what removing one costs -------------------------------------------------------------------------------
+//
+// A core plugin is "removable on purpose, never by accident" (manifest.ts), and the accident this stops is the
+// only one the loader cannot: a removal is not a graph that fails to resolve, it is a graph that resolves to
+// something smaller than the person meant. So the cost is computed from the same manifests, said in full, and the
+// deciding is left to whoever asked — the CLI with `--yes`, the installer route with `force: true`.
+
+/** a plugin as the removal check needs it: its tier and its place in the graph, from its manifest */
+export interface PluginFacts {
+  name: string;
+  tier: string;
+  provides: InterfaceName[];
+  requires: InterfaceName[];
+}
+
+/** what stops working if this plugin goes, and the parts of it an API answers separately */
+export interface RemovalCost {
+  /** a core-tier plugin, or the last provider of an interface the CORE list names */
+  core: boolean;
+  /** every interface it provides */
+  provides: InterfaceName[];
+  /** installed plugins that require an interface only this one provides, and so stop loading with it */
+  dependents: string[];
+  /** what stops working, in the words a person needs before deciding */
+  reason: string;
+}
+
+/**
+ * What an instance does without a provider, named one interface at a time because the answers differ: auth's is
+ * "it runs, with nobody signed in", and that is worth saying rather than leaving to be discovered from a 401.
+ */
+const WITHOUT: Record<string, string> = {
+  "auth@1": "the instance still loads and runs with nobody signed in: no request is authenticated and every superuser route answers 401",
+};
+
+/** what removing `name` from this set costs, or null when nothing worth stopping for stops working */
+export function removalCost(plugins: PluginFacts[], name: string, core: InterfaceName[] = CORE): RemovalCost | null {
+  const self = plugins.find((p) => p.name === name);
+  if (!self) return null;
+  const others = plugins.filter((p) => p.name !== name);
+  // the interfaces that leave with it: the ones nothing else here provides
+  const sole = self.provides.filter((i) => !others.some((p) => p.provides.includes(i)));
+  const lost = sole.filter((i) => core.includes(i));
+  const dependents = [...new Set(others.filter((p) => p.requires.some((i) => sole.includes(i))).map((p) => p.name))].sort();
+  const isCore = self.tier === "core" || lost.length > 0;
+  if (!isCore && !dependents.length) return null;
+
+  const said: string[] = [];
+  if (isCore) {
+    const named = lost.length ? lost : sole;
+    const without = named.map((i) => WITHOUT[i] ?? `the instance still loads and runs without ${i}`).join("; ");
+    said.push(
+      `${name} is a core plugin${named.length ? `: it provides ${named.join(", ")}, and nothing else installed does` : ", which an instance is not usable without"}.` +
+        `${without ? ` Without a provider ${without}.` : ""}` +
+        ` The instance reports the gap on /api/plugins and warns once in its log at boot.`,
+    );
+  }
+  if (dependents.length) {
+    const needed = [...new Set(others.filter((p) => dependents.includes(p.name)).flatMap((p) => p.requires.filter((i) => sole.includes(i))))];
+    said.push(
+      `${dependents.join(" and ")} ${dependents.length > 1 ? "require" : "requires"} ${needed.join(", ")}, and only ${name} provides it: removing it stops ${dependents.length > 1 ? "them" : dependents[0]} loading.`,
+    );
+  }
+  return { core: isCore, provides: [...self.provides], dependents, reason: said.join(" ") };
+}
+
+/** the refusal a caller prints or answers with: what stops working, then the exact way to say it was meant */
+export const refusal = (cost: RemovalCost, goAhead: string): string => `${cost.reason} ${goAhead}`;

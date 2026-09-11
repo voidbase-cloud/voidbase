@@ -7,9 +7,10 @@ import { Hono } from "hono";
 import { addPlugin, listPlugins, removePlugin, updatePlugins } from "../../src/node/installed";
 import { provideAuthLookup } from "../../src/server/auth-slot";
 import { ApiError } from "../../src/server/errors";
-import { createKernel, load } from "../../src/server/kernel";
+import { createKernel, load, whatLoaded } from "../../src/server/kernel";
 import { auth, provider } from "../../src/server/plugins/auth";
 import { installer, installerInfo, type FilesystemInstaller } from "../../src/server/plugins/installer";
+import type { Plugin } from "../../src/server/plugins/manifest";
 import type { AppEnv, AuthRecord, Bindings } from "../../src/server/types";
 
 // a marketplace: one plugin, two versions
@@ -44,12 +45,13 @@ beforeAll(async () => {
 afterAll(() => { market.stop(true); gh.stop(true); });
 
 const superuser = { collection: { name: "_superusers" }, row: { id: "s1" } } as unknown as AuthRecord;
-async function appWith(env: Partial<Bindings>, filesystem: FilesystemInstaller | null) {
+async function appWith(env: Partial<Bindings>, filesystem: FilesystemInstaller | null, extra: Plugin[] = []) {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => { c.set("auth", superuser); await next(); });
   app.onError((err, c) => (err instanceof ApiError ? c.json({ message: err.message }, err.status as 400) : c.json({ message: String(err) }, 500)));
   const kernel = createKernel(app);
-  await load(kernel, [auth, installer("0.9.0", filesystem)], "0.9.0");
+  // the graph the removal check reads is what this instance loaded, asked at request time, the way app.ts passes it
+  await load(kernel, [auth, installer("0.9.0", filesystem, () => whatLoaded(kernel).plugins), ...extra], "0.9.0");
   provideAuthLookup(() => provider);
   const call = async (method: string, path: string, body?: unknown) => { const r = await app.request(path, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }, env as Bindings); return { status: r.status, json: (await r.json()) as any }; }; // eslint-disable-line @typescript-eslint/no-explicit-any
   return { call };
@@ -121,5 +123,43 @@ describe("a project on disk (Bun): the change is written in place, and the insta
   test("removing a shipped plugin turns it off", async () => {
     const { call } = await appWith({}, fs);
     expect((await call("POST", "/api/plugins/remove", { name: "backups" })).json.result).toBe("disabled");
+  });
+});
+
+describe("removing a core plugin, or one something else requires, is a deliberate act", () => {
+  const root = mkdtempSync(join(tmpdir(), "vb-installer-core-"));
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+  const fs: FilesystemInstaller = { root, list: () => { const l = listPlugins(root); return { installed: l.installed, disabled: [], marketplaces: l.marketplaces }; }, add: (spec, o) => addPlugin(root, spec, o), remove: (n, o) => removePlugin(root, n, o), update: (n, o) => updatePlugins(root, n, o) };
+
+  test("409 with what stops working, the core flag, what it provides and who depended on it", async () => {
+    const { call } = await appWith({}, fs);
+    const r = await call("POST", "/api/plugins/remove", { name: "auth" });
+    expect(r.status).toBe(409);
+    expect(r.json).toEqual({
+      message: expect.stringContaining("auth is a core plugin: it provides auth@1"),
+      core: true,
+      provides: ["auth@1"],
+      dependents: [],
+    });
+    expect(r.json.message).toContain("runs with nobody signed in");
+    expect(r.json.message).toContain('send this again with "force": true');
+    expect(existsSync(join(root, "voidbase.lock"))).toBe(false); // nothing was written
+  });
+
+  test('force: true is the saying-so, and the removal goes through', async () => {
+    const { call } = await appWith({}, fs);
+    const r = await call("POST", "/api/plugins/remove", { name: "auth", force: true });
+    expect(r.status).toBe(200); expect(r.json.result).toBe("disabled");
+    expect(JSON.parse(readFileSync(join(root, "voidbase.lock"), "utf8")).disabled).toEqual(["auth"]);
+  });
+
+  test("a plugin whose interface a dependent requires is refused the same way, and the dependent is named", async () => {
+    const pays: Plugin = { manifest: { name: "pays", version: "0.1.0", tier: "community", voidbase: "*", provides: ["payments@1"] } };
+    const shop: Plugin = { manifest: { name: "shop", version: "0.1.0", tier: "community", voidbase: "*", requires: ["payments@1"] } };
+    const { call } = await appWith({}, fs, [pays, shop]);
+    const r = await call("POST", "/api/plugins/remove", { name: "pays" });
+    expect(r.status).toBe(409);
+    expect(r.json.core).toBe(false); expect(r.json.dependents).toEqual(["shop"]); expect(r.json.provides).toEqual(["payments@1"]);
+    expect(r.json.message).toContain("shop requires payments@1, and only pays provides it");
   });
 });

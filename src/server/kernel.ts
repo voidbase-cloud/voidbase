@@ -32,7 +32,7 @@ import { Context } from "cordis";
 import type { Context as RequestContext, Hono } from "hono";
 import { logger } from "#platform/log";
 import type { AppEnv, Bindings } from "./types";
-import type { Plugin } from "./plugins/manifest";
+import type { InterfaceName, Plugin } from "./plugins/manifest";
 import { resolve } from "./plugins/resolve";
 
 /** work a plugin does once per isolate with the bindings, on the first request: creating what it owns */
@@ -104,12 +104,28 @@ export function runBootstraps(kernel: Kernel, env: Bindings): Promise<void> {
   return p;
 }
 
+/**
+ * A loaded plugin as the instance describes itself: the tier it declared, whether that tier is `core`, and its
+ * place in the graph. The core flag is spelled out rather than left to be inferred from the tier, because it is
+ * what a panel or a CLI has to read before it offers to remove one.
+ */
+export interface LoadedPlugin {
+  name: string;
+  tier: string;
+  /** tier `core`: the instance is not usable without it. Removable on purpose, never by accident. */
+  core: boolean;
+  provides: InterfaceName[];
+  requires: InterfaceName[];
+}
+
 /** what this instance ended up running, for the health endpoint and for anything that asks */
 export interface Loaded {
   names: string[];
   providers: Record<string, string>;
   /** the tiers a name belongs to, so an instance can say what it is missing */
   tiers: Record<string, string>;
+  /** every loaded plugin with its tier, its core flag and what it provides and requires */
+  plugins: LoadedPlugin[];
   /**
    * Core interfaces nothing provides. An instance can be run without one, because replacing auth is the entire
    * point of moving it out, but it is not a lean instance and it should not have to be guessed at from a 404.
@@ -123,7 +139,7 @@ export interface Loaded {
 
 const loaded = new WeakMap<Kernel, Loaded>();
 export const whatLoaded = (kernel: Kernel): Loaded =>
-  loaded.get(kernel) ?? { names: [], providers: {}, tiers: {}, missingCore: [], origins: {}, disabled: [] };
+  loaded.get(kernel) ?? { names: [], providers: {}, tiers: {}, plugins: [], missingCore: [], origins: {}, disabled: [] };
 
 /**
  * Fill an interface this plugin declared it provides. The name is the one in the manifest, version and all.
@@ -169,6 +185,7 @@ export async function load(kernel: Kernel, plugins: Plugin[], voidbaseVersion: s
     names: order.map((p) => p.manifest.name),
     providers: Object.fromEntries([...providers].map(([i, n]) => [i, n])),
     tiers: Object.fromEntries(order.map((p) => [p.manifest.name, p.manifest.tier])),
+    plugins: order.map((p) => ({ name: p.manifest.name, tier: p.manifest.tier, core: p.manifest.tier === "core", provides: [...(p.manifest.provides ?? [])], requires: [...(p.manifest.requires ?? [])] })),
     missingCore,
     origins: extra.origins ?? Object.fromEntries(order.map((p) => [p.manifest.name, "shipped"])),
     disabled: extra.disabled ?? [],

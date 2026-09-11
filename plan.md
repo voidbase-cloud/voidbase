@@ -219,9 +219,11 @@ and redeploy — minutes, and a deployment event rather than a toggle.
   while auth was running fine — caught before release. An interface joins the list in the commit that removes its
   built-in implementation, not before.
 - An instance missing a core interface is not refused; it reports the gap on `/api/plugins` (superuser) and warns
-  once in the log. **Done.** The "confirmation" the roadmap wants belongs to the CLI in Phase 6, and surfacing it on
-  `/api/health` for the panel is open — `/api/health` is public, and an inventory of what is missing is a map of
-  the attack surface, so that needs deciding rather than doing.
+  once in the log. **Done.** The "confirmation" the roadmap wants is **done** too (2026-09-11): `voidbase plugins
+  remove <name>` and `POST /api/plugins/remove` both refuse a core plugin, or one something else requires, until
+  `--yes` or `force: true` says it was meant, and `/api/plugins` carries a `core` flag per plugin so a panel can
+  say the same. Surfacing it on `/api/health` for the panel is still open — `/api/health` is public, and an
+  inventory of what is missing is a map of the attack surface, so that needs deciding rather than doing.
 - **The "completely gutted" instance is an invariant, not a shipping mode.** Enforce it with a test — the loader
   imports nothing but the kernel and the manifest, every route is mounted by a plugin — and never ship it as a
   configuration. An instance with no auth answers 404 to everything the SDK and panel know how to ask; that is a
@@ -502,7 +504,10 @@ other branch that way; (2026-09-11) the first payment provider: `stripe`, a ship
 (2026-09-11) `polar` and `lemonsqueezy` behind the same interface: what the three share moved into
 `payments-shared.ts`, each provider file is its knobs, its calls, its signature and its events, and the three are
 one provider of `payments@1` to the loader (stripe claims it, the others join its family), so changing provider is
-changing which key is set; and (2026-09-10) the installer: an instance changes its own plugins (`installer`, a
+changing which key is set; and (2026-09-11) removing a core plugin is a deliberate act: `voidbase plugins remove`
+refuses a core-tier plugin, or one whose interface another installed plugin requires, without `--yes`, and
+`POST /api/plugins/remove` answers 409 with the same text unless the body carries `force: true`, both of them
+printing what stops working rather than finding out afterwards; and (2026-09-10) the installer: an instance changes its own plugins (`installer`, a
 shipped plugin: on disk on Bun, as a commit to the repository it deploys from on Workers), so nobody builds a
 release for a customer's instance; voidbase.cloud wraps voidbase and the user's Cloudflare account, plus the
 GitHub connection for templates and pipelines (Mahmood, 2026-09-10: "that shouldn't be us, it should be the user

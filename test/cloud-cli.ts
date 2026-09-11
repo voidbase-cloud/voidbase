@@ -89,6 +89,10 @@ const instance = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
   if (p === "/api/plugins") return Response.json({ names: ["auth", "realtime", "installer", "echo"], origins: { auth: "shipped", realtime: "shipped", installer: "shipped", echo: "http://market.test 0.1.0" }, disabled: ["backups"], installer: { mode: "repository", repository: "octo-tester/existing", branch: "master" } });
   const body = await req.json().catch(() => null); instanceCalls.push({ path: p, auth, body });
   if (p === "/api/plugins/install") return Response.json({ applied: "repository", committed: { sha: "abc", url: "https://github.com/octo-tester/existing/commit/abc" }, message: "Committed." });
+  // the instance guards a core plugin the way a real one does: 409 with what stops working, until force says it was meant
+  if (p === "/api/plugins/remove" && (body as { name?: string; force?: boolean } | null)?.name === "auth" && !(body as { force?: boolean }).force) {
+    return Response.json({ message: 'auth is a core plugin: it provides auth@1, and nothing else installed does. To go ahead, send this again with "force": true.', core: true, provides: ["auth@1"], dependents: [] }, { status: 409 });
+  }
   if (p === "/api/plugins/remove" || p === "/api/plugins/update") return Response.json({ applied: "repository", message: "Committed." });
   return Response.json({ message: "no" }, { status: 404 });
 } });
@@ -187,6 +191,9 @@ try {
   const rm = await cli("plugins", "vb-my-shop", "remove", "echo", "--password", password);
   const upd = await cli("plugins", "vb-my-shop", "update", "--password", password);
   check("plugins install/remove/update reach the instance with its session; name@version and the marketplace travel", inst.code === 0 && /installed echo 0.2.0 on vb-my-shop: Committed\./.test(inst.out) && /commit: https:\/\/github.com\/octo-tester\/existing\/commit\/abc/.test(inst.out) && rm.code === 0 && /removed echo from vb-my-shop/.test(rm.out) && upd.code === 0 && /updated the installed plugins on vb-my-shop/.test(upd.out) && instanceCalls.length === 3 && instanceCalls.every((c) => c.auth === "inst-session") && JSON.stringify(instanceCalls[0]!.body) === JSON.stringify({ name: "echo", version: "0.2.0", marketplace: "https://marketplace.voidbase.cloud" }) && JSON.stringify(instanceCalls[1]!.body) === JSON.stringify({ name: "echo" }) && JSON.stringify(instanceCalls[2]!.body) === "{}", `${inst.all} ${rm.all} ${upd.all} ${JSON.stringify(instanceCalls)}`);
+  const coreNo = await cli("plugins", "vb-my-shop", "remove", "auth", "--password", password);
+  const coreYes = await cli("plugins", "vb-my-shop", "remove", "auth", "--password", password, "--yes");
+  check("plugins remove of a core plugin: the instance's 409 is the CLI's refusal, and --yes sends force", coreNo.code === 1 && /auth is a core plugin: it provides auth@1/.test(coreNo.err) && /"force": true/.test(coreNo.err) && coreYes.code === 0 && /removed auth from vb-my-shop/.test(coreYes.out) && JSON.stringify(instanceCalls[3]!.body) === JSON.stringify({ name: "auth" }) && JSON.stringify(instanceCalls[4]!.body) === JSON.stringify({ name: "auth", force: true }), `${coreNo.all} ${coreYes.all} ${JSON.stringify(instanceCalls.slice(3))}`);
   row!.url = "https://vb-my-shop.testsub.workers.dev";
 
   // ---- delete

@@ -9,9 +9,11 @@
 // schema creates, and the manifest owns them so nothing else can.
 import { collectionToJSON, findCollection, type Collection } from "../collections/model";
 import { createCollection, updateCollection } from "../collections/service";
+import { logger } from "#platform/log";
 import type { Plugin } from "./manifest";
 
 const RULES = ["listRule", "viewRule", "createRule", "updateRule", "deleteRule"] as const;
+const indexName = (sql: string): string => /CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"']?([^`"'\s(]+)/i.exec(sql)?.[1]?.toLowerCase() ?? sql;
 
 /**
  * What a newer definition adds to a collection the plugin created earlier: fields it lacks (by name), indexes it
@@ -21,11 +23,17 @@ const RULES = ["listRule", "viewRule", "createRule", "updateRule", "deleteRule"]
 export function reconcileDefinition(existing: Collection, def: Record<string, unknown>): Record<string, unknown> | null {
   const have = new Set(existing.fields.map((f) => f.name));
   const fields = ((def.fields as { name: string }[] | undefined) ?? []).filter((f) => !have.has(f.name));
-  const indexes = ((def.indexes as string[] | undefined) ?? []).filter((i) => !existing.indexes.includes(i));
+  // an index is known by its name: the definition's text replaces an existing index of that name (the columns
+  // changed with the fields), and a name the instance lacks is added
+  const wanted = ((def.indexes as string[] | undefined) ?? []);
+  const byName = new Map(wanted.map((i) => [indexName(i), i] as const));
+  const indexes = existing.indexes.map((i) => byName.get(indexName(i)) ?? i);
+  for (const i of wanted) if (!existing.indexes.some((e) => indexName(e) === indexName(i))) indexes.push(i);
+  const indexesChanged = indexes.length !== existing.indexes.length || indexes.some((i, n) => i !== existing.indexes[n]);
   const rules: Record<string, unknown> = {};
   for (const r of RULES) if (r in def && (def[r] ?? null) !== (existing[r] ?? null)) rules[r] = def[r] ?? null;
-  if (!fields.length && !indexes.length && !Object.keys(rules).length) return null;
-  return { ...collectionToJSON(existing), ...rules, fields: [...existing.fields, ...fields], indexes: [...existing.indexes, ...indexes] };
+  if (!fields.length && !indexesChanged && !Object.keys(rules).length) return null;
+  return { ...collectionToJSON(existing), ...rules, fields: [...existing.fields, ...fields], indexes };
 }
 
 /**
@@ -44,7 +52,12 @@ export async function ensureCollections(plugin: Plugin, db: D1Database, definiti
     const existing = await findCollection(db, name);
     if (existing) {
       const next = reconcileDefinition(existing, def);
-      if (next) await updateCollection(db, existing, next);
+      if (next) {
+        // a shape the instance refuses (a hand-made change in the way, say) must not take every request down with
+        // it: the collection keeps its shape, the reason is in the log, and the plugin's routes see the old columns
+        try { await updateCollection(db, existing, next); }
+        catch (e) { logger.warn(`voidbase: ${plugin.manifest.name} could not bring its collection "${name}" up to date`, { error: e instanceof Error ? e.message : String(e) }); }
+      }
       continue;
     }
     await createCollection(db, def);

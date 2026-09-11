@@ -37,19 +37,30 @@ describe("reconciling an owned collection", () => {
   }
   const plugin: Plugin = { manifest: { name: "notes", version: "1.0.0", tier: "community", voidbase: "*", collections: ["notes"] } };
   const v1 = { name: "notes", type: "base", listRule: "user = @request.auth.id", viewRule: "user = @request.auth.id", createRule: null, updateRule: null, deleteRule: null, fields: [{ name: "user", type: "text" }, { name: "title", type: "text" }] };
-  const v2 = { ...v1, listRule: "owner = @request.auth.id", viewRule: "owner = @request.auth.id", fields: [{ name: "owner", type: "text" }, { name: "user", type: "text" }], indexes: ["CREATE INDEX `idx_notes_owner` ON `notes` (`owner`)"] };
+  const v1i = { ...v1, indexes: ["CREATE INDEX `idx_notes_by` ON `notes` (`user`)"] };
+  const v2 = { ...v1, listRule: "owner = @request.auth.id", viewRule: "owner = @request.auth.id", fields: [{ name: "owner", type: "text" }, { name: "user", type: "text" }], indexes: ["CREATE INDEX `idx_notes_owner` ON `notes` (`owner`)", "CREATE INDEX `idx_notes_by` ON `notes` (`owner`, `title`)"] };
 
   test("a newer definition adds its fields, indexes and rules to the collection an older version created; nothing is dropped", async () => {
     const { sqlite, db } = await instance();
-    expect(await ensureCollections(plugin, db, [v1])).toEqual(["notes"]);
+    expect(await ensureCollections(plugin, db, [v1i])).toEqual(["notes"]);
     sqlite.run("INSERT INTO notes (id, user, title) VALUES ('n1', 'u1', 'kept')");
     expect(await ensureCollections(plugin, db, [v2])).toEqual([]);
     const c = (await findCollection(db, "notes"))!;
     expect(c.fields.map((f) => f.name)).toEqual(["id", "user", "title", "owner"]);
     expect(c.listRule).toBe("owner = @request.auth.id");
-    expect(c.indexes).toEqual(["CREATE INDEX `idx_notes_owner` ON `notes` (`owner`)"]);
+    // an index of a known name is replaced (its columns moved with the fields), a new name is added
+    expect(c.indexes).toEqual(["CREATE INDEX `idx_notes_by` ON `notes` (`owner`, `title`)", "CREATE INDEX `idx_notes_owner` ON `notes` (`owner`)"]);
+    expect(sqlite.query("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'notes' AND name LIKE 'idx_%' ORDER BY name").all()).toEqual([{ name: "idx_notes_by" }, { name: "idx_notes_owner" }]);
     expect(sqlite.query("SELECT title, owner FROM notes").all()).toEqual([{ title: "kept", owner: "" }]);
     expect(reconcileDefinition(c, v2)).toBeNull();
+  });
+
+  test("a shape the instance refuses is logged, not thrown: the instance keeps running on the old shape", async () => {
+    const { db } = await instance();
+    await ensureCollections(plugin, db, [v1]);
+    const bad = { ...v1, fields: [...v1.fields, { name: "user", type: "number" }, { name: "id", type: "text" }, { name: "", type: "text" }] };
+    await expect(ensureCollections(plugin, db, [bad])).resolves.toEqual([]);
+    expect((await findCollection(db, "notes"))!.fields.map((f) => f.name)).toEqual(["id", "user", "title"]);
   });
 
   test("a definition that matches touches nothing", async () => {

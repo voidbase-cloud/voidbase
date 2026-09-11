@@ -9,6 +9,12 @@
 export const PANEL_DEFAULT_PATH = "/_/";
 /** where the Worker answers the guarded entry: the asset layer only ever invokes the Worker under /api */
 export const PANEL_API = "/api/panel";
+/**
+ * The file the guarded entry is written as. Not `index.html`: the rules that send the panel's path to the handler
+ * name `<path>index.html` too, and Cloudflare applies a rule to the Worker's own `env.ASSETS.fetch`, so a handler
+ * reading `index.html` is answered with its own redirect. This name is the one the rules do not touch.
+ */
+export const PANEL_ENTRY_FILE = "entry.html";
 
 const SEGMENT = /^[A-Za-z0-9._~-]+$/;
 

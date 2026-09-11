@@ -17,7 +17,7 @@ import type { Context } from "hono";
 import { findAuthRecordByToken, isSuperuser } from "./auth";
 import { cookieValue } from "./csrf";
 import { notFound } from "./errors";
-import { PANEL_API } from "./panel-paths";
+import { PANEL_API, PANEL_ENTRY_FILE } from "./panel-paths";
 import type { AppEnv } from "./types";
 
 export { PANEL_API, PANEL_DEFAULT_PATH, normalizePanelPath, panelRedirectLines } from "./panel-paths";
@@ -89,10 +89,14 @@ export async function panelEntry(c: Context<AppEnv>, at = ""): Promise<Response>
   if (!(await panelSuperuser(c))) return miss();
   const assets = (c.env as unknown as { ASSETS?: AssetFetcher }).ASSETS;
   if (!assets || typeof assets.fetch !== "function") return miss();
-  let res: Response;
-  try { res = await assets.fetch(new Request(new URL(`${dir}index.html`, c.req.url), { method: "GET", headers: { accept: "text/html" } })); }
-  catch { return miss(); }
-  if (!res.ok) return miss();
+  // `entry.html` under a guard, `index.html` otherwise (panel-paths.ts says why): a rule applies to this fetch too,
+  // so the guarded entry has a name no rule names. An older build that has only index.html still answers.
+  let res: Response | null = null;
+  for (const file of [PANEL_ENTRY_FILE, "index.html"]) {
+    try { const r = await assets.fetch(new Request(new URL(`${dir}${file}`, c.req.url), { method: "GET", headers: { accept: "text/html" } })); if (r.ok) { res = r; break; } }
+    catch { /* the next name, then miss() */ }
+  }
+  if (!res) return miss();
   const html = withBase(await res.text(), dir);
   return new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store", "x-robots-tag": "noindex, nofollow" } });
 }

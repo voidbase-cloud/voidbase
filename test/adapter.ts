@@ -199,7 +199,9 @@ try {
   const guardedRedirects = readFileSync(`${pub}/_redirects`, "utf8");
   check("guard sends the bare path, the directory and its index to /api/panel, which is the only way the Worker sees them",
     /^\/admin \/api\/panel\?at=\/admin\/ 302$/m.test(guardedRedirects) && /^\/admin\/ \/api\/panel\?at=\/admin\/ 302$/m.test(guardedRedirects) && /^\/admin\/index\.html \/api\/panel\?at=\/admin\/ 302$/m.test(guardedRedirects) && guardedPanel.panel?.rules.length === 3, guardedRedirects);
-  check("a guarded panel has no 404.html of its own: that copy would be the index, readable by anyone", !existsSync(`${pub}/admin/404.html`) && existsSync(`${pub}/admin/index.html`), readdirSync(`${pub}/admin`).join(" "));
+  // a rule is applied to the Worker's own env.ASSETS.fetch too, so a guarded entry cannot be called index.html:
+  // the handler reading it would be answered with its own redirect (seen on voidbase.cloud, 2026-09-11)
+  check("a guarded panel keeps its entry under a name no rule names, and has no 404.html of its own", !existsSync(`${pub}/admin/404.html`) && existsSync(`${pub}/admin/entry.html`) && !existsSync(`${pub}/admin/index.html`), readdirSync(`${pub}/admin`).join(" "));
 
   const hidden = await adapt(WORK, { quiet: true, clientDir: "dist/client", panel: { path: "/admin", hide: true } });
   const hiddenRedirects = readFileSync(`${pub}/_redirects`, "utf8");

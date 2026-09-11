@@ -364,6 +364,11 @@ where there is no voidbase at all — Void's build importing the same module to 
 that renders per request has no runtime here, so today a loader answers where server code runs, which is
 `routes/`, `middleware/` and `vb_hooks/`. `sessionOf` is what it will call when pages render on this Worker too.
 
+
+Under a guard the panel's entry is written as `entry.html`, not `index.html`. The rules that send the panel's path
+to the handler name `<path>index.html` too, and Cloudflare applies a rule to the Worker's own `env.ASSETS.fetch`,
+so a handler reading `index.html` would be answered with its own redirect and could never serve the panel it
+guards. Without a guard the entry stays `index.html`, because the browser loads it directly.
 ## The panel under your own path
 
 The admin panel is PocketBase's own static build, served at `/_/` since the beginning. The `panel` option moves it,

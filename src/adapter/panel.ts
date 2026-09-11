@@ -18,7 +18,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ensurePanelDir } from "../node/panel";
-import { normalizePanelPath, panelRedirectLines, PANEL_DEFAULT_PATH } from "../server/panel-paths";
+import { normalizePanelPath, panelRedirectLines, PANEL_DEFAULT_PATH, PANEL_ENTRY_FILE } from "../server/panel-paths";
 
 export interface PanelOptions {
   /** where the panel is served (default `/_/`, today's behaviour); `/admin` and `/admin/` mean the same thing */
@@ -113,8 +113,13 @@ export async function writePanel(publicDir: string, opts: PanelOptions): Promise
     // Cloudflare answers an unmatched path with the nearest 404.html; the panel's index is its own, the way
     // scripts/sync-panel.ts writes it for /_/. Not under a guard: that copy would be the index, readable.
     const index = join(dest, "index.html");
-    if (guard) rmSync(join(dest, "404.html"), { force: true });
-    else if (existsSync(index)) cpSync(index, join(dest, "404.html"));
+    if (guard) {
+      rmSync(join(dest, "404.html"), { force: true });
+      // Under a guard the entry is renamed. The rules send `<path>index.html` to the handler, and a rule is applied
+      // to the Worker's own `env.ASSETS.fetch` too, so a handler reading `index.html` would be answered with its own
+      // redirect and could never serve the panel it guards. `entry.html` is the one name no rule names.
+      if (existsSync(index)) { cpSync(index, join(dest, PANEL_ENTRY_FILE)); rmSync(index, { force: true }); }
+    } else if (existsSync(index)) cpSync(index, join(dest, "404.html"));
   }
   const rules = appendPanelRedirects(publicDir, panelRedirectLines(path, { guard: !!guard, hide }));
   return { path, guard, hidden: hide, copied, rebased, rules };

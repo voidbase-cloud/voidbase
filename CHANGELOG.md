@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.36](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.35...v0.9.0-beta.36) (2026-09-11)
+
+* feat(backups): restore the archive as a stream, in chunks
+
 ## [0.9.0-beta.35](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.34...v0.9.0-beta.35) (2026-09-11)
 
 * fix(plugin): reconcile owned indexes by name; a refused shape no longer breaks requests

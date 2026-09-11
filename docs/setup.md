@@ -114,6 +114,14 @@ Server started at http://127.0.0.1:8090
 Open the dashboard, sign in with the account you just made, and you have an instance. `--http 0.0.0.0:8090` makes it
 reachable from other machines; put a TLS terminator in front of it before you do that on the open internet.
 
+`./voidbase serve --tunnel` (the npm package's `voidbase serve --tunnel` too, with or without `--dev`) puts the
+instance on the internet without any of that, through a Cloudflare quick tunnel: the banner gains a line,
+`└─ Tunnel:    https://<words>.trycloudflare.com`, and that address reaches the API and the dashboard over HTTPS
+until the server stops. It needs `cloudflared`: the one `VOIDBASE_CLOUDFLARED` names, else the one on `PATH`, else
+the release binary is downloaded once into `~/.cache/voidbase/cloudflared/` (`XDG_CACHE_HOME` respected). When none
+can be had, the server still starts and says so in one line. Quick tunnels get a fresh address every start and are
+meant for showing work, not hosting it; with `--dev` the watcher keeps one tunnel across hook restarts.
+
 Everything the instance owns lives in `pb_data/` next to the executable: the SQLite database, the uploaded files and
 the generated hook typings. Copy that directory and you have copied the instance. `./voidbase update` fetches the
 newest release for your platform, checks it against the published checksum and replaces the executable in place;

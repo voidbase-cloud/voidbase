@@ -11,7 +11,9 @@ import { embedded } from "./embedded";
 
 export interface ServeOptions { http?: string; dir?: string; hooksDir?: string; migrationsDir?: string; pluginsDir?: string;
   /** pb_secrets/: the declaration and the git-ignored values (VOIDBASE_SECRETS_DIR) */
-  secretsDir?: string; publicDir?: string; quiet?: boolean }
+  secretsDir?: string; publicDir?: string; quiet?: boolean;
+  /** put the instance on the internet through a Cloudflare quick tunnel (cloudflared; src/node/tunnel.ts) */
+  tunnel?: boolean }
 const PKG = resolve(import.meta.dir, "../..");
 
 // system tables: the same SQL migrations Void applies on Cloudflare
@@ -107,15 +109,21 @@ export async function voidbase(opts: ServeOptions = {}) {
     const tick = () => runDue(env as never, new Date()).catch((e) => console.error("voidbase: cron failed", e));
     const first = 60_000 - (Date.now() % 60_000);
     const timer = setTimeout(() => { void tick(); setInterval(() => void tick(), 60_000); }, first);
+    // --tunnel: cloudflared in front of the port, started before the banner so the address is in it. The watcher of
+    // --dev keeps one tunnel across restarts and passes its address down as VOIDBASE_TUNNEL_URL; a missing
+    // cloudflared costs the tunnel, never the server
+    let tunnel: import("./tunnel").Tunnel | null = null;
+    if (opts.tunnel) { const { openTunnel, attachToProcess } = await import("./tunnel"); tunnel = await openTunnel(port); if (tunnel) attachToProcess(tunnel); }
+    const tunnelUrl = tunnel?.url ?? process.env.VOIDBASE_TUNNEL_URL;
     if (!opts.quiet) {
       const shown = hostname === "0.0.0.0" ? "127.0.0.1" : hostname;
       console.log(`voidbase (data: ${dir}, hooks: ${process.env.VOIDBASE_HOOKS_DIR})`);
-      console.log(`Server started at http://${shown}:${port}\n├─ REST API:  http://${shown}:${port}/api/\n└─ Dashboard: http://${shown}:${port}/_/`);
+      console.log(`Server started at http://${shown}:${port}\n├─ REST API:  http://${shown}:${port}/api/\n${tunnelUrl ? "├─" : "└─"} Dashboard: http://${shown}:${port}/_/${tunnelUrl ? `\n└─ Tunnel:    ${tunnelUrl}` : ""}`);
     }
     // bootstrap now (system collections, settings, superuser from env, pb_migrations) instead of on the first request
     await fetch(`http://127.0.0.1:${port}/api/health`).catch(() => undefined);
     await seedUser(port);
-    return { server, env, stop: () => { clearTimeout(timer); server.stop(true); } };
+    return { server, env, stop: () => { clearTimeout(timer); tunnel?.stop(); server.stop(true); } };
   };
   return { ...api, env, dir, start };
 }
@@ -140,9 +148,9 @@ export async function serve(opts: ServeOptions = {}): Promise<VoidbaseServer> {
   return (await voidbase(opts)).start();
 }
 
-// `pocketbase serve`-style flags: --http host:port --dir --hooksDir --migrationsDir --publicDir
+// `pocketbase serve`-style flags: --http host:port --dir --hooksDir --migrationsDir --publicDir --tunnel
 export function parseServeArgs(argv: string[] = process.argv.slice(2)): ServeOptions {
   const flags: Record<string, string> = {};
   for (let i = 0; i < argv.length; i++) { const a = argv[i]!; if (a.startsWith("--")) { const [k, v] = a.slice(2).split("="); flags[k!] = v ?? (argv[i + 1] && !argv[i + 1]!.startsWith("--") ? argv[++i]! : "1"); } }
-  return { http: flags.http, dir: flags.dir, hooksDir: flags.hooksDir, migrationsDir: flags.migrationsDir, pluginsDir: flags.pluginsDir, publicDir: flags.publicDir };
+  return { http: flags.http, dir: flags.dir, hooksDir: flags.hooksDir, migrationsDir: flags.migrationsDir, pluginsDir: flags.pluginsDir, publicDir: flags.publicDir, tunnel: !!flags.tunnel };
 }

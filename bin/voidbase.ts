@@ -18,13 +18,16 @@ const flags: Record<string, string> = {}; const positional: string[] = [];
 for (let i = 0; i < argv.length; i++) { const a = argv[i]!; if (a.startsWith("--")) { const [k, v] = a.slice(2).split("="); flags[k!] = v ?? (argv[i + 1] && !argv[i + 1]!.startsWith("--") ? argv[++i]! : "1"); } else positional.push(a); }
 const [cmd, sub, ...rest] = positional;
 const url = (flags.url ?? process.env.VOIDBASE_URL ?? "http://127.0.0.1:8090").replace(/\/$/, "");
-const serveOpts = () => ({ http: flags.http, dir: flags.dir, hooksDir: flags.hooksDir, migrationsDir: flags.migrationsDir, pluginsDir: flags.pluginsDir, secretsDir: flags.secretsDir, publicDir: flags.publicDir });
+const serveOpts = () => ({ http: flags.http, dir: flags.dir, hooksDir: flags.hooksDir, migrationsDir: flags.migrationsDir, pluginsDir: flags.pluginsDir, secretsDir: flags.secretsDir, publicDir: flags.publicDir, tunnel: !!flags.tunnel });
 const admin = () => { const [email, password] = (flags.admin ?? `${process.env.VOIDBASE_SUPERUSER_EMAIL ?? "admin@example.com"}:${process.env.VOIDBASE_SUPERUSER_PASSWORD ?? ""}`).split(":") as [string, string]; return { email, password }; };
 const HELP = `voidbase - PocketBase-compatible backend: a single Bun process locally, Cloudflare Workers via Void in production
 
-  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--pluginsDir pb_plugins] [--secretsDir pb_secrets] [--publicDir pb_public] [--dev] [--entry main.ts]
+  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--pluginsDir pb_plugins] [--secretsDir pb_secrets] [--publicDir pb_public] [--dev] [--tunnel] [--entry main.ts]
                                      run the server like "pocketbase serve" (--dev restarts when hooks or migrations change;
-                                     --entry runs your own main.ts, the counterpart of a custom PocketBase build)
+                                     --tunnel puts it on the internet through a Cloudflare quick tunnel, a
+                                     https://<words>.trycloudflare.com address, with cloudflared from VOIDBASE_CLOUDFLARED,
+                                     PATH or a download into ~/.cache/voidbase; --entry runs your own main.ts, the
+                                     counterpart of a custom PocketBase build)
   superuser upsert <email> <password>  create or update a superuser: on the local data directory (--dir) or on a running
                                      instance (--url, --admin email:pass)
 
@@ -429,15 +432,20 @@ switch (cmd) {
     if (!flags.dev) { if (flags.entry) { await run("bun", [resolve(flags.entry), ...process.argv.slice(3).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry")]); break; } const { serve } = await import("../src/node/serve"); await serve(serveOpts()); break; }
     // --dev: run the server as a child and restart it when pb_hooks / pb_migrations change (like modd for PocketBase)
     const { watch } = await import("node:fs");
-    const childArgs = process.argv.slice(2).filter((a) => a !== "--dev");
+    const childArgs = process.argv.slice(2).filter((a) => a !== "--dev" && a !== "--tunnel");
     const entry = flags.entry ? resolve(flags.entry) : null;
     let child: ReturnType<typeof Bun.spawn> | null = null; let timer: ReturnType<typeof setTimeout> | null = null;
     const entryArgs = childArgs.slice(1).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry");
-    const start = () => { child = Bun.spawn(entry ? ["bun", entry, ...entryArgs] : ["bun", import.meta.path, ...childArgs], { stdio: ["inherit", "inherit", "inherit"], env: process.env }); };
+    // --tunnel with --dev: the watcher holds the tunnel, so the address survives every restart; the child prints it
+    const env: Record<string, string | undefined> = { ...process.env };
+    let tunnel: import("../src/node/tunnel").Tunnel | null = null;
+    if (flags.tunnel) { const { openTunnel } = await import("../src/node/tunnel"); tunnel = await openTunnel(Number((flags.http ?? "127.0.0.1:8090").split(":")[1] ?? 8090)); if (tunnel) env.VOIDBASE_TUNNEL_URL = tunnel.url; }
+    const start = () => { child = Bun.spawn(entry ? ["bun", entry, ...entryArgs] : ["bun", import.meta.path, ...childArgs], { stdio: ["inherit", "inherit", "inherit"], env }); };
     const restart = () => { if (timer) clearTimeout(timer); timer = setTimeout(() => { console.log("voidbase: hooks changed, restarting"); child?.kill(); start(); }, 300); };
     for (const d of [flags.hooksDir ?? "pb_hooks", flags.migrationsDir ?? "pb_migrations", ...(entry ? [entry] : [])]) { try { watch(resolve(d), { recursive: true }, restart); } catch { /* directory may not exist yet */ } }
     start();
-    process.on("SIGINT", () => { child?.kill(); process.exit(0); }); process.on("SIGTERM", () => { child?.kill(); process.exit(0); });
+    const bye = () => { child?.kill(); tunnel?.stop(); process.exit(0); };
+    process.on("SIGINT", bye); process.on("SIGTERM", bye); process.on("exit", () => tunnel?.stop());
     await new Promise(() => undefined);
     break;
   }

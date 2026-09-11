@@ -5,7 +5,9 @@ import { dirname, resolve } from "node:path";
 import { unzipSync } from "fflate";
 import { embedded } from "./embedded";
 export const PANEL_VERSION = process.env.POCKETBASE_PANEL_VERSION ?? "0.40.2";
-const cacheDir = (version: string) => resolve(`${process.env.XDG_CACHE_HOME ?? `${process.env.HOME ?? process.env.USERPROFILE ?? "."}/.cache`}/voidbase/panel-${version}`);
+/** ~/.cache/voidbase (XDG_CACHE_HOME when set): the panel, cloudflared and whatever else is fetched once per machine. */
+export const cacheRoot = (env: Record<string, string | undefined> = process.env) => resolve(`${env.XDG_CACHE_HOME ?? `${env.HOME ?? env.USERPROFILE ?? "."}/.cache`}/voidbase`);
+const cacheDir = (version: string) => `${cacheRoot()}/panel-${version}`;
 export async function ensurePanelDir(): Promise<string> {
   const local = [process.env.POCKETBASE_UI_DIST, resolve(import.meta.dir, "../../public/_"), resolve(import.meta.dir, "../../../pocketbase/ui/dist")].filter((p): p is string => !!p);
   for (const p of local) if (existsSync(`${p}/index.html`)) return p;

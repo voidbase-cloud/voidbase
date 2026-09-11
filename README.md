@@ -60,8 +60,12 @@ bunx voidbase serve --http 127.0.0.1:8090 --dir pb_data --hooksDir pb_hooks --mi
 
 One Bun process, SQLite in `pb_data/data.db`, files in `pb_data/storage/`, the admin panel at `/_/`, the same
 `pb_hooks` and `pb_migrations` you would give PocketBase (`--dev` restarts on hook changes, `voidbase superuser
-upsert email pass` works offline on `pb_data`). The Cloudflare deployment runs the same code on D1 and R2 with
-`voidbase deploy` from the same directory (see docs/deploy.md). The PocketBase-shaped
+upsert email pass` works offline on `pb_data`). `--tunnel` puts the instance on the internet through a Cloudflare
+quick tunnel: the banner gains a `Tunnel: https://<words>.trycloudflare.com` line, and the tunnel closes with the
+server. It runs `cloudflared` from `VOIDBASE_CLOUDFLARED`, from `PATH`, or downloaded once into
+`~/.cache/voidbase/cloudflared/`; without one the server serves as usual and says so. The Cloudflare deployment
+runs the same code on D1 and R2 with `voidbase deploy` from the same directory (see docs/deploy.md). The
+PocketBase-shaped
 consumer is `voidbase-sveltekit-starter/vb`.
 
 ## Run locally (this checkout, Workers dev server)

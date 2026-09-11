@@ -41,10 +41,13 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      (main.ts, package.json, pb_hooks, pb_migrations, pb_public) with the project's
                                      routes/middleware/crons/queues and whatever src/voidbase/ adds. vite build does
                                      this too through the voidbaseAdapter() plugin; this is the same pass without Vite.
-  init [dir] [--template owner/name] [--ref branch] [--registry url]
+  init [dir] [--template <name|owner/name>] [--ref branch] [--marketplace url]
                                      scaffold .env, pb_hooks/, pb_migrations/, pb_secrets/ in a fresh checkout and sync
-                                     the panel; --template writes somebody's published project into the directory
-                                     instead (owner/name, a GitHub URL, or a name listed in the marketplace)
+                                     the panel; --template starts from a template instead: one the marketplace lists,
+                                     by name, or any public GitHub repository as owner/name, unpacked into dir (default:
+                                     the repository's name; empty or absent) at --ref or the default branch, no .git.
+                                     --template with no name lists what the marketplace has
+  templates [--marketplace url]      the templates the marketplace lists: name, title, summary, repository
   dev [--port 5180]                  start the Void dev server (vp dev)
   build | preview [--port 5181]      production build / run the built Worker locally (vp build / vp preview)
   deploy [--name worker] [--account id] [--domain example.com,api.example.com] [--public-dir pb_public] [--dry-run] [--no-queue] [--no-hub] [--no-cron]
@@ -136,6 +139,17 @@ async function serveOnWorkers(): Promise<never> {
   const bye = () => { void s.stop().then(() => process.exit(0)); };
   process.on("SIGINT", bye); process.on("SIGTERM", bye);
   process.exit(await s.exited);
+}
+// `voidbase templates` / `voidbase init --template`: what the marketplaces list, one line each, and how to start one
+async function listTemplates(): Promise<void> {
+  const T = await import("../src/node/template");
+  const marketplaces = T.templateMarketplaces(flags.marketplace);
+  const { templates, problems } = await T.listTemplates(marketplaces);
+  for (const p of problems) console.error(p);
+  if (!templates.length) { console.log(`no templates listed on ${marketplaces.join(", ")}`); if (problems.length) process.exit(1); return; }
+  const w = Math.max(...templates.map((t) => t.name.length));
+  for (const t of templates) console.log(`${t.name.padEnd(w)}  ${t.title}: ${t.summary}  (${t.repository}${marketplaces.length > 1 ? `, ${t.marketplace}` : ""})`);
+  console.log(`\nstart one: voidbase init [dir] --template <name>   (or any public repository: --template owner/name)`);
 }
 if (cmd && TOOLCHAIN.has(cmd) && isExecutable()) { console.error(`"${cmd}" needs the Cloudflare toolchain, which comes with the npm package, not the prebuilt executable:\n  bunx @voidbase-cloud/voidbase ${argv.join(" ")}`); process.exit(1); }
 switch (cmd) {
@@ -479,15 +493,19 @@ switch (cmd) {
     console.log("  deploy it: cd .voidbase && voidbase deploy");
     break;
   }
+  case "templates": await listTemplates(); break;
   case "init": {
     const dir = resolve(sub ?? ".");
     // --template starts from somebody's working project instead of an empty directory. It writes the whole thing,
     // so the scaffold below is skipped: a template that needed scaffolding on top would not be much of a template.
-    if (flags.template) {
-      const { fetchTemplate } = await import("../src/node/template");
-      const r = await fetchTemplate(flags.template, dir, { ref: flags.ref, registry: flags.registry, log: (l) => console.log(l) });
-      console.log(`${r.files} files from ${r.repository} at ${r.ref} into ${dir}`);
-      console.log(`\nnext: cd ${sub ?? "."} && bun install, then read its README`);
+    if ("template" in flags) {
+      if (flags.template === "1") { await listTemplates(); break; } // bare --template: the listing, the same as voidbase templates
+      const T = await import("../src/node/template");
+      try {
+        const r = await T.fetchTemplate(flags.template!, sub, { ref: flags.ref, marketplaces: T.templateMarketplaces(flags.marketplace), log: (l) => console.log(l) });
+        console.log(`${r.files} files from ${r.repository} at ${r.ref} into ${r.dir}`);
+        console.log(`\nnext: cd ${sub ?? r.repository.split("/")[1]}, then ${r.next.join(", then ")}`);
+      } catch (err) { console.error(err instanceof Error ? err.message : String(err)); process.exit(1); }
       break;
     }
     const { scaffold, writeSecretsDeclaration } = await import("../src/node/local");

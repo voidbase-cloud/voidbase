@@ -494,7 +494,9 @@ a backup on the source restored on the target through the backups API over HTTP,
 running instances in either direction; `voidbase serve --tunnel` runs cloudflared (configured, on PATH, or
 downloaded once into the cache) and prints the trycloudflare address in the banner; `voidbase serve --workers` runs
 the project a deploy would upload on workerd through Void's dev server, D1, R2, queue and hub local, nothing touching
-Cloudflare (docs/deploy.md).
+Cloudflare (docs/deploy.md). And templates (2026-09-11): `voidbase init --template <name>` starts from a template the
+marketplace's index lists, `--template owner/name` from any public GitHub repository, the tarball of one ref unpacked
+with the system tar and the next steps read from the files (docs/setup.md).
 
 ## What to correct on the site when this lands
 

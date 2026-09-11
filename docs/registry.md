@@ -60,8 +60,9 @@ may change, a version record and its bundle never do once published (a change is
   visible as a change.
 - `audit` is what the marketplace checked, with the reason for every check, so a reader can disagree with any one
   of them. Its absence is allowed and visible.
-- `templates` are pointers: a template is started from on GitHub (*Use this template*), so a marketplace only
-  lists them.
+- `templates` are pointers: a template is started from on GitHub (*Use this template*, or `voidbase init
+  --template <name>`, which downloads the repository's tarball), so a marketplace only lists them. An optional
+  `name` (`^[a-z][a-z0-9-]*$`) is what the CLI asks for one by; without it, the repository's own name serves.
 
 ## The bundle
 

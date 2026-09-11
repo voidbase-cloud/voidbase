@@ -185,6 +185,16 @@ declaration in `pb_secrets/main.ts` to fill in. Make a superuser the same way as
 `voidbase superuser upsert you@example.com your-password`, or set `VOIDBASE_SUPERUSER_EMAIL` and
 `VOIDBASE_SUPERUSER_PASSWORD` in `.env` and let the first run create it.
 
+To start from somebody's working project instead of empty directories, `voidbase init [dir] --template <name>`
+takes a template the marketplace lists (`voidbase templates`, or `voidbase init --template` with no name, prints
+them: name, title, summary, repository; `--marketplace <url>` reads another, and `VOIDBASE_PLUGIN_MARKETPLACES`
+applies here too) and `--template owner/name` takes any public GitHub repository. The files of the default branch
+(or `--ref <branch or tag>`) are downloaded from GitHub as a tarball and unpacked with the system `tar` into `dir`
+(default: the repository's name), which has to be empty or absent; nothing is cloned and no `.git` is left behind.
+The next steps are read from the template itself: `bun install` and its `dev` script for a package, `voidbase
+serve` for a PocketBase layout, `bun install` and `bun run dev` for a voidbase stack app. GitHub answers 404 for a
+private repository and a missing one alike, and the command says so.
+
 ### Straight onto Cloudflare
 
 The same directory deploys to your own Cloudflare account as one Worker, with its D1 database, R2 bucket, jobs queue

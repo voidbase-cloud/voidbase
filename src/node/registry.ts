@@ -52,6 +52,8 @@ export interface AuditRecord {
 }
 
 export interface TemplateListing {
+  /** what `voidbase init --template <name>` asks for; the repository's own name when absent */
+  name?: string;
   repository: string;
   title: string;
   summary: string;
@@ -119,6 +121,7 @@ export function problemsWithIndex(index: unknown): string[] {
     if (!Array.isArray(index.templates)) out.push("templates, when present, has to be an array");
     else index.templates.forEach((t, i) => {
       if (!isRecord(t) || !isString(t.repository) || !REPOSITORY.test(t.repository) || !isString(t.title) || !isString(t.summary)) out.push(`templates[${i}] needs repository (owner/name), title and summary`);
+      else if (t.name !== undefined && (!isString(t.name) || !NAME.test(t.name))) out.push(`templates[${i}].name ${JSON.stringify(t.name)} is not a template name (lowercase, digits and dashes)`);
     });
   }
   return out;

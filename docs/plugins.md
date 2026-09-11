@@ -744,7 +744,7 @@ record):
 `POST https://api.cloudflare.com/client/v4/accounts/<account_id>/analytics_engine/sql` with the SQL as the request
 body and `Authorization: Bearer <token>` (https://developers.cloudflare.com/analytics/analytics-engine/sql-api/,
 checked 2026-09-11), when both `VOIDBASE_OBSERVABILITY_ACCOUNT_ID` (or the `VOIDBASE_ACCOUNT_ID` the deploy already
-bakes) and `VOIDBASE_OBSERVABILITY_TOKEN` are set. The token needs Account Analytics | Read, and it is a secret:
+bakes) and `VOIDBASE_OBSERVABILITY_TOKEN` are set. The token needs Account Analytics | Read, and it is a secret. Give it a token that has only that permission, not the deploy token: this token lives in the Worker's env at runtime, where every plugin the instance runs can read it, and a deploy token in that place can rewrite every Worker, database and secret on the account:
 declare it in `pb_secrets` or push it with `VOIDBASE_DEPLOY_SECRETS`, never as a var. Counts are
 `SUM(_sample_interval)` and percentiles are `quantileWeighted(q, double1, _sample_interval)`, which is how that page
 and the aggregate functions page say to read a downsampled dataset; our own sampling is a second factor the dataset

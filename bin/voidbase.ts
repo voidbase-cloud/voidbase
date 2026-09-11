@@ -140,6 +140,15 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      stops and says how many times it rewrote. A watch with --email and --password
                                      signs in again when the token expires; one with --token stops instead.
                                      --watch has nothing to poll with --json, and is refused there
+  i18n extract [--dir src] [--out i18n] [--locales en,ar,fr] [--check]
+                                     the interface strings, extracted and typed: scan the source for t("key") (and
+                                     i18n.t("key"), and a default as the second argument) and write i18n/<locale>.json
+                                     per locale plus i18n/keys.d.ts, the union of the keys a client types against, so
+                                     an unknown key is a compile error. The source locale (the first) takes the call's
+                                     default or the key itself, the others gain new keys as ""; a key nothing calls any
+                                     more is kept and listed, never deleted. --check writes nothing and exits 1 when a
+                                     key has no text somewhere, which is what a build runs. The locales come from
+                                     --locales, else VOIDBASE_LOCALES, else the catalogues already in --out
   version                            print the version
   bundle [--out dir] [--version v]   build the generic Worker + panel as a release directory (default .cloud/releases/<v>);
          [--plugins-dir pb_plugins]     --plugins-dir bakes a project's installed plugins (voidbase.lock beside them) into the Worker
@@ -342,6 +351,20 @@ switch (cmd) {
       console.log("json" in flags ? JSON.stringify(report, null, 2) : formatReport(report));
       if (report.fail) process.exit(1);
     } catch (err) { console.error(`security check of ${target} failed: ${err instanceof Error ? err.message : String(err)}`); process.exit(1); }
+    break;
+  }
+  case "i18n": {
+    // The interface strings (src/node/i18n.ts): a text scan of the project, one catalogue per locale and a
+    // declaration file of the keys. No network, no toolchain, so it works from the executable too.
+    if (sub !== "extract") { console.error("usage: voidbase i18n extract [--dir src] [--out i18n] [--locales en,ar,fr] [--check]"); process.exit(1); }
+    const { extractMessages } = await import("../src/node/i18n");
+    const check = "check" in flags;
+    try {
+      const report = extractMessages({ root: process.cwd(), dir: flags.dir, out: flags.out, locales: flags.locales ? flags.locales.split(",") : undefined, check });
+      for (const line of report.lines) console.log(line);
+      if (!check) console.log(`wrote ${report.written.join(", ")}`);
+      else if (!report.ok) { console.error("the catalogues are not up to date with the source: run voidbase i18n extract, translate what it adds (an empty string is untranslated) and commit the result."); process.exit(1); }
+    } catch (err) { console.error(err instanceof Error ? err.message : String(err)); process.exit(1); }
     break;
   }
   case "migrate": {

@@ -163,6 +163,23 @@ given `--email` and `--password` signs in again when the superuser token expires
 the token expired and stops; and Ctrl-C exits saying how many times it rewrote the file. `--watch` has nothing to
 poll with `--json`, and is refused there. The client plugin surface beside this is the fork's `client.use(plugin)`.
 
+`voidbase i18n extract` writes the other half of an app's text: the interface strings, the ones written in the app
+rather than stored in the collections. It scans the project's source (`--dir`, `src` by default) for translation
+calls, `t("key")` in any of the three quotes, `i18n.t("key")`, and a default as the second argument
+(`t("greeting", "Hello")`), and writes one catalogue per locale into `i18n/` (`--out`). A catalogue,
+`i18n/<locale>.json`, is a flat JSON object of key to text, sorted by key. The source locale (the first of
+`--locales`, else `VOIDBASE_LOCALES`, else the catalogues already in the output directory, else `en`) is filled
+with each call's own default, or the key itself when the call has none; every other locale gains a new key as
+`""`, which is what untranslated means. Beside them it writes `i18n/keys.d.ts`, which declares
+`export type MessageKey = "greeting" | ...` plus `Locale` and `Messages`, so a client typed against it makes an
+unknown key a compile error rather than a key shown to a reader. A key that a catalogue has and nothing calls any
+more is kept and listed, never deleted silently, and left out of `MessageKey`, so a client that still names it
+stops compiling while the text waits for the key to come back. `--check` writes nothing and exits 1 when a key has
+no text in some locale, which is the shape a build runs it in. There is no runtime here: the files are the whole
+contract, and `@voidbase-cloud/sdk/i18n` is what reads them. Content translations, the ones in the collections,
+are the `translations` plugin's, and a locale in the route is the adapter's `locales` option
+([plugins.md](plugins.md), [adapter.md](adapter.md)).
+
 `voidbase migrate <from-url> <to-url>` moves an instance's data to another running instance, whichever way each one
 runs (the executable, the npm package, Cloudflare) and in either direction. It is a backup taken on the source and
 restored on the target through the backups API over HTTP, so it works from the executable and needs nothing but the

@@ -18,6 +18,16 @@ import type { AppApi, RequestEvent } from "../server/hooks/runtime";
 import type { CollectionRef, HookRecord } from "../server/hooks/record";
 
 type Handler = (c: Context) => unknown;
+
+/** what the generated app publishes of the auth cookie (src/server/auth-cookie.ts, src/server/hooks/index.ts) */
+export interface VoidbaseAuthApi {
+  /** the cookie's name on this scheme: `__Host-vb_auth` on https, `vb_auth` on http */
+  cookieName(https: boolean): string;
+  /** whether `VOIDBASE_AUTH_COOKIE` is on and not refused for want of a CSRF protection */
+  enabled(): boolean;
+  /** the record this request's auth cookie belongs to, verified as the server verifies every token, or null */
+  fromCookie(request: Request): Promise<HookRecord | null>;
+}
 export type Middleware = (c: Context, next: () => Promise<void>) => Promise<void>;
 
 /** PocketBase's global request middleware: every request, before whatever answers it. */
@@ -62,6 +72,11 @@ export type PocketBaseApi = {
   $os: { getenv(name: string): string };
   /** the bindings of the request, cron tick or job running now */
   $env(): Bindings;
+  /**
+   * The auth cookie, read and verified by the server itself: what `sessionOf()` below is built on. Present only on
+   * an instance new enough to publish it.
+   */
+  $auth?: VoidbaseAuthApi;
   /** voidbase's background queue */
   $jobs: {
     queueJob(job: { type: "queue"; queue: string; body: unknown }): Promise<unknown>;
@@ -147,6 +162,32 @@ const AUTH = Symbol.for("voidbase.auth");
 /** The authenticated record of this request, exactly as a PocketBase hook sees it (`e.auth`). */
 export function authOf(c: Context): HookRecord | null {
   return ((c as unknown as Record<symbol, HookRecord | null>)[AUTH]) ?? null;
+}
+
+/**
+ * Who is signed in on this request, from the cookie rather than from a header. `authOf(c)` answers for the app's
+ * own routes, which voidbase has already authenticated; a Void page's loader is handed an ordinary navigation,
+ * which carries cookies and no `Authorization`, so this is the one it wants:
+ *
+ *     // pages/account.server.ts
+ *     import { defineHandler } from "void";
+ *     import { sessionOf } from "@voidbase-cloud/voidbase/adapter";
+ *
+ *     export const loader = defineHandler(async (c) => {
+ *       const user = await sessionOf(c.req.raw);
+ *       return { email: user?.getString("email") ?? null };
+ *     });
+ *
+ * It needs `VOIDBASE_AUTH_COOKIE=1` on the instance, and that knob needs one of the two CSRF protections with it
+ * (`VOIDBASE_CORS_ORIGINS` naming the origins, or `VOIDBASE_CSRF=double-submit`) or it is refused; see
+ * docs/adapter.md. The verification is not this module's: the token goes to the generated app's own auth, the same
+ * path every API request takes, through the globals the hook publishes before any of the app's code runs. So a
+ * loader that is bundled apart from the routes still reaches it, and anywhere there is no voidbase at all -- Void's
+ * build importing the same module to prerender a page -- the answer is null rather than a throw.
+ */
+export async function sessionOf(request: Request): Promise<HookRecord | null> {
+  const auth = hookGlobals()?.$auth as VoidbaseAuthApi | undefined;
+  return auth ? auth.fromCookie(request) : null;
 }
 
 /** Void-shaped counterparts of $apis.requireAuth / requireSuperuserAuth, for `defineHandler(mw, handler)`. */

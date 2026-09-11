@@ -11,13 +11,20 @@ import { buildAuthURL, providerConfig, s256Challenge } from "./oauth2";
 import catalog from "./collections/oauth2-providers.json";
 import { randomString } from "./ids";
 import { recordAuthResponse } from "./auth-response";
+import { authCookieToken } from "./auth-cookie";
 import { requestHook } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import type { AppEnv, AuthRecord, Row } from "./types";
 
-export function tokenFromRequest(req: Request): string {
+/**
+ * The token this request carries. The `Authorization` header is the one the SDK sends and the one that wins: only
+ * when there is none does the auth cookie count, and only while `VOIDBASE_AUTH_COOKIE` is on and not refused
+ * (auth-cookie.ts). `env` is the request's, since every knob there is read per request.
+ */
+export function tokenFromRequest(req: Request, env?: object): string {
   const h = req.headers.get("Authorization") ?? "";
-  return /^bearer /i.test(h) ? h.slice(7) : h;
+  if (h) return /^bearer /i.test(h) ? h.slice(7) : h;
+  return authCookieToken(req, env);
 }
 
 // Resolve the auth record for a token: decode, load collection + record, verify with tokenKey + collection secret.
@@ -37,7 +44,7 @@ export async function findAuthRecordByToken(db: D1Database, token: string, type 
 }
 
 export async function loadAuth(c: Context<AppEnv>): Promise<AuthRecord | null> {
-  const token = tokenFromRequest(c.req.raw);
+  const token = tokenFromRequest(c.req.raw, c.env);
   return token ? findAuthRecordByToken(c.env.DB, token) : null;
 }
 

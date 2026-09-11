@@ -107,7 +107,8 @@ export function mountAuthExtra(app: Hono<AppEnv>, deps: { collection: (c: Contex
     if (duration < 0) throw validationFailed({ duration: { code: "validation_min_greater_equal_than_required", message: "Must be no less than 0.", params: { threshold: 0 } } });
     const token = await newAuthToken({ collection, row }, false, duration > 0 ? duration : undefined);
     const ctx = await deps.ctx(c);
-    return recordAuthResponse(c, ctx, collection, row, "", { token, body });
+    // cookie: false -- the token is for another record and the answer is data, not this superuser's own session
+    return recordAuthResponse(c, ctx, collection, row, "", { token, body, cookie: false });
   });
 }
 const randomString30 = () => { const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"; return [...crypto.getRandomValues(new Uint8Array(30))].map((b) => chars[b % chars.length]).join(""); };

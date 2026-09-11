@@ -189,7 +189,10 @@ try {
   const port = (() => { const s = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() }); const p = s.port; s.stop(true); return p; })();
   const base = `http://127.0.0.1:${port}`;
   const env = { ...process.env, VOIDBASE_SUPERUSER_EMAIL: "root@example.com", VOIDBASE_SUPERUSER_PASSWORD: "root-password-1", VOIDBASE_USER_EMAIL: "", VOIDBASE_USER_PASSWORD: "", VOIDBASE_LOG_MIN_LEVEL: "8", VOIDBASE_HOOKS_DIR: `${WORK}/.voidbase/pb_hooks`, VOIDBASE_MIGRATIONS_DIR: `${WORK}/.voidbase/pb_migrations` };
-  procs.push(Bun.spawn(["bun", "main.ts", "--http", `127.0.0.1:${port}`, "--dir", `${WORK}/.voidbase/pb_data`], { cwd: `${WORK}/.voidbase`, env: env as Record<string, string>, stdout: "inherit", stderr: "inherit" }));
+  // one session across the pages and the API: the cookie knob, with the origin rule beside it, since the knob is
+  // refused without one of the two CSRF protections (checked at the end of this file, on an instance without one)
+  const cookieEnv = { ...env, VOIDBASE_AUTH_COOKIE: "1", VOIDBASE_CORS_ORIGINS: base, VOIDBASE_CSRF: "" };
+  procs.push(Bun.spawn(["bun", "main.ts", "--http", `127.0.0.1:${port}`, "--dir", `${WORK}/.voidbase/pb_data`], { cwd: `${WORK}/.voidbase`, env: cookieEnv as Record<string, string>, stdout: "inherit", stderr: "inherit" }));
   for (let i = 0; i < 200; i++) { try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* booting */ } await Bun.sleep(200); }
 
   const get = async (path: string, init?: RequestInit) => { const r = await fetch(base + path, init); return { status: r.status, type: r.headers.get("content-type") ?? "", json: (await r.clone().json().catch(() => ({}))) as Record<string, unknown>, text: await r.text() }; };
@@ -260,6 +263,54 @@ try {
   check("sw.js and manifest.webmanifest are served from pb_public, the worker with the precache list the option asked for", swServed.status === 200 && /javascript/.test(swServed.type) && swServed.text.includes('"/robots.txt"') && manifestServed.status === 200 && manifestServed.json.name === "Void on voidbase", `${swServed.status} ${swServed.type} ${manifestServed.status} ${manifestServed.type}`);
   const collections = await get("/api/collections?perPage=1");
   check("PocketBase's own API is untouched by the app's routes", collections.status === 401 || collections.status === 200, String(collections.status));
+
+  // ---- one session across the pages and the API ------------------------------------------------------------------
+  // VOIDBASE_AUTH_COOKIE=1 makes every route that mints a token set it as a cookie too, and makes the server take
+  // that cookie as the token when there is no Authorization header. The header still wins; sign-out takes it away;
+  // and the CSRF rule the cookie makes necessary is on, because the knob is refused without one.
+  const signIn = await fetch(`${base}/api/collections/_superusers/auth-with-password`, { method: "POST", headers: { "content-type": "application/json", origin: base }, body: JSON.stringify({ identity: "root@example.com", password: "root-password-1" }) });
+  const session = (await signIn.json()) as { token: string; record: { id: string; email: string } };
+  const setCookie = signIn.headers.get("set-cookie") ?? "";
+  check("signing in sets the token as a cookie: vb_auth on http, Path=/, HttpOnly, SameSite=Lax, and a Max-Age that is the token's own",
+    setCookie.startsWith(`vb_auth=${session.token};`) && /;\s*Path=\/(;|$)/.test(setCookie) && /;\s*HttpOnly(;|$)/.test(setCookie) && /;\s*SameSite=Lax(;|$)/.test(setCookie) && Number(/Max-Age=(\d+)/.exec(setCookie)?.[1] ?? 0) > 0 && !/Secure/.test(setCookie) && !setCookie.includes("__Host-"), setCookie);
+  const cookie = `vb_auth=${session.token}`;
+  const byCookie = await fetch(`${base}/api/collections/_superusers/records?perPage=1`, { headers: { cookie } });
+  check("a later request with only the cookie is authenticated by the API", byCookie.status === 200, `${byCookie.status} ${(await byCookie.text()).slice(0, 90)}`);
+  const loaded = await get("/api/account", { headers: { cookie } });
+  check("a page loader calling sessionOf() sees the same signed-in user, through the generated app's own verification",
+    loaded.json.id === session.record.id && loaded.json.email === "root@example.com" && loaded.json.collection === "_superusers" && loaded.json.api === session.record.id, JSON.stringify(loaded.json));
+  const anonymous = await get("/api/account");
+  check("with no cookie the loader renders for nobody, rather than failing", anonymous.status === 200 && anonymous.json.id === null && anonymous.json.email === null && anonymous.json.api === null, JSON.stringify(anonymous.json));
+  // the header decides who the request is, whichever of the two is the good one: a bad header beside a good cookie
+  // is nobody, and a good header beside a bad cookie is the record the header names
+  const headerOverCookie = await get("/api/account", { headers: { cookie, authorization: "not-a-token" } });
+  const cookieUnderHeader = await get("/api/account", { headers: { cookie: "vb_auth=not-a-token", authorization: session.token } });
+  check("the Authorization header still wins when both are there, whichever of the two is the good one",
+    headerOverCookie.json.api === null && headerOverCookie.json.id === session.record.id && cookieUnderHeader.json.api === session.record.id && cookieUnderHeader.json.id === null,
+    JSON.stringify([headerOverCookie.json, cookieUnderHeader.json]));
+  const crossSite = await fetch(`${base}/api/collections/_superusers/auth-clear`, { method: "POST", headers: { cookie, origin: "https://evil.example" } });
+  check("the hole a cookie opens is closed: a state-changing cookie request from another origin is refused, naming the knob that decides",
+    crossSite.status === 403 && /VOIDBASE_CORS_ORIGINS/.test(String(((await crossSite.json()) as { message: string }).message)), String(crossSite.status));
+  const signOut = await fetch(`${base}/api/collections/_superusers/auth-clear`, { method: "POST", headers: { cookie, origin: base } });
+  const cleared = signOut.headers.get("set-cookie") ?? "";
+  check("sign-out answers 204 and takes the cookie away: the same cookie, empty and already expired", signOut.status === 204 && cleared.startsWith("vb_auth=;") && /;\s*Max-Age=0(;|$)/.test(cleared) && /;\s*HttpOnly(;|$)/.test(cleared), `${signOut.status} ${cleared}`);
+
+  // the knob on its own, with neither CSRF protection: the same generated app, the same data, one env apart. The
+  // first instance is stopped before this one starts, so only one process is ever holding the database.
+  procs[0]!.kill(); await procs[0]!.exited; procs.length = 0;
+  const port2 = (() => { const sv = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() }); const p = sv.port; sv.stop(true); return p; })();
+  const refusedProc = Bun.spawn(["bun", "main.ts", "--http", `127.0.0.1:${port2}`, "--dir", `${WORK}/.voidbase/pb_data`], { cwd: `${WORK}/.voidbase`, env: { ...env, VOIDBASE_AUTH_COOKIE: "1", VOIDBASE_CORS_ORIGINS: "", VOIDBASE_CSRF: "" } as Record<string, string>, stdout: "ignore", stderr: "pipe" });
+  procs.push(refusedProc);
+  const base2 = `http://127.0.0.1:${port2}`;
+  for (let i = 0; i < 200; i++) { try { if ((await fetch(`${base2}/api/health`)).ok) break; } catch { /* booting */ } await Bun.sleep(200); }
+  const refusedSignIn = await fetch(`${base2}/api/collections/_superusers/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: "root@example.com", password: "root-password-1" }) });
+  const refusedSession = (await refusedSignIn.json()) as { token: string };
+  const refusedByCookie = await fetch(`${base2}/api/account`, { headers: { cookie: `vb_auth=${refusedSession.token}` } }).then((r) => r.json() as Promise<Record<string, unknown>>);
+  check("without either CSRF protection the knob does not take effect: no cookie is set, and none is a session for the API or for a loader",
+    refusedSignIn.status === 200 && !refusedSignIn.headers.get("set-cookie") && refusedByCookie.api === null && refusedByCookie.id === null, `${refusedSignIn.status} ${refusedSignIn.headers.get("set-cookie")} ${JSON.stringify(refusedByCookie)}`);
+  refusedProc.kill(); await refusedProc.exited;
+  const said = await new Response(refusedProc.stderr as ReadableStream).text().catch(() => "");
+  check("and it says so, naming both ways to fix it", /VOIDBASE_AUTH_COOKIE was refused/.test(said) && /VOIDBASE_CORS_ORIGINS/.test(said) && /VOIDBASE_CSRF=double-submit/.test(said), said.split("\n").filter((l) => l.includes("refused")).join(" ").slice(0, 200) || said.slice(-200));
 } finally {
   for (const p of procs) p.kill();
   rmSync(resolve(PKG, "test/.tmp"), { recursive: true, force: true });

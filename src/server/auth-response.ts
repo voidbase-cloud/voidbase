@@ -3,6 +3,7 @@
 // MFA handshake (401 {mfaId} until a second method confirms), record export with email, expand, login alert.
 import type { Context } from "hono";
 import { newAuthToken } from "./auth";
+import { authCookieFor } from "./auth-cookie";
 import type { Collection } from "./collections/model";
 import { one, run } from "./db";
 import { badRequest, forbidden } from "./errors";
@@ -17,7 +18,17 @@ import type { AppEnv, Row } from "./types";
 
 const opt = <T>(c: Collection, path: string, fallback: T): T => { let cur: unknown = c.options; for (const k of path.split(".")) { if (!cur || typeof cur !== "object") return fallback; cur = (cur as Record<string, unknown>)[k]; } return (cur === undefined || cur === null ? fallback : cur) as T; };
 
-export interface AuthResponseOptions { token?: string; body?: Record<string, unknown>; meta?: Record<string, unknown> }
+export interface AuthResponseOptions {
+  token?: string;
+  body?: Record<string, unknown>;
+  meta?: Record<string, unknown>;
+  /**
+   * whether this answer's token is also the caller's own session, and so may be set as the auth cookie when
+   * `VOIDBASE_AUTH_COOKIE` is on (auth-cookie.ts). True for every way of signing in; false for impersonation,
+   * where a superuser is handed a token for a *different* record and must not have their own session replaced.
+   */
+  cookie?: boolean;
+}
 
 export async function recordAuthResponse(c: Context<AppEnv>, ctx: RecordContext, collection: Collection, row: Row, method: string, options: AuthResponseOptions = {}): Promise<Response> {
   const token = options.token ?? (await newAuthToken({ collection, row }));
@@ -53,7 +64,12 @@ export async function recordAuthResponse(c: Context<AppEnv>, ctx: RecordContext,
     if (ev.meta !== undefined && ev.meta !== null) result.meta = ev.meta;
     result.record = sortKeys(exported);
     result.token = ev.token;
-    response = c.json(result);
+    const answer = c.json(result);
+    // one session across the pages and the API: the same token as a cookie, so a page rendered on this Worker
+    // knows who is asking. Off unless VOIDBASE_AUTH_COOKIE is on and a CSRF protection is with it.
+    const cookie = options.cookie === false ? null : authCookieFor(c, String(ev.token ?? ""));
+    if (cookie) answer.headers.append("Set-Cookie", cookie);
+    response = answer;
   });
   return response ?? c.body(null, 204);
 }

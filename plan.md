@@ -494,7 +494,13 @@ a service worker written from what the app declares, with the client half in `@v
 `path: "prefix"` the `_redirects` rules that send `/<code>/<path>` to the same page with `?locale=<code>`, a
 redirect rather than a 200 proxy because a proxy could carry no locale and the deploy would drop the line, while
 `voidbase i18n extract` writes the project half's interface strings, one catalogue per locale plus the key union a
-client types against, with `--check` as a build's gate. What
+client types against, with `--check` as a build's gate. And (2026-09-11) the two notions of who is signed in are
+one: `VOIDBASE_AUTH_COOKIE=1` makes every route that mints a token set it as `__Host-vb_auth` too (`HttpOnly`,
+`SameSite=Lax`, `Path=/`, `Secure` on https, living exactly as long as the token), makes the server take that
+cookie as the token when there is no `Authorization` header, and adds `auth-clear` to end it, so a Void page's
+loader asks `sessionOf(request)` and gets the record the API would have; the knob refuses to take effect, and
+fails the deploy, unless `VOIDBASE_CORS_ORIGINS` or `VOIDBASE_CSRF=double-submit` is on, because a cookie a
+browser attaches on its own is what those two exist for. What
 exists: the executable, the package on Bun, Cloudflare all three ways, both modes in shape,
 `voidbase sync`, the adapter, (2026-09-11) the ai plugin's memory as records: `ai_conversations` and `ai_messages`,
 created once the Workers AI binding is there, written through the records service so realtime sees each reply land,

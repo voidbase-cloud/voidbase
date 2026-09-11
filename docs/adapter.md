@@ -104,6 +104,7 @@ export const GET = defineHandler(requireAuth("users"), async (c) => {
 | `pb.Record`, `pb.$apis`, `pb.$os` | the rest of the hook surface a route is likely to want |
 | `pb.BadRequestError` and friends | PocketBase's error classes, so a thrown error becomes the right HTTP response |
 | `authOf(c)` | the authenticated record, exactly as a hook's `e.auth` |
+| `sessionOf(request)` | the same question asked of a cookie rather than a header, for a page's loader: "One session across the pages and the API" below |
 | `requireAuth(...)`, `requireSuperuser()` | the Void-shaped counterparts of `$apis.requireAuth` and `requireSuperuserAuth` |
 
 ### Hooks
@@ -296,6 +297,73 @@ Interface strings are the other half of the same problem and are not the adapter
 the catalogues and the key union for them (setup.md), and content translations are the `translations` plugin's
 (plugins.md).
 
+## One session across the pages and the API
+
+A stack app has two notions of who is signed in. voidbase authenticates a request from `Authorization: Bearer
+<token>`, which is what the SDK sends from the browser. A Void page's loader runs server-side on the same Worker
+and is handed an ordinary navigation, which carries cookies and no header of the app's own, so on its own it cannot
+tell who the visitor is. `VOIDBASE_AUTH_COOKIE=1` makes the two agree:
+
+```bash
+VOIDBASE_AUTH_COOKIE=1
+VOIDBASE_CORS_ORIGINS=https://app.example     # or VOIDBASE_CSRF=double-submit; one of the two is required
+```
+
+Every route that mints a token sets it as a cookie on the same answer: `auth-with-password`, `auth-with-oauth2`,
+`auth-with-otp` (the MFA handshake included, since the second method is what ends in a token), the passkey routes,
+and `auth-refresh`, which replaces it with a fresh one. `POST /api/collections/<collection>/auth-clear` takes it
+away and answers 204; it needs no valid session of its own, because clearing a cookie nobody holds is the same
+answer. Impersonation is the one exception: `impersonate` mints a token for *another* record at a superuser's
+request, and that is data in the answer, not the caller's own session, so it sets no cookie.
+
+| | |
+| --- | --- |
+| name | `__Host-vb_auth` on https, `vb_auth` on http, where a `__Host-` cookie would need `Secure` and no browser would keep it |
+| attributes | `Path=/`, `HttpOnly`, `SameSite=Lax`, and `Secure` on https. No `Domain`, which is what `__Host-` means |
+| lifetime | `Max-Age` is what is left of the token's own `exp`, so the cookie dies exactly when the token does |
+
+The server then accepts that cookie as a source of the token **when the `Authorization` header is absent**, so an
+ordinary browser navigation is authenticated and `authOf(c)` answers in a route reached that way. The header wins
+whenever both are there, whichever of the two is the good one: nothing an SDK client does changes, and a stale
+cookie cannot override the token a client sent on purpose.
+
+**The knob is off by default, and refuses to take effect without a CSRF protection.** A browser attaches a cookie
+on its own and never attaches a bearer token on its own, so the moment a cookie authenticates a state-changing
+request, a cross-site page can make the browser send one. That is exactly the hole the hardening plugin's origin
+rule and its double-submit token exist for (plugins.md, "The response policy"), so one of the two has to be on:
+
+- `VOIDBASE_CORS_ORIGINS` naming the origins the application is served from, which turns the origin rule on: a
+  `POST`, `PATCH`, `PUT` or `DELETE` carrying cookies from an origin that is neither this instance's nor one of the
+  named ones is refused 403; or
+- `VOIDBASE_CSRF=double-submit`, which additionally requires the `X-CSRF-Token` header from `GET /api/csrf` on a
+  cookie-authenticated write.
+
+With neither, `voidbase deploy` fails with the reason rather than shipping it, and an instance whose vars were set
+some other way refuses the knob at request time: no cookie is set, no cookie is accepted, and the reason is printed
+once. `VOIDBASE_CORS_ORIGINS=*`, which is what unset means, is not an origin rule and does not count.
+
+**What a loader imports.** `sessionOf(request)` is `authOf(c)`'s counterpart for a page: it reads the cookie and
+has the generated app verify it, the same path every API request takes, and answers the record or `null`.
+
+```ts
+// pages/account.server.ts
+import { defineHandler } from "void";
+import { sessionOf } from "@voidbase-cloud/voidbase/adapter";
+
+export const loader = defineHandler(async (c) => {
+  const user = await sessionOf(c.req.raw);
+  return { email: user?.getString("email") ?? null };
+});
+```
+
+The verification is not the adapter's: the token goes to whoever provides `auth@1`, through the same globals the
+generated hook publishes before any of the app's code runs (`$auth`, beside `$app` and `$jobs`). That handoff is on
+`globalThis`, not in the pb_hooks bundle, so a loader compiled apart from `routes/` reaches it just the same, and
+where there is no voidbase at all — Void's build importing the same module to prerender a page — the answer is
+`null` rather than a throw. The half of this that is still missing is the one the whole file already says: a page
+that renders per request has no runtime here, so today a loader answers where server code runs, which is
+`routes/`, `middleware/` and `vb_hooks/`. `sessionOf` is what it will call when pages render on this Worker too.
+
 ## Two shapes of app
 
 The adapter looks at what the project actually has:
@@ -364,7 +432,7 @@ surface: the generated layout, route paths and parameters, literal-beats-paramet
 its reach over PocketBase's own endpoints, `void/db` through the shim, `void/storage`, a queue round trip, a cron
 run, both kinds of migration, an `onBootstrap` hook running exactly once, a tagged event hook, a tsconfig alias
 resolving to a directory's index file, the four build errors (a hook attached to nothing, a misspelt hook name, a
-hook left in `middleware/`, a secret value nothing declares), `vb_secrets/` reaching the app through `$os.getenv`,
+hook left in `middleware/`, a secret value nothing declares), `vb_secrets/` reaching the app through `$os.getenv`, one session across the pages and the API (signing in sets the cookie with its exact attributes and a lifetime that is the token's own, a later request with only the cookie is authenticated by the API, a page loader calling `sessionOf` sees the same user, the header still wins, a cross-site write carrying the cookie is refused, sign-out takes it away, and the knob without either CSRF protection is refused with the reason on an instance of its own),
 the `pwa` option (the manifest's defaults, the icon set, the worker's precache list and handshake, the tags in
 `index.html`, a new version for a changed shell, and nothing of it without the option), the `locales` option (the
 rules each mode writes, the `hreflang` links and the `lang` attribute on the pages, the 404 shell without

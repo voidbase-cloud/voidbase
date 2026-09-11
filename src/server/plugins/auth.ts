@@ -13,6 +13,7 @@
 // by the bootstrap. The manifest owns them, so no other plugin can claim them; handing their creation over is next.
 import type { Context, Hono } from "hono";
 import { authMethods, authRefresh, authWithPassword, findAuthRecordByToken, isSuperuser, tokenFromRequest } from "../auth";
+import { AUTH_CLEAR_PATH, authClearCookieFor } from "../auth-cookie";
 import { mountAuthExtra } from "../auth-extra";
 import { mountAuthFlows } from "../auth-flows";
 import type { Field } from "../collections/fields";
@@ -32,7 +33,7 @@ const STATIC: Pick<Field, "name" | "type">[] = [
 ];
 
 export const provider: Auth = {
-  authenticate(request, env) { const token = tokenFromRequest(request); return token ? findAuthRecordByToken(env.DB, token) : Promise.resolve(null); },
+  authenticate(request, env) { const token = tokenFromRequest(request, env); return token ? findAuthRecordByToken(env.DB, token) : Promise.resolve(null); },
   fromToken: (token, env, type = "auth") => findAuthRecordByToken(env.DB, token, type),
   schema: () => STATIC.map((f) => ({ ...f })),
   collections: async (env) => (await listCollections(env.DB)).filter(isAuth).map((c) => c.name),
@@ -48,6 +49,15 @@ function mountRoutes(app: Hono<AppEnv>) {
   app.post("/api/collections/:collection/auth-with-oauth2", async (c) => authWithOAuth2(c, await authCollection(c), await ctx(c)));
   app.post("/api/collections/:collection/auth-refresh", async (c) => authRefresh(c, await collection(c)));
   app.get("/api/collections/:collection/auth-methods", async (c) => authMethods(c, await collection(c)));
+  // sign-out: the other half of VOIDBASE_AUTH_COOKIE. A bearer client clears its own store and never needs this;
+  // a cookie session cannot, because the cookie is HttpOnly, so the server takes it away. Idempotent, and it needs
+  // no valid session of its own: clearing a cookie nobody holds is a 204 either way.
+  app.post(`/api/collections/:collection/${AUTH_CLEAR_PATH}`, async (c) => {
+    await authCollection(c); // the collection still has to exist and hold accounts, as on every other auth route
+    const cookie = authClearCookieFor(c);
+    if (cookie) c.header("Set-Cookie", cookie);
+    return c.body(null, 204);
+  });
   mountWebAuthn(app); // passkeys: the routes answer only where a `passkeys` collection exists
   mountOAuth2Redirect(app);
   mountAuthFlows(app, { collection: authCollection, ctx });

@@ -58,9 +58,14 @@ export interface ResponsePolicy {
   crossOrigin: boolean;
 }
 
-const read = (name: string, env?: object): string => {
+/**
+ * One knob's value: the request's env first (a knob may be a feature flag evaluated per request: flags.ts), then
+ * the runtime's, then the process's. Exported because auth-cookie.ts reads its own knobs exactly this way.
+ */
+export const readKnob = (name: string, env?: object): string => {
   try { return String((env as Record<string, unknown> | undefined)?.[name] ?? (runtimeEnv as Record<string, unknown>)[name] ?? process.env?.[name] ?? "").trim(); } catch { return ""; }
 };
+const read = readKnob;
 const truthy = (v: string): boolean => ["1", "true", "on", "yes"].includes(v.toLowerCase());
 const normalizeOrigin = (o: string): string => o.trim().toLowerCase().replace(/\/+$/, "");
 

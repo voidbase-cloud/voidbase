@@ -14,6 +14,8 @@ import {
   crons, eventHooks, makeOs, onEvent, routerAdd, routerUse, routes, type HookMiddleware,
 } from "./runtime";
 import { ApiError } from "../errors";
+import { authCookieName, authCookieState, authCookieToken } from "../auth-cookie";
+import { fromToken } from "../auth-slot";
 
 const HOOKS_PREFIX = "/pb_hooks";
 const $os = makeOs(files, HOOKS_PREFIX);
@@ -34,6 +36,20 @@ function buildGlobals(): Record<string, unknown> {
     // migration running now, and the background jobs queue
     $env: () => (hookStore.getStore()?.env ?? {}) as Record<string, unknown>,
     $jobs: { queueJob: (job: Job) => dispatch(job), onJob: (type: Job["type"], fn: Parameters<typeof registerJobHandler>[1]) => registerJobHandler(type, fn) },
+    // one session across the pages and the API: the auth cookie, read and verified the way the server reads and
+    // verifies it. This is how a Void page's loader reaches it -- the generated app publishes these globals on
+    // globalThis before anything else runs, and the adapter's sessionOf() asks them (src/adapter/runtime.ts).
+    // Nothing here is a second implementation: the token goes to whoever provides auth@1, as every request does.
+    $auth: {
+      cookieName: (https: boolean) => authCookieName(https),
+      enabled: () => authCookieState(hookStore.getStore()?.env).on,
+      fromCookie: async (request: Request): Promise<HookRecord | null> => {
+        const store = hookStore.getStore();
+        if (!store) return null; // outside a request there is no session to have
+        const token = authCookieToken(request, store.env);
+        return token ? authToHookRecord(await fromToken(token, store.env as never)) : null;
+      },
+    },
     routerAdd, routerUse, cronAdd, cronRemove,
     migrate: () => { /* migrations are applied by the migrations runner, not at hook load */ },
     Record: class Record extends HookRecord { constructor(collection: CollectionRef, data?: { [k: string]: unknown }) { super(collection, data ?? {}); } },

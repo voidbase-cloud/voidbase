@@ -148,6 +148,14 @@ request cannot be forged cross-site. That is what the SDK sends, so turning the 
 client and everything for a cookie one. Neither is a request with no `Cookie` header at all (there is no session to
 forge against), nor any `GET`, `HEAD` or `OPTIONS`.
 
+**And what makes it necessary: `VOIDBASE_AUTH_COOKIE`.** Everything above is written as a defence a
+bearer-only instance does not need. The knob that changes that is the Void adapter's (`docs/adapter.md`,
+"One session across the pages and the API"): with it, voidbase sets the auth token as a cookie and accepts
+that cookie as the token, so a page rendered on the same Worker knows who is asking. It refuses to take
+effect unless one of the two rules above is on — `VOIDBASE_CORS_ORIGINS` naming the origins, or
+`VOIDBASE_CSRF=double-submit` — failing the deploy and, on an instance configured some other way, refusing
+at request time with the reason rather than opening the hole quietly.
+
 **Reading an instance from outside: `voidbase check --security <url>`** (`src/node/security-check.ts`). A handful
 of reads against a running instance, one line each, `pass` / `warn` / `fail` with the one thing to set: the
 security headers (`X-Content-Type-Options`, the frame and opener policies, HSTS on https, `Referrer-Policy`,
@@ -1208,9 +1216,11 @@ as preview) is not built: every preview is a whole instance.
 
 Auth left the core on 2026-09-09 (plan.md, decision 0.3): `src/server/plugins/auth.ts` is a plugin of tier `core`
 that provides `auth@1`, owns `_superusers`, `_externalAuths`, `_authOrigins`, `_otps` and `_mfas`, and mounts every
-auth route (password, OAuth2, refresh, methods, the flows, passkeys). The interface has three parts, because the
+auth route (password, OAuth2, refresh, methods, the flows, passkeys, and `auth-clear`, which ends a cookie
+session). The interface has three parts, because the
 core knows auth's shape and not only its result: `authenticate` (a request in, a record or null out) and
-`fromToken` (the record behind a token the provider issued, of a given kind), `schema` (the fields every auth record
+`fromToken` (the record behind a token the provider issued, of a given kind, which is also what a Void page's
+loader reaches through `sessionOf`), `schema` (the fields every auth record
 answers to in a rule, which `filter/compile.ts` asks for instead of keeping a list of its own) and `collections`
 (which collections hold accounts), plus `isSuperuser`, which the core asks and does not decide. The core reaches
 the provider through `src/server/auth-slot.ts` and imports none of the implementation, so replacing auth is

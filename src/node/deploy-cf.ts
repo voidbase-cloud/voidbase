@@ -11,6 +11,7 @@ export { applyZoneRedirects, redirectRule } from "./zone-redirects";
 import { pathToFileURL } from "node:url";
 import { loadEnv } from "./serve";
 import { STORE_KEYS_VAR } from "../server/secrets-store";
+import { AUTH_COOKIE_KNOB, authCookieRefusal } from "../server/auth-cookie";
 import { deleteWorkerSecrets, loadSecrets, putStoreSecrets, readSecretsValues, SECRETS_DIR, STORE_KNOB, storeBindings, storeSecretName, storeSecrets, workerSecretNames, type LoadedSecrets, putWorkerSecrets } from "./secrets";
 import { CfApi, destroyInstance, ensureD1, ensureQueue, ensureR2, findQueue, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
 import { PREVIEW_OF_VAR, PREVIEW_VAR, previewWorkerName } from "../server/plugins/previews";
@@ -329,6 +330,12 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     const msg = `${missingVars.length} declared value(s) have no value in ${secretsDir}/secrets.json or the environment and no default: ${missingVars.join(", ")}`;
     if (opts.dryRun) log(`vars: ${msg}`); else throw new Error(msg);
   }
+  // VOIDBASE_AUTH_COOKIE makes a cookie authenticate a request, and a cookie a browser attaches on its own is what
+  // the CSRF protections exist for. The deploy refuses the combination rather than shipping it open; the instance
+  // refuses the same one at request time, in case the vars were set some other way (src/server/auth-cookie.ts).
+  const knob = (k: string) => baked[k] ?? process.env[k] ?? "";
+  const cookieRefusal = knob(AUTH_COOKIE_KNOB) ? authCookieRefusal(knob("VOIDBASE_CORS_ORIGINS"), knob("VOIDBASE_CSRF")) : null;
+  if (cookieRefusal) { if (opts.dryRun) log(`vars: ${cookieRefusal}`); else throw new Error(cookieRefusal); }
   if (plainKeys.length) log(`vars: ${plainKeys.filter((k) => baked[k] !== undefined).join(", ") || "none"}${definition!.of("public").length ? ` (public: ${definition!.of("public").join(", ")})` : ""}`);
   // the declared flags: Flagship holds them (the deploy creates the app and the missing flags, binds it), and
   // their defaults are baked as vars for a Worker whose Flagship is out of reach (src/node/flagship.ts)

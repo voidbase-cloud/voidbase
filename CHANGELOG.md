@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.43](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.42...v0.9.0-beta.43) (2026-09-11)
+
+* fix(plugin): the shop's rules name its own order, and a refused create no longer stops an instance
+
 ## [0.9.0-beta.42](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.41...v0.9.0-beta.42) (2026-09-11)
 
 * feat(plugin): a shop the other plugins plug into, and the two interfaces it leans on

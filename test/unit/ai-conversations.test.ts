@@ -70,7 +70,7 @@ function memoryRows(seed: Partial<Record<AiCollection, Row[]>> = {}) {
   const rows: AiRows = {
     async get(c, id) { return tables[c].find((r) => r.id === id) ?? null; },
     async conversations(user, page, perPage) {
-      const mine = tables.ai_conversations.filter((r) => r.user === user).sort((a, b) => String(b.lastMessageAt ?? "").localeCompare(String(a.lastMessageAt ?? "")) || String(b.created).localeCompare(String(a.created)));
+      const mine = tables.ai_conversations.filter((r) => r.owner === user).sort((a, b) => String(b.lastMessageAt ?? "").localeCompare(String(a.lastMessageAt ?? "")) || String(b.created).localeCompare(String(a.created)));
       return { items: mine.slice((page - 1) * perPage, page * perPage), totalItems: mine.length };
     },
     async messages(conversation, last) { const all = tables.ai_messages.filter((r) => r.conversation === conversation); return last ? all.slice(-last) : all; },
@@ -129,7 +129,7 @@ describe("a conversation is a record of its user", () => {
     const { call, tables } = await appWith({ ai: fakeAI([]) });
     const r = await call("POST", "/api/ai/conversations", {}, "ada-token");
     expect(r.status).toBe(200);
-    expect(r.json).toMatchObject({ id: "c1", user: "u1", title: "", model: "", system: "", tools: true, lastMessageAt: "" });
+    expect(r.json).toMatchObject({ id: "c1", owner: "u1", user: "u1", title: "", model: "", system: "", tools: true, lastMessageAt: "" });
     const long = "x".repeat(100);
     const r2 = await call("POST", "/api/ai/conversations", { title: `  ${long}`, model: " @cf/qwen/qwen3-30b-a3b-fp8 ", system: "Be terse.", tools: false }, "ada-token");
     expect(r2.json).toMatchObject({ title: "x".repeat(TITLE_LENGTH), model: "@cf/qwen/qwen3-30b-a3b-fp8", system: "Be terse.", tools: false });
@@ -142,10 +142,10 @@ describe("a conversation is a record of its user", () => {
 
   test("list: mine only, newest first by last message, paginated like records", async () => {
     const { rows } = memoryRows({ ai_conversations: [
-      { id: "c1", user: "u1", title: "old", created: "000001", lastMessageAt: "2026-09-01T00:00:00.000Z" },
-      { id: "c2", user: "u2", title: "bob's", created: "000002", lastMessageAt: "2026-09-05T00:00:00.000Z" },
-      { id: "c3", user: "u1", title: "new", created: "000003", lastMessageAt: "2026-09-03T00:00:00.000Z" },
-      { id: "c4", user: "u1", title: "fresh", created: "000004", lastMessageAt: "" },
+      { id: "c1", owner: "u1", user: "u1", title: "old", created: "000001", lastMessageAt: "2026-09-01T00:00:00.000Z" },
+      { id: "c2", owner: "u2", user: "u2", title: "bob's", created: "000002", lastMessageAt: "2026-09-05T00:00:00.000Z" },
+      { id: "c3", owner: "u1", user: "u1", title: "new", created: "000003", lastMessageAt: "2026-09-03T00:00:00.000Z" },
+      { id: "c4", owner: "u1", user: "u1", title: "fresh", created: "000004", lastMessageAt: "" },
     ] });
     const { call } = await appWith({ ai: fakeAI([]), rows });
     const r = await call("GET", "/api/ai/conversations", undefined, "ada-token");
@@ -160,7 +160,7 @@ describe("a conversation is a record of its user", () => {
 
   test("get: the conversation with its messages oldest first; somebody else's is a 404", async () => {
     const { rows } = memoryRows({
-      ai_conversations: [{ id: "c1", user: "u1", title: "t", created: "000001" }],
+      ai_conversations: [{ id: "c1", owner: "u1", user: "u1", title: "t", created: "000001" }],
       ai_messages: [{ id: "m1", conversation: "c1", role: "user", content: "hi", created: "000002" }, { id: "m2", conversation: "c1", role: "assistant", content: "hello", created: "000003" }, { id: "m9", conversation: "other", role: "user", content: "no", created: "000004" }],
     });
     const { call } = await appWith({ ai: fakeAI([]), rows });
@@ -174,7 +174,7 @@ describe("a conversation is a record of its user", () => {
 
   test("delete: gone with its messages; somebody else's is a 404 and stays", async () => {
     const { rows, tables } = memoryRows({
-      ai_conversations: [{ id: "c1", user: "u1", created: "000001" }, { id: "c2", user: "u2", created: "000002" }],
+      ai_conversations: [{ id: "c1", owner: "u1", user: "u1", created: "000001" }, { id: "c2", owner: "u2", user: "u2", created: "000002" }],
       ai_messages: [{ id: "m1", conversation: "c1", role: "user", content: "hi", created: "000003" }, { id: "m2", conversation: "c2", role: "user", content: "bob", created: "000004" }],
     });
     const { call } = await appWith({ ai: fakeAI([]), rows });
@@ -190,7 +190,7 @@ describe("appending a message runs the loop over the history", () => {
   test("the user message is stored first, the model sees the prompts and the history, the reply lands with its steps and tokens; the title comes from the first user message", async () => {
     let t = Date.UTC(2026, 8, 11, 12, 0, 0);
     const { rows, tables, log } = memoryRows({
-      ai_conversations: [{ id: "c1", user: "u1", title: "", model: "", system: "Answer in French.", tools: true, created: "000001" }],
+      ai_conversations: [{ id: "c1", owner: "u1", user: "u1", title: "", model: "", system: "Answer in French.", tools: true, created: "000001" }],
       ai_messages: [{ id: "m1", conversation: "c1", role: "user", content: "  What is   in the shop?  ", created: "000002" }, { id: "m2", conversation: "c1", role: "assistant", content: "Posts.", steps: [], created: "000003" }],
     });
     const ai = fakeAI([
@@ -230,7 +230,7 @@ describe("appending a message runs the loop over the history", () => {
 
   test("the conversation's model and tools: false win; the history is the last 40 messages; the body is checked", async () => {
     const messages: Row[] = Array.from({ length: 45 }, (_, i) => ({ id: `m${i}`, conversation: "c1", role: i % 2 ? "assistant" : "user", content: `n${i}`, created: String(i).padStart(6, "0") }));
-    const { rows } = memoryRows({ ai_conversations: [{ id: "c1", user: "u1", title: "t", model: "@cf/qwen/qwen3-30b-a3b-fp8", system: "", tools: false, created: "000000" }], ai_messages: messages });
+    const { rows } = memoryRows({ ai_conversations: [{ id: "c1", owner: "u1", user: "u1", title: "t", model: "@cf/qwen/qwen3-30b-a3b-fp8", system: "", tools: false, created: "000000" }], ai_messages: messages });
     const ai = fakeAI([{ response: "ok" }]);
     const { call } = await appWith({ ai, rows });
     const r = await call("POST", "/api/ai/conversations/c1/messages", { content: "last" }, "ada-token");
@@ -250,7 +250,7 @@ describe("appending a message runs the loop over the history", () => {
   });
 
   test("the cap is the chat's: 30 a minute per caller across both routes", async () => {
-    const { rows } = memoryRows({ ai_conversations: [{ id: "c1", user: "u1", title: "t", tools: false, created: "000000" }] });
+    const { rows } = memoryRows({ ai_conversations: [{ id: "c1", owner: "u1", user: "u1", title: "t", tools: false, created: "000000" }] });
     const ai = fakeAI(Array.from({ length: 40 }, () => ({ response: "ok" })));
     const { call } = await appWith({ ai, rows, now: () => 1_000_000 });
     for (let i = 0; i < RATE.limit - 1; i++) expect((await call("POST", "/api/ai/chat", { messages: [{ role: "user", content: "hi" }] }, "ada-token")).status).toBe(200);
@@ -266,7 +266,7 @@ describe("stream: true streams the final answer", () => {
   const events = (text: string) => text.split("\n\n").filter(Boolean).map((line) => { expect(line.startsWith("data: ")).toBe(true); return JSON.parse(line.slice(6)) as Record<string, unknown>; });
 
   test("the tool steps run first, then one last call without tools streams; the full text is stored before done", async () => {
-    const { rows, tables } = memoryRows({ ai_conversations: [{ id: "c1", user: "u1", title: "", tools: true, created: "000000" }] });
+    const { rows, tables } = memoryRows({ ai_conversations: [{ id: "c1", owner: "u1", user: "u1", title: "", tools: true, created: "000000" }] });
     const ai = fakeAI([
       { response: "", tool_calls: [{ name: "posts_list", arguments: {} }] },
       { response: "one post (not streamed)" },
@@ -290,7 +290,7 @@ describe("stream: true streams the final answer", () => {
   });
 
   test("without tools the streamed call is the only one; an answer that did not stream is one delta; the error is an event", async () => {
-    const { rows } = memoryRows({ ai_conversations: [{ id: "c1", user: "u1", title: "t", tools: false, created: "000000" }] });
+    const { rows } = memoryRows({ ai_conversations: [{ id: "c1", owner: "u1", user: "u1", title: "t", tools: false, created: "000000" }] });
     const ai = fakeAI([sseStream(["a", "b"]), { response: "whole" }, () => { throw new Error("model down"); }]);
     const { call } = await appWith({ ai, rows });
     expect(events((await call("POST", "/api/ai/conversations/c1/messages", { content: "x", stream: true }, "ada-token")).text).map((e) => e.delta ?? e.done)).toEqual(["a", "b", true]);
@@ -352,9 +352,9 @@ describe("on an instance: the collections, the rows through the records service,
     expect(names).toContain(AI_CONVERSATIONS);
     expect(names).toContain(AI_MESSAGES);
     const conversations = (await listCollections(db)).find((c) => c.name === AI_CONVERSATIONS)!;
-    expect(conversations).toMatchObject({ listRule: "user = @request.auth.id", deleteRule: "user = @request.auth.id", createRule: null, updateRule: null });
+    expect(conversations).toMatchObject({ listRule: "owner = @request.auth.id", deleteRule: "owner = @request.auth.id", createRule: null, updateRule: null });
     expect((conversations.fields as { name: string; collectionId?: string }[]).find((x) => x.name === "user")!.collectionId).toBe(users.id);
-    expect((await listCollections(db)).find((c) => c.name === AI_MESSAGES)).toMatchObject({ listRule: "conversation.user = @request.auth.id", viewRule: "conversation.user = @request.auth.id" });
+    expect((await listCollections(db)).find((c) => c.name === AI_MESSAGES)).toMatchObject({ listRule: "conversation.owner = @request.auth.id", viewRule: "conversation.owner = @request.auth.id" });
     expect(await aiRoute(env)).toEqual({ via: "workers-ai", model: DEFAULT_MODEL, conversations: true });
     await runBootstraps(fresh, env); // a second time creates nothing
     expect((await listCollections(db)).filter((c) => c.name.startsWith("ai_"))).toHaveLength(2);
@@ -365,7 +365,7 @@ describe("on an instance: the collections, the rows through the records service,
     };
     const made = await call("POST", "/api/ai/conversations", { system: "Réponds en français.", tools: false });
     expect(made.status).toBe(200);
-    expect(made.json).toMatchObject({ collectionName: AI_CONVERSATIONS, user: "u1", tools: false, title: "" });
+    expect(made.json).toMatchObject({ collectionName: AI_CONVERSATIONS, owner: "u1", user: "u1", tools: false, title: "" });
     const id = String(made.json.id);
     const turn = await call("POST", `/api/ai/conversations/${id}/messages`, { content: "Salut, ça va ?" });
     expect(turn.status).toBe(200);

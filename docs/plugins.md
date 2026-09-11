@@ -517,8 +517,8 @@ carries the binding (the way the payment plugins create theirs), so an instance 
 `ai_conversations` (`user` relation to `users`, optional, `title`, `model`, `system` text, `tools` bool,
 `lastMessageAt` date) and `ai_messages` (`conversation` relation, required, cascade, `role` select user, assistant,
 tool or system, `content` text, `steps` json, `tokens` number). Their rules are the owner's: a signed-in user lists,
-views and deletes their own conversations (`user = @request.auth.id`) and their messages
-(`conversation.user = @request.auth.id`) through the records API like any collection, in the panel included; create
+views and deletes their own conversations (`owner = @request.auth.id`: the auth record's id whichever auth collection it is in, so a superuser owns conversations too; `user` is the relation to `users` when the owner is one) and their messages
+(`conversation.owner = @request.auth.id`) through the records API like any collection, in the panel included; create
 and update rules are superuser-only, so the routes below are the way in. Anonymous callers keep `POST /api/ai/chat`
 and get no persistence. Every write goes through the records service as a superuser, so hooks fire and realtime
 publishes: a client subscribed to `ai_messages` (or to one conversation's messages by filter) sees the user message

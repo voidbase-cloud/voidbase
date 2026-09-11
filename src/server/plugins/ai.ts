@@ -17,7 +17,8 @@
 // package @cloudflare/think) keeps a chat in a Durable Object's SQLite; here the persistent half is two collections
 // the plugin owns, `ai_conversations` and `ai_messages`, created at bootstrap once the binding is there (the way
 // the payment plugins create theirs), so an instance without VOIDBASE_AI never sees them. A signed-in user reads
-// and deletes their own through the records API (`user = @request.auth.id`, `conversation.user = @request.auth.id`)
+// and deletes their own through the records API (`owner = @request.auth.id`, `conversation.owner = @request.auth.id`;
+// `owner` is the auth record's id whichever auth collection it is in, `user` the relation when that is `users`)
 // and writes through the routes under /api/ai/conversations, which store every row through the records service as
 // a superuser: hooks fire and realtime publishes, so a subscriber on `ai_messages` sees the reply land. Anonymous
 // callers keep the stateless route and get no persistence.
@@ -183,12 +184,13 @@ function allow(windows: Windows, key: string, now: number): boolean {
 export async function conversationDefinitions(db: D1Database): Promise<Record<string, unknown>[]> {
   const users = (await findCollection(db, "users"))?.id ?? collectionId("auth", "users");
   const conversations = collectionId("base", AI_CONVERSATIONS);
-  const own = "user = @request.auth.id", ownConversation = "conversation.user = @request.auth.id";
+  const own = "owner = @request.auth.id", ownConversation = "conversation.owner = @request.auth.id";
   const autodates = [{ name: "created", type: "autodate", onCreate: true, onUpdate: false }, { name: "updated", type: "autodate", onCreate: true, onUpdate: true }];
   return [
     {
       name: AI_CONVERSATIONS, type: "base", listRule: own, viewRule: own, createRule: null, updateRule: null, deleteRule: own,
       fields: [
+        { name: "owner", type: "text", required: true },
         { name: "user", type: "relation", collectionId: users, maxSelect: 1, cascadeDelete: true },
         { name: "title", type: "text" },
         { name: "model", type: "text" },
@@ -197,7 +199,7 @@ export async function conversationDefinitions(db: D1Database): Promise<Record<st
         { name: "lastMessageAt", type: "date" },
         ...autodates,
       ],
-      indexes: [`CREATE INDEX \`idx_ai_conversations_user\` ON \`${AI_CONVERSATIONS}\` (\`user\`, \`lastMessageAt\`)`],
+      indexes: [`CREATE INDEX \`idx_ai_conversations_user\` ON \`${AI_CONVERSATIONS}\` (\`owner\`, \`lastMessageAt\`)`],
     },
     {
       name: AI_MESSAGES, type: "base", listRule: ownConversation, viewRule: ownConversation, createRule: null, updateRule: null, deleteRule: ownConversation,
@@ -260,8 +262,8 @@ export function d1AiRows(env: Bindings, realtime?: RealtimeClient, waitUntil?: W
   return {
     async get(name, id) { return (await values(name, await all(env.DB, `SELECT * FROM ${ident(name)} WHERE id = ? LIMIT 1`, [id])))[0] ?? null; },
     async conversations(user, page, perPage) {
-      const items = await values(AI_CONVERSATIONS, await all(env.DB, `SELECT * FROM ${ident(AI_CONVERSATIONS)} WHERE ${ident("user")} = ? ORDER BY ${ident("lastMessageAt")} DESC, created DESC, rowid DESC LIMIT ? OFFSET ?`, [user, perPage, (page - 1) * perPage]));
-      const total = await one<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM ${ident(AI_CONVERSATIONS)} WHERE ${ident("user")} = ?`, [user]);
+      const items = await values(AI_CONVERSATIONS, await all(env.DB, `SELECT * FROM ${ident(AI_CONVERSATIONS)} WHERE ${ident("owner")} = ? ORDER BY ${ident("lastMessageAt")} DESC, created DESC, rowid DESC LIMIT ? OFFSET ?`, [user, perPage, (page - 1) * perPage]));
+      const total = await one<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM ${ident(AI_CONVERSATIONS)} WHERE ${ident("owner")} = ?`, [user]);
       return { items, totalItems: Number(total?.n ?? 0) };
     },
     async messages(conversation, last) {
@@ -354,7 +356,7 @@ function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource, 
   /** the caller's own conversation, or 404: somebody else's is not distinguished from none */
   const owned = async (rows: AiRows, id: string, auth: AuthRecord): Promise<Row> => {
     const row = await rows.get(AI_CONVERSATIONS, id);
-    if (!row || str(row.user) !== str(auth.row.id)) throw notFound(`There is no conversation ${JSON.stringify(id)} of yours.`);
+    if (!row || str(row.owner) !== str(auth.row.id)) throw notFound(`There is no conversation ${JSON.stringify(id)} of yours.`);
     return row;
   };
   const capped = (c: Context<AppEnv>): Response | null => {
@@ -396,7 +398,7 @@ function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource, 
     for (const k of ["title", "model", "system"] as const) if (body[k] !== undefined && typeof body[k] !== "string") throw badRequest(`${k} must be a string.`);
     if (body.tools !== undefined && typeof body.tools !== "boolean") throw badRequest("tools must be a boolean.");
     const row = await rowsFor(c).create(AI_CONVERSATIONS, {
-      user: str(auth.row.id), title: titleOf(str(body.title)), model: str(body.model).trim(), system: str(body.system), tools: body.tools ?? true, lastMessageAt: "",
+      owner: str(auth.row.id), user: auth.collection.name === "users" ? str(auth.row.id) : "", title: titleOf(str(body.title)), model: str(body.model).trim(), system: str(body.system), tools: body.tools ?? true, lastMessageAt: "",
     });
     return c.json(row);
   });

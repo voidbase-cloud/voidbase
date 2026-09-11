@@ -28,7 +28,7 @@ import { loadCollections, findCollection } from "../collections/model";
 import { collectionId } from "../collections/service";
 import { ident, one } from "../db";
 import { ApiError, badRequest, forbidden, notFound } from "../errors";
-import type { Payments, PaymentsRoute, RealtimeClient } from "../interfaces";
+import type { CheckoutRequest, Payments, PaymentsRoute, RealtimeClient } from "../interfaces";
 import { onBootstrap, serve, type Kernel } from "../kernel";
 import { createRecord, updateRecord, type RecordContext } from "../records/service";
 import { rowToValues } from "../records/values";
@@ -217,8 +217,11 @@ export async function upsert(rows: PaymentRows, collection: "subscriptions" | "p
 
 // ---- the provider -------------------------------------------------------------------------------------------
 
-export type CheckoutItems = { price: string; quantity: number }[];
-export type CheckoutInput = { items: CheckoutItems; success: string; cancel?: string; mode?: "payment" | "subscription" };
+/** a checkout as `payments@1` takes it: provider prices, amount lines, where to go after, and the caller's reference */
+export type CheckoutInput = CheckoutRequest;
+export type CheckoutItems = CheckoutRequest["items"];
+/** lines charged as an amount of their own, in the minor unit, for what has no price at the provider: a tax, a shipping total */
+export type CheckoutAmounts = NonNullable<CheckoutRequest["amounts"]>;
 /** how a subscription is stopped: at the period's end, now, or not after all */
 export type CancelMode = "period_end" | "now" | "resume";
 
@@ -239,9 +242,27 @@ export interface PaymentProvider {
   livemode(env: Bindings): boolean;
   /** create (or find) the customer at the provider for a signed-in user: its id there, and the email it was made with */
   createCustomer(env: Bindings, auth: AuthRecord): Promise<{ providerId: string; email: string }>;
-  /** refuse a checkout body this provider cannot take (400), before any customer is created for it */
+  /**
+   * Refuse (400) a body this provider's own checkout route cannot take, before any customer is created for it: a rule
+   * of the route's, like Stripe's that `cancel` is given. Only the route makes it and `payments@1` does not, because a
+   * plugin calling the interface never used the route. Split from `checkCharge` on 2026-09-11, when making both
+   * through the interface turned a commerce checkout on Stripe without `cancel` from a 200 into a 400.
+   */
   checkCheckout?(o: CheckoutInput): void;
-  /** start a checkout for a customers row; where to send the customer */
+  /**
+   * Refuse (400) a checkout this provider would charge less of than it was given, before any customer is created for
+   * it: an amount line it has no line for, items of which it would charge only one. The route and `payments@1` both
+   * make it (`checkChargeFor`). What counts depends on whether the checkout has a `reference`. One with a reference
+   * (commerce's order) is paid only by its whole total, so it is charged in full or refused. One without is charged in
+   * full or refused as well, but for Polar: Polar's route lists several products for a buyer to pick among (a monthly
+   * and a yearly plan) and charges the one picked, once, whatever quantity it was sent, and such a checkout names no
+   * order, so it moves no order of commerce's. An amount line is refused with a reference or without one.
+   */
+  checkCharge?(o: CheckoutInput): void;
+  /**
+   * Start a checkout for a customers row; where to send the customer. With a reference it charges every item and every
+   * amount line; without one, at Polar, the product the buyer picks of those listed (see `checkCharge`).
+   */
   checkout(env: Bindings, customer: Row, o: CheckoutInput): Promise<{ url: string }>;
   /** where a customers row's owner manages their billing */
   portal(env: Bindings, customer: Row, o: { return: string }): Promise<{ url: string }>;
@@ -282,6 +303,118 @@ export async function customerForUser(rows: PaymentRows, provider: PaymentProvid
   if (found) return found;
   const created = await provider.createCustomer(env, auth);
   return rows.create("customers", { user, provider: provider.name, providerId: created.providerId, email: created.email });
+}
+
+const AMOUNT_LINES = "amounts must be a list of { name, amount, currency }: a name, a whole number above zero in the currency's minor unit, and a three-letter currency";
+
+/**
+ * Refuse (400) a checkout that cannot be charged as asked, before anything is created at the provider or by whoever
+ * asked: an amount line that is not a name, an amount and a currency, and then whatever this provider cannot charge
+ * (`checkCharge`), which is where one with no line for an amount, or one that would charge one item of several, says
+ * so. The provider's route, the interface's `checkout` and its `checkCheckout` all run this. The route's own rules
+ * about its body (`checkCheckout` on the provider) are the route's alone.
+ */
+export function checkChargeFor(provider: PaymentProvider, o: CheckoutInput): void {
+  const amounts: unknown = o.amounts;
+  if (amounts !== undefined && (!Array.isArray(amounts) || amounts.map(obj).some((a) => !str(a.name) || !(Number.isInteger(a.amount) && Number(a.amount) > 0) || !/^[a-z]{3}$/i.test(str(a.currency))))) throw badRequest(AMOUNT_LINES);
+  provider.checkCharge?.(o);
+}
+
+/** the metadata key a checkout's `reference` travels under, at every provider */
+export const REFERENCE_KEY = "voidbase_order";
+
+/**
+ * The `reference` a checkout was started with, read back off the object a provider sent (a payments row's `raw`).
+ * Stripe keeps it in the metadata of the session and of its payment intent, Polar in the metadata it copies from
+ * the checkout onto the order, and Lemon Squeezy in the webhook's `meta.custom_data`, which its rows keep beside
+ * the object for that reason. Empty when the provider carried none.
+ */
+export const paymentReference = (raw: unknown): string => str(obj(obj(raw).metadata)[REFERENCE_KEY] || obj(obj(obj(raw).meta).custom_data)[REFERENCE_KEY]);
+
+/**
+ * One thing a payment bought: the id a checkout names it by at the provider, and how many, when the provider reported a
+ * quantity at all. A quantity nobody reported is left off rather than made up: reported as `NaN` it was no order's line,
+ * so a Lemon Squeezy order exactly as its own docs print it (which carry no `quantity`) paid nothing and left a fully
+ * paid order pending for good. The id is reported whatever the quantity says, and it is what a caller holds a purchase
+ * to first.
+ */
+export interface PurchasedItem { id: string; quantity?: number }
+
+/**
+ * What a payment bought, read off the object the provider sent (a payments row's `raw`): each item by the id a checkout
+ * names it by at that provider, with its quantity where the provider reported one. `null` when the provider does not
+ * report purchases on a payment, which is not the same as `[]`, an object of a provider that does report them and in
+ * which none could be read, and which matches no order. Added 2026-09-11, because a
+ * reference says which order a payment claims to pay and not what was bought for it: at Lemon Squeezy a buyer can set
+ * one, since any checkout URL takes `?checkout[custom][voidbase_order]=...` and it comes back as `meta.custom_data`, so
+ * an order for another variant of the same price, bought with the same email, named a pending order and paid it.
+ *
+ *   - Lemon Squeezy: an order (`type: "orders"`) carries `attributes.first_order_item`, whose `variant_id` is what a
+ *     checkout names. Its `quantity` is reported only when it is there and a whole number above zero: the order
+ *     object's page in the docs lists no `quantity` at all, and Lemon Squeezy's own SDK types one, "Not in the
+ *     documentation, but in the response" (lmsqueezy/lemonsqueezy.js, src/orders/types.ts, read 2026-09-11). So an
+ *     order exactly as the docs print it says which variant was bought and not how many. A checkout there is one
+ *     variant, so one item.
+ *   - Polar: an order carries its `product_id` (the Order schema of the 2026-04 document), the product a checkout
+ *     lists, and that field is nullable; when it is null the products the order's `items` name are read instead. A line
+ *     item of that document carries `product_price_id` and no `product_id`, so an order that names a product nowhere
+ *     reports no purchase at all rather than an empty one, and the reference and the amount before tax are what gate
+ *     it, which is safe here because a buyer cannot set a Polar checkout's metadata (its public checkout update carries
+ *     none). Polar charges a product once whatever quantity it is sent, so its quantity is 1.
+ *   - Stripe: null. Metadata on a session or a payment intent is set only by whoever creates it with the secret key,
+ *     never by a buyer, and neither `checkout.session.completed` nor a `payment_intent.*` event carries line items (a
+ *     session's are a call of their own), so there is nothing on the payment to compare.
+ */
+export function purchasedItems(payment: Row): PurchasedItem[] | null {
+  const raw = obj(payment.raw), attributes = obj(raw.attributes);
+  const count = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined);
+  if (raw.type === "orders" || "first_order_item" in attributes) {
+    const item = obj(attributes.first_order_item), quantity = count(item.quantity);
+    return str(item.variant_id) ? [{ id: str(item.variant_id), ...(quantity === undefined ? {} : { quantity }) }] : [];
+  }
+  if ("product_id" in raw || "net_amount" in raw || "total_amount" in raw || "tax_amount" in raw) {
+    const items = Array.isArray(raw.items) ? (raw.items as unknown[]).map(obj) : [];
+    const product = str(raw.product_id) || str(items.find((i) => str(i.product_id))?.product_id);
+    return product ? [{ id: product, quantity: 1 }] : null;
+  }
+  return null;
+}
+
+/**
+ * What a payment charged before any tax the provider added of its own, in the currency's minor unit: read off the
+ * object the provider sent (the payments row's `raw`) by its shape, and the row's `amount` when the object is of no
+ * shape read here. Polar and Lemon Squeezy are merchants of record: they add their own tax to what a checkout asks for
+ * and write the total with it as `amount`, so a caller that computed a total without that tax (commerce's order)
+ * compares its total with this, not with `amount`. Added 2026-09-11, when a taxed buyer's payment left an order pending.
+ *
+ *   - A Polar order carries `net_amount`, "after discounts but before taxes" in the 2026-04 document, beside
+ *     `total_amount`, "after discounts and taxes", which is its row's `amount`. The order does not say whether the
+ *     price held the tax: in that document only a checkout and a price carry `tax_behavior`, and a checkout's is null
+ *     while the tax is not yet calculated, which it often is not when the checkout is created. So `net_amount` is what
+ *     a checkout asked for only when the price was tax-exclusive, which commerce requires of the Polar prices it
+ *     charges; with an inclusive or location-based price it is less than the price. An object that does carry
+ *     `tax_behavior` (a checkout's shape, or an order of a later document) says which figure is the price:
+ *     `total_amount` when it is `inclusive`, and `net_amount` when it is `exclusive`. Never whichever of the two
+ *     matches.
+ *   - A Lemon Squeezy order (and subscription invoice) carries `attributes.total` and `attributes.tax`: with
+ *     `tax_inclusive` true the tax was inside the price, so the total is what was asked for; otherwise it was added on
+ *     top, and the total less the tax is.
+ *   - A Stripe object has neither, and its `amount` is what Stripe was asked to charge, since nothing voidbase starts
+ *     asks Stripe to add a tax of its own (no automatic tax).
+ *
+ * An object of a shape read here whose figure cannot be read is NaN, which equals no total, and not the row's
+ * `amount`, which at a merchant of record holds its tax: a Polar object with `total_amount` or `tax_amount` and no
+ * number for the figure it is compared by, or a Lemon Squeezy `total` that is not a number, or whose `tax` is there
+ * and not a number while `tax_inclusive` is not true. Added 2026-09-11, so that an object missing its figure before
+ * tax never pays an order with the provider's tax in the amount.
+ */
+export function chargedBeforeProviderTax(payment: Row): number {
+  const raw = obj(payment.raw), attributes = obj(raw.attributes);
+  const figure = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+  if ("net_amount" in raw || "total_amount" in raw || "tax_amount" in raw) return figure(raw.tax_behavior === "inclusive" ? raw.total_amount : raw.net_amount);
+  if ("total" in attributes) return attributes.tax_inclusive === true || attributes.tax === undefined ? figure(attributes.total) : figure(attributes.total) - figure(attributes.tax);
+  const amount = Number(payment.amount ?? 0);
+  return Number.isFinite(amount) ? amount : 0;
 }
 
 // ---- the family: the shipped providers as one provider of payments@1 ------------------------------------
@@ -424,8 +557,15 @@ export function paymentsPlugin(provider: PaymentProvider, deps: PaymentDeps, o: 
       const p = activeProvider(family, env);
       return str((await customerForUser(deps.rows(env), p, env, auth)).id);
     },
+    checkCheckout(env, o) {
+      checkChargeFor(activeProvider(family, env), o);
+    },
     async checkout(env, o) {
       const p = activeProvider(family, env);
+      // what the provider cannot charge is refused here as it is on the provider's route, rather than left out of the
+      // checkout. The route's rules about its own body are not made here, because this caller did not use the route:
+      // Stripe's route wants `cancel`, and a session without one is still a session that charges everything
+      checkChargeFor(p, o);
       const rows = deps.rows(env);
       return p.checkout(env, await customerOf(rows, p, o.customer), o);
     },
@@ -491,7 +631,10 @@ export function paymentsPlugin(provider: PaymentProvider, deps: PaymentDeps, o: 
         const mode = body.mode === undefined ? "payment" : body.mode;
         if (mode !== "payment" && mode !== "subscription") throw badRequest('mode must be "payment" or "subscription"');
         const input: CheckoutInput = { items: items.map((i) => ({ price: str(i.price), quantity: Number(i.quantity ?? 1) })), success, ...(cancelUrl ? { cancel: cancelUrl } : {}), mode };
+        // amounts and a reference are for a plugin calling payments@1, never a body: a browser that names its own
+        // amounts sets its own price. The route's own rules about the body first, then what the provider cannot charge
         provider.checkCheckout?.(input);
+        checkChargeFor(provider, input);
         const rows = rowsFor(c);
         const customer = await customerForUser(rows, provider, c.env, auth);
         return c.json(await provider.checkout(c.env, customer, input));

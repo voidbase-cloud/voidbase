@@ -8,7 +8,7 @@ import { compileFilter, compileSort, FilterError, renderJoin, type Join, type Re
 import { FilterSyntaxError } from "../filter/lexer";
 import { nowString, randomId, randomString } from "../ids";
 import { hashPassword, verifyPassword } from "../password";
-import { writtenRow } from "../tx-d1";
+import { isTransaction, writtenRow } from "../tx-d1";
 import type { AuthRecord, Row } from "../types";
 import { expandRecords } from "./expand";
 import { deleteAllRecordFiles, deleteFiles, normalizeFilename, putUpload, sniffMime } from "./files";
@@ -41,6 +41,24 @@ export interface RecordContext {
 
 export interface ListQuery { page: number; perPage: number; skipTotal: boolean; sort: string; filter: string; expand: string; fields: string }
 export interface EnrichOptions { expand?: string; fields?: string }
+/**
+ * What an update takes beside the body: what its answer expands and picks, and `where`, a precondition by field name.
+ * With `where` the update is made against those values of the row: when the row does not have them, as read or as its
+ * UPDATE finds it, nothing is written, no hook of the collection's fires after it (neither after-success nor
+ * after-error, since nothing failed: the update deliberately wrote nothing), no realtime event or feed row follows, and
+ * `PreconditionFailed` is thrown outside the hook chain to say so.
+ * Validation and the update hooks run before anything is written, so a hook that refuses stops the update as it would
+ * any other. Added 2026-09-11 for commerce's claim on an order, which has to be this update itself: made as a raw UPDATE
+ * ahead of it, a hook on orders saw the claimed status as the original, and a hook that refused could not undo the move.
+ */
+export interface UpdateOptions extends EnrichOptions { where?: Record<string, unknown> }
+
+/** an update whose precondition (`UpdateOptions.where`) the row did not meet, so that it wrote nothing */
+export class PreconditionFailed extends ApiError {
+  constructor(readonly collection: string, readonly recordId: string) {
+    super(409, `the record "${recordId}" of "${collection}" no longer has the values the update was made against`);
+  }
+}
 
 const MAX_PER_PAGE = 1000;
 const DEFAULT_PER_PAGE = 30;
@@ -332,9 +350,14 @@ function authFormErrors(c: Collection, p: Prepared, original: Record<string, unk
 // ---- change feed -----------------------------------------------------------------------------------
 // With the hub the change is published after its batch commits (flushChanges); without it a `_changes` row goes into
 // the batch itself, written only while a realtime client exists so idle apps and imports pay no feed rows.
-function feed(ctx: RecordContext, c: Collection, action: "create" | "update" | "delete", row: Row): D1PreparedStatement[] {
+/**
+ * The change a write announces. With `changed` the feed's row is written only when the statement before it in the
+ * batch changed a row (SQLite's `changes()`), which is what an update with a precondition needs: it may find the row
+ * no longer as it was and change nothing, and then there is nothing to announce.
+ */
+function feed(ctx: RecordContext, c: Collection, action: "create" | "update" | "delete", row: Row, changed = false): D1PreparedStatement[] {
   if (ctx.realtime.active()) { (ctx.changes ??= []).push({ collection: c.name, recordId: String(row.id), action, data: action === "delete" ? row : undefined }); return []; }
-  return [stmt(ctx.db, "INSERT INTO `_changes` (collection, recordId, action, data, created) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM `_realtime_clients`)", [c.name, String(row.id), action, JSON.stringify(row), nowString()])];
+  return [stmt(ctx.db, `INSERT INTO \`_changes\` (collection, recordId, action, data, created) SELECT ?, ?, ?, ?, ? WHERE ${changed ? "changes() > 0 AND " : ""}EXISTS (SELECT 1 FROM \`_realtime_clients\`)`, [c.name, String(row.id), action, JSON.stringify(row), nowString()])];
 }
 function flushChanges(ctx: RecordContext): void {
   const pending = ctx.changes; if (!pending?.length) return;
@@ -472,13 +495,23 @@ export async function canUpdateRecord(ctx: RecordContext, c: Collection, id: str
 }
 
 // ---- update ---------------------------------------------------------------------------------------
-export async function updateRecord(ctx: RecordContext, c: Collection, id: string, body: RawBody, opts: EnrichOptions) {
+export async function updateRecord(ctx: RecordContext, c: Collection, id: string, body: RawBody, opts: UpdateOptions) {
   if (c.type === "view") throw badRequest("Unsupported collection type.");
   if (c.updateRule === null && !ctx.superuser) throw forbidden(SUPERUSER_ONLY_MSG);
   const row = await fetchRecord(ctx, c, id, c.updateRule);
   if (!row) throw notFound();
   refuseForeignRow(ctx, c, id, row, "update");
   const fields = c.fields as Field[];
+  // the precondition as columns, held first against the row as read, so an update that is stale already runs no hook;
+  // the UPDATE holds it again, since the row can change between that read and the write
+  const where = Object.entries(opts.where ?? {}).map(([name, value]) => {
+    const f = fields.find((x) => x.name === name);
+    if (!f) throw new Error(`voidbase: an update's where names "${name}", which is not a field of "${c.name}"`);
+    return { name, column: toColumn(f, value) };
+  });
+  // a transaction's writes say whether they changed a row only once it commits (src/server/tx-d1.ts)
+  if (where.length && isTransaction(ctx.db)) throw new Error("voidbase: an update's where cannot be held inside a transaction, whose writes land only when it commits");
+  if (where.some((w) => String(row[w.name] ?? "") !== String(w.column ?? ""))) throw new PreconditionFailed(c.name, id);
   const current = rowToValues(c, row);
   const p = await prepareInput(c, current, body);
   p.values.id = current.id;
@@ -491,6 +524,8 @@ export async function updateRecord(ctx: RecordContext, c: Collection, id: string
   rec.values = p.values;
   rec.setOriginal(current);
   const reqEv = ctx.hookEvent?.(rec, c);
+  // an UPDATE whose precondition the row no longer met, raised after the hook chain rather than inside it (below)
+  let lost = false;
   const core = async () => {
     const values = rec.values;
     const errors: RecordErrors = { ...authFormErrors(c, { ...p, values }, current, manage) };
@@ -519,8 +554,15 @@ export async function updateRecord(ctx: RecordContext, c: Collection, id: string
     if (refreshTokenKey) stored.tokenKey = randomString(50);
     const setCols = fields.filter((f) => f.name !== "id").map((f) => `${ident(f.name)} = ?`);
     const params = fields.filter((f) => f.name !== "id").map((f) => toColumn(f, stored[f.name]));
+    const held = where.map((w) => ` AND ${ident(w.name)} IS ?`).join("");
+    const queued = ctx.changes?.length ?? 0;
     try {
-      await ctx.db.batch([stmt(ctx.db, `UPDATE ${ident(c.name)} SET ${setCols.join(", ")} WHERE id = ?`, [...params, id]), ...feed(ctx, c, "update", { ...valuesToRow(c, stored), id })]);
+      const done = await ctx.db.batch([stmt(ctx.db, `UPDATE ${ident(c.name)} SET ${setCols.join(", ")} WHERE id = ?${held}`, [...params, id, ...where.map((w) => w.column)]), ...feed(ctx, c, "update", { ...valuesToRow(c, stored), id }, where.length > 0)]);
+      // an UPDATE held to a precondition that changed nothing found the row moved since it was read: the change it
+      // queued for realtime is taken back and the rest of this update is skipped. The caller is told once the hook
+      // chain has run rather than by throwing here, because nothing failed: thrown inside the chain, the after-error
+      // hooks fired on every twin delivery from Stripe for an update that deliberately wrote nothing
+      if (where.length && !Number(done[0]?.meta?.changes ?? 0)) { ctx.changes?.splice(queued); lost = true; return; }
       flushChanges(ctx);
     } catch (err) {
       const col = uniqueViolation(err);
@@ -540,6 +582,9 @@ export async function updateRecord(ctx: RecordContext, c: Collection, id: string
   const modelEv = { app: undefined as unknown, record: rec, model: rec, collection: new CollectionRef(c), next: async () => undefined as unknown };
   const withModelHooks = () => trigger("onModelUpdate", modelEv, c.name, () => trigger("onRecordUpdate", modelEv, c.name, core));
   await withAfterError("Update", modelEv, c, () => (reqEv ? trigger("onRecordUpdateRequest", reqEv, c.name, withModelHooks) : withModelHooks()));
+  // the precondition lost at the UPDATE: no after-success hook and no after-error hook either, so that this behaves as
+  // a precondition the row failed as it was read, which never reaches a hook at all
+  if (lost) throw new PreconditionFailed(c.name, id);
   await trigger("onRecordAfterUpdateSuccess", modelEv, c.name, async () => undefined);
   await trigger("onModelAfterUpdateSuccess", modelEv, c.name, async () => undefined);
   const fresh = writtenRow(ctx.db, c.name, id) ?? (await one(ctx.db, `SELECT * FROM ${ident(c.name)} WHERE id = ?`, [id]));

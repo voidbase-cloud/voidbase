@@ -18,7 +18,7 @@ import type { AuthRecord, Bindings, Row } from "../types";
 import type { Plugin } from "./manifest";
 import {
   apiPrefix, constantTimeEqual, depsWith, ensureCustomer, hex, hmacSha256, isoDate, knob, obj, paymentsPlugin, str, upsert, webhookPathOf, webhookResult,
-  type CancelMode, type CheckoutInput, type Fetch, type PaymentDeps, type PaymentProvider, type PaymentRows, type Verdict, type WebhookResult,
+  REFERENCE_KEY, type CancelMode, type CheckoutInput, type Fetch, type PaymentDeps, type PaymentProvider, type PaymentRows, type Verdict, type WebhookResult,
 } from "./payments-shared";
 
 export const LEMONSQUEEZY_API = "https://api.lemonsqueezy.com";
@@ -102,11 +102,14 @@ export async function applyEvent(rows: PaymentRows, event: Row): Promise<Webhook
   const id = str(data.id);
   const custom = obj(meta.custom_data);
   const user = str(custom.voidbase_user);
-  const out = (r: Omit<WebhookResult, "kind" | "raw">) => webhookResult(name, data, r);
+  // what the checkout was started with (the user, the customers row, the order it pays) comes back in the envelope's
+  // custom data and not on the object, so the object is kept with it beside, for whoever reads a payments row's raw
+  const raw: Row = Object.keys(custom).length ? { ...data, meta: { ...obj(data.meta), custom_data: custom } } : data;
+  const out = (r: Omit<WebhookResult, "kind" | "raw">) => webhookResult(name, raw, r);
 
   if (name === "order_created" || name === "order_refunded") {
     const customer = await ensureCustomer(rows, PROVIDER, str(a.customer_id), { email: str(a.user_email), user });
-    const payment = await upsert(rows, "payments", `order_${id}`, { customer: str(customer?.id), amount: Number(a.total ?? 0), currency: str(a.currency), status: orderStatus(a), raw: data });
+    const payment = await upsert(rows, "payments", `order_${id}`, { customer: str(customer?.id), amount: Number(a.total ?? 0), currency: str(a.currency), status: orderStatus(a), raw });
     return out({ customer: str(customer?.id), payment: str(payment.id) });
   }
 
@@ -117,7 +120,7 @@ export async function applyEvent(rows: PaymentRows, event: Row): Promise<Webhook
     const subId = str(a.subscription_id);
     const sub = subId ? await rows.find("subscriptions", { providerId: subId }) : null;
     const payment = await upsert(rows, "payments", `invoice_${id}`, {
-      customer: str(customer?.id), amount: Number(a.total ?? 0), currency: str(a.currency), status: invoiceStatus(name, a), ...(sub ? { subscription: str(sub.id) } : {}), raw: data,
+      customer: str(customer?.id), amount: Number(a.total ?? 0), currency: str(a.currency), status: invoiceStatus(name, a), ...(sub ? { subscription: str(sub.id) } : {}), raw,
     });
     return out({ customer: str(customer?.id), subscription: str(sub?.id), payment: str(payment.id) });
   }
@@ -156,6 +159,14 @@ export function lemonsqueezyProvider(deps: PaymentDeps): PaymentProvider {
     return { store, call: (method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: Record<string, unknown>) => call(deps.fetch, key, method, path, body) };
   };
   const attributesOf = (answer: Row): Row => obj(obj(answer.data).attributes);
+  const checkCharge = (o: CheckoutInput): void => {
+    // a checkout here is one variant at its price, with nowhere to put an amount computed here (a tax, a shipping
+    // total) and no second variant, so a checkout carrying either is refused before Lemon Squeezy is called rather
+    // than charged without it; the route and payments@1 both make this check
+    if (o.amounts?.length) throw badRequest(`Lemon Squeezy charges one variant at its price and has no line for an amount, so a checkout with ${o.amounts.map((a) => a.name).join(", ")} cannot be charged in full through Lemon Squeezy and is refused rather than charged without them`);
+    if (o.items.length !== 1) throw badRequest("a Lemon Squeezy checkout takes one item: the variant to buy, with its quantity");
+    if (!/^\d+$/.test(o.items[0]!.price)) throw badRequest("price must be the numeric id of a Lemon Squeezy variant");
+  };
   return {
     name: PROVIDER, label: "Lemon Squeezy", keyVar: KEY_VAR, webhookSecretVar: WEBHOOK_SECRET_VAR,
     key: apiKey, webhookSecret,
@@ -176,19 +187,23 @@ export function lemonsqueezyProvider(deps: PaymentDeps): PaymentProvider {
       return { providerId: str(obj(created.data).id), email };
     },
 
-    checkCheckout(o: CheckoutInput) {
-      if (o.items.length !== 1) throw badRequest("a Lemon Squeezy checkout takes one item: the variant to buy, with its quantity");
-      if (!/^\d+$/.test(o.items[0]!.price)) throw badRequest("price must be the numeric id of a Lemon Squeezy variant");
-    },
+    checkCharge,
 
     async checkout(env, row, o) {
+      // the check again, for a caller that went straight here: the first item alone would otherwise be charged
+      checkCharge(o);
       const { store, call: ls } = api(env);
       const item = o.items[0]!;
       const answer = await ls("POST", "/v1/checkouts", resource("checkouts", {
         product_options: { redirect_url: o.success },
+        // A checkout that pays a reference (commerce's order) has to pay the order's total or the order stays pending,
+        // and a discount code typed at Lemon Squeezy pays less. So the field is hidden then:
+        // `checkout_options.discount`, "If false, hide the discount code field" (Create a Checkout,
+        // docs.lemonsqueezy.com, read 2026-09-11)
+        ...(o.reference ? { checkout_options: { discount: false } } : {}),
         checkout_data: {
           ...(row.email ? { email: str(row.email) } : {}),
-          custom: { voidbase_customer: str(row.id), ...(row.user ? { voidbase_user: str(row.user) } : {}) },
+          custom: { voidbase_customer: str(row.id), ...(row.user ? { voidbase_user: str(row.user) } : {}), ...(o.reference ? { [REFERENCE_KEY]: o.reference } : {}) },
           ...(item.quantity > 1 ? { variant_quantities: [{ variant_id: Number(item.price), quantity: item.quantity }] } : {}),
         },
       }, { store, variant: item.price }));

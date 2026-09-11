@@ -21,7 +21,7 @@ import type { AuthRecord, Bindings, Row } from "../types";
 import type { Plugin } from "./manifest";
 import {
   apiPrefix, constantTimeEqual, depsWith, ensureCustomer, hex, hmacSha256, knob, obj, paymentsPlugin, str, unixToDate, upsert, webhookPathOf, webhookResult,
-  TOLERANCE_SECONDS, type CancelMode, type CheckoutInput, type Fetch, type PaymentDeps, type PaymentProvider, type PaymentRows, type Verdict, type WebhookResult,
+  REFERENCE_KEY, TOLERANCE_SECONDS, type CancelMode, type CheckoutInput, type Fetch, type PaymentDeps, type PaymentProvider, type PaymentRows, type Verdict, type WebhookResult,
 } from "./payments-shared";
 
 // what the shared module holds and this file's callers used to import from here
@@ -183,19 +183,32 @@ export function stripeProvider(deps: PaymentDeps): PaymentProvider {
       return { providerId: str(created.id), email };
     },
 
+    // the route's rule and not a charge's: a browser posting to the route says where a buyer who backs out goes. A
+    // plugin calling payments@1 may leave it out, and its session then has no cancel_url and Stripe offers no way back
     checkCheckout(o: CheckoutInput) {
       if (!o.cancel) throw badRequest("success and cancel must be the URLs to return to");
     },
 
     async checkout(env, row, o) {
+      const mode = o.mode ?? "payment";
+      const reference = o.reference ? { [REFERENCE_KEY]: o.reference } : {};
       const session = await call(deps.fetch, mustKey(env), "POST", "/v1/checkout/sessions", {
         customer: str(row.providerId),
-        mode: o.mode ?? "payment",
-        line_items: o.items.map((i) => ({ price: i.price, quantity: i.quantity })),
+        mode,
+        // the prices Stripe knows, then what it has no price for (commerce's tax and shipping) as an amount of its
+        // own, so the session charges the whole of what the caller computed and not only the part Stripe knew
+        line_items: [
+          ...o.items.map((i) => ({ price: i.price, quantity: i.quantity })),
+          ...(o.amounts ?? []).map((a) => ({ price_data: { currency: str(a.currency).toLowerCase(), unit_amount: a.amount, product_data: { name: a.name } }, quantity: 1 })),
+        ],
         success_url: o.success,
-        cancel_url: o.cancel,
+        // left out rather than sent empty, which Stripe would refuse as a URL that is not one
+        ...(o.cancel ? { cancel_url: o.cancel } : {}),
         client_reference_id: str(row.id),
-        metadata: { voidbase_customer: str(row.id), ...(row.user ? { voidbase_user: str(row.user) } : {}) },
+        metadata: { voidbase_customer: str(row.id), ...(row.user ? { voidbase_user: str(row.user) } : {}), ...reference },
+        // the payment intent carries the reference as well, so `payment_intent.succeeded` names the order just as
+        // `checkout.session.completed` does; a subscription's session has no payment intent of its own to carry it
+        ...(o.reference && mode === "payment" ? { payment_intent_data: { metadata: reference } } : {}),
       });
       return { url: str(session.url) };
     },

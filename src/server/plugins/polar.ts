@@ -11,13 +11,13 @@
 // id, so the rows and Polar agree on who a customer is before any money moves; the checkout then names that
 // customer. Polar keys its webhook envelope on `type` and puts the whole object in `data`; a subscription's status
 // vocabulary is Stripe's, so it is written as it comes.
-import { ApiError } from "../errors";
+import { ApiError, badRequest } from "../errors";
 import type { Payments } from "../interfaces";
 import type { AuthRecord, Bindings, Row } from "../types";
 import type { Plugin } from "./manifest";
 import {
   apiPrefix, base64, constantTimeEqual, depsWith, ensureCustomer, fromBase64, hmacSha256, isoDate, knob, obj, paymentsPlugin, str, upsert, webhookPathOf, webhookResult,
-  TOLERANCE_SECONDS, type CancelMode, type Fetch, type PaymentDeps, type PaymentProvider, type PaymentRows, type Verdict, type WebhookResult,
+  REFERENCE_KEY, TOLERANCE_SECONDS, type CancelMode, type CheckoutInput, type Fetch, type PaymentDeps, type PaymentProvider, type PaymentRows, type Verdict, type WebhookResult,
 } from "./payments-shared";
 
 export const POLAR_API = "https://api.polar.sh";
@@ -147,6 +147,24 @@ export async function applyEvent(rows: PaymentRows, event: Row): Promise<Webhook
 
 // ---- the provider -----------------------------------------------------------------------------------
 
+/**
+ * What a Polar checkout cannot charge, refused (400) before Polar is called at all rather than started short. A Polar
+ * checkout lists products and Polar charges the price of the one the buyer picks, once. So there is no line in it for
+ * an amount computed here (a tax, a shipping total), and an amount line is refused whoever asks. Several products are
+ * the list a buyer picks from (a monthly and a yearly plan), which the route has always taken, and a quantity is not
+ * Polar's business. A checkout that pays a reference (commerce's order) is another matter, because an order is paid
+ * only by its whole total: two products there, or a quantity above 1, would be charged for one, which is how a cart
+ * of three kettles was paid for with one (2026-09-11). So both are refused when a reference is set. Commerce always
+ * sets one, so its carts are refused before an order exists, and a checkout without one moves no order.
+ */
+const checkCharge = (o: CheckoutInput): void => {
+  if (o.amounts?.length) throw badRequest(`Polar charges the products it sells and has no line for an amount, so a checkout with ${o.amounts.map((a) => a.name).join(", ")} cannot be charged in full through Polar and is refused rather than charged without them`);
+  if (!o.reference) return;
+  if (o.items.length !== 1) throw badRequest(`a Polar checkout for an order takes one item: Polar charges for the one product the buyer picks of those it lists, so ${o.items.length} items cannot be charged in full through Polar and are refused rather than charged for one of them`);
+  const item = o.items[0]!;
+  if (item.quantity > 1) throw badRequest(`a Polar checkout for an order takes a quantity of 1: Polar charges a product once whatever quantity it is sent, so ${item.quantity} of "${item.price}" cannot be charged in full through Polar and are refused rather than charged for one`);
+};
+
 export type PolarDeps = PaymentDeps;
 
 /** Polar over its dependencies: the knobs, the calls, the signature, the events */
@@ -177,15 +195,29 @@ export function polarProvider(deps: PaymentDeps): PaymentProvider {
       return { providerId: str(created.id), email };
     },
 
+    checkCharge,
+
     async checkout(env, row, o) {
-      // `items[].price` is a Polar product id; quantities are not a checkout's business at Polar, the customer
-      // picks among the products listed
+      // the refusal again, for a caller that came straight here
+      checkCharge(o);
+      // `items[].price` is a Polar product id: the one product a checkout for an order lists, or the products a buyer
+      // picks among, so quantities are not sent. Polar copies the checkout's metadata onto the order it makes, which is
+      // how the reference comes back on `order.paid`
       const checkout = await api(env)("POST", "/v1/checkouts/", {
         products: o.items.map((i) => i.price),
         customer_id: str(row.providerId),
         ...(row.email ? { customer_email: str(row.email) } : {}),
         success_url: o.success,
-        metadata: { voidbase_customer: str(row.id), ...(row.user ? { voidbase_user: str(row.user) } : {}) },
+        metadata: { voidbase_customer: str(row.id), ...(row.user ? { voidbase_user: str(row.user) } : {}), ...(o.reference ? { [REFERENCE_KEY]: o.reference } : {}) },
+        // A checkout that pays a reference (commerce's order) has to pay that order's total to the cent or the order
+        // stays pending, and a discount code typed at Polar pays less. So Polar is told not to offer the field then:
+        // `allow_discount_codes` is CheckoutProductsCreate's in the 2026-04 document, and it defaults to true.
+        ...(o.reference ? { allow_discount_codes: false } : {}),
+        // It has to pay it in the order's currency as well, and Polar shows a buyer their local currency when the
+        // product has a price in it (the organization's `default_presentment_currency` is only the fallback), so the
+        // checkout names the currency the order was priced in: CheckoutProductsCreate's `currency`, a
+        // PresentmentCurrency, which the document spells in lower case
+        ...(o.reference && o.currency ? { currency: str(o.currency).toLowerCase() } : {}),
       });
       return { url: str(checkout.url) };
     },

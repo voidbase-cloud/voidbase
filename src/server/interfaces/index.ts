@@ -74,8 +74,21 @@ export interface Payments {
    * provider's own checkout route would have looked up for itself.
    */
   customer(env: Bindings, auth: AuthRecord): Promise<string>;
-  /** start a checkout for a customers row and return where to send the customer */
-  checkout(env: Bindings, o: { customer: string; items: { price: string; quantity: number }[]; success: string; cancel?: string; mode?: "payment" | "subscription" }): Promise<{ url: string }>;
+  /**
+   * Start a checkout for a customers row and return where to send the customer. A checkout with a `reference` is
+   * charged in full or refused (400): every item at its quantity and every amount line. One without a reference is
+   * too, but at Polar, which lists its products for the buyer to pick among and charges the one picked, once (an amount
+   * line is refused there either way); such a checkout names no order, so it moves no commerce order.
+   */
+  checkout(env: Bindings, o: CheckoutRequest & { customer: string }): Promise<{ url: string }>;
+  /**
+   * Refuse (400) a checkout the active provider cannot charge in full, the same check `checkout` makes first, without
+   * starting one. Optional, like `refund`. Added 2026-09-11 with amount lines, so that commerce refuses a cart the
+   * provider cannot charge in full before it creates the customer at the provider, writes the order and reserves the
+   * stock, rather than undoing all three afterwards. It is not the provider route's check of its own body (Stripe's
+   * route requires `cancel` and this does not), because a caller of the interface did not use the route.
+   */
+  checkCheckout?(env: Bindings, o: CheckoutRequest): void;
   /** where a customer manages their own billing, when the provider hosts such a page */
   portal(env: Bindings, o: { customer: string; return: string }): Promise<{ url: string }>;
   /** verify and interpret a provider's webhook and write what it says into the collections; the route belongs to the provider's own plugin */
@@ -88,6 +101,36 @@ export interface Payments {
    * lets commerce refund an order against a provider that can only be refunded from its own dashboard.
    */
   refund?(env: Bindings, o: { payment: string; amount?: number; reason?: string }): Promise<{ providerId: string }>;
+}
+
+/**
+ * What a checkout charges. `items` are prices the provider already knows, by its own id. `amounts` are lines that
+ * carry their own amount in the currency's minor unit, for what has no price at the provider because it was
+ * computed a second ago: commerce's tax and shipping, added 2026-09-11 after a Stripe session on the demo charged
+ * an order's 4500 subtotal and not its 5900 total. A provider that cannot charge an amount line refuses the whole
+ * checkout rather than leave the line out. `reference` is the caller's own id for what is being paid for (commerce's
+ * order): the provider carries it in its metadata, it comes back on the object the webhook writes into `raw`, and
+ * that is how a payment says which order it pays. It is a claim and not proof, since any caller of `payments@1` can
+ * give one, so commerce holds it against the amount paid; and a payment that comes back without one moves no order of
+ * commerce's. A checkout with a reference is paid only by its whole total, so a provider refuses more of it (Polar a
+ * second product) and Polar and Lemon Squeezy offer its buyer no discount code. The provider routes read neither
+ * from a request body, because a browser that names its own amounts sets its own price and one that names an order
+ * could pay somebody else's.
+ */
+export interface CheckoutRequest {
+  items: { price: string; quantity: number }[];
+  amounts?: { name: string; amount: number; currency: string }[];
+  /**
+   * The currency the caller priced what is paid for in (commerce's cart's), in either case. Added 2026-09-11 for
+   * Polar, which shows a buyer their local currency when the product has a price in it: a Polar checkout with a
+   * reference is sent it, lower-cased, so the payment comes back in the currency its order was priced in. Stripe and
+   * Lemon Squeezy ignore it.
+   */
+  currency?: string;
+  success: string;
+  cancel?: string;
+  mode?: "payment" | "subscription";
+  reference?: string;
 }
 
 /**

@@ -9,7 +9,7 @@ import { ApiError } from "../../src/server/errors";
 import type { Auth, Payments } from "../../src/server/interfaces";
 import { createKernel, load, using } from "../../src/server/kernel";
 import {
-  applyEvent, KEY_VAR, lemonsqueezy, lemonsqueezyWith, signPayload, STORE_VAR, verifySignature, WEBHOOK_PATH, WEBHOOK_SECRET_VAR,
+  applyEvent, KEY_VAR, lemonsqueezy, lemonsqueezyProvider, lemonsqueezyWith, signPayload, STORE_VAR, verifySignature, WEBHOOK_PATH, WEBHOOK_SECRET_VAR,
 } from "../../src/server/plugins/lemonsqueezy";
 import type { PaymentCollection, PaymentRows } from "../../src/server/plugins/payments-shared";
 import { stripeWith } from "../../src/server/plugins/stripe";
@@ -179,6 +179,47 @@ describe("checkout", () => {
     const again = await appWith({ auth: ada, fetch: down.f, rows });
     expect((await again.post("/api/payments/lemonsqueezy/checkout", { items: [{ price: "1" }], success: "https://a" })).status).toBe(502);
   });
+
+  test("amount lines are refused with a 400 before Lemon Squeezy is called, and a reference goes in the custom data every webhook carries back", async () => {
+    const { calls, f } = fakeFetch({ "POST /v1/checkouts": jsonapi("checkouts", "x", { url: "https://ls/co" }) });
+    const customer = { id: "c1", user: "u1", provider: "lemonsqueezy", providerId: "7", email: "ada@b.test" };
+    const { rows } = memoryRows({ customers: [customer] });
+    const { kernel, env } = await appWith({ auth: ada, fetch: f, rows });
+    const payments = using<Payments>(kernel, "payments@1");
+    const charge = { customer: "c1", items: [{ price: "123", quantity: 1 }], amounts: [{ name: "Standard shipping", amount: 500, currency: "usd" }], success: "https://a/ok", reference: "ord_1" };
+    // one variant at its price, and no line for an amount: the checkout is refused, never started without it
+    expect(() => payments.checkCheckout!(env, charge)).toThrow(/Lemon Squeezy charges one variant at its price and has no line for an amount/);
+    await expect(payments.checkout(env, charge)).rejects.toMatchObject({ status: 400 });
+    // and by the provider itself, for a caller that went straight to it: neither the amount nor a second item is dropped
+    const provider = lemonsqueezyProvider({ fetch: f, rows: () => rows, now: () => 0 });
+    await expect(provider.checkout(env, customer, charge)).rejects.toMatchObject({ status: 400 });
+    await expect(provider.checkout(env, customer, { ...charge, amounts: [], items: [{ price: "123", quantity: 1 }, { price: "124", quantity: 1 }] })).rejects.toMatchObject({ status: 400 });
+    expect(calls).toHaveLength(0);
+    // without one the checkout goes, and names its order in the custom data
+    expect(await payments.checkout(env, { ...charge, amounts: [] })).toEqual({ url: "https://ls/co" });
+    expect(((calls[0]!.body.data as Row).attributes as Row).checkout_data).toMatchObject({ email: "ada@b.test", custom: { voidbase_customer: "c1", voidbase_user: "u1", voidbase_order: "ord_1" } });
+  });
+
+  test("a checkout that pays a reference hides the discount code field, since a code would pay less than the order's total; one without a reference leaves the field as Lemon Squeezy has it", async () => {
+    const { calls, f } = fakeFetch({ "POST /v1/checkouts": jsonapi("checkouts", "x", { url: "https://ls/co" }) });
+    const customer = { id: "c1", user: "u1", provider: "lemonsqueezy", providerId: "7", email: "ada@b.test" };
+    const { rows } = memoryRows({ customers: [customer] });
+    const { kernel, env, post } = await appWith({ auth: ada, fetch: f, rows });
+    const payments = using<Payments>(kernel, "payments@1");
+    expect(await payments.checkout(env, { customer: "c1", items: [{ price: "123", quantity: 1 }], success: "https://a/ok", reference: "ord_1", currency: "usd" })).toEqual({ url: "https://ls/co" });
+    // `checkout_options.discount`: "If false, hide the discount code field" (Create a Checkout); the checkout's currency
+    // is not sent, since a variant is priced in the store's
+    expect((calls[0]!.body.data as Row).attributes).toEqual({
+      product_options: { redirect_url: "https://a/ok" },
+      checkout_options: { discount: false },
+      checkout_data: { email: "ada@b.test", custom: { voidbase_customer: "c1", voidbase_user: "u1", voidbase_order: "ord_1" } },
+    });
+    // without a reference, through payments@1 or the route, there is no order to pay in full and no option is sent
+    expect(await payments.checkout(env, { customer: "c1", items: [{ price: "123", quantity: 1 }], success: "https://a/ok" })).toEqual({ url: "https://ls/co" });
+    expect((await post("/api/payments/lemonsqueezy/checkout", { items: [{ price: "123" }], success: "https://a/ok" })).status).toBe(200);
+    expect(calls).toHaveLength(3);
+    for (const c of calls.slice(1)) expect((c.body.data as Row).attributes).not.toHaveProperty("checkout_options");
+  });
 });
 
 describe("the customer portal", () => {
@@ -299,13 +340,15 @@ describe("what each event does to the rows", () => {
     const { rows, tables } = memoryRows();
     const r = await applyEvent(rows, JSON.parse(event("order_created", "orders", "1", order)) as Row);
     expect(tables.customers).toEqual([{ id: tables.customers[0]!.id as string, provider: "lemonsqueezy", providerId: "7", email: "ada@b.test", user: "u1" }]);
-    expect(tables.payments).toEqual([{ id: tables.payments[0]!.id as string, providerId: "order_1", customer: tables.customers[0]!.id as string, amount: 1999, currency: "USD", status: "succeeded", raw: { type: "orders", id: "1", attributes: order } }]);
+    // the checkout's custom data comes back on the envelope and not on the object, so the row keeps it beside the object
+    expect(tables.payments).toEqual([{ id: tables.payments[0]!.id as string, providerId: "order_1", customer: tables.customers[0]!.id as string, amount: 1999, currency: "USD", status: "succeeded", raw: { type: "orders", id: "1", attributes: order, meta: { custom_data: { voidbase_user: "u1" } } } }]);
     expect(r).toEqual({ kind: "order_created", customer: String(tables.customers[0]!.id), payment: String(tables.payments[0]!.id), raw: expect.any(Object) });
     await applyEvent(rows, JSON.parse(event("order_refunded", "orders", "1", { ...order, status: "refunded", refunded: true })) as Row);
     expect(tables.payments).toHaveLength(1);
     expect(tables.payments[0]!.status).toBe("refunded");
     await applyEvent(rows, JSON.parse(event("order_created", "orders", "2", { ...order, status: "pending" }, {})) as Row);
     expect(tables.payments[1]).toMatchObject({ providerId: "order_2", status: "pending" });
+    expect(tables.payments[1]!.raw).toEqual({ type: "orders", id: "2", attributes: { ...order, status: "pending" } });
     expect(tables.customers).toHaveLength(1);
   });
 

@@ -924,10 +924,74 @@ field of `GET /api/plugins`. A fourth provider is a `PaymentProvider` and a call
 exports `./plugins/payments-shared` for one written outside voidbase.
 
 **The interface.** `payments@1` takes the env on every method, because the keys arrive with the request:
-`route(env)`, `checkout(env, { customer, items, success, cancel?, mode? })`, `portal(env, { customer, return })`,
+`route(env)`, `checkout(env, { customer, items, amounts?, currency?, success, cancel?, mode?, reference? })`,
+`checkCheckout(env, { items, amounts?, currency?, success, cancel?, mode?, reference? })`, `portal(env, { customer, return })`,
 `webhook(env, request)` and `cancel(env, subscription, { now?, resume? })`. `customer` and `subscription` are ids
 of the plugin's own rows, never the provider's ids: the app talks about its rows and the plugin translates. The
 routes below call the same code.
+
+**What a checkout charges.** `items` are prices the provider already knows, by its own id. `amounts` are lines
+`{ name, amount, currency }` that carry their own amount in the currency's minor unit, for what has no price at the
+provider because it was computed a second ago: commerce's tax and shipping. A checkout with a `reference` is charged in
+full or refused: every item at its quantity and every amount line, or a 400 before anything is created at the
+provider. A checkout without one is charged in full or refused as well, but at Polar, which lists the products it is
+given for the buyer to pick among and charges the one picked, once, whatever quantity it was sent; such a checkout
+names no order, so it moves no order of commerce's. Stripe charges amount lines. Polar and Lemon Squeezy, as
+implemented, refuse them, with a reference or without one. Lemon Squeezy takes one item, a numeric variant with its
+quantity, and Polar, for a checkout with a `reference`, one product with a quantity of 1. An amount line that is not
+a name, a whole number above zero and a three-letter currency is 400 whichever provider is active. `currency` is the
+currency the caller priced the checkout in (commerce passes its cart's): Polar is sent it, lower-cased, for a checkout
+with a reference, so that it does not show the buyer a price in their own currency, and Stripe and Lemon Squeezy
+ignore it. `reference` is the caller's own id for what is being paid for (commerce's order id). The provider carries it
+in its metadata as `voidbase_order`, it comes back on the object the webhook writes into the `payments` row's `raw`,
+and `paymentReference(raw)` in `payments-shared.ts` reads it back whichever provider wrote the row. Any plugin
+calling `payments@1` can give a reference, so it says which order a payment claims to pay and proves nothing;
+commerce holds it against the amount paid (below). A checkout with a reference is paid only by its whole total, so
+Polar refuses a second product or a quantity above 1 for it, and Polar and Lemon Squeezy offer its buyer no discount
+code. The routes never read `amounts` or `reference` from a request body: a browser that names its own amounts sets
+its own price, and one that names an order could pay somebody else's.
+
+**What a payment charged before the provider's tax.** Polar and Lemon Squeezy are merchants of record: they add their
+own tax to what a checkout asks for, and the `payments` row's `amount` includes it (Polar's `total_amount`, Lemon
+Squeezy's `attributes.total`). `chargedBeforeProviderTax(payment)` in `payments-shared.ts` reads what the provider
+charged before that tax off the row's `raw`, whichever provider wrote it: Polar's `net_amount` ("after discounts but
+before taxes"), which is the price only when the price was tax-exclusive (see polar), or its `total_amount` when the
+object says `tax_behavior: "inclusive"` (a Polar order carries no `tax_behavior` in the 2026-04 document; a checkout
+does, and it is read when a payload has it), and never whichever of the two matches; Lemon Squeezy's `total` less its
+`tax`, or the `total` when `tax_inclusive` is true; and otherwise the row's `amount`, which for Stripe is what it was
+asked to charge, since nothing asks Stripe to add a tax of its own. An object of a shape it reads whose figure cannot
+be read is `NaN`, which is no order's total, rather than the row's `amount`, which holds the provider's tax: a Polar
+object with `total_amount` or `tax_amount` and no number for the figure it is compared by, a Lemon Squeezy `total`
+that is not a number, or a `tax` beside it that is there and not a number while `tax_inclusive` is not true.
+
+**What a payment bought.** A reference says which order a payment claims to pay and proves nothing: at Lemon Squeezy
+any checkout URL takes `?checkout[custom][voidbase_order]=...`, and it comes back on the webhook as
+`meta.custom_data`, so a buyer can name somebody's pending order on an order of their own for another variant.
+`purchasedItems(payment)` in `payments-shared.ts` reads what a payment bought off the row's `raw`, each item by the id
+a checkout names it by at that provider, and its quantity where the provider reported one: Lemon Squeezy's
+`attributes.first_order_item` (`variant_id`, and `quantity` only when it is there and a whole number above zero, since
+the docs' own order object lists no `quantity` at all and Lemon Squeezy's SDK types one as "Not in the documentation,
+but in the response"), and Polar's order `product_id`, once, since Polar charges a product once whatever quantity it is
+sent; that field is nullable at Polar, and when it is null the products the order's `items` name are read instead. It
+is `null` at Stripe, which reports no purchase on a payment: a session's line items are a call of their own, neither
+`checkout.session.completed` nor a `payment_intent.*` event carries them, and a session's metadata is set only by
+whoever creates it with the secret key, so no buyer can name an order on money of their own. It is `null` at Polar as
+well for an order that names a product nowhere, since a line item in the 2026-04 document carries `product_price_id`
+and no `product_id`. `null` is not `[]`: an object of a provider that does report purchases and in which none could be
+read is `[]`, which is no order's lines; and a quantity nobody reported is left off the item rather than reported as
+`NaN`, which was no order's line either and left a fully paid Lemon Squeezy order pending for good.
+
+**Two checks, and only one of them is the interface's.** A `PaymentProvider` refuses what it cannot take through two
+optional hooks. `checkCharge(o)` is what the provider cannot charge in full (an amount line; a second item at Lemon
+Squeezy; at Polar, when the checkout has a `reference`, a second item or a quantity above 1); the provider's route and
+`payments@1` both make it, through `checkChargeFor`, which checks the amount lines' shape first. `checkCheckout(o)`
+is the route's own rule about the body it was posted, such as Stripe's that `cancel` is given, and only
+`POST /api/payments/<provider>/checkout` makes it: a plugin calling `payments@1` did not use the route and is not
+held to its rules (they were split on 2026-09-11, when making both through the interface turned a commerce checkout
+on Stripe without `cancel` from a 200 into a 400).
+`payments@1`'s optional `checkCheckout(env, o)` is the charge check on its own, the one `checkout` makes first,
+without starting anything, so a caller can refuse before it does work of its own (commerce refuses a cart before it
+writes the order). It is optional on the interface, like `refund`.
 
 **The knobs are secrets**: declare them with `secret(...)` in `env.ts` so they live in `pb_secrets`/`vb_secrets`
 and reach the Worker as encrypted secrets, never as vars. A plugin reads them from the request env first and the
@@ -953,9 +1017,10 @@ keep their shape, with `provider` saying which. What follows from the family: `w
 **The routes**, the same four under each `/api/payments/<provider>/`:
 
 - `POST checkout`, signed-in user. Body `{ items: [{ price, quantity }], success, cancel?, mode?: "payment" |
-  "subscription" }`. Finds the user's `customers` row or creates the customer at the provider and the row, then
-  starts a checkout. Answers `{ url }`. What `price` means, and whether `cancel` and `mode` are read, is the
-  provider's (below).
+  "subscription" }`; `amounts` and `reference` in a body are not read. Checks the body against the provider first
+  (the route's own rules, `checkCheckout`, then what the provider can charge, `checkCharge`), then finds the user's
+  `customers` row or creates the customer at the provider and the row, then starts a checkout. Answers `{ url }`.
+  What `price` means, and whether `cancel` and `mode` are read, is the provider's (below).
 - `POST portal`, signed-in user. Body `{ return }`. Where the user manages their billing. `{ url }`.
 - `POST cancel`, the subscription's owner or a superuser. Body `{ subscription, now?, resume? }` (a
   `subscriptions` row id). Cancels at the period's end by default; `now: true` ends it at once where the
@@ -970,7 +1035,11 @@ A provider's error comes back as 400 with its message (`Stripe answered 402: You
 as 502. Each plugin's test (`test/unit/stripe-plugin.test.ts`, `polar-plugin.test.ts`,
 `lemonsqueezy-plugin.test.ts`) measures the signature check, the three routes against a fake `fetch` (URL, method,
 auth header, body), every event against in-memory rows, the replay, and the no-key state;
-`test/unit/payments-shared.test.ts` measures the family. Nothing calls a provider.
+`test/unit/payments-shared.test.ts` measures the family, which of a provider's two checks its route and
+`payments@1` each make, what `paymentReference`, `chargedBeforeProviderTax` and `purchasedItems` read off each
+provider's objects (a Polar `tax_behavior` among them, the `NaN` of a figure that cannot be read, a Lemon Squeezy
+variant and quantity, a Polar product, and Stripe's nothing at all), and that what a checkout charges is said the same
+way in the interface, in `PaymentProvider` and here. Nothing calls a provider.
 
 ### stripe
 
@@ -979,9 +1048,20 @@ pinned to `2025-08-27.basil`, so a change on Stripe's side arrives when that lin
 
 - Knobs: `STRIPE_SECRET_KEY` (`sk_test_...` or `sk_live_...`; `livemode` is read off its prefix),
   `STRIPE_WEBHOOK_SECRET` (the `whsec_...` of the endpoint registered in Stripe's dashboard).
-- Checkout: `price` is a Stripe price id, `quantity` is sent, `cancel` is required, `mode` defaults to `payment`.
-  The customer is created with `POST /v1/customers` (email and `metadata[voidbase_user]`), the session with
-  `POST /v1/checkout/sessions` (`client_reference_id` and `metadata[voidbase_customer]` set to the row id).
+- Checkout: `price` is a Stripe price id, `quantity` is sent, `mode` defaults to `payment`. The route requires
+  `cancel` (its `checkCheckout`); through `payments@1` it is optional, and a session started without one is sent no
+  `cancel_url` at all, rather than an empty one, so Stripe shows no way back. Stripe has no `checkCharge`: it charges
+  amount lines. The customer is created with `POST /v1/customers` (email and `metadata[voidbase_user]`), the session
+  with `POST /v1/checkout/sessions` (`client_reference_id` and `metadata[voidbase_customer]` set to the row id). An
+  amount line follows the prices as a line of its own, `line_items[n][price_data]` with `currency`, `unit_amount`
+  and `product_data[name]`, and `quantity` 1. A reference is `metadata[voidbase_order]` on the session and, in
+  payment mode, `payment_intent_data[metadata][voidbase_order]` on its payment intent, so
+  `checkout.session.completed` and `payment_intent.succeeded` both name the order. Stripe reports no purchase on a
+  payment (`purchasedItems` is null), and there is nothing to hold an order's lines against; its metadata is set with
+  the secret key alone, so a reference at Stripe is never a buyer's claim. A commerce shop on Stripe needs
+  Adaptive Pricing (Stripe's presentment currencies) turned off: commerce compares a payment's amount with the
+  order's total in the order's currency, and a buyer who pays in a currency Stripe offered them pays another amount
+  in another currency, which pays no order and leaves it pending.
   Portal: `POST /v1/billing_portal/sessions`. Cancel: `POST /v1/subscriptions/{id}` with `cancel_at_period_end`
   (`true`, or `false` to resume); `now: true` is `DELETE /v1/subscriptions/{id}`.
 - Webhook: register `https://<instance>/api/payments/stripe/webhook` (Developers > Webhooks). `Stripe-Signature`
@@ -1002,12 +1082,36 @@ Polar's REST API with JSON bodies and `Authorization: Bearer`, against `https://
 - Knobs: `POLAR_ACCESS_TOKEN` (an organization access token), `POLAR_WEBHOOK_SECRET` (the `whsec_...` shown when
   the endpoint is created), optional `POLAR_SANDBOX=1` (`livemode` is false with it).
 - Checkout: `price` is a Polar product id; the customer picks among the products listed, so `quantity`, `cancel`
-  and `mode` are not read. The customer is looked up by email (`GET /v1/customers/?email=`; an email is unique in
-  an organization) and otherwise created with `POST /v1/customers/` (`external_id` set to the user id), then
-  `POST /v1/checkouts/` with `products`, `customer_id`, `customer_email`, `success_url` and `metadata`; the answer
-  is its `url`. Portal: `POST /v1/customer-sessions/` with `customer_id` and `return_url`, answering
+  and `mode` are not read. An amount line is refused with 400 before Polar is called (its `checkCharge`, through the
+  route and `payments@1` alike), because there is no line in a Polar checkout for an amount. A checkout with a
+  reference is for an order, which is paid only by its whole total, so with one `checkCharge` also refuses more than
+  one item and a quantity above 1, which Polar would charge for once. The route sets no reference, so it still lists
+  several products for a buyer to pick from (a monthly and a yearly plan). A reference goes in `metadata` as
+  `voidbase_order`, which Polar copies onto the order, so `order.paid` carries it back; and a checkout with a
+  reference is sent `allow_discount_codes: false` (the document's default is `true`), because a discount code would
+  pay less than the order's total and leave the order pending. A checkout with a reference and a `currency` is sent
+  that currency lower-cased as `currency` (CheckoutProductsCreate's, a PresentmentCurrency), because Polar shows a
+  buyer their local currency when the product has a price in it (the organization's `default_presentment_currency` is
+  only the fallback), and a payment in another currency than its order's pays no order. The customer is looked up by email
+  (`GET /v1/customers/?email=`; an email is unique in an organization) and otherwise created with
+  `POST /v1/customers/` (`external_id` set to the user id), then `POST /v1/checkouts/` with `products`,
+  `customer_id`, `customer_email`, `success_url` and `metadata`; the answer is its `url`. Portal:
+  `POST /v1/customer-sessions/` with `customer_id` and `return_url`, answering
   `customer_portal_url`. Cancel: `PATCH /v1/subscriptions/{id}` with `cancel_at_period_end` (`true`, or `false`
   to resume); `now: true` is `DELETE /v1/subscriptions/{id}` (revoke).
+- For commerce, a product at Polar needs a price in the shop's currency (`VOIDBASE_COMMERCE_CURRENCY`), which the
+  checkout names, and that price has to be tax-exclusive. A Polar order carries no `tax_behavior` (in the 2026-04
+  document only a checkout and a price do, and a checkout's is null until the tax is calculated), so commerce compares
+  the order's `net_amount`, which is before taxes, with the order's total, and `net_amount` is the price only when the
+  tax was added on top of it. An order's `product_id` is what was bought, which commerce holds against the product its
+  checkout named; it is nullable, and when it is null the products the order's `items` name are read instead, and an
+  order that names a product nowhere reports no purchase at all, which leaves its reference and its amount before tax
+  to gate it. That is safe here because a buyer cannot set a Polar checkout's metadata (the public checkout update
+  carries none), so a reference from Polar is not a claim anybody can make. With an inclusive price, or a location-based one where Polar takes the tax out of the
+  price, `net_amount` is less than the price: a buyer who paid in full leaves the order `pending`, and an
+  `order.payment_unmatched` row names both amounts, `amount` (Polar's `total_amount`) and `beforeProviderTax` (its
+  `net_amount`), against the order's total. A payload that does carry `tax_behavior` is read by it: `total_amount`
+  when it is `inclusive`, `net_amount` when it is `exclusive`.
 - Webhook: register `https://<instance>/api/payments/polar/webhook` (Settings > Webhooks). Polar signs with
   Standard Webhooks: `webhook-id`, `webhook-timestamp` (unix seconds) and `webhook-signature` (`v1,<base64>`),
   HMAC SHA-256 over `id.timestamp.body`, a five-minute tolerance. Two keys are tried, because Polar changed how a
@@ -1020,8 +1124,9 @@ Polar's REST API with JSON bodies and `Authorization: Bearer`, against `https://
   subscription: status as Polar says it, which is the rows' vocabulary; `revoked` as `canceled`; `canceled` keeps
   the status and sets `cancelAtPeriodEnd`).
 - Not verified against a live account: whether `POST /v1/customers/` refuses a duplicate email is not stated in
-  the document (the email lookup runs first either way), and the day Polar switched secret formats is taken from
-  its delivery page; both keys are accepted regardless.
+  the document (the email lookup runs first either way), the day Polar switched secret formats is taken from
+  its delivery page (both keys are accepted regardless), and what Polar answers to a checkout sent a `currency` its
+  product has no price in (a refusal comes back as a 400, and commerce then cancels the order it had just made).
 
 ### lemonsqueezy
 
@@ -1032,7 +1137,22 @@ Lemon Squeezy's JSON:API (`application/vnd.api+json`, `Authorization: Bearer`) a
   to; without it the routes answer 503 naming it), `LEMONSQUEEZY_WEBHOOK_SECRET` (the signing secret typed when
   the webhook is created). Test mode is a switch on the store, not a property of the key, so `livemode` is `true`.
 - Checkout: one item whose `price` is a numeric variant id; a `quantity` above 1 goes as
-  `checkout_data.variant_quantities`; `cancel` and `mode` are not read (the variant decides). The customer is
+  `checkout_data.variant_quantities`; `cancel` and `mode` are not read (the variant decides). An amount line is
+  refused with 400 before Lemon Squeezy is called, and so is a second item or a price that is not a variant id (its
+  `checkCharge`, which the route and `payments@1` both make): a checkout is one variant at its price. A reference
+  goes in `checkout_data.custom` as `voidbase_order`, and a checkout with one is sent
+  `checkout_options: { discount: false }`, which hides the discount code field (Lemon Squeezy shows it by default),
+  because a code would pay less than the order's total and leave the order pending. An order's
+  `attributes.first_order_item` says which variant was bought, and how many only when it carries a `quantity` (the
+  docs' order object lists none, and Lemon Squeezy's own SDK types one as "Not in the documentation, but in the
+  response"), which commerce holds against the order's line: by the variant always, and by the quantity only when one
+  was reported. That is because a checkout URL takes custom data of a buyer's own
+  (`?checkout[custom][voidbase_order]=`) and a reference from Lemon Squeezy is therefore a claim anybody can make,
+  which is also why a declined Lemon Squeezy purchase cancels the order it names only when it bought that order's
+  lines. A variant with a setup fee pays no
+  commerce order: the order's `attributes.total` includes the variant's `setup_fee`, which commerce's order does not,
+  so what it charged before the tax is more than the order's total, and the order stays `pending` with an
+  `order.payment_unmatched` row. A product commerce sells through Lemon Squeezy is a variant without one. The customer is
   looked up by email in the store (`GET /v1/customers?filter[store_id]=&filter[email]=`) and otherwise created
   with `POST /v1/customers` (`name` from the auth record or the email's local part), then `POST /v1/checkouts`
   with `product_options.redirect_url`, `checkout_data.email` and `checkout_data.custom` (`voidbase_user`,
@@ -1053,6 +1173,8 @@ Lemon Squeezy's JSON:API (`application/vnd.api+json`, `Authorization: Bearer`) a
   `subscription_payment_success|failed|recovered|refunded` (a payment keyed `invoice_<id>` linked to its
   subscription; the `initial` invoice is skipped because `order_created` already wrote that money). Ids are
   integers and an order and an invoice can share a number, which is what the prefixes are for.
+  A payments row's `raw` is the object with the envelope's custom data kept beside it as `raw.meta.custom_data`,
+  because the envelope is the only place the checkout's custom data, and so its reference, comes back.
 - Not verified against a live account: whether `POST /v1/customers` refuses an email the store already has (the
   lookup runs first either way), and whether `urls.customer_portal` on a customer is null before the first order
   (the create-customer example shows null, which is how the 400 is decided).
@@ -1111,9 +1233,9 @@ set, each with `created` and `updated` autodates:
 - `orders`: `number` (unique), `customer` (relation to the payments plugin's `customers`), `email`, `status`
   (`pending` / `paid` / `fulfilled` / `cancelled` / `refunded`), `currency`, `subtotal`, `tax`, `shipping`,
   `total`, `address` (json), `payment` (relation to the payments plugin's `payments` row), `placedAt`.
-- `order_items`: `order`, `variant`, `sku`, `title`, `quantity`, `unitPrice`, `total`. A record of what was
-  bought rather than a pointer to it, because a variant's title and price may change tomorrow and the order may
-  not.
+- `order_items`: `order`, `variant`, `sku`, `title`, `quantity`, `unitPrice`, `total`, `priceId` (what the checkout
+  named the line by at the payment provider: the variant's `priceId`, or its `sku`). A record of what was bought
+  rather than a pointer to it, because a variant's title and price may change tomorrow and the order may not.
 - `shipments`: `order`, `carrier`, `tracking`, `shippedAt`, `items` (json).
 - `refunds`: `order`, `amount`, `reason`, `providerId`, `refundedAt`.
 - `commerce_audit`: `at`, `actor`, `action`, `subject`, `detail` (json). Every state change writes one, it is
@@ -1144,10 +1266,19 @@ token through the routes and not through the records API, because a rule cannot 
   cart and quotes both interfaces against it. Answers `{ cart, currency, address, subtotal, tax: { lines, total },
   shipping: [rates] }`. An address with nothing recognisable in it is 400.
 - `POST /checkout`, signed-in user. Body `{ success, cancel?, shipping?: <rate id> }`. Quotes tax and shipping
-  again (a quote an hour old is not a quote), takes the named rate or the first one, asks `payments@1` for the
-  caller's `customers` row, reserves the stock, writes the `pending` order and its items, marks the cart
-  `ordered`, and hands the line items to `payments@1`'s checkout. Answers `{ order, url }`. If the provider
-  refuses, the stock goes back, the order is cancelled and the provider's error is the answer.
+  again (a quote an hour old is not a quote), takes the named rate or the first one, and works out what the provider
+  is to charge: the variants by `priceId` (or `sku`) and quantity, and the tax and the shipping, when they are not
+  zero, as amount lines in the cart's currency (the tax named by its labels, the shipping by its rate's label), so
+  the checkout charges the order's `total` and not only its subtotal. A provider that cannot charge all of that
+  refuses here with 400, before anything has happened (`payments@1`'s `checkCheckout`, asked about a checkout with a
+  reference, since it will have one, with the cart's id standing in for the order's, which does not exist yet):
+  Polar and Lemon Squeezy refuse a cart with tax or shipping or of more than one line, and Polar one with a quantity
+  above 1. A provider
+  route's own rules about its body are not made here, so `cancel` stays optional whichever provider is active (a
+  Stripe session without it offers no way back). Then it asks `payments@1` for the caller's `customers` row, reserves
+  the stock, writes the `pending` order and its items, marks the cart `ordered`, and hands the lines to
+  `payments@1`'s checkout with the order's id as the `reference` and the cart's `currency`. Answers `{ order, url }`.
+  If the provider refuses then, the stock goes back, the order is cancelled and the provider's error is the answer.
 - `POST /orders/:id/fulfil`, superuser. Body `{ carrier?, tracking? }`. A paid order only (409 otherwise): writes
   a `shipments` row holding what shipped, takes the quantities off `onHand` and off the reservation with them, and
   moves the order to `fulfilled`.
@@ -1169,30 +1300,225 @@ family is already keyed by, so two instances in one process never hear each othe
 the webhook's error on purpose: the provider then retries, every write on that path is an upsert by the provider's
 id, and the watcher's own move is idempotent for the same reason.
 
-Commerce's watcher matches the payments row to a `pending` order of the same `customers` row, preferring the one
-whose total and currency are the payment's and otherwise taking the oldest. A `succeeded` payment moves the order
-to `paid` and points it at the row; a `failed` one releases the reservation and cancels the order, which is the
-other half of "reserved at checkout, released when an order is cancelled or its payment fails". Both write a
-`commerce_audit` row whose actor is `payments:<provider>`. A payment with no pending order of ours is a log line
-and nothing else.
+Commerce's watcher moves only the order a payment names: the reference checkout handed over, read off the row's
+`raw` with `paymentReference`.
+
+- A payment that names no order never pays, cancels or revives one, whatever it costs, and is a log line and not an
+  audit row. Commerce gives every checkout its order's id as the reference, at all three providers, so money that
+  names no order is not a commerce checkout's: a subscription invoice's payment intent at Stripe, which carries
+  neither metadata nor a mark of its subscription and whose upsert can replace the invoice in the row's `raw`; a
+  Lemon Squeezy subscription's first order; a purchase through a provider's own checkout route. Until 2026-09-11
+  such a payment was matched on the `customers` row and the amount, so any of them could pay, cancel or revive a
+  pending order of the same total.
+- A payment that names one is that order's or nobody's: Stripe tells of one payment twice (the session, then its
+  payment intent) and the second telling must not pay a second order of the same total, and a name that points at
+  somebody else's order is no reason to pick one of the payer's. The order has to be the payer's (the same
+  `customers` row) and still `pending`, or, for a success, cancelled by a failed payment (below).
+- A `succeeded` payment has to be the order's `total` in its currency as well (compared in either case, since Lemon
+  Squeezy writes `USD`), because the name is a claim and not proof: any plugin calling `payments@1` can give one, a
+  variant's `priceId` can cost something else at the provider, and a provider can report less than the total. The
+  amount compared is what the provider charged before any tax of its own (`chargedBeforeProviderTax`, above), since
+  Polar and Lemon Squeezy add their tax on top of an order's total, which cannot include it. At Stripe it is the
+  amount as written, compared in the order's currency, which is why Stripe's Adaptive Pricing has to be off. At Polar
+  it is the order's `net_amount`, which is the order's total only when the price is tax-exclusive, and the payment is in
+  the currency the checkout named; at Lemon Squeezy it is the `total` less the `tax`, which a variant's setup fee is
+  in. What each needs is below.
+- A `succeeded` payment has to have bought what the order is, where the provider says what was bought
+  (`purchasedItems`, above): every item reported has to be a line of the order and every line has to be bought, held to
+  the id the checkout named the line by (the line's `priceId`, and the id its variant names it by now and the line's
+  `sku` as well, any one of which matching is the line) and to the quantity only for an item whose
+  quantity the provider reported, since a Lemon Squeezy order carries none in the object its own docs print. Stripe
+  reports none at all, so there is nothing to hold it against and no buyer can set its metadata anyway. At Lemon Squeezy, where any checkout URL
+  takes `?checkout[custom][voidbase_order]=`, an order for another variant at the same price, or a subscription
+  variant's first order, names the order and moves it no more than a Polar order for another product does; each leaves
+  an `order.payment_unmatched` row naming what was bought against what was ordered.
+- A `failed` payment needs no amount: it moves no money, so it cancels the pending order of the payer's that it
+  names whatever amount or currency it gives, rather than leave that order's stock reserved for good. It does have to
+  have bought that order's lines, the same check a success makes, wherever the provider says what was bought: at Lemon
+  Squeezy the reference is a buyer's to set, so a declined one-cent purchase of any variant would otherwise cancel
+  somebody's pending order and release its stock. Where the provider reports no purchase there is nothing to check and
+  nothing to abuse either, because the reference is not a buyer's to set there, so a Stripe decline that names the
+  order still cancels it.
+- A subscription's money is not even logged, since commerce starts payment-mode checkouts only: a payments row with
+  a `subscription`, or whose `raw` is an invoice or carries a subscription (`object: "invoice"`, `subscription`,
+  `parent.subscription_details`, Polar's `subscription_id`, Lemon Squeezy's `attributes.subscription_id`), moves
+  nothing and writes nothing. The filter keeps that noise out. It is not what protects an order: it cannot see a
+  subscription invoice's payment intent, and a payment that names no order moves none anyway.
+
+A `succeeded` payment moves the order to `paid` and points it at the row; a `failed` one cancels the order, points it
+at the row too and releases the reservation, which is the other half of "reserved at checkout, released when an order
+is cancelled or its payment fails". Both write a `commerce_audit` row whose actor is `payments:<provider>`, and whose
+detail holds `beforeProviderTax` beside `amount` when the provider added a tax of its own (`null` when that figure
+could not be read).
+
+Every move is a claim, and every step of a move is written once. The order changes only while its status is still the
+one the watcher read, through `updateWhere(collection, id, where, values)` on the commerce rows, which answers whether
+it changed the row. At D1 that is the records service's own update held to a precondition (`UpdateOptions.where`), so
+the collection's hooks run before anything is written and see the order go from the status it had to the one the move
+gives it; a hook that refuses stops the move, as it stops any other update; and an UPDATE that finds the order moved
+since it was read writes nothing, fires no hook after it (no after-success hook, and no after-error hook either, since
+nothing failed: the update deliberately wrote nothing), announces nothing to realtime, and answers false. Until
+2026-09-11 a raw `UPDATE ... WHERE status = ?` claimed the row and the service wrote the same values after it, so a
+hook saw the claimed status as the original (`pending` to `paid` was never seen) and one that refused could not stop
+the move. Stripe tells of one payment twice at once, the session and its payment intent, and two requests that had both
+read the order both moved it: both wrote `order.paid`, and a revived order's stock was reserved twice. Now only the
+request whose claim changed the order goes on; a request whose claim finds the order already moved to the status its
+own news gives it, with its own payment, finishes the move beside the request that won, which repeats nothing; and a
+claim that finds anything else is 409, so the provider's retry decides against the order as it is by then.
+
+What a move leaves is a series of steps, each written once per order, payment and line, because the move and its rows
+are separate writes and a watcher's error is the webhook's: the provider retries, and the retry has to finish what the
+first attempt left without repeating what it did. Each step's `commerce_audit` id is derived from the order, the
+action, the payment and, where it has one, the line or the status (the SHA-256 of them in base 36, cut to the 15
+characters of `[a-z0-9]` an id takes), and the row is created only if it is absent; a step that moves stock writes its
+row and the `inventory` update as one unit that lands both or neither (`createOnce` on the commerce rows, one D1
+batch). So a failure claims `pending` to `cancelled`, releases each line (a `stock.released` row per line) and writes
+`order.payment_failed`; a success claims to `paid`, reserves again each line whose release is recorded (a
+`stock.reserved` row per line, which only a revived order has), writes `order.paid`, and writes an `order.oversold`
+note when a line's stock had gone to somebody else. What that guarantees: an order's stock is released once and
+reserved again once per payment however often the news is told or retried, a move's row is written once, and a retry
+after any write failed ends with the stock the order should hold and one row per move. What it does not guarantee is
+the moment: between one step and the next the order's stock is short by the lines not yet moved, and a delivery that
+reads the order before another request's claim can still write a note about what it found.
+
+A payment that has moved an order (that order's `payment` is its id) is that order's for good and is never matched
+again, so a failure told after the success of the same payment intent cannot cancel a second pending order of the same
+total and release its stock. The same status again, a replay, Stripe's second telling or the provider's retry after a
+write failed, moves nothing and finishes the move: the steps it finds undone it does, the ones it finds done it leaves.
+A contradicting status leaves the orders alone and writes one `order.payment_contradicted` row, once per payment and
+status, whose detail holds the payment, its amount, currency and status, the order's status (`orderStatus`) and the
+reason. Two are not noted but acted on: a success after the failure that cancelled the order brings the order back
+(below); and a failure told again after a success brought its order back is the same news as before, so it writes its
+own `order.payment_failed` row when that is missing, which it is when the write of it failed and the success came
+before the provider's retry. What says that this payment is the one that had cancelled the order is the order's own
+rows: a line it released, or the revived `order.paid` row's `cancelledBy`.
+
+One contradiction is mended rather than noted: a cancelled order paid after all. Stripe Checkout lets a buyer retry
+on the same session after a decline, so the payment intent whose failure cancelled the order can succeed a minute
+later, with the money captured for an order that is gone. And the failure need not be that payment's: a failure cancels
+the pending order it names whatever it was for, so a `payments@1` caller's own checkout that names the order and is
+declined for another amount cancels it, and the order's own payment then succeeds. When a succeeded payment names a
+cancelled order of the payer's that carries a payment, pays the order's total in its currency before the provider's own
+tax (which a failure did not have to be) and bought what the order is, the order is claimed from `cancelled` to `paid`
+with this payment, its lines whose release is recorded are reserved again, and it is audited as `order.paid` with
+`revived: true` and `cancelledBy` naming the payment whose failure had cancelled it.
+
+The order row is the witness that a failed payment cancelled it, not the audit trail. A cancelled order that carries a
+`payment` was cancelled by that payment's failure: only a failure's claim writes a payment onto an order it cancels, a
+refused checkout cancels an order before there is any payment to write (`order.checkout_failed`), and nothing else
+moves a cancelled order. The trail was the witness until 2026-09-11, and a failure's `order.payment_failed` row lands
+after its claim, so a success read in between saw `order.placed` as the last move, noted a contradiction, answered 200
+and was never retried: a fully paid order stayed cancelled for good. An order a refused checkout cancelled carries no
+payment, so it stays cancelled and the payment leaves an `order.payment_unmatched` row saying so. (A superuser who
+cancels a paid order by hand through the records API leaves its `payment` on it; clear that too, or a success told
+again brings the order back.)
+
+Only the lines whose release is recorded are reserved again, which is what keeps a revive from reserving a line twice:
+a failure whose release never happened left that line reserved from checkout, and the provider's retry of the failure
+is what releases it. If the stock went to somebody else in the meantime the order is paid all the same, since the money
+is captured: its lines are still reserved, above what is on hand, which stops those variants selling, and an
+`order.oversold` row names each line short (`variant`, `sku`, `quantity`, `available`) for a person to decide what
+happens.
+
+A payment that names an order and moves none (the order does not exist, is another customer's, is no longer pending
+and cannot be brought back, or a success is not its total, which includes a figure before the provider's tax that
+cannot be read, or bought something other than the order's lines) leaves the orders alone and is said out loud: a log
+line, and a `commerce_audit` row `order.payment_unmatched`, once per payment and status, whose subject is
+`order:<reference>`. Its detail holds the provider, the payment, what was paid (`amount`, `currency`, and
+`beforeProviderTax` when the provider added a tax of its own) and its status, the customer, the reference, what was
+owed (`owed`: `[{ order, total, currency }]`, the named order), what was bought against what was ordered (`bought` and
+`ordered`, `[{ id, quantity }]`, when that is why) and the reason, so a superuser can find the money. A payment that
+names no order is a log line and nothing else, as above.
 
 Two smaller additions to `payments@1` came with it: `customer(env, auth)`, which answers the `customers` row id
 for a signed-in user (creating it at the provider on the first contact) because the interface previously only took
 an id the provider's own route had looked up for itself, and an optional `refund(env, { payment, amount?, reason? })`
-that no shipped provider implements yet and that the refund route asks for by name.
+that no shipped provider implements yet and that the refund route asks for by name. Amount lines and a `reference`
+on checkout, and the optional `checkCheckout(env, o)`, came after it (see the payments section above), so that a
+checkout charges the order's total and the payment that comes back names its order.
+
+**What each provider needs for a shop**, since a payment moves its order only when it is the order's total in the
+order's currency:
+
+- Stripe: Adaptive Pricing turned off, so that a buyer pays in the order's currency.
+- Polar: each product priced in the shop's currency (`VOIDBASE_COMMERCE_CURRENCY`), which commerce's checkout names,
+  and priced tax-exclusive. A Polar order does not say how its price was taxed, so commerce compares its `net_amount`,
+  which is less than the price when the price held the tax (inclusive, or location-based where Polar takes the tax out
+  of it). Otherwise a buyer who paid in full leaves the order `pending`, and an `order.payment_unmatched` row names both
+  amounts, `amount` with Polar's tax and `beforeProviderTax` without it.
+- Lemon Squeezy: variants without a setup fee, since an order's `total` includes the variant's `setup_fee` and so pays
+  more than the order's total; otherwise, again, the order stays `pending` with an `order.payment_unmatched` row.
+
+**Upgrading from 0.9.0-beta.45 or earlier.** Commerce shipped in 0.9.0-beta.42 and gave a checkout no reference until
+after 0.9.0-beta.45. Orders still `pending` when a version with references is deployed were checked out without one, so
+their payments name no order and will never move them, and nothing in commerce matches a payment to an order by its
+amount any more. A superuser matches them by hand. The orders are the `pending` ones placed before the deploy (their
+`placedAt`). The payments that may be theirs are the `payments` rows that name no order (`paymentReference(raw)` is
+empty: no `voidbase_order` in `raw.metadata`, or at Lemon Squeezy in `raw.meta.custom_data`), of the order's
+`customer`, written after it was placed, whose `amount` and `currency` a person holds against the order's `total` and
+`currency` (at Polar and Lemon Squeezy with the provider's tax on top). A superuser is not held to the collections'
+null rules, so the order is changed in the dashboard or through the records API: for a payment that succeeded,
+`status` `paid` and `payment` the row's id; for one that failed, `status` `cancelled`, and each of its lines' `quantity`
+taken off its variant's `inventory.reserved`. No `commerce_audit` row is written for a change made that way. Leave
+`payment` empty on an order cancelled by hand, since a cancelled order that carries one reads as one a failed payment
+cancelled, which a success told again brings back.
+
+`CommerceRows`, which `commerceWith({ rows })` takes and which the package exports through `./plugins/commerce`, gained
+two required members in the same version, so an implementation of your own (a test's rows in memory, another database)
+has to have both before a payment can move an order: `updateWhere(collection, id, where, values)`, the compare-and-set
+every move is claimed with, which answers whether it changed the row and must change it only while the row still has
+the values `where` names; and `createOnce(collection, values, alongside?)`, which writes a row of the id the caller
+derived unless a row of that id is there, together with the updates in `alongside`, and must land all of them or none
+of them and answer whether it wrote the row. Two things to know about `createOnce` at D1, where it is one buffered
+transaction sent as one batch: a unit that loses the race writes nothing, but the collections' after-success hooks have
+already run for the writes it issued by the time the batch is refused and takes them back, so a hook that hears of a
+step's write may be hearing of one that never landed; and `alongside` takes at most one update per collection, because
+a second would read a table the transaction has already written, which a buffered transaction refuses rather than
+answer a stale row (`src/server/tx-d1.ts`). `order_items` also gained a `priceId`, what the checkout named the line by
+at the provider. A line written before it has none, so the id its variant names it by now and the line's `sku` stand
+in, and all three are accepted where they disagree, which they can only do once a shop has re-pointed a variant since
+an order was placed: either may then be what that checkout sent. Falling back from one to the next, as it did until
+2026-09-11, guessed one of them and left an order placed before the field existed pending for good once its variant had
+moved on. What no id can witness is a pre-`priceId` line whose variant was re-pointed before the payment came back:
+nothing on the order says what its checkout sent, so such an order stays pending with an `order.payment_unmatched` row
+and a superuser matches it by hand (above).
 
 **What it deliberately does not do.**
 
-- It does not charge tax and shipping at the provider. `payments@1`'s checkout takes the provider's own price ids,
-  and there is no price id for an amount computed a second ago, so the line items handed over are the variants and
-  the tax and shipping are computed and recorded on the order. A shop that needs the customer charged the whole
-  total either prices that in at the provider or uses a provider plugin that takes amounts.
+- It does not sell a cart through a provider that cannot charge all of it. The tax and the shipping go to the
+  provider as amount lines, which Stripe charges and Polar and Lemon Squeezy, as implemented, cannot, so with those
+  a cart with tax or shipping is refused before the order is written, and never charged short; so is a cart of more
+  than one line through either, and one with a quantity above 1 through Polar, which charges a product once.
+- It does not check a variant's price at the provider, and it does not take a payment's word for which order it
+  pays or for what it bought. The items go by `priceId`, and the checkout charges the order's total only when that
+  price costs at the provider what `price` says here; any plugin calling `payments@1` can name an order as its
+  reference, and at Lemon Squeezy a buyer can name one in a checkout URL. So a successful payment moves the order it
+  names only when it is that order's total in its currency before the provider's own tax and bought that order's
+  lines where the provider says what was bought, and one that pays or buys anything else moves nothing and leaves an
+  `order.payment_unmatched` row saying what was paid against what was owed, and what was bought against what was
+  ordered. A failed payment cancels the order it names only when it bought that order's lines too, though it needs no
+  amount, since a decline moves no money. Where a provider reports no purchase (Stripe), the amount is all there is to
+  hold a payment to, and the reference there is not a buyer's to set.
+- It does not count stock atomically. `reserve` and `release` read the `inventory` row and write back a count worked
+  out in the Worker, so two checkouts of one variant at the same moment, or a checkout and a payment's move, can lose
+  one of the two writes: the reservation is then short (or long) by a line's quantity, and a busy variant can sell one
+  more than it has, or refuse a sale it could have made. This predates the payment watcher's claims and steps, which
+  keep one order's own moves from doubling each other; it has been so since commerce shipped in 0.9.0-beta.42, and a
+  shop that sells several of one variant a second wants a count the database adds up rather than the Worker.
+- It does not guess which order a payment is for. A payment that names no order moves none, even when it costs
+  exactly what a pending order of the payer's costs.
+- It does not take payment in another currency than the order's. A shop on Stripe has Adaptive Pricing turned off,
+  since a buyer paying in a presentment currency pays another amount in another currency, which pays no order. At
+  Polar the checkout names the cart's currency, and a product needs a price in it.
+- It does not read how a Polar price was taxed, which a Polar order does not say. Its Polar prices are tax-exclusive,
+  and an inclusive or location-based one leaves a paid order pending, said in an `order.payment_unmatched` row.
 - Checkout needs a session. The `customers` row `payments@1` works in terms of belongs to a signed-in user, so an
   anonymous cart has to sign in before it can be paid for. The cart survives that: signing in with its token
   claims it.
 - It does not reopen the cart when a payment fails. The order is cancelled and the stock released; starting again
   is a new cart, because a cart that comes back from the dead after a customer has edited nothing is a support
-  ticket.
+  ticket. What does come back is the order itself, when the payment that failed then succeeds (a buyer retrying on
+  the same Stripe session), as above.
 - No discounts, coupons, gift cards, tax exemptions, subscriptions-as-products, multi-currency price lists,
   multi-warehouse inventory, backorders, partial shipments (one fulfilment ships the whole order), partial
   refunds beyond the amount on the `refunds` row, or a panel screen. Subscriptions are the payment plugins'
@@ -1202,10 +1528,43 @@ that no shipped provider implements yet and that the refund route asks for by na
 
 `test/unit/commerce.test.ts` measures the cart's lifecycle, over-selling and untracked variants, the reservation
 and its release on a failed payment and on a refused checkout, both interfaces being asked with the cart's lines,
-what Stripe was actually handed at checkout, the paid webhook through the real seam and its replay, fulfilment,
-a refund with and without a provider that can give money back, the audit trail's rows in order, and one customer
-kept out of another's order. The payment provider is the real stripe plugin over a fake `fetch`; the tax engine
-and the carrier are the test's own.
+what Stripe was actually handed at checkout (the tax and shipping lines and the order's reference with it), the
+lines a provider is asked to charge adding up to the order's total, a provider that cannot charge them refusing
+before the order exists (Polar with tax and shipping, and Polar with neither but two lines or two of one line), a
+checkout on Stripe without `cancel`, the paid webhook through the real seam and its replay, a payment matched by
+the order it names beside another of the same total, a payment that pays the wrong total or currency (through a
+reference any `payments@1` caller can set) or names another customer's order moving nothing and leaving an
+`order.payment_unmatched` row, a payment that bought something other than the order's lines moving nothing (a Lemon
+Squeezy order for another variant at the same price, a subscription variant's first order, two of the order's own
+variant for the price of one, a Polar order for another product) while the order's own purchase pays it, a failure
+told after the same payment's success cancelling no second order, payments
+that name no order (a Stripe payment intent or session, a subscription invoice's payment intent before and after
+`invoice.paid`, a Lemon Squeezy subscription's first order) paying, cancelling and reviving nothing and writing no
+audit row, subscription invoices of an order's total moving nothing and not even logged, Polar and Lemon Squeezy
+orders with their own tax on top paying the order when the amount before that tax is its total and not when it is
+short, a Polar price that held its tax leaving the order pending unless the payment says `tax_behavior: "inclusive"`,
+a figure before the provider's tax that cannot be read (a Polar order with no `net_amount`, a Lemon Squeezy `tax` that
+is a string) paying nothing, the cart's currency sent to Polar, a failure for another amount cancelling its order all
+the same, an order cancelled by a declined payment coming back when that payment succeeds (reserved again, or
+oversold and said so), a success read between a failure's claim and that failure's `order.payment_failed` row bringing
+the order back all the same, of the same payment or of another, an order a `payments@1`
+caller's declined payment cancelled coming back when its own payment succeeds and one a refused checkout cancelled
+not, a failure claiming its order before releasing so that a retry never frees another order's stock, a release or a
+reservation that failed after the claim finished by the provider's retry and never done twice (a decline whose release
+threw, a revive whose reservation or whose row threw, each ending with the stock the order holds and one row per move),
+a move's missing audit row written by the retry, two deliveries of one success at once moving the order once (over rows
+that yield between reads and writes) and a lagging twin writing no second `order.paid`,
+what the docs say each provider needs and an upgrade needs, fulfilment, a refund with and without a provider that can give money back, the audit
+trail's rows in order, and one customer kept out of another's order. The payment provider is the real stripe plugin
+over a fake `fetch` (with polar or lemonsqueezy as the active provider where a test needs a merchant of record, and a
+provider of the test's own where it counts what checkout was handed); the tax engine and the carrier are the test's
+own, or the shipped flat-rate pair where a test needs neither to charge anything. Those rows are in memory, where an
+inventory row's read and write do not yield, because `reserve` and `release` read and write back a count (above);
+`test/unit/commerce-d1.test.ts` measures what depends on the records service over the real D1 adapter on bun:sqlite,
+with the migrations and the collections: an `onRecordUpdate` hook on orders seeing a claim move the order from
+`pending` to `paid`, a hook that refuses the move leaving the order pending with no audit row and no row backfilled by
+the retry, a claim that finds the order moved writing nothing and announcing nothing, and a step whose row and whose
+stock land together or not at all.
 
 ## Backups worth relying on: backups
 

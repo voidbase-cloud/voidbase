@@ -27,13 +27,14 @@ function memoryRows(seed: Partial<Record<PaymentCollection, Row[]>> = {}) {
   return { rows, tables };
 }
 
-type Call = { url: string; method: string; headers: Record<string, string>; body: URLSearchParams };
+type Call = { url: string; method: string; headers: Record<string, string>; body: URLSearchParams; raw: string };
 function fakeFetch(answers: Record<string, Row | ((body: URLSearchParams) => Row | Response)> = {}) {
   const calls: Call[] = [];
   const f = async (url: string, init?: RequestInit): Promise<Response> => {
     const headers = Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>).map(([k, v]) => [k.toLowerCase(), v]));
-    const body = new URLSearchParams(typeof init?.body === "string" ? init.body : "");
-    calls.push({ url, method: init?.method ?? "GET", headers, body });
+    const raw = typeof init?.body === "string" ? init.body : "";
+    const body = new URLSearchParams(raw);
+    calls.push({ url, method: init?.method ?? "GET", headers, body, raw });
     const key = `${init?.method ?? "GET"} ${new URL(url).pathname}`;
     const answer = answers[key];
     if (!answer) return new Response(JSON.stringify({ error: { message: `unexpected ${key}` } }), { status: 500 });
@@ -195,6 +196,87 @@ describe("checkout", () => {
     const down = fakeFetch({ "POST /v1/checkout/sessions": () => new Response("bad gateway", { status: 503 }) });
     const again = await appWith({ auth: ada, fetch: down.f, rows });
     expect((await again.post("/api/payments/stripe/checkout", { items: [{ price: "price_x" }], success: "https://a", cancel: "https://b" })).status).toBe(502);
+  });
+
+  test("through payments@1 an amount line is a price_data line of its own, and the reference names the order on the session and on its payment intent", async () => {
+    const { calls, f } = fakeFetch({ "POST /v1/checkout/sessions": { url: "https://checkout.stripe.com/c/pay/cs_3" } });
+    const { rows } = memoryRows({ customers: [{ id: "c1", user: "u1", provider: "stripe", providerId: "cus_1" }] });
+    const { kernel, env } = await appWith({ auth: ada, fetch: f, rows });
+    const payments = using<Payments>(kernel, "payments@1");
+    const order = {
+      customer: "c1", items: [{ price: "price_1", quantity: 2 }],
+      amounts: [{ name: "VAT (20%)", amount: 900, currency: "usd" }, { name: "Standard shipping", amount: 500, currency: "usd" }],
+      success: "https://a.test/ok", cancel: "https://a.test/no", reference: "ord_1", currency: "usd",
+    };
+    expect(await payments.checkout(env, order)).toEqual({ url: "https://checkout.stripe.com/c/pay/cs_3" });
+    // the body exactly as formEncode writes it: every nested object and array a bracketed key, in the order built; the
+    // checkout's currency is not in it, since a Stripe price carries its own
+    expect(calls[0]!.raw).toBe([
+      "customer=cus_1",
+      "mode=payment",
+      "line_items%5B0%5D%5Bprice%5D=price_1",
+      "line_items%5B0%5D%5Bquantity%5D=2",
+      "line_items%5B1%5D%5Bprice_data%5D%5Bcurrency%5D=usd",
+      "line_items%5B1%5D%5Bprice_data%5D%5Bunit_amount%5D=900",
+      "line_items%5B1%5D%5Bprice_data%5D%5Bproduct_data%5D%5Bname%5D=VAT+%2820%25%29",
+      "line_items%5B1%5D%5Bquantity%5D=1",
+      "line_items%5B2%5D%5Bprice_data%5D%5Bcurrency%5D=usd",
+      "line_items%5B2%5D%5Bprice_data%5D%5Bunit_amount%5D=500",
+      "line_items%5B2%5D%5Bprice_data%5D%5Bproduct_data%5D%5Bname%5D=Standard+shipping",
+      "line_items%5B2%5D%5Bquantity%5D=1",
+      "success_url=https%3A%2F%2Fa.test%2Fok",
+      "cancel_url=https%3A%2F%2Fa.test%2Fno",
+      "client_reference_id=c1",
+      "metadata%5Bvoidbase_customer%5D=c1",
+      "metadata%5Bvoidbase_user%5D=u1",
+      "metadata%5Bvoidbase_order%5D=ord_1",
+      "payment_intent_data%5Bmetadata%5D%5Bvoidbase_order%5D=ord_1",
+    ].join("&"));
+    // a subscription's session has no payment intent of its own to carry the reference: the session's metadata names the order
+    await payments.checkout(env, { ...order, mode: "subscription" });
+    expect(calls[1]!.body.get("mode")).toBe("subscription");
+    expect(calls[1]!.body.get("metadata[voidbase_order]")).toBe("ord_1");
+    expect([...calls[1]!.body.keys()].filter((k) => k.startsWith("payment_intent_data"))).toEqual([]);
+  });
+
+  test("an amount line that is not a name, a positive whole amount and a currency is refused before Stripe is called, and the route reads neither amounts nor a reference from a body", async () => {
+    const { calls, f } = fakeFetch({ "POST /v1/checkout/sessions": { url: "https://checkout.stripe.com/c/pay/cs_4" } });
+    const { rows } = memoryRows({ customers: [{ id: "c1", user: "u1", provider: "stripe", providerId: "cus_1" }] });
+    const { kernel, env, post } = await appWith({ auth: ada, fetch: f, rows });
+    const payments = using<Payments>(kernel, "payments@1");
+    const base = { customer: "c1", items: [{ price: "price_1", quantity: 1 }], success: "https://a", cancel: "https://b" };
+    for (const bad of [{ name: "", amount: 100, currency: "usd" }, { name: "Tax", amount: 12.5, currency: "usd" }, { name: "Tax", amount: 0, currency: "usd" }, { name: "Tax", amount: 100, currency: "" }]) {
+      await expect(payments.checkout(env, { ...base, amounts: [bad] })).rejects.toMatchObject({ status: 400 });
+      expect(() => payments.checkCheckout!(env, { ...base, amounts: [bad] })).toThrow(/amounts must be a list/i);
+    }
+    expect(calls).toHaveLength(0);
+    // a browser that names its own amounts would set its own price, and one that names an order could pay somebody else's
+    const r = await post("/api/payments/stripe/checkout", { items: [{ price: "price_1" }], amounts: [{ name: "Tax", amount: 1, currency: "usd" }], reference: "ord_x", success: "https://a", cancel: "https://b" });
+    expect(r.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect([...calls[0]!.body.keys()].filter((k) => k.includes("price_data") || k.includes("voidbase_order"))).toEqual([]);
+  });
+
+  test("that cancel is given is the route's rule and not payments@1's: without one the interface starts a session with no cancel_url, and the route still refuses", async () => {
+    const { calls, f } = fakeFetch({ "POST /v1/checkout/sessions": { url: "https://checkout.stripe.com/c/pay/cs_5" } });
+    const { rows } = memoryRows({ customers: [{ id: "c1", user: "u1", provider: "stripe", providerId: "cus_1" }] });
+    const { kernel, env, post } = await appWith({ auth: ada, fetch: f, rows });
+    const payments = using<Payments>(kernel, "payments@1");
+    const base = { customer: "c1", items: [{ price: "price_1", quantity: 1 }], success: "https://a.test/ok" };
+    expect(() => payments.checkCheckout!(env, base)).not.toThrow();
+    expect(await payments.checkout(env, base)).toEqual({ url: "https://checkout.stripe.com/c/pay/cs_5" });
+    // an empty one is no URL either, and is left out rather than sent empty
+    expect(await payments.checkout(env, { ...base, cancel: "" })).toEqual({ url: "https://checkout.stripe.com/c/pay/cs_5" });
+    expect(calls).toHaveLength(2);
+    for (const c of calls) {
+      expect(c.body.get("success_url")).toBe("https://a.test/ok");
+      expect(c.body.has("cancel_url")).toBe(false);
+    }
+    // the route is where a browser says where a buyer who backs out goes, so there it is still required
+    const r = await post("/api/payments/stripe/checkout", { items: [{ price: "price_1" }], success: "https://a.test/ok" });
+    expect(r.status).toBe(400);
+    expect(String(r.json.message)).toContain("Success and cancel must be the URLs to return to");
+    expect(calls).toHaveLength(2);
   });
 });
 

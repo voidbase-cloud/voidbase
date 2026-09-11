@@ -11,7 +11,7 @@ import type { Auth, Payments } from "../../src/server/interfaces";
 import { createKernel, load, using } from "../../src/server/kernel";
 import type { PaymentCollection, PaymentRows } from "../../src/server/plugins/payments-shared";
 import {
-  applyEvent, KEY_VAR, polar, polarWith, SANDBOX_VAR, signPayload, verifySignature, webhookKeys, WEBHOOK_PATH, WEBHOOK_SECRET_VAR,
+  applyEvent, KEY_VAR, polar, polarProvider, polarWith, SANDBOX_VAR, signPayload, verifySignature, webhookKeys, WEBHOOK_PATH, WEBHOOK_SECRET_VAR,
 } from "../../src/server/plugins/polar";
 import { stripeWith } from "../../src/server/plugins/stripe";
 import type { AppEnv, AuthRecord, Bindings, Row } from "../../src/server/types";
@@ -135,6 +135,7 @@ describe("checkout", () => {
     });
     const { rows, tables } = memoryRows();
     const { post } = await appWith({ auth: ada, fetch: f, rows });
+    // the products a buyer picks among (a monthly and a yearly plan, say): Polar charges for the one picked
     const r = await post("/api/payments/polar/checkout", { items: [{ price: "prod_1", quantity: 1 }, { price: "prod_2" }], success: "https://app.test/ok" });
     expect(r).toEqual({ status: 200, json: { url: "https://polar.sh/checkout/co_1" } });
 
@@ -197,6 +198,77 @@ describe("checkout", () => {
     const down = fakeFetch({ "POST /v1/checkouts/": () => new Response("bad gateway", { status: 503 }) });
     const again = await appWith({ auth: ada, fetch: down.f, rows });
     expect((await again.post("/api/payments/polar/checkout", { items: [{ price: "prod_x" }], success: "https://a" })).status).toBe(502);
+  });
+
+  test("amount lines are refused with a 400 before Polar is called, and a reference goes in the metadata Polar copies onto the order", async () => {
+    const { calls, f } = fakeFetch({ "POST /v1/checkouts/": { url: "https://polar.sh/checkout/co_4" } });
+    const customer = { id: "c1", user: "u1", provider: "polar", providerId: "cus_p1", email: "ada@b.test" };
+    const { rows } = memoryRows({ customers: [customer] });
+    const { kernel, env } = await appWith({ auth: ada, fetch: f, rows });
+    const payments = using<Payments>(kernel, "payments@1");
+    const charge = { customer: "c1", items: [{ price: "prod_1", quantity: 1 }], amounts: [{ name: "Tax (20%)", amount: 900, currency: "usd" }], success: "https://a/ok", reference: "ord_1" };
+    // Polar charges its products and has no line for an amount: the checkout is refused, never started without it
+    expect(() => payments.checkCheckout!(env, charge)).toThrow(/Polar charges the products it sells and has no line for an amount/);
+    await expect(payments.checkout(env, charge)).rejects.toMatchObject({ status: 400 });
+    // and by the provider itself, for a caller that went straight to it
+    await expect(polarProvider({ fetch: f, rows: () => rows, now: () => T }).checkout(env, customer, charge)).rejects.toMatchObject({ status: 400 });
+    expect(calls).toHaveLength(0);
+    // without one the checkout goes, and names its order in the metadata Polar copies onto the order it makes
+    expect(await payments.checkout(env, { ...charge, amounts: [] })).toEqual({ url: "https://polar.sh/checkout/co_4" });
+    expect(calls[0]!.body.metadata).toEqual({ voidbase_customer: "c1", voidbase_user: "u1", voidbase_order: "ord_1" });
+  });
+
+  test("a checkout for an order, one with a reference, takes one product once: two items or a quantity above 1 are refused with a 400 before Polar is called; without a reference they go, as the products a buyer picks among", async () => {
+    const { calls, f } = fakeFetch({ "POST /v1/checkouts/": { url: "https://polar.sh/checkout/co_5" } });
+    const customer = { id: "c1", user: "u1", provider: "polar", providerId: "cus_p1", email: "ada@b.test" };
+    const { rows } = memoryRows({ customers: [customer] });
+    const { kernel, env, post } = await appWith({ auth: ada, fetch: f, rows });
+    const payments = using<Payments>(kernel, "payments@1");
+    const provider = polarProvider({ fetch: f, rows: () => rows, now: () => T });
+    const charge = { customer: "c1", items: [{ price: "prod_1", quantity: 1 }], success: "https://a/ok", reference: "ord_1" };
+    const refused = async (items: typeof charge.items, said: RegExp) => {
+      expect(() => payments.checkCheckout!(env, { ...charge, items })).toThrow(said);
+      await expect(payments.checkout(env, { ...charge, items })).rejects.toMatchObject({ status: 400 });
+      await expect(provider.checkout(env, customer, { ...charge, items })).rejects.toMatchObject({ status: 400 });
+    };
+    // an order is paid only by its whole total, and the buyer would have picked one of the two products and paid for
+    // that one, or paid for one of the two asked for
+    await refused([{ price: "prod_1", quantity: 1 }, { price: "prod_2", quantity: 1 }], /A Polar checkout for an order takes one item/);
+    await refused([{ price: "prod_1", quantity: 2 }], /A Polar checkout for an order takes a quantity of 1/);
+    // an amount line is refused with a reference or without one: a Polar checkout has no line for it
+    expect(() => payments.checkCheckout!(env, { items: [{ price: "prod_1", quantity: 1 }], success: "https://a/ok", amounts: [{ name: "Tax", amount: 100, currency: "usd" }] })).toThrow(/Polar charges the products it sells and has no line for an amount/);
+    expect(calls).toHaveLength(0);
+    // one product once goes; with a reference Polar is told to offer no discount code
+    expect(await payments.checkout(env, charge)).toEqual({ url: "https://polar.sh/checkout/co_5" });
+    expect(calls[0]!.body).toEqual({ products: ["prod_1"], customer_id: "cus_p1", customer_email: "ada@b.test", success_url: "https://a/ok", metadata: { voidbase_customer: "c1", voidbase_user: "u1", voidbase_order: "ord_1" }, allow_discount_codes: false });
+    // without a reference, on the route or through payments@1, several products are the list a buyer picks from (a
+    // monthly and a yearly plan) and a quantity is not Polar's business; the discount code field is left as Polar has it
+    const plans = await post("/api/payments/polar/checkout", { items: [{ price: "prod_monthly" }, { price: "prod_yearly" }], success: "https://a/ok", mode: "subscription" });
+    expect(plans).toEqual({ status: 200, json: { url: "https://polar.sh/checkout/co_5" } });
+    expect(await payments.checkout(env, { customer: "c1", items: [{ price: "prod_1", quantity: 3 }, { price: "prod_2", quantity: 1 }], success: "https://a/ok" })).toEqual({ url: "https://polar.sh/checkout/co_5" });
+    expect(calls.slice(1).map((c) => [c.body.products, Object.keys(c.body).includes("allow_discount_codes")])).toEqual([[["prod_monthly", "prod_yearly"], false], [["prod_1", "prod_2"], false]]);
+  });
+});
+
+describe("the checkout's currency", () => {
+  test("a checkout for an order is sent the currency the order was priced in, lower-cased, so Polar does not show the buyer a price in their own; without a reference, or in a route's body, no currency is sent", async () => {
+    const { calls, f } = fakeFetch({ "POST /v1/checkouts/": { url: "https://polar.sh/checkout/co_6" } });
+    const customer = { id: "c1", user: "u1", provider: "polar", providerId: "cus_p1", email: "ada@b.test" };
+    const { rows } = memoryRows({ customers: [customer] });
+    const { kernel, env, post } = await appWith({ auth: ada, fetch: f, rows });
+    const payments = using<Payments>(kernel, "payments@1");
+    const { reference: _, ...plan } = { customer: "c1", items: [{ price: "prod_1", quantity: 1 }], success: "https://a/ok", currency: "EUR", reference: "ord_1" };
+    expect(await payments.checkout(env, { ...plan, reference: "ord_1" })).toEqual({ url: "https://polar.sh/checkout/co_6" });
+    // CheckoutProductsCreate's `currency` is a PresentmentCurrency, spelled in lower case
+    expect(calls[0]!.body).toEqual({ products: ["prod_1"], customer_id: "cus_p1", customer_email: "ada@b.test", success_url: "https://a/ok", metadata: { voidbase_customer: "c1", voidbase_user: "u1", voidbase_order: "ord_1" }, allow_discount_codes: false, currency: "eur" });
+    // a checkout that pays no order is left as Polar would show it, and so is one without a currency
+    expect(await payments.checkout(env, plan)).toEqual({ url: "https://polar.sh/checkout/co_6" });
+    const { currency: __, ...unpriced } = plan;
+    expect(await payments.checkout(env, { ...unpriced, reference: "ord_2" })).toEqual({ url: "https://polar.sh/checkout/co_6" });
+    // and the route reads no currency from a body, as it reads no reference
+    expect((await post("/api/payments/polar/checkout", { items: [{ price: "prod_1" }], success: "https://a/ok", currency: "eur", reference: "ord_3" })).status).toBe(200);
+    expect(calls).toHaveLength(4);
+    for (const c of calls.slice(1)) expect(Object.keys(c.body)).not.toContain("currency");
   });
 });
 

@@ -12,10 +12,21 @@ import type { Context } from "hono";
 import type { RecordContext } from "./records/service";
 import type { AppEnv } from "./types";
 
-let build: ((c: Context<AppEnv>) => Promise<RecordContext>) | undefined;
+/** how the core builds the record context of one request; what fills the slot */
+export type RecordContextBuilder = (c: Context<AppEnv>) => Promise<RecordContext>;
 
-/** app.ts: how to build the record context for a request */
-export function provideRecordContext(fn: (c: Context<AppEnv>) => Promise<RecordContext>): void { build = fn; }
+let build: RecordContextBuilder | undefined;
+
+/**
+ * app.ts: how to build the record context for a request. Answers what was in the slot before this call, so that a
+ * caller that is borrowing the slot rather than filling it for good can put back exactly what it took
+ * (`restoreRecordContext`). app.ts ignores the answer: it fills the slot once, and nothing empties it after.
+ */
+export function provideRecordContext(fn: RecordContextBuilder): RecordContextBuilder | undefined {
+  const previous = build;
+  build = fn;
+  return previous;
+}
 
 /** the record context for this request, as the core's own record routes build it */
 export function recordContextFor(c: Context<AppEnv>): Promise<RecordContext> {
@@ -23,10 +34,16 @@ export function recordContextFor(c: Context<AppEnv>): Promise<RecordContext> {
   return build(c);
 }
 
+/** what is in the slot, or nothing when nothing has filled it: for whoever has to check that a borrow was given back */
+export const recordContextBuilder = (): RecordContextBuilder | undefined => build;
+
 /**
- * For tests only: empty the slot again. `bun test` runs every file in one process and this is a module global, so
- * a file that fills the slot with a stub of its own has to put it back, or the stub outlives the file and the next
- * test to reach the slot gets it (test/unit/plugin-slot-restored.test.ts is the file that checks it did).
+ * For tests only: put back what `provideRecordContext` answered. `bun test` runs every file in one process and this
+ * is a module global, so a file that fills the slot with a stub of its own has to give back what was there — not
+ * empty the slot, which is what this used to do: app.ts fills the slot at module scope, so a file that ran after
+ * anything imported app.ts was clearing the application's own builder and leaving the next file with nothing.
+ * Whether that mattered depended only on the order bun walked the directory in
+ * (test/unit/plugin-slot-restored.test.ts is the file that checks the slot holds no test's stub).
  * Nothing in a running instance calls this: app.ts fills the slot once, before the app serves anything.
  */
-export function resetRecordContext(): void { build = undefined; }
+export function restoreRecordContext(previous: RecordContextBuilder | undefined): void { build = previous; }

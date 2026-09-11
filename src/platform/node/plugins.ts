@@ -9,8 +9,11 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import * as hono from "hono";
 import { lockPath, rootOfPluginsDir, verifyInstalled } from "../../node/installed";
+import * as authSlot from "../../server/auth-slot";
 import * as interfaces from "../../server/interfaces";
 import * as kernel from "../../server/kernel";
+import * as realtimeSlot from "../../server/realtime-slot";
+import * as recordSlot from "../../server/record-slot";
 import * as backups from "../../server/plugins/backups";
 import * as hardening from "../../server/plugins/hardening";
 import * as auth from "../../server/plugins/auth";
@@ -26,6 +29,12 @@ const PROVIDED: Record<string, object> = {
   "@voidbase-cloud/voidbase/kernel": kernel,
   "@voidbase-cloud/voidbase/plugins": manifest,
   "@voidbase-cloud/voidbase/interfaces": interfaces,
+  // the three slots the core and a plugin hand each other things through. A bundle that mounts a route needing the
+  // request's record context imports ./record-slot, which package.json's exports names for the type checker; without
+  // the specifier here the same import would resolve nowhere at load and the instance would refuse the bundle.
+  "@voidbase-cloud/voidbase/auth-slot": authSlot,
+  "@voidbase-cloud/voidbase/record-slot": recordSlot,
+  "@voidbase-cloud/voidbase/realtime-slot": realtimeSlot,
   "@voidbase-cloud/voidbase/plugins/backups": backups,
   "@voidbase-cloud/voidbase/plugins/realtime": realtime,
   "@voidbase-cloud/voidbase/plugins/hardening": hardening,

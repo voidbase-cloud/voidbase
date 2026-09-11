@@ -84,8 +84,14 @@ async function takeSession(db: D1Database, userId: string): Promise<string | nul
 type Router = Pick<Hono<AppEnv>, "get" | "post"> | { get: (p: string, h: (c: Context<AppEnv>) => Promise<Response>) => void; post: (p: string, h: (c: Context<AppEnv>) => Promise<Response>) => void };
 
 /**
- * Mounts the four passkey endpoints. voidbase's own app mounts them, so an app gets them for free; the export is
- * for anyone putting them on a router of their own.
+ * Mounts the four passkey endpoints. voidbase's own app mounts them, so an app gets them for free. It is not a
+ * published entry point any more (`./passkeys` shipped through 0.9.0-beta.48 and is dropped here): the login
+ * handler finishes by
+ * building the request's record context, which it asks the core's slot for (record-slot.ts) rather than reaching
+ * for it with a dynamic import of the application module, and only the application fills that slot. On a router of
+ * its own the slot is empty and the route would throw, where that dynamic import used to load the app and heal
+ * itself — and putting it back would give plugins/auth.ts, which mounts these four routes, the whole application
+ * in its module graph again.
  *
  * They answer only when the app has a `passkeys` collection. Without one there is nowhere to keep a credential, so
  * the feature is off and the endpoints are not there.

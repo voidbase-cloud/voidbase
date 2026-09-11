@@ -232,10 +232,12 @@ export class CloudClient {
   plugins(inst: Instance, session: string) {
     const call = this.onInstance(inst, session);
     return {
-      // `installer` is optional because this types what an instance answers, not what this client builds: a
-      // voidbase instance always answers it (the core answers when no plugin does), but this talks to instances of
-      // any version over HTTP, so a reader has to be able to be handed an answer without it
-      running: () => call<{ names: string[]; origins: Record<string, string>; disabled: string[]; installer?: { mode: string; repository?: string; branch?: string; hint?: string } }>("GET", "/api/plugins"),
+      // `installer` is optional, and so is its `mode`, because this types what an instance answers rather than what
+      // this client builds: a voidbase instance always answers the field (the core answers when no plugin does),
+      // but this talks to instances of any version over HTTP, and an instance whose installer is an installed
+      // plugin answers `{error}` for it when that plugin could not describe itself. A reader has to test the field
+      // it is about to read, not the object around it.
+      running: () => call<{ names: string[]; origins: Record<string, string>; disabled: string[]; installer?: { mode?: string; repository?: string; branch?: string; hint?: string; error?: string } }>("GET", "/api/plugins"),
       available: (marketplace?: string) => call<{ available: { marketplace: string; plugins: { name: string; title: string; summary: string; latest: string }[]; error?: string }[] }>("GET", `/api/plugins/available${marketplace ? `?marketplace=${encodeURIComponent(marketplace)}` : ""}`),
       install: (name: string, o: { version?: string; marketplace?: string } = {}) => call<Record<string, unknown>>("POST", "/api/plugins/install", { name, ...o }),
       // the instance answers 409 for a core plugin, or one something else requires, until force says it was meant

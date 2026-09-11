@@ -210,12 +210,20 @@ export async function runCloud(sub: string | undefined, rest: string[], flags: R
         const action = rest[1] ?? "ls";
         if (action === "ls" || action === "list") {
           const r = await api.running();
+          // The instance answers this one itself even with no installer plugin loaded, but the answer is the
+          // instance's and not ours: an older one, or one whose plugins are its own, may leave the field out, and
+          // an instance that installed a plugin under the name answers `{error}` for it when that plugin's info()
+          // failed. So the line is keyed on the field it reads rather than on the object being there: a `{error}`
+          // is truthy, and reading `.mode` off it printed "installer:    undefined".
+          const i = r.installer;
+          const installerLine = typeof i?.mode === "string"
+            ? `${i.mode}${i.repository ? ` ${i.repository}${i.branch ? ` (${i.branch})` : ""}` : ""}${i.hint ? `  ${i.hint}` : ""}`
+            : typeof i?.error === "string" ? `the plugin answering for it failed: ${i.error}`
+            : "not reported by this instance";
           emit(r, () => [
             `running:      ${r.names.map((n) => (r.origins[n] && r.origins[n] !== "shipped" ? `${n} (${r.origins[n]})` : n)).join(", ") || "none"}`,
             `disabled:     ${r.disabled.length ? r.disabled.join(", ") : "none"}`,
-            // the instance answers this one itself even with no installer plugin loaded, but the answer is the
-            // instance's and not ours: an older one, or one whose plugins are its own, may leave the field out
-            `installer:    ${r.installer ? `${r.installer.mode}${r.installer.repository ? ` ${r.installer.repository}${r.installer.branch ? ` (${r.installer.branch})` : ""}` : ""}${r.installer.hint ? `  ${r.installer.hint}` : ""}` : "not reported by this instance"}`,
+            `installer:    ${installerLine}`,
           ]);
           return 0;
         }

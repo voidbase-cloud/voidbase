@@ -17,16 +17,21 @@ working plan. What is here is what a contributor needs to touch it.
 | `src/server/plugins/report.ts` | what `GET /api/plugins` answers: the graph the kernel resolved, then what each loaded plugin says about itself through its own `info(env)`, by name. |
 | `src/server/record-slot.ts` | how a plugin asks the core to build the `RecordContext` of a request it is answering, the way `auth-slot.ts` is how the core asks a plugin about auth. |
 | `src/server/realtime-slot.ts` | the guard on the `realtime@1` slot: the client for this request's bindings, or one that says realtime is off when nothing provides the interface. |
-| `GET /api/plugins` | what this instance loaded: names, providers, tiers, `plugins` (each with its tier, a `core` flag and its `provides`/`requires`), any core interface nobody provides, `mail`, where this instance's mail goes, `translations`, the locales and the declared collections, and `commerce`, whether the shop is on and what the tax and shipping providers are set to. The per-plugin fields are each plugin's own `info(env)`, so what answers is what loaded under the name; `installer` and `mail` are answered by the core when no plugin does. Superuser only. |
+| `GET /api/plugins` | what this instance loaded: names, providers, tiers, `plugins` (each with its tier, a `core` flag and its `provides`/`requires`), any core interface nobody provides, then a field per loaded plugin that declares `info(env)`, under that plugin's own name. `installer`, `mail`, `payments` and `observability` are always answered; the rest are there only while a plugin answers for them, which is a change from what every instance through 0.9.0-beta.48 reported (below). Superuser only. |
 
 ## The entry points a plugin package uses
 
 The package exposes the plugin API and the plugins it ships, so a plugin can live in its own package and be typed
 against this voidbase: `@voidbase-cloud/voidbase/kernel` (`createKernel`, `load`, `serve`, `using`, `whatLoaded`,
 `Kernel`), `@voidbase-cloud/voidbase/plugins` (`Plugin`, `PluginManifest`, `checkManifest`),
-`@voidbase-cloud/voidbase/interfaces` (the interface types and `KNOWN`), and `@voidbase-cloud/voidbase/plugins/backups`,
+`@voidbase-cloud/voidbase/interfaces` (the interface types and `KNOWN`), the three slots
+(`@voidbase-cloud/voidbase/auth-slot`, `/record-slot`, `/realtime-slot`, below), and `@voidbase-cloud/voidbase/plugins/backups`,
 `/plugins/auth`, `/plugins/realtime`, `/plugins/hardening`, `/plugins/openapi`, `/plugins/mcp`, `/plugins/seo`, `/plugins/mail`, `/plugins/translations`, `/plugins/commerce`, `/plugins/tax-flat`, `/plugins/shipping-flat` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
-the map honest. The official plugin packages (`@voidbase-cloud/plugin-*`, one repository each) re-export the shipped
+the map honest, and keeps it the same map twice: a bundle installed from a marketplace imports these names at
+runtime too, where `src/platform/node/plugins.ts` resolves them to the modules this process is already running, so
+a name in one list and not the other type-checks and then fails to load. `./passkeys` was one of these and is not
+one any more: `mountWebAuthn` needs the record context slot that only the application fills, so it cannot stand on
+a consumer's own router; voidbase's own app mounts the four passkey routes, which is how an instance has them. The official plugin packages (`@voidbase-cloud/plugin-*`, one repository each) re-export the shipped
 objects through these entry points: the code lives here once, and the package is the plugin's name, manifest and
 version as the marketplace lists it.
 
@@ -52,28 +57,51 @@ answer has to describe what is running. `app.ts` used to call the shipped module
 so a plugin installed under a shipped name shadowed the shipped one at load and the answer went on describing the
 module that was not running: the swap was cosmetic. Now the answer is assembled from the plugins that loaded, by
 name (`plugins/report.ts`), and a name nothing loaded — or a plugin that says nothing about itself — is simply not
-in that part of the answer. `installer`, `mail`, `ai`, `translations`, `domains`, `previews`, `commerce`,
-`tax-flat` and `shipping-flat` each provide one; `payments@1` and `observability@1` answer through their
-interfaces instead, which is the older seam and the better one, since what is reported is the provider's whatever
-the plugin providing it is called.
+in that part of the answer. The offer is to any plugin: the shipped `installer`, `mail`, `ai`, `translations`,
+`domains`, `previews`, `commerce`, `tax-flat` and `shipping-flat` each declare one, and a community plugin under a
+name of its own is asked the same way and answers under that name, after those fields and in load order. Two kinds
+of plugin are not asked under their own name: one whose `info()` already answers somewhere else in the object (the
+`tax@1` and `shipping@1` providers, inside `commerce`), and one whose name is a key of the graph half (`names`,
+`providers`, `tiers`, `plugins`, `missingCore`, `origins`, `disabled`), which is left out with a warning rather
+than allowed to overwrite it. `payments@1` and `observability@1` answer through their interfaces instead, which is
+the older seam and the better one, since what is reported is the provider's whatever the plugin providing it is
+called.
 
-Which fields are always in the answer, and which depend on a plugin. `installer` (where this instance's plugins
-live) and `mail` (where its mail goes) are the core's own answers: a plugin loaded under either name answers for
-it, and when none does — turned off in `voidbase.lock`, or shadowed by a plugin with no `info()` — the core
-answers instead, because both are facts about the instance rather than about a plugin, and our own clients read
-into them (`voidbase cloud plugins <instance> ls` prints `installer.mode`). `payments` and `observability` are
-always there for the older reason: they are answered through an interface, and an instance with no provider says
-`{"via":"none"}` and `null` rather than leaving the field out. The rest depend on the plugin: `ai`,
-`translations`, `domains`, `previews` and `commerce` are in the answer only while a plugin of that name is loaded
-and has an `info()`, exactly as they were only there while the plugin was. Inside `commerce`, `tax` and `shipping`
-follow the interface instead: the key is there whenever something provides `tax@1` or `shipping@1`, and a provider
-with nothing to say about itself is `null`, so replacing the flat-rate pair — which is what the interfaces are for
-— cannot quietly change the shape of the answer.
+Which fields are always in the answer, and which depend on a plugin. **This is a change to what an instance
+reports about itself, the first one this route has made, and it lands in the release after 0.9.0-beta.48.** Four
+fields are always there. `installer` (where this instance's plugins live) and `mail` (where its mail goes) are the core's own answers: a
+plugin loaded under either name answers for it, and when none does — turned off in `voidbase.lock`, or shadowed by
+a plugin with no `info()` — the core answers instead, because both are facts about the instance rather than about a
+plugin, and our own clients read into them (`voidbase cloud plugins <instance> ls` prints `installer.mode`).
+`payments` and `observability` are always there for the older reason: they are answered through an interface, and
+an instance with no provider says `{"via":"none"}` and `null` rather than leaving the field out.
+
+Every other field is a plugin's to answer, and is in the answer only while one does. `ai`, `translations`,
+`domains`, `previews` and `commerce` were each in the answer of every instance through 0.9.0-beta.48, because
+`app.ts` called the shipped module's own function whatever was loaded; now they are there only while a plugin of
+that name is loaded **and** declares an `info()`. Turn one off in `voidbase.lock`, or install a plugin over its
+name that says nothing about itself, and the field is gone. That is deliberate, and it is what keeps the core from
+importing a plugin module to answer for a plugin that is not running, which is the point of the whole seam. Read a
+missing field as "no plugin here says", never as "the feature is off": what is loaded is `names` and `origins`,
+which is the graph half and is unchanged. A client reading one of these fields has to handle its absence
+(`src/cloud/client.ts` types them optional, and the cloud page and `voidbase cloud plugins … ls` each test the
+field before reading into it).
+
+Inside `commerce`, `tax` and `shipping` follow the interface instead: the key is there whenever something provides
+`tax@1` or `shipping@1`, and a provider with nothing to say about itself is `null`, so replacing the flat-rate pair
+— which is what the interfaces are for — cannot quietly change the shape of the answer. Those two providers answer
+inside `commerce` rather than under their own names; with no `commerce` loaded to answer inside, they answer under
+their own names instead, because every loaded plugin that declares an `info()` answers somewhere in the object,
+exactly once.
 
 An `info()` is a plugin's code running inside a superuser's route, and on an instance that installed one it is
-community code. So each call is held at arm's length: one that throws, or that answers with something which is not
-an object, becomes `{"error": "..."}` in that one field and is logged, and the graph half and every other plugin
-still answer.
+community code. So each call is held at arm's length, and so is its answer: one that throws, that rejects, that
+does not answer within a second, that answers with something which is not an object, or that answers with
+something the route could not have sent — a cycle, a getter or a `toJSON` that throws — becomes `{"error": "..."}`
+in that one field and is logged, and the graph half and every other plugin still answer. Each answer is put
+through JSON here, on its own, rather than left for the one `c.json()` that serialises the whole object: a value
+JSON cannot take would otherwise fail the entire route with a 500 long after the plugin that produced it returned.
+What the field holds is the value that came back through JSON, so it is exactly what a reader will be sent.
 
 The tiers are `core` (the instance is not usable without a provider; `CORE` in `resolve.ts` lists `auth@1` since
 auth left the core), `official` (ours, versioned with voidbase, opt-in) and `community`.
@@ -125,6 +153,12 @@ its own a plugin importing the whole application that loads it. `app.ts` fills t
 `provideAuthLookup`, and a context is built per request and never held, because a context is the request's.
 `src/server/hooks/index.ts` still imports the app for one and stays as it is: that is the application's own use of
 its own module, not a plugin reaching past its package.
+
+All three are published entry points (`@voidbase-cloud/voidbase/auth-slot`, `/record-slot`, `/realtime-slot`) and
+all three are in the provided-module list a bundle imports through on Bun, because a plugin in a package of its own
+can reach them no other way. The one thing that cannot be packaged is a route that needs the record context and is
+mounted outside the application: `src/server/webauthn.ts` is that, which is why `./passkeys` is no longer an entry
+point.
 
 ### The response policy, hardening's other half
 

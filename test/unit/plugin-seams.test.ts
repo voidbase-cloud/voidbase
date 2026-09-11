@@ -17,7 +17,7 @@
 // rebuilds here from the same still-exported helpers, so the file is checked against it rather than trusted.
 // Regenerate it only when the answer is meant to change, and say in the changelog what moved: a diff here is a
 // change to what every instance reports about itself.
-import { afterAll, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { Hono } from "hono";
@@ -26,8 +26,9 @@ import type { Collection } from "../../src/server/collections/model";
 import type { Mail as MailInterface, Observability, Payments, Realtime, Tax } from "../../src/server/interfaces";
 import { createKernel, load, serve, using, whatLoaded, type Kernel } from "../../src/server/kernel";
 import { mailRoute } from "../../src/server/mail";
-import { provideRecordContext, resetRecordContext } from "../../src/server/record-slot";
+import { provideRecordContext, recordContextBuilder, restoreRecordContext, type RecordContextBuilder } from "../../src/server/record-slot";
 import { realtimeOf, realtimeOff } from "../../src/server/realtime-slot";
+import type { RecordContext } from "../../src/server/records/service";
 import { ai, aiRoute } from "../../src/server/plugins/ai";
 import { auth } from "../../src/server/plugins/auth";
 import { backups } from "../../src/server/plugins/backups";
@@ -85,9 +86,26 @@ afterAll(() => { commerce.stopWatchingPayments(); });
 // --- the record context a plugin needs ----------------------------------------------------------------------------
 describe("a plugin asks the core for the request's record context", () => {
   const source = (file: string) => readFileSync(resolvePath(import.meta.dir, "../../src/server", file), "utf8");
-  // the slot is a module global and bun test runs every file in one process, so the stubs below are put back
-  // (test/unit/plugin-slot-restored.test.ts is the file that checks they were)
-  afterAll(() => { resetRecordContext(); });
+  // The slot is a module global and bun test runs every file in one process, so the stubs below are borrowed and
+  // given back: whatever was in the slot when this file started goes back into it, which is app.ts's own builder
+  // in any run where something imported app.ts first and nothing at all in a run where nothing did. Emptying it
+  // instead — what this did — took app.ts's builder out of the process and left the next file with nothing, and
+  // only the order bun walks test/unit in decided whether that was noticed
+  // (test/unit/plugin-slot-restored.test.ts is the file that checks no stub is left behind).
+  let outside: RecordContextBuilder | undefined;
+  beforeAll(() => { outside = recordContextBuilder(); });
+  afterAll(() => { restoreRecordContext(outside); });
+
+  test("the slot is a borrow: filling it answers what was there, and that is what goes back", () => {
+    const theirs: RecordContextBuilder = async () => ({ theirs: true }) as unknown as RecordContext;
+    const before = provideRecordContext(theirs); // stands in for app.ts, which fills the slot at module scope
+    const mine: RecordContextBuilder = async () => ({ mine: true }) as unknown as RecordContext;
+    expect(provideRecordContext(mine)).toBe(theirs); // what a borrower is handed: exactly what it took
+    expect(recordContextBuilder()).toBe(mine);
+    restoreRecordContext(theirs); // and what it gives back, rather than emptying the slot on top of theirs
+    expect(recordContextBuilder()).toBe(theirs);
+    restoreRecordContext(before);
+  });
 
   test("nothing the auth plugin mounts imports the app to get one, which a package cannot do to the package that loads it", () => {
     // plugins/auth.ts mounts three modules: its own routes, the core's auth routes (auth.ts) and the passkey ones
@@ -235,6 +253,168 @@ describe("/api/plugins is what the plugins that loaded say about themselves", ()
     expect(answer.observability).toEqual({ via: "request-log", sampling: 1, logs: false });
     // and an instance with no provider for either says so where it always did, rather than leaving it out
     expect(await pluginsReport(await instance([], ["observability"]), env)).toMatchObject({ observability: null, payments: { via: "none" } });
+  });
+});
+
+// --- which fields depend on a plugin, and which do not ------------------------------------------------------------
+describe("a field is in the answer only while a plugin answers for it", () => {
+  /** a plugin under a shipped name that says nothing about itself, with the manifest that name needs to load */
+  const quiet = (name: string): Plugin => ({
+    manifest: {
+      name, version: "2.0.0", tier: "community", voidbase: "*",
+      ...(name === "mail" ? { provides: ["mail@1" as const] } : {}),
+    },
+    ...(name === "mail" ? { apply: (ctx: Kernel) => { serve<MailInterface>(ctx, "mail@1", { carrier: () => null, refuses: () => null, send: async () => {} }); } } : {}),
+  });
+  /** the same, answering for itself */
+  const loud = (name: string): Plugin => ({ ...quiet(name), info: () => ({ theirs: name }) });
+
+  // This is the change 0.9.0-beta.46 made to what every instance reports about itself, and it is pinned here name
+  // by name so that it cannot drift back by accident: the core does not import a plugin module to answer for a
+  // plugin that is not running, which is the whole of why the answer is assembled from what loaded.
+  for (const name of ["ai", "translations", "domains", "previews", "commerce"]) {
+    test(`${name} is absent when it is turned off in voidbase.lock, and absent when what shadows it says nothing`, async () => {
+      expect(name in (await pluginsReport(await instance([], [name]), env))).toBe(false);
+      expect(name in (await pluginsReport(await instance([quiet(name)], [name]), env))).toBe(false);
+    });
+
+    test(`${name} is the answer of whatever loaded under the name, when that plugin answers`, async () => {
+      const answer = await pluginsReport(await instance([loud(name)], [name]), env);
+      // commerce keeps its two nested keys, which follow the tax@1 and shipping@1 interfaces rather than the name
+      expect(answer[name]).toEqual(name === "commerce" ? { theirs: name, tax: { rate: 0 }, shipping: { flat: 0, freeOver: 0 } } : { theirs: name });
+      expect(answer.names).toContain(name); // and the graph half says it is loaded either way
+    });
+  }
+
+  test("this is the change: the expression this replaced answered all five whatever was loaded", async () => {
+    for (const name of ["ai", "translations", "domains", "previews", "commerce"]) {
+      const off = await instance([], [name]);
+      expect(name in (await oldAnswer(off))).toBe(true); // app.ts called the shipped module, loaded or not
+      expect(name in (await pluginsReport(off, env))).toBe(false);
+    }
+  });
+
+  test("and the module and the docs say so, rather than that the shape is unchanged", () => {
+    const report = readFileSync(resolvePath(import.meta.dir, "../../src/server/plugins/report.ts"), "utf8");
+    const docs = readFileSync(resolvePath(import.meta.dir, "../../docs/plugins.md"), "utf8");
+    // what both used to claim, which was true of a plugin that was never there and false of one turned off
+    expect(report).not.toContain("exactly as an unloaded plugin was left out of it before");
+    expect(docs).not.toContain("exactly as they were only there while the plugin was");
+    // and what they have to say instead: which release answered them anyway, and which fields are the core's own
+    for (const text of [report, docs]) {
+      expect(text).toContain("0.9.0-beta.48");
+      for (const name of ["installer", "mail", "payments", "observability"]) expect(text).toContain(name);
+    }
+  });
+
+  test("what is loaded is the graph half's to say: a field nobody answers for is not the same as a plugin that is gone", async () => {
+    const answer = await pluginsReport(await instance([quiet("domains")], ["domains"]), env);
+    expect("domains" in answer).toBe(false);
+    expect(answer.names).toContain("domains");
+    expect(answer.plugins).toContainEqual({ name: "domains", tier: "community", core: false, provides: [], requires: [] });
+  });
+
+  test("installer, mail, payments and observability are there whatever is loaded: they are not a plugin's to take away", async () => {
+    const kernel = await instance([quiet("installer"), quiet("mail")], ["installer", "mail", "ai", "translations", "domains", "previews", "commerce", "observability"]);
+    const answer = await pluginsReport(kernel, env);
+    expect(answer).toMatchObject({ installer: installerInfo(env), mail: await mailRoute(env), payments: { via: "none" }, observability: null });
+    for (const name of ["ai", "translations", "domains", "previews", "commerce"]) expect(name in answer).toBe(false);
+  });
+});
+
+// --- a plugin that declares info() is asked, whatever it is called -------------------------------------------------
+describe("every loaded plugin with an info() answers, exactly once", () => {
+  test("a community plugin under a name of its own answers under that name, after the fields above", async () => {
+    const theirs: Plugin = { manifest: { name: "echo", version: "1.0.0", tier: "community", voidbase: "*" }, info: () => ({ heard: true }) };
+    const answer = await pluginsReport(await instance([theirs]), env);
+    expect(answer.echo).toEqual({ heard: true });
+    // appended, so the fields the snapshot pins keep the order and the places they had
+    expect(Object.keys(answer).at(-1)).toBe("echo");
+  });
+
+  test("and the shipped ones that answer inside commerce are not asked twice", async () => {
+    const answer = await pluginsReport(await instance(), env);
+    expect("tax-flat" in answer).toBe(false);
+    expect("shipping-flat" in answer).toBe(false);
+    expect(answer.commerce).toMatchObject({ tax: { rate: 0 }, shipping: { flat: 0, freeOver: 0 } });
+  });
+
+  test("with no commerce to answer inside, the two providers answer under their own names instead of nowhere", async () => {
+    const answer = await pluginsReport(await instance([], ["commerce"]), env);
+    expect("commerce" in answer).toBe(false);
+    expect(answer["tax-flat"]).toEqual(taxFlatInfo(env));
+    expect(answer["shipping-flat"]).toEqual(shippingFlatInfo(env));
+  });
+
+  test("a plugin named like a field of the graph half is left out rather than allowed to overwrite it", async () => {
+    const logged = spyOn(console, "warn").mockImplementation(() => {});
+    const liar: Plugin = { manifest: { name: "names", version: "1.0.0", tier: "community", voidbase: "*" }, info: () => ({ not: "a list" }) };
+    const answer = await pluginsReport(await instance([liar]), env);
+    expect(Array.isArray(answer.names)).toBe(true);
+    expect(answer.names).toContain("names");
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
+  });
+});
+
+// --- what a plugin's answer can do to the route --------------------------------------------------------------------
+describe("an info() is held at arm's length by its answer as well as by its call", () => {
+  /** the route as app.ts mounts it: c.json() serialises the whole answer at once, which is where a bad value lands */
+  async function route(kernel: Kernel, opts: { timeoutMs?: number } = {}): Promise<Response> {
+    const app = new Hono<AppEnv>();
+    app.onError((err, c) => c.json({ crashed: err instanceof Error ? err.message : String(err) }, 500));
+    app.get("/api/plugins", async (c) => c.json(await pluginsReport(kernel, c.env, opts)));
+    return app.request("http://shop.example/api/plugins", {}, env as unknown as Bindings);
+  }
+  const said = (name: string, info: () => object): Plugin => ({ manifest: { name, version: "2.0.0", tier: "community", voidbase: "*" }, info });
+  const quiet = () => spyOn(console, "error").mockImplementation(() => {});
+
+  test("an answer with a cycle in it is that field's failure, not the route's", async () => {
+    const logged = quiet();
+    const circular: Record<string, unknown> = { hostnames: [] }; circular.self = circular;
+    const r = await route(await instance([said("domains", () => circular)], ["domains"]));
+    expect(r.status).toBe(200);
+    const answer = (await r.json()) as { domains: { error: string }; previews: unknown };
+    expect(answer.domains.error).toContain("domains described itself with something that cannot be sent as JSON");
+    expect(answer.previews).toEqual(await previewsReport(env)); // and every other plugin still answers
+    logged.mockRestore();
+  });
+
+  test("an answer whose toJSON throws, and one whose getter throws, are the same failure", async () => {
+    const logged = quiet();
+    const kernel = await instance([
+      said("domains", () => ({ toJSON() { throw new Error("gotcha"); } })),
+      said("previews", () => ({ get shape() { throw new Error("getter boom"); } })),
+    ], ["domains", "previews"]);
+    const r = await route(kernel);
+    expect(r.status).toBe(200);
+    const answer = (await r.json()) as { domains: { error: string }; previews: { error: string }; installer: unknown };
+    expect(answer.domains.error).toContain("gotcha");
+    expect(answer.previews.error).toContain("getter boom");
+    expect(answer.installer).toEqual(installerInfo(env));
+    logged.mockRestore();
+  });
+
+  test("an info() that never settles is that field's failure too, rather than a request that never answers", async () => {
+    const logged = quiet();
+    const kernel = await instance([said("domains", () => new Promise<object>(() => {}))], ["domains"]);
+    const answer = await pluginsReport(kernel, env, { timeoutMs: 25 });
+    expect(answer.domains).toEqual({ error: "domains did not say what it is within 25ms" });
+    expect(answer.previews).toEqual(await previewsReport(env));
+    logged.mockRestore();
+  });
+
+  test("a promise that rejects is held like a throw", async () => {
+    const logged = quiet();
+    const kernel = await instance([said("domains", () => Promise.reject(new Error("async boom")) as unknown as object)], ["domains"]);
+    expect((await pluginsReport(kernel, env)).domains).toEqual({ error: "async boom" });
+    logged.mockRestore();
+  });
+
+  test("and what a field holds is what the route sends: the answer is the value that came back through JSON", async () => {
+    const kernel = await instance([said("domains", () => ({ hostnames: ["shop.example"], at: new Date(0), gone: undefined, fn: () => 1 }))], ["domains"]);
+    // a Date is a string over the wire and a function is nothing, so the field says what a reader will actually get
+    expect((await pluginsReport(kernel, env)).domains).toEqual({ hostnames: ["shop.example"], at: "1970-01-01T00:00:00.000Z" });
   });
 });
 

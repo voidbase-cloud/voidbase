@@ -44,3 +44,20 @@ test("an instance that reports none: ls says so and still lists what is running,
   expect(r.out.join("\n")).toContain("installer:    not reported by this instance");
   expect(r.out.join("\n")).toContain("disabled:     realtime");
 });
+
+test("an instance whose installer is an installed plugin that could not describe itself: the line says so", async () => {
+  // the field is `{error}` rather than an installer answer (src/server/plugins/report.ts holds every info() at
+  // arm's length), which is truthy: reading `.mode` off it printed "installer:    undefined"
+  const r = await ls({ ...GRAPH, installer: { error: "this plugin's info blew up" } });
+  expect(r.err).toEqual([]);
+  expect(r.code).toBe(0);
+  expect(r.out.join("\n")).toContain("installer:    the plugin answering for it failed: this plugin's info blew up");
+  expect(r.out.join("\n")).not.toContain("undefined");
+  expect(r.out.join("\n")).toContain("running:      auth, commerce"); // and the rest of the listing still prints
+});
+
+test("and a field of some other shape is not read into either: ls says the instance did not report it", async () => {
+  const r = await ls({ ...GRAPH, installer: "filesystem" });
+  expect(r.code).toBe(0);
+  expect(r.out.join("\n")).toContain("installer:    not reported by this instance");
+});

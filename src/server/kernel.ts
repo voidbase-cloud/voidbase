@@ -29,7 +29,7 @@
 //   `services` is for. A plugin therefore cannot decide *whether* to mount by looking at a binding: it mounts, and
 //   answers for the binding's absence when it is called.
 import { Context } from "cordis";
-import type { Hono } from "hono";
+import type { Context as RequestContext, Hono } from "hono";
 import { logger } from "#platform/log";
 import type { AppEnv, Bindings } from "./types";
 import type { Plugin } from "./plugins/manifest";
@@ -38,18 +38,46 @@ import { resolve } from "./plugins/resolve";
 /** work a plugin does once per isolate with the bindings, on the first request: creating what it owns */
 export type Bootstrap = (env: Bindings) => Promise<void> | void;
 
+/** records read through the API, after the rules judged them and before they are answered */
+export interface RecordsRead {
+  /** the collection the route was asked for; an expanded record inside a row names its own in `collectionName` */
+  collection: string;
+  /** the records as the response will carry them (JSON shape, `expand` and `fields` applied); changed in place */
+  rows: Record<string, unknown>[];
+}
+/** work a plugin does on every read, with the request: reshaping the rows, setting a header (onAfterRead) */
+export type AfterRead = (c: RequestContext<AppEnv>, read: RecordsRead) => Promise<void> | void;
+
 export interface Kernel extends Context {
   /** the app a plugin mounts its routes on */
   app: Hono<AppEnv>;
   /** what plugins asked to run at bootstrap, in load order (onBootstrap) */
   bootstraps: { plugin: string; run: Bootstrap }[];
+  /** what plugins asked to run after a records read, in load order (onAfterRead) */
+  afterReads: { plugin: string; run: AfterRead }[];
 }
 
 export function createKernel(app: Hono<AppEnv>): Kernel {
   const kernel = new Context() as Kernel;
   kernel.app = app;
   kernel.bootstraps = [];
+  kernel.afterReads = [];
   return kernel;
+}
+
+/**
+ * Register work to do after records are read for a response: the list and view routes call `runAfterRead` with
+ * the collection and the rows as the response will carry them, once the rules have judged the read and `expand`
+ * and `fields` are applied. A handler changes the rows in place and may set a response header; it does not see
+ * writes or realtime events, which carry the record as stored.
+ */
+export function onAfterRead(ctx: Kernel, run: AfterRead): void {
+  ctx.afterReads.push({ plugin: applying ?? "?", run });
+}
+
+/** run every plugin's after-read handler, in load order; a handler's error is the request's error */
+export async function runAfterRead(kernel: Kernel, c: RequestContext<AppEnv>, read: RecordsRead): Promise<void> {
+  for (const h of kernel.afterReads) await h.run(c, read);
 }
 
 /**

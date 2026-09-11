@@ -20,7 +20,7 @@ import { mountFilesApi, protectedAccess } from "./files-api";
 import { BATCH_CONTEXT_HEADER, batchContextToken, mountBatch } from "./batch";
 import { mountLogsApi, requestLogger } from "./logs";
 import { mountCronsApi } from "./crons";
-import { createKernel, load, runBootstraps, using, whatLoaded } from "./kernel";
+import { createKernel, load, runAfterRead, runBootstraps, using, whatLoaded } from "./kernel";
 import { auth as authPlugin } from "./plugins/auth";
 import { backups as backupsPlugin } from "./plugins/backups";
 import { installer as installerPlugin, installerInfo } from "./plugins/installer";
@@ -29,6 +29,7 @@ import { mcp as mcpPlugin } from "./plugins/mcp";
 import { seo as seoPlugin } from "./plugins/seo";
 import { mail as mailPlugin } from "./plugins/mail";
 import { ai as aiPlugin, aiRoute } from "./plugins/ai";
+import { translations as translationsPlugin, translationsInfo } from "./plugins/translations";
 import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
 import { SHIPPED } from "./plugins/shipped";
@@ -326,13 +327,22 @@ const listQuery = (c: Context<AppEnv>): ListQuery => ({
 app.get("/api/collections/:collection/records", async (c) => {
   const collection = await mustFindCollection(c, c.req.param("collection"));
   const ctx = await recordContext(c);
-  return requestHookResult("onRecordsListRequest", c, collection.name, { collection: new CollectionRef(collection), records: null }, async () => listRecords(ctx, collection, listQuery(c)));
+  return requestHookResult("onRecordsListRequest", c, collection.name, { collection: new CollectionRef(collection), records: null }, async () => {
+    const result = await listRecords(ctx, collection, listQuery(c));
+    // the plugins' turn on what is about to be answered (kernel onAfterRead): the rows change in place
+    await runAfterRead(kernel, c, { collection: collection.name, rows: result.items });
+    return result;
+  });
 });
 
 app.get("/api/collections/:collection/records/:id", async (c) => {
   const collection = await mustFindCollection(c, c.req.param("collection"));
   const ctx = await recordContext(c);
-  return requestHookResult("onRecordViewRequest", c, collection.name, { collection: new CollectionRef(collection), record: null }, async () => viewRecord(ctx, collection, c.req.param("id"), { expand: c.req.query("expand"), fields: c.req.query("fields") }));
+  return requestHookResult("onRecordViewRequest", c, collection.name, { collection: new CollectionRef(collection), record: null }, async () => {
+    const record = await viewRecord(ctx, collection, c.req.param("id"), { expand: c.req.query("expand"), fields: c.req.query("fields") });
+    await runAfterRead(kernel, c, { collection: collection.name, rows: [record] });
+    return record;
+  });
 });
 
 app.post("/api/collections/:collection/records", async (c) => {
@@ -513,7 +523,7 @@ mountCronsApi(app);
 export const kernel = createKernel(app);
 // What ships, minus what the project turned off, minus what an installed plugin shadows by name; then what the
 // project installed (pb_plugins, verified against voidbase.lock by the platform module). One graph, resolved once.
-const shipped = [authPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION), openapiPlugin, mcpPlugin, seoPlugin, mailPlugin, aiPlugin];
+const shipped = [authPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION), openapiPlugin, mcpPlugin, seoPlugin, mailPlugin, aiPlugin, translationsPlugin];
 if (shipped.map((p) => p.manifest.name).join() !== SHIPPED.join()) throw new Error("voidbase: src/server/plugins/shipped.ts disagrees with the plugins app.ts loads");
 const shadowed = new Set(installedPlugins.map((p) => p.name));
 const active = shipped.filter((p) => !disabledPlugins.includes(p.manifest.name) && !shadowed.has(p.manifest.name));
@@ -531,7 +541,7 @@ provideMailLookup(() => using<Mail | undefined>(kernel, "mail@1"));
 // the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface.
 app.get("/api/plugins", async (c) => {
   requireSuperuser(c);
-  return c.json({ ...whatLoaded(kernel), installer: installerInfo(c.env), mail: await mailRoute(c.env), ai: aiRoute(c.env) });
+  return c.json({ ...whatLoaded(kernel), installer: installerInfo(c.env), mail: await mailRoute(c.env), ai: aiRoute(c.env), translations: translationsInfo(c.env) });
 });
 mountSqlApi(app);
 

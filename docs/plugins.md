@@ -13,8 +13,8 @@ working plan. What is here is what a contributor needs to touch it.
 | `src/server/plugins/manifest.ts` | the manifest format (`name`, `version`, `tier`, `voidbase` range, `provides`, `requires`, `collections`, `extends`) and `checkManifest()`. Data only. |
 | `src/server/plugins/resolve.ts` | the whole graph checked before a single plugin is applied: unknown interface names, version ranges, two providers of one interface, collection ownership, missing requirements, cycles. Everything wrong is reported at once. |
 | `src/server/interfaces/index.ts` | the interfaces a plugin may provide or require, versioned in the name (`auth@1`, `payments@1`, `realtime@1`, `hardening@1`, `mail@1`) and the closed `KNOWN` list. |
-| `src/server/plugins/*.ts` | the plugins voidbase ships with today: `auth`, `realtime`, `hardening`, `backups`, `installer`, `openapi`, `mcp`, `seo`, `mail`. |
-| `GET /api/plugins` | what this instance loaded: names, providers, tiers, any core interface nobody provides, and `mail`, where this instance's mail goes. Superuser only. |
+| `src/server/plugins/*.ts` | the plugins voidbase ships with today: `auth`, `realtime`, `hardening`, `backups`, `installer`, `openapi`, `mcp`, `seo`, `mail`, `translations`. |
+| `GET /api/plugins` | what this instance loaded: names, providers, tiers, any core interface nobody provides, `mail`, where this instance's mail goes, and `translations`, the locales and the declared collections. Superuser only. |
 
 ## The entry points a plugin package uses
 
@@ -22,7 +22,7 @@ The package exposes the plugin API and the plugins it ships, so a plugin can liv
 against this voidbase: `@voidbase-cloud/voidbase/kernel` (`createKernel`, `load`, `serve`, `using`, `whatLoaded`,
 `Kernel`), `@voidbase-cloud/voidbase/plugins` (`Plugin`, `PluginManifest`, `checkManifest`),
 `@voidbase-cloud/voidbase/interfaces` (the interface types and `KNOWN`), and `@voidbase-cloud/voidbase/plugins/backups`,
-`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening`, `/plugins/openapi`, `/plugins/mcp`, `/plugins/seo`, `/plugins/mail` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
+`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening`, `/plugins/openapi`, `/plugins/mcp`, `/plugins/seo`, `/plugins/mail`, `/plugins/translations` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
 the map honest. The official plugin packages (`@voidbase-cloud/plugin-*`, one repository each) re-export the shipped
 objects through these entry points: the code lives here once, and the package is the plugin's name, manifest and
 version as the marketplace lists it.
@@ -386,6 +386,75 @@ behind it: the conversation persists, an agent can be driven as a sub-agent over
 environment can mount it. This plugin is the stateless half, one request in and one answer out, and it is what the
 Think plugins would call, because the scoping question they all have is answered here once: the MCP server's tool
 list is the instance as the caller may see it, and a Think agent needs nothing more than that list and a token.
+
+## Content in the reader's language: translations
+
+`translations` is a shipped plugin (tier `official`, `src/server/plugins/translations.ts`) that answers the content
+half of the roadmap's "Translations, as an official plugin": a field is declared translatable once, and the records
+API answers in the language the request asks for, falling back the way you said. Interface strings (the project
+half: typed keys that fail the build when one is missing) are not here, and are not this plugin's job.
+
+**The knobs**, read from the request's env first, then the runtime's, like seo's and hardening's:
+
+- `VOIDBASE_TRANSLATABLE=posts:title,body;pages:title` declares which fields have translations: entries separated
+  by `;`, each `collection:field,field` (`,` between fields). Whitespace around a name is ignored, a collection
+  named twice gets the union of its fields, and an entry with no `:`, an invalid name or no field is skipped with a
+  warning in the log.
+- `VOIDBASE_LOCALES=en,ar,fr` lists the locales, lowercased and deduplicated. The first is the source locale, the
+  one the records' own fields hold; the order is the fallback order.
+
+Both have to be set for anything to happen; with either missing the plugin is loaded and idle.
+
+**Storage.** The plugin owns one collection, `translations`, created at bootstrap through the ownership mechanism
+above: `collection`, `record`, `field`, `locale` (text, required) and `value` (text), with one unique index over the
+four keys. A translation is written like any record (`POST /api/collections/translations/records` with
+`{ collection: "posts", record: "<id>", field: "title", locale: "ar", value: "..." }`); create, update and delete are
+superuser only, list and view are public. Public on purpose and said plainly: a translation is as public as its
+record, and the cheap rule is the public one, so a translation of a record that is not publicly readable is still
+listable through `/api/collections/translations/records`. The read path below never has that problem, because it
+only swaps fields on records the caller could already see; if the collection itself has to be tightened, its rules
+are edited from the panel like any collection's (the plugin creates it once, when missing, and does not overwrite
+what you changed). The source text stays in the record's own field: writes go there as they always did, and
+realtime events carry the record as stored. Nothing here touches either.
+
+**Reading.** `GET /api/collections/:c/records` and `/records/:id` go through a kernel seam (`onAfterRead`, below)
+after the rules judged the read and `expand` and `fields` were applied. When the response holds a record of a
+declared collection (the rows, or a record inside their `expand`), the locale is `?locale=ar` when that is one of
+the locales (an unknown one is the source, not an error), else the best `Accept-Language` match among
+`VOIDBASE_LOCALES` by q value (a tag matches its locale exactly or by primary subtag, `en-US` finds `en`, `*` is
+the source), else the source. The response carries it in `Content-Language`. Each translatable field is replaced
+by its translation in that locale, falling back down `VOIDBASE_LOCALES`' order to the source value; an empty
+translation is no translation, and an empty source value counts as missing too, so the next locale in the order is
+tried. Per record, `translated: { field: locale }` names the fields that were swapped and where each came from
+(`{ title: "ar" }`, or `{ title: "ar", body: "fr" }` when the body fell back); the key is absent when nothing was
+swapped. A request for the source locale is the records as they are, with the header. All the translations a
+response needs, expanded records included, are asked for in one call to the plugin's source (the default source
+issues that as one `IN` over the record ids, chunked under D1's bound-parameter limit the way the expander does),
+never one query per record. A collection the knob does not name is answered exactly as before, header included.
+
+**The reports**, superuser only:
+
+- `GET /api/translations/missing?collection=posts&locale=ar` lists what has no translation yet: paginated over the
+  collection's records with `page` and `perPage` like the records API (`totalItems` is the record count), and
+  `items` are the records of that page missing at least one field, each with the fields it lacks:
+  `{ collection, locale, page, perPage, totalItems, totalPages, items: [{ id, fields: ["body"] }] }`. An
+  undeclared collection, an unknown locale or the source locale is a 400 saying which.
+- `GET /api/translations/status` counts, per declared collection and per locale other than the source, the
+  `(record, field)` pairs that have a translation out of records times fields:
+  `{ source, locales, collections: { posts: { fields, records, locales: { ar: { translated, total } } } } }`. A
+  translation whose record is gone is not counted; a declared collection that does not exist is left out with a
+  warning.
+- `GET /api/plugins` gains a `translations` field: `{ source, locales, collections: { posts: ["title", "body"] } }`.
+
+**The seam.** The kernel gained `onAfterRead(ctx, (c, { collection, rows }) => ...)`: the list and view routes in
+app.ts call `runAfterRead` with the collection's name and the rows as the response will carry them, in load order,
+and a handler changes the rows in place and may set a header. It is generic on purpose (the kernel still imports no
+feature; `test/unit/kernel-invariant.test.ts` holds) and is what any plugin that reshapes what a read answers
+would use. The plugin takes an injectable source for tests, `translationsWith({ collections, translations,
+recordIds, counts })`; `test/unit/translations.test.ts` measures the knob grammar, the negotiation, the swap and
+its fallback, the marker, the single lookup, the reports, the untouched collection, and the default source's SQL
+over the table the definition creates. Not here: a locale in the route, `hreflang` and canonical tags (the seo
+plugin's other half), a panel screen over the reports, and the interface strings.
 
 ## Auth is the core plugin
 

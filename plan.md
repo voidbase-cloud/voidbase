@@ -521,6 +521,10 @@ staying the fallback for every other sender (docs/plugins.md). And (2026-09-11) 
 is a shipped plugin whose `POST /api/ai/chat` runs a tool-calling loop on Workers AI (`VOIDBASE_AI=1` adds the
 binding) with the MCP server's tool list for the caller as the tools, so the model reaches exactly what the token
 may call and Think, when it comes, sits on top of this rather than beside it (docs/plugins.md).
+And (2026-09-11) the content half of translations:
+`translations` is a shipped plugin that owns a `translations` collection and, for the fields `VOIDBASE_TRANSLATABLE`
+declares, answers the records API in the locale the request asks for among `VOIDBASE_LOCALES`, falling back down
+their order, through a new after-read seam in the kernel; interface strings are still the project's (docs/plugins.md).
 
 ## What to correct on the site when this lands
 

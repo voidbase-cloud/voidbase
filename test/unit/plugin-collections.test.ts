@@ -1,7 +1,8 @@
-// A plugin creates what it owns, and only that; and bootstrap work runs once per isolate, in load order.
+// A plugin creates what it owns, and only that; bootstrap work runs once per isolate, in load order; and after-read
+// work runs on every read, in load order, over the rows the response will carry.
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { createKernel, load, onBootstrap, runBootstraps, type Kernel } from "../../src/server/kernel";
+import { createKernel, load, onAfterRead, onBootstrap, runAfterRead, runBootstraps, type Kernel } from "../../src/server/kernel";
 import { ensureCollections } from "../../src/server/plugins/collections";
 import type { Plugin } from "../../src/server/plugins/manifest";
 import type { Bindings } from "../../src/server/types";
@@ -41,5 +42,30 @@ describe("bootstrap work", () => {
     await expect(runBootstraps(kernel, {} as Bindings)).rejects.toThrow("not yet");
     await runBootstraps(kernel, {} as Bindings);
     expect(attempts).toBe(2);
+  });
+});
+
+describe("after-read work", () => {
+  test("runs on every read in load order, sees the rows in place, and is recorded under the plugin's name", async () => {
+    const plugin = (name: string): Plugin => ({
+      manifest: { name, version: "1.0.0", tier: "community", voidbase: "*" },
+      apply(ctx: Kernel) { onAfterRead(ctx, (c, read) => { for (const row of read.rows) row.seen = `${String(row.seen ?? "")}${name}:${read.collection};`; c.header("x-seen-by", name); }); },
+    });
+    const app = new Hono() as never;
+    const kernel = createKernel(app);
+    await load(kernel, [plugin("first"), plugin("second")], "0.9.0");
+    expect(kernel.afterReads.map((h) => h.plugin)).toEqual(["first", "second"]);
+    const rows = [{ id: "a" }, { id: "b" }];
+    const headers: Record<string, string> = {};
+    const c = { header: (k: string, v: string) => { headers[k] = v; } } as never;
+    await runAfterRead(kernel, c, { collection: "posts", rows });
+    expect(rows).toEqual([{ id: "a", seen: "first:posts;second:posts;" }, { id: "b", seen: "first:posts;second:posts;" }]);
+    expect(headers).toEqual({ "x-seen-by": "second" });
+    // nothing registered: the rows are untouched
+    const bare = createKernel(app);
+    await load(bare, [], "0.9.0");
+    const plain = [{ id: "a" }];
+    await runAfterRead(bare, c, { collection: "posts", rows: plain });
+    expect(plain).toEqual([{ id: "a" }]);
   });
 });

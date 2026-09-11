@@ -86,7 +86,7 @@ rows actually written", and 5 and 6 are the two latency wins visible to users.
 | 3 change feed only with listeners | done: the `_changes` insert is a conditional `INSERT ... SELECT ... WHERE EXISTS (SELECT 1 FROM _realtime_clients)` inside the same write batch, so it costs no extra round trip and writes no row when nobody is subscribed | `src/server/records/service.ts` |
 | 4 crons only when needed | done: the hooks plugin reads every `cronAdd` expression at build time and registers them as the Worker's triggers (macros expanded; more than 4 falls back to every minute), plus one hourly tick; PocketBase's maintenance jobs (log and file cleanup, token purge, backups) also run lazily on the next request when overdue, and a tick catches every job due since the last one | `hooks-plugin.ts` `cronTriggers`, `crons/every-minute.ts`, `src/server/crons.ts` |
 | 5 Smart Placement | done for `voidbase deploy` (`placement: { mode: "smart" }` in the generated wrangler config). Caveat from Cloudflare: with `run_worker_first` the whole Worker is placed as one unit, so asset requests from far users travel to the placed region as well; browsers cache those, API latency wins | `src/node/deploy-cf.ts` |
-| 6 lazy wasm | done: Photon is imported on the first thumbnail request | `src/server/records/thumbs.ts` |
+| 6 lazy wasm | done: Photon is imported on the first thumbnail request, and resvg on the first share card asked for as a PNG; both are dynamic imports, so a request that touches neither pays for neither | `src/server/records/thumbs.ts`, `src/platform/*/raster.ts` |
 | 7 queues | done (2026-09-06): mail and automatic backups through the `<name>-jobs` queue with retries and an alert on drop; inline without the queue. Verified in dev, in `vp preview` (mail-http) and on a deployed probe | `src/server/jobs.ts`, `queues/jobs.ts`, `src/server/mail/index.ts`, `src/server/backups.ts` |
 | 2b log sink | done, opt-in: Analytics Engine data point per request (`--analytics`); the account must enable Analytics Engine once, which is why it is not the default | `src/server/logs.ts`, `src/node/deploy-cf.ts` |
 | 8 KV | skipped: settings are cached per isolate and Smart Placement makes the remaining D1 read cheap | |
@@ -94,6 +94,25 @@ rows actually written", and 5 and 6 are the two latency wins visible to users.
 | 10 Durable Object hub | done: one SQLite-backed `VoidbaseHub` per instance, exported from the instance's own Worker (the plugin appends it to Void's generated entry; wrangler.jsonc declares the binding and the `new_sqlite_classes` migration, which Void's Cloudflare backend accepts). Each SSE connection holds one hibernatable socket to it, writes publish after their D1 batch commits, subscription changes are relayed through it, and the object sweeps sockets that stopped pinging. Without the binding (Bun, `--no-hub`) the D1 poll stays. Local fan-out to 100 clients: p50 346 ms (poll: 587 ms), one client: about 50 ms. Void itself neither promises custom Durable Objects nor offers a cheaper primitive: `void/live` keeps one active object per open stream and caps a topic at 256 subscribers | `src/server/hub.ts`, `src/server/realtime/`, `hooks-plugin.ts` `hubEntry` |
 | 11 Durable Object database | done (2026-09-11), behind `VOIDBASE_DATABASE=durable`: the instance's data in its own SQLite-backed `VoidbaseDatabase` through the same D1 interface, `batch` a real transaction; the 100-column and 100-parameter ceilings stay (measured on workerd). Section below | `src/server/durable-db.ts`, `src/server/durable-d1.ts`, `test/workers-durable.ts` |
 
+
+### The Worker bundle, and the two wasm modules in it (2026-09-11)
+
+Two of the things voidbase does are Rust compiled to wasm, and they are most of the deployed Worker:
+
+| | raw | gzipped |
+| --- | --- | --- |
+| Everything else (the app, the panel's API, hono, the plugins) | 1.57 MB | 0.39 MB |
+| Photon, for thumbnails (`@cf-wasm/photon`) | 1.57 MB | 0.62 MB |
+| resvg, for share cards (`@resvg/resvg-wasm`) | 2.48 MB | 0.95 MB |
+| The chunk resvg loads with (its glue and the card's two font faces, base64) | 0.24 MB | 0.09 MB |
+| **Total `dist/ssr`** | **5.85 MB** | **2.05 MB** |
+
+Adding resvg for the PNG share cards took the bundle from 3.13 MB raw / 1.01 MB gzipped to 5.85 MB / 2.05 MB:
++2.71 MB raw and +1.04 MB gzipped, roughly double. The numbers above are measured with `vp build` on this repo's
+own Void app, plus `gzip -9` per file. Cloudflare's limit is what matters, and it is on the compressed size: 3 MB on the free plan,
+10 MB on Workers Paid. 2.05 MB is inside both, with less room on the free plan than before, so the next wasm
+dependency is a decision rather than a detail. Neither module is imported at module load (item 6), so this is
+bundle size and Worker startup, not per-request CPU.
 
 ## The database as a Durable Object: `VOIDBASE_DATABASE=durable` (2026-09-11)
 

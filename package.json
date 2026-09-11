@@ -101,6 +101,10 @@
     "#platform/plugins": {
       "workerd": "./src/platform/workers/plugins.ts",
       "default": "./src/platform/node/plugins.ts"
+    },
+    "#platform/raster": {
+      "workerd": "./src/platform/workers/raster.ts",
+      "default": "./src/platform/node/raster.ts"
     }
   },
   "files": [
@@ -160,6 +164,7 @@
   "dependencies": {
     "@cf-wasm/photon": "^0.4.0",
     "@cloudflare/workers-types": "^4.20250903.0",
+    "@resvg/resvg-wasm": "2.6.2",
     "@simplewebauthn/server": "^14.0.1",
     "bcryptjs": "^3.0.2",
     "cordis": "4.0.0-rc.9",
@@ -176,6 +181,7 @@
     "@types/bun": "^1.4.1",
     "husky": "^9.1.7",
     "playwright": "^1.63.0",
-    "pocketbase": "0.28.0"
+    "pocketbase": "0.28.0",
+    "subset-font": "2.7.0"
   }
 }

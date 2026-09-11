@@ -236,7 +236,10 @@ export function buildMeta(input: MetaInput): MetaAnswer {
 // --- the share card ------------------------------------------------------------------------------------------------------
 export const CARD = { width: 1200, height: 630, titleChars: 30, titleLines: 3, descriptionChars: 70 } as const;
 export const DEFAULT_THEME = "#1f2430";
-const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+// The rasteriser is handed Inter's own bytes (og-font.ts), so the family is named first and the generic stack
+// stays behind it for the browsers and scrapers that fetch the .svg instead.
+export const CARD_FONT_FAMILY = "Inter";
+const FONT = `${CARD_FONT_FAMILY}, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif`;
 
 /** VOIDBASE_SEO_THEME when it is a hex colour or a colour name, else the default dark */
 export const themeOf = (v: string): string => (/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(v.trim()) || /^[a-z]{3,20}$/i.test(v.trim()) ? v.trim() : DEFAULT_THEME);
@@ -272,7 +275,7 @@ export function wrap(text: string, chars: number, lines: number): string[] {
   return out;
 }
 
-/** the 1200x630 SVG card: the app's name, the title on up to three lines, the description on one, generic fonts only */
+/** the 1200x630 SVG card: the app's name, the title on up to three lines, the description on one */
 export function shareCard(opts: { appName: string; title: string; description: string; theme: string }): string {
   const bg = themeOf(opts.theme);
   const ink = inkOf(bg);

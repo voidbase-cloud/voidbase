@@ -14,8 +14,8 @@
 // own path first and only answers when there is no file. On Bun the app runs before the static fallback, so this
 // is the only way the file could win; on Cloudflare the asset layer answers before the Worker for any path outside
 // /api, so the file wins there without the plugin being asked. The site URL is VOIDBASE_SITE_URL when set, else
-// the request's origin. JSON-LD, OpenGraph tags, canonical URLs and share images are the roadmap's other half and
-// are not here.
+// the request's origin. JSON-LD, OpenGraph tags, canonical URLs and the share card live in seo-meta.ts, and the
+// card is rasterised to PNG through #platform/raster (og-raster.ts).
 import type { Context, Hono } from "hono";
 import { env as runtimeEnv } from "#platform/env";
 import { logger } from "#platform/log";
@@ -27,7 +27,7 @@ import { loadSettings } from "../settings";
 import type { AppEnv, Bindings } from "../types";
 import { VERSION } from "../version";
 import type { Plugin } from "./manifest";
-import { alternatesOf, buildMeta, etagOf, expandOf, localesOf, lookupFilter, matchPath, notModified, pageText, parseSeo, shareCard, splitLocale, splitOutside, type LocaleSetup } from "./seo-meta";
+import { alternatesOf, buildMeta, CARD, etagOf, expandOf, localesOf, lookupFilter, matchPath, notModified, pageText, parseSeo, shareCard, splitLocale, splitOutside, type LocaleSetup } from "./seo-meta";
 
 /** where the answers' facts come from; the defaults read the instance, a test hands in what it likes */
 export interface SeoSource {
@@ -39,7 +39,7 @@ export interface SeoSource {
   records(env: Bindings, collection: Collection, filter: string, limit: number): Promise<Record<string, unknown>[]>;
   /** the one record of the collection matching the filter that the request's caller may list, expanded; null when none */
   record(c: Context<AppEnv>, collection: Collection, filter: string, expand: string): Promise<Record<string, unknown> | null>;
-  /** the PNG of an SVG when the platform can rasterise one; null when it cannot (photon decodes raster formats only) */
+  /** the PNG of the card's SVG at 1200x630, or null when this platform's rasteriser could not load or parse it */
   rasterize(svg: string): Promise<Uint8Array | null>;
 }
 
@@ -70,7 +70,8 @@ const defaultSource: SeoSource = {
     const r = await listRecords(await recordContextFor(c), collection, { page: 1, perPage: 1, skipTotal: true, sort: "", filter, expand, fields: "" });
     return r.items[0] ?? null;
   },
-  rasterize: async () => null,
+  // resvg, loaded on the first card asked for as a PNG: the wasm is ~2.4 MB and no other request should pay for it
+  rasterize: async (svg) => (await import("#platform/raster")).rasterize(svg, CARD.width, CARD.height),
 };
 
 // --- the knobs -------------------------------------------------------------------------------------------------------
@@ -249,23 +250,28 @@ function mountMeta(app: Hono<AppEnv>, kernel: Kernel, source: SeoSource) {
       site, appName: (await source.appName(c.env).catch(() => "")).trim(), collection: page.collection, record: page.record,
       canonical: locOf(site, page.entry.pattern, page.record) ?? `${site}${new URL(path || "/", site).pathname}`,
       mapping: page.mapping, imageSize: read("VOIDBASE_SEO_IMAGE_SIZE", c.env), locale, locales: page.locales,
-      card: `${site}${OG_PATH}/${encodeURIComponent(page.collection.name)}/${encodeURIComponent(String(page.record.id ?? ""))}.svg`,
+      // .png, not .svg: no social scraper renders SVG, and the .png route falls back to the SVG body itself when
+      // this platform has no rasteriser, so the one URL is right either way
+      card: `${site}${OG_PATH}/${encodeURIComponent(page.collection.name)}/${encodeURIComponent(String(page.record.id ?? ""))}.png`,
     });
     return c.json(meta);
   });
 
   app.get(`${OG_PATH}/:collection/:file`, async (c) => {
     const m = /^(.+)\.(svg|png)$/.exec(c.req.param("file"));
-    if (!m) return c.json({ message: "The card is <id>.svg (or <id>.png where the platform can rasterise)." }, 404);
+    if (!m) return c.json({ message: "The card is <id>.png or <id>.svg." }, 404);
     const page = await findPage(c, kernel, source, { collection: c.req.param("collection"), id: m[1]! });
     if (!page) return c.json({ message: "No page for this record: nothing in VOIDBASE_SITEMAP names its collection, or the caller may not list it." }, 404);
     const { etag, fresh } = skewHeaders(c, page.record, CARD_CACHE);
     if (fresh) return c.body(null, 304);
     const text = pageText(page.collection, page.record, page.mapping);
     const svg = shareCard({ appName: (await source.appName(c.env).catch(() => "")).trim(), title: text.title, description: text.description, theme: read("VOIDBASE_SEO_THEME", c.env) });
-    if (m[2] === "svg") { c.header("Content-Type", "image/svg+xml; charset=utf-8"); return c.body(svg); }
+    const asSvg = () => { c.header("Content-Type", "image/svg+xml; charset=utf-8"); return c.body(svg); };
+    if (m[2] === "svg") return asSvg();
     const png = await source.rasterize(svg).catch((err: unknown) => { logger.warn("voidbase: seo: share card could not be rasterised", { error: err instanceof Error ? err.message : String(err) }); return null; });
-    if (!png) return c.json({ message: "This platform's image library (photon) cannot rasterise an SVG; the card is served as .svg." }, 406);
+    // a card no one sees is worse than a card in the wrong format: the .png URL answers with the SVG rather than an
+    // error when the rasteriser is missing, and says so in a header so a caller can tell the two apart
+    if (!png) { logger.warn("voidbase: seo: share card asked for as .png served as SVG: this platform has no rasteriser", { collection: page.collection.name, id: String(page.record.id ?? "") }); c.header("X-Voidbase-Card", "svg-fallback"); return asSvg(); }
     return new Response(png as BodyInit, { headers: { "Content-Type": "image/png", "Cache-Control": CARD_CACHE, ETag: etag, "X-Voidbase-Version": VERSION } });
   });
 }

@@ -1,5 +1,6 @@
 // The seo plugin: robots.txt, a sitemap generated from public records, and llms.txt, from an injected source; then
-// the record half: a page's metadata resolved through the sitemap templates in reverse, the share card, the ETags.
+// the record half: a page's metadata resolved through the sitemap templates in reverse, the share card as SVG and
+// as the PNG resvg rasterises it (and the SVG it falls back to when a platform has no rasteriser), the ETags.
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Hono } from "hono";
 import { provideAuthLookup } from "../../src/server/auth-slot";
@@ -8,6 +9,7 @@ import { ApiError } from "../../src/server/errors";
 import { createKernel, load } from "../../src/server/kernel";
 import { auth, provider } from "../../src/server/plugins/auth";
 import { buildMeta, etagOf, excerpt, locOf, matchPath, notModified, parseSeo, parseSitemap, seo, seoRedirectLines, seoWith, shareCard, splitLocale, wrap, type MetaAnswer, type SeoSource } from "../../src/server/plugins/seo";
+import { CARD_FONT_FAMILY } from "../../src/server/plugins/seo-meta";
 import type { AppEnv, Bindings } from "../../src/server/types";
 import { VERSION } from "../../src/server/version";
 
@@ -62,10 +64,19 @@ async function appWith(env: Record<string, unknown> = {}, plugin = seoWith(spySo
   const kernel = createKernel(app);
   await load(kernel, [auth, plugin], "0.9.0");
   provideAuthLookup(() => provider);
-  const get = async (path: string, headers: Record<string, string> = {}) => { const r = await app.request(`http://shop.example${path}`, { headers }, env as unknown as Bindings); return { r, text: await r.text() }; };
-  return { app, get };
+  const ask = (path: string, headers: Record<string, string> = {}) => app.request(`http://shop.example${path}`, { headers }, env as unknown as Bindings);
+  const get = async (path: string, headers: Record<string, string> = {}) => { const r = await ask(path, headers); return { r, text: await r.text() }; };
+  // the card as PNG is bytes, not text: reading it as text would mangle them
+  const bytes = async (path: string, headers: Record<string, string> = {}) => { const r = await ask(path, headers); return { r, body: new Uint8Array(await r.arrayBuffer()) }; };
+  return { app, get, bytes };
 }
 const locs = (xml: string) => [...xml.matchAll(/<loc>(.*?)<\/loc>/g)].map((m) => m[1]);
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+/** a PNG's signature and its first chunk: IHDR carries the width and the height as big-endian 32-bit ints */
+const ihdr = (png: Uint8Array) => {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  return { signature: [...png.subarray(0, 8)], chunk: String.fromCharCode(...png.subarray(12, 16)), width: view.getUint32(16), height: view.getUint32(20) };
+};
 
 let warn: ReturnType<typeof spyOn> | null = null;
 const quiet = () => { warn = spyOn(console, "warn").mockImplementation(() => {}); return warn; };
@@ -262,7 +273,7 @@ describe("the page's metadata: /api/seo/meta", () => {
     expect(script).toContain('"name":"Ada \\u003cLovelace>"');
     expect(script).not.toContain("<Lovelace");
     // a description whose text (tags stripped, entities decoded) tries to close the script tag cannot
-    const built = buildMeta({ site: SITE, appName: "Shop", collection: COLLECTIONS[0]!, record: { id: "x", title: "T", summary: "<p>&lt;/script&gt;&lt;script&gt;alert(1)</p>" }, canonical: `${SITE}/blog/x`, mapping: parseSeo(SEO)[0]!, imageSize: "", locale: "", locales: null, card: `${SITE}/api/seo/og/posts/x.svg` });
+    const built = buildMeta({ site: SITE, appName: "Shop", collection: COLLECTIONS[0]!, record: { id: "x", title: "T", summary: "<p>&lt;/script&gt;&lt;script&gt;alert(1)</p>" }, canonical: `${SITE}/blog/x`, mapping: parseSeo(SEO)[0]!, imageSize: "", locale: "", locales: null, card: `${SITE}/api/seo/og/posts/x.png` });
     expect(built.description).toBe("</script><script>alert(1)");
     expect(built.html).toContain('<meta name="description" content="&lt;/script&gt;&lt;script&gt;alert(1)">');
     expect(built.html).toContain('"description":"\\u003c/script>\\u003cscript>alert(1)"');
@@ -321,7 +332,7 @@ describe("the page's metadata: /api/seo/meta", () => {
     expect(body.description.length).toBeLessThanOrEqual(201);
     expect(body.description.startsWith("Who we are. Who we are.")).toBe(true);
     expect(body.description.endsWith("\u2026")).toBe(true);
-    expect(body.image).toBe("http://shop.example/api/seo/og/pages/g1.svg");
+    expect(body.image).toBe("http://shop.example/api/seo/og/pages/g1.png");
     expect(body.canonical).toBe("http://shop.example/about");
     expect(body.og["og:type"]).toBe("website");
     expect(body.jsonld).toEqual({ "@context": "https://schema.org", "@type": "WebPage", name: "About us", description: body.description, image: body.image, url: "http://shop.example/about" });
@@ -437,7 +448,7 @@ describe("locales: og:locale, alternates and hreflang", () => {
   });
 });
 
-describe("the share card: /api/seo/og/:collection/:id.svg", () => {
+describe("the share card: /api/seo/og/:collection/:id.png and .svg", () => {
   test("a 1200x630 SVG with the app's name, the title and the description, escaped, cached an hour, with the skew headers", async () => {
     const { get } = await appWith({ VOIDBASE_SITEMAP: SITEMAP, VOIDBASE_SEO: SEO, VOIDBASE_SITE_URL: SITE });
     const { r, text } = await get("/api/seo/og/posts/p1.svg");
@@ -453,7 +464,8 @@ describe("the share card: /api/seo/og/:collection/:id.svg", () => {
     expect(text).toContain('font-size="64" font-weight="700" fill="#ffffff">Hello, world &amp; &quot;friends&quot;</text>');
     expect(text).toContain('font-size="32" fill="#ffffff" opacity="0.8">The first post, with markup &amp; entities.</text>');
     expect(text).not.toContain("<b>");
-    expect(text).toMatch(/font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"/);
+    // the bundled family first (it is the one the rasteriser is handed), the generic stack behind it for a browser
+    expect(text).toMatch(new RegExp(`font-family="${CARD_FONT_FAMILY}, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"`));
     expect(text).not.toContain("@font-face");
     expect((await get("/api/seo/og/posts/p1.svg", { "if-none-match": P1_ETAG })).r.status).toBe(304);
   });
@@ -484,24 +496,69 @@ describe("the share card: /api/seo/og/:collection/:id.svg", () => {
     expect(shareCard({ appName: "Shop", title: "", description: "", theme: "" })).toContain('font-size="64" font-weight="700" fill="#ffffff">Shop</text>');
   });
 
-  test(".png is 406 when the platform cannot rasterise an SVG, image/png when a source can; a bad name or record is 404", async () => {
+  test(".png is the rasterised card: image/png, 1200x630 in its IHDR, the same ETag, 304 on If-None-Match", async () => {
     const env = { VOIDBASE_SITEMAP: SITEMAP, VOIDBASE_SEO: SEO };
-    const { get } = await appWith(env);
-    const png = await get("/api/seo/og/posts/p1.png");
-    expect(png.r.status).toBe(406);
-    expect(JSON.parse(png.text).message).toContain("cannot rasterise");
-    expect((await get("/api/seo/og/posts/p3.svg")).r.status).toBe(404);
-    expect((await get("/api/seo/og/posts/p1.gif")).r.status).toBe(404);
-    expect((await get("/api/seo/og/secrets/x.svg")).r.status).toBe(403);
-    expect((await get("/api/seo/og/nothing/x.svg")).r.status).toBe(404);
-    const able = await appWith(env, seoWith({ ...spySource, rasterize: async (svg) => new Uint8Array([0x89, 0x50, 0x4e, 0x47, svg.length & 0xff]) }));
-    const ok = await able.get("/api/seo/og/posts/p1.png");
+    const { bytes } = await appWith(env);
+    const { r, body } = await bytes("/api/seo/og/posts/p1.png");
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toBe("image/png");
+    expect(r.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect(r.headers.get("etag")).toBe(P1_ETAG);
+    expect(r.headers.get("x-voidbase-version")).toBe(VERSION);
+    expect(r.headers.get("x-voidbase-card")).toBeNull();
+    const header = ihdr(body);
+    expect(header.signature).toEqual(PNG_MAGIC);
+    expect(header.chunk).toBe("IHDR");
+    expect([header.width, header.height]).toEqual([1200, 630]);
+    expect(body.length).toBeGreaterThan(1000);
+    expect((await bytes("/api/seo/og/posts/p1.png", { "if-none-match": P1_ETAG })).r.status).toBe(304);
+    expect((await bytes("/api/seo/og/posts/p1.png", { "if-none-match": "*" })).r.status).toBe(304);
+    expect((await bytes("/api/seo/og/posts/p1.png", { "if-none-match": '"0.0.0-1"' })).r.status).toBe(200);
+  });
+
+  test("a platform with no rasteriser answers .png with the SVG body and says so in a header, not an error", async () => {
+    quiet();
+    const env = { VOIDBASE_SITEMAP: SITEMAP, VOIDBASE_SEO: SEO };
+    const { get } = await appWith(env, seoWith({ ...spySource, rasterize: async () => null }));
+    const { r, text } = await get("/api/seo/og/posts/p1.png");
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toBe("image/svg+xml; charset=utf-8");
+    expect(r.headers.get("x-voidbase-card")).toBe("svg-fallback");
+    expect(r.headers.get("etag")).toBe(P1_ETAG);
+    expect(r.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect(text.startsWith("<svg")).toBe(true);
+    expect(warned()).toContain("served as SVG");
+    // a rasteriser that throws is the same answer, not a 500
+    const threw = await appWith(env, seoWith({ ...spySource, rasterize: async () => { throw new Error("wasm is not here"); } }));
+    const boom = await threw.get("/api/seo/og/posts/p1.png");
+    expect(boom.r.status).toBe(200);
+    expect(boom.r.headers.get("x-voidbase-card")).toBe("svg-fallback");
+    expect(warned()).toContain("wasm is not here");
+  });
+
+  test("a source's own rasteriser is what the route serves; a bad name, a filtered record or a locked collection is not", async () => {
+    const env = { VOIDBASE_SITEMAP: SITEMAP, VOIDBASE_SEO: SEO };
+    const able = await appWith(env, seoWith({ ...spySource, rasterize: async (svg) => new Uint8Array([...PNG_MAGIC, svg.length & 0xff]) }));
+    const ok = await able.bytes("/api/seo/og/posts/p1.png");
     expect(ok.r.status).toBe(200);
     expect(ok.r.headers.get("content-type")).toBe("image/png");
-    expect(ok.r.headers.get("cache-control")).toBe("public, max-age=3600");
-    expect(ok.r.headers.get("etag")).toBe(P1_ETAG);
-    expect(new Uint8Array(await (await able.get("/api/seo/og/posts/p1.png")).r.clone().arrayBuffer().catch(() => new ArrayBuffer(0))).length).toBeGreaterThanOrEqual(0);
-    expect((await able.get("/api/seo/og/posts/p1.png", { "if-none-match": P1_ETAG })).r.status).toBe(304);
+    expect([...ok.body.subarray(0, 8)]).toEqual(PNG_MAGIC);
+    const { get } = await appWith(env);
+    expect((await get("/api/seo/og/posts/p3.svg")).r.status).toBe(404);
+    expect((await get("/api/seo/og/posts/p1.gif")).r.status).toBe(404);
+    expect(JSON.parse((await get("/api/seo/og/posts/p1.gif")).text).message).toContain("<id>.png or <id>.svg");
+    expect((await get("/api/seo/og/secrets/x.svg")).r.status).toBe(403);
+    expect((await get("/api/seo/og/nothing/x.svg")).r.status).toBe(404);
+  });
+
+  test("the rasteriser behind #platform/raster renders the card's own SVG and refuses what is not one, without throwing", async () => {
+    const { rasterize } = await import("#platform/raster");
+    const png = await rasterize(shareCard({ appName: "Shop", title: "Hello, world", description: "A description", theme: "#1f2430" }), 1200, 630);
+    expect(png).not.toBeNull();
+    expect(ihdr(png!)).toMatchObject({ chunk: "IHDR", width: 1200, height: 630 });
+    quiet();
+    expect(await rasterize("not an svg at all", 1200, 630)).toBeNull();
+    expect(warned()).toContain("could not be rasterised");
   });
 });
 

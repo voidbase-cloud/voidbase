@@ -381,18 +381,39 @@ with an ellipsis when longer). A collection that is in the sitemap but not in `V
 type `WebPage`, the title from the first text field named `title`, `name` or `headline`, the description from
 `summary`, `description` or `excerpt`, no image field. A malformed entry or mapping is skipped with a warning.
 
-**Share images rendered on request.** `GET /api/seo/og/<collection>/<id>.svg` is a 1200x630 card: the app's name,
+**Share images rendered on request.** `GET /api/seo/og/<collection>/<id>.png` is a 1200x630 card: the app's name,
 the record's title wrapped onto at most three lines of thirty characters (the last one ellipsised), the description
 on one line, every string escaped, on the background colour `VOIDBASE_SEO_THEME` names (a hex colour or a CSS
 colour name; default a neutral dark, `#1f2430`; the text is white on a dark colour and near-black on a light hex
-one). Fonts are the generic system stack only, no font file is shipped or fetched. Served
-`Cache-Control: public, max-age=3600`. The record is found the way the meta route finds it, through the first
-sitemap entry naming the collection, its filter, and the caller's list rule. `image` in the meta answer (so
-`og:image` and `twitter:image`) is this URL whenever no image field is mapped or the record has no file in it, so
-every page has a share image without one being uploaded. `<id>.png` exists for the platforms whose image library
-can rasterise an SVG; photon (`#platform/photon`, the resizer the thumbnails use) decodes raster formats only, on
-Workers and on Node alike, so today `.png` answers 406 with a JSON message saying so and SVG is what is served. A
-test or a platform with a rasteriser hands one in through the source (`rasterize(svg)`, below).
+one). Served `Cache-Control: public, max-age=3600`. The record is found the way the meta route finds it, through
+the first sitemap entry naming the collection, its filter, and the caller's list rule. `image` in the meta answer
+(so `og:image` and `twitter:image`) is this URL whenever no image field is mapped or the record has no file in it,
+so every page has a share image without one being uploaded, and it is the `.png` because no social scraper renders
+SVG: Slack, Twitter/X, LinkedIn, Discord and Facebook all drop an `og:image` they cannot decode, and a card no one
+sees is not a card.
+
+The card is built as an SVG either way. `<id>.svg` serves that SVG; `<id>.png` hands it to resvg
+(`@resvg/resvg-wasm`, the Rust rasteriser, pinned at 2.6.2) behind `#platform/raster`, which is the wasm module the
+Workers build bundles on Cloudflare and the same wasm read off disk on Bun. It is imported on the first `.png`
+asked for and instantiated once per isolate, so nothing else pays for it. When it cannot load, or will not parse
+the SVG, `.png` answers the **SVG body** with `Content-Type: image/svg+xml` and `X-Voidbase-Card: svg-fallback`,
+and logs a warning: one URL is right on every platform, and a share image is never worth a 5xx. It answered 406
+before this, which put the failure in front of the crawler instead of behind the header.
+
+**The card's fonts.** A Worker has no system fonts, and resvg with no font renders blank text, so the card carries
+its own: Inter (SIL Open Font License 1.1), subset to ASCII, Latin-1's printable half and the punctuation the card
+itself emits, pinned to two static weights (400 for the app name and the description, 700 for the title). The two
+faces are 80 KB each and live base64-encoded in `src/server/plugins/og-font.ts`, which is **generated and
+committed**: `bun scripts/og-font.ts` rewrites it from google/fonts at one pinned commit, and
+`bun scripts/og-font.ts --check` fails when the committed file is not what the script produces. No build reaches
+the network for it. The SVG names `Inter` first and keeps the generic system stack behind it, so a browser that
+fetches the `.svg` still gets something.
+
+**What a card costs.** One rasterisation is about 20 ms of CPU on workerd, and about 60 ms the first time in an
+isolate (the wasm instantiation and building the font database, paid once). That is inside a Worker's CPU budget
+but it is not free, which is what `Cache-Control: public, max-age=3600` and the `ETag` are for: a crawler that
+comes back within the hour, or with the right `If-None-Match`, costs nothing. The rasteriser's wasm is 2.4 MB and
+roughly doubles the gzipped Worker bundle (docs/platform.md), so it is worth knowing it is there.
 
 **Deployment skew.** A crawler that arrives during a deploy must not get half a page. On Cloudflare that is the
 platform's own guarantee: each request is served, start to finish, by one Worker version (a gradual deployment
@@ -428,6 +449,10 @@ the loader pays for the meta only when the record or voidbase changed.
 The plugin takes an injectable source for tests, `seoWith({ collections, appName, records, record, rasterize })`
 (`test/unit/seo.test.ts`, which measures the three files, the path resolution through the template in reverse, the
 mapping grammar, the fragment's escaping, the JSON-LD, the defaults, the card, the ETags and the alternates).
+`rasterize(svg)` is the seam the PNG goes through: the default one calls `#platform/raster` at 1200x630, a test
+hands in one that returns bytes, or `null` to exercise the SVG fallback. The real rasteriser runs under
+`bun test` too, so the PNG route is measured against an actual PNG (its signature and the width and height in its
+IHDR chunk), not a stand-in.
 
 ## Mail from the instance's domain: mail
 

@@ -10,6 +10,7 @@ import type { Collection } from "../collections/model";
 import { isDurableDatabase } from "../durable-d1";
 import { ApiError } from "../errors";
 import type { RealtimeClient } from "../interfaces";
+import { ownedCollections } from "../kernel";
 import { normalizeFilename, sniffMime } from "../records/files";
 import type { RecordContext } from "../records/service";
 import type { Upload } from "../records/values";
@@ -159,6 +160,12 @@ const svc = () => { if (!services) throw new Error("hooks: services not installe
 export interface AppApi {
   findCollectionByNameOrId(idOrName: string): CollectionRef;
   findAllCollections(...types: string[]): CollectionRef[];
+  /**
+   * voidbase: the collections the loaded plugins own (their manifests name them) that exist here, as findAllCollections
+   * answers them, of the given types if any are named. An import with deleteMissing leaves these alone, so a hook
+   * that puts the instance back truncates them itself.
+   */
+  findPluginCollections(...types: string[]): CollectionRef[];
   findRecordById(collection: string | CollectionRef, id: string): Promise<HookRecord | null>;
   findRecordsByFilter(collection: string | CollectionRef, filter: string, sort?: string, limit?: number, offset?: number, params?: Record<string, unknown>): Promise<HookRecord[]>;
   findFirstRecordByFilter(collection: string | CollectionRef, filter: string, params?: Record<string, unknown>): Promise<HookRecord>;
@@ -203,6 +210,10 @@ export const $app: AppApi = {
     const seen = new Set<string>(); const out: CollectionRef[] = [];
     for (const c of mustStore().collections.values()) { if (seen.has(c.id)) continue; seen.add(c.id); if (!types.length || types.includes(c.type)) out.push(new CollectionRef(c)); }
     return out;
+  },
+  findPluginCollections(...types: string[]): CollectionRef[] {
+    const owned = ownedCollections();
+    return $app.findAllCollections(...types).filter((c) => owned.has(c.name));
   },
   findRecordById: (collection: string | CollectionRef, id: string) => svc().findRecordById(typeof collection === "string" ? collection : collection.name, id),
   findRecordsByFilter: (collection: string | CollectionRef, filter: string, sort = "", limit = 0, offset = 0, params?: Record<string, unknown>) => svc().findRecordsByFilter(typeof collection === "string" ? collection : collection.name, filter, sort, limit, offset, params),

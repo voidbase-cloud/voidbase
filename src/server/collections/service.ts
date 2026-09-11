@@ -5,6 +5,7 @@ import { crc32 } from "../crc32";
 import { all, ident, one, stmt } from "../db";
 import { badRequest, notFound, type FieldErrors } from "../errors";
 import { nowString, randomString } from "../ids";
+import { ownedCollections } from "../kernel";
 import { createIndexesSQL, createTableSQL, createViewSQL, dropIndexesSQL, dropTableSQL, dropViewSQL, parseIndex, buildIndex, syncTableSQL, truncateSQL } from "./ddl";
 import { defaultFieldId, normalizeField, sortKeys, type Field } from "./fields";
 import { collectionToJSON, invalidateCollections, jsonToCollection, listCollections, loadCollections, type Collection } from "./model";
@@ -220,7 +221,13 @@ export async function importCollections(db: D1Database, items: Record<string, un
     plan.push({ c: prepareCollection(raw, old), old });
   }
   const keep = new Set(plan.map((p) => p.c.id));
-  const toDelete = deleteMissing ? existing.filter((c) => !c.system && !keep.has(c.id)) : [];
+  // An import is about the collections the caller manages, so deleteMissing sweeps only those. A system collection is
+  // voidbase's, and a collection a loaded plugin owns is the plugin's: its manifest names it, its bootstrap creates it
+  // once per isolate, and the schema is the plugin's to change. Both stay. Deleting an owned one is still possible on
+  // purpose (DELETE /api/collections/:name); a sweep is not that. The demo's hourly reset, which imports its own list
+  // with deleteMissing, deleted every plugin's collections this way until a fresh isolate recreated them (2026-09-11).
+  const owned = ownedCollections();
+  const toDelete = deleteMissing ? existing.filter((c) => !c.system && !owned.has(c.name) && !keep.has(c.id)) : [];
   const ctx = await validateContext(db, plan.map((p) => p.c));
   ctx.all = ctx.all.filter((c) => !toDelete.some((d) => d.id === c.id));
   const errors: Record<string, unknown> = {};

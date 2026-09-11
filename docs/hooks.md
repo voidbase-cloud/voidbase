@@ -64,16 +64,23 @@ Request events expose the PocketBase `RequestEvent` surface: `e.auth`, `e.reques
 | `$app.importCollections(list, deleteMissing)` | create or update every collection in the list; with `deleteMissing` the ones it does not name are dropped |
 | `$app.importCollectionsByMarshaledJSON(json, deleteMissing)` | the same, from a JSON string |
 | `$app.truncateCollection(collection)` | delete every record of a collection (and its files); a view has none to delete |
+| `$app.findPluginCollections(...types)` | voidbase's own: the collections the loaded plugins own (their manifests name them) that exist here, of those types if any are named |
 | `record.setPassword(value)` | set an auth record's password; `$app.save()` then asks for no confirmation, as PocketBase's `app.Save` does |
 
-Together they are enough for an app to restore itself:
+With `deleteMissing`, `importCollections` drops only the collections the caller manages: the system collections and
+every collection a loaded plugin owns stay, because the plugin owns that schema and creates it once per isolate.
+Deleting one of those is a deliberate `DELETE /api/collections/:name`, not a sweep; clearing its rows is
+`findPluginCollections` and `truncateCollection`.
+
+Together they are enough for an app to restore itself, the rows its plugins keep included:
 
 ```js
 // pb_hooks/reset.pb.js
 const data = require(`${__hooks}/data.js`);
 cronAdd("reset", "0 * * * *", () => {
-  $app.importCollections(data.COLLECTIONS, true);        // whatever was added is gone
+  $app.importCollections(data.COLLECTIONS, true);        // whatever was added is gone; what plugins own stays
   for (const c of data.NAMES) $app.truncateCollection($app.findCollectionByNameOrId(c));
+  for (const c of $app.findPluginCollections("base", "auth")) if (!c.system) $app.truncateCollection(c); // their rows
   data.seed();                                            // records, users, whatever the app ships with
 });
 ```
@@ -126,7 +133,7 @@ the commit rather than at the call: two records in one transaction that clash le
 
 | Global | Supported members |
 | --- | --- |
-| `$app` | `findCollectionByNameOrId`, `findAllCollections`, `findRecordById`, `findFirstRecordByData`, `findFirstRecordByFilter`, `findRecordsByFilter`, `findAuthRecordByEmail`, `findAuthRecordByToken`, `countRecords`, `expandRecord(s)`, `save`, `saveNoValidate`, `delete`, `runInTransaction` (a real transaction on the Durable Object database, a plain call on D1: see Transactions), `transactionsAreReal`, `settings()`, `isDev()`, `logger()`, `newMailClient()`, `dao()` (raw SQL, D1 limits apply) |
+| `$app` | `findCollectionByNameOrId`, `findAllCollections`, `findPluginCollections`, `findRecordById`, `findFirstRecordByData`, `findFirstRecordByFilter`, `findRecordsByFilter`, `findAuthRecordByEmail`, `findAuthRecordByToken`, `countRecords`, `expandRecord(s)`, `save`, `saveNoValidate`, `delete`, `runInTransaction` (a real transaction on the Durable Object database, a plain call on D1: see Transactions), `transactionsAreReal`, `settings()`, `isDev()`, `logger()`, `newMailClient()`, `dao()` (raw SQL, D1 limits apply) |
 | `$apis` | `requireAuth`, `requireSuperuserAuth`, `requireGuestOnly`, `requireSuperuserOrOwnerAuth`, `enrichRecord(s)` |
 | `$http` | `send({url, method, body, headers, timeout})` |
 | `$filesystem` | `fileFromURL`, `fileFromBytes`; `fileFromPath` throws (no filesystem) |

@@ -141,6 +141,16 @@ const loaded = new WeakMap<Kernel, Loaded>();
 export const whatLoaded = (kernel: Kernel): Loaded =>
   loaded.get(kernel) ?? { names: [], providers: {}, tiers: {}, plugins: [], missingCore: [], origins: {}, disabled: [] };
 
+// The collections the loaded plugins' manifests own, by name: manifest data like the tiers, and a service the core
+// asks for. An import that deletes what it does not name leaves these alone (collections/service.ts), and a hook is
+// handed them by $app.findPluginCollections(). Kept for the isolate rather than per kernel, because the one asking
+// has no kernel to hand; an isolate loads one kernel, so the last load() is the one recorded.
+let owned: ReadonlySet<string> = new Set();
+/** the collections the loaded plugins own, by name, as the last load() recorded them */
+export function ownedCollections(): ReadonlySet<string> {
+  return owned;
+}
+
 /**
  * Fill an interface this plugin declared it provides. The name is the one in the manifest, version and all.
  *
@@ -191,6 +201,7 @@ export async function load(kernel: Kernel, plugins: Plugin[], voidbaseVersion: s
     disabled: extra.disabled ?? [],
   };
   loaded.set(kernel, result);
+  owned = new Set(order.flatMap((p) => p.manifest.collections ?? []));
   logger.info("voidbase: plugins loaded", { plugins: result.names });
   if (missingCore.length) {
     logger.warn("voidbase: no plugin provides a core interface; the instance is running without it", { missing: missingCore });

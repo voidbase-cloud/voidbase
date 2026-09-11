@@ -624,7 +624,11 @@ canonical one and detaching on `voidbase deploy --remove`, so the deploy uploads
 and stops; backups' scheduling, previews and observability's toggles are the same shape and come next (docs/plugins.md). And (2026-09-11) the roadmap's transactions entry, behind `VOIDBASE_DATABASE=durable`: an
 instance's data in its own SQLite-backed Durable Object through the same D1 interface, so a batched write is a real
 transaction, while the 100-column and 100-parameter ceilings stay, measured on workerd rather than assumed
-(docs/platform.md, "The database as a Durable Object").
+(docs/platform.md, "The database as a Durable Object"). And (2026-09-11) an import leaves what plugins own alone:
+`importCollections` with `deleteMissing` spares every collection a loaded plugin's manifest names, as it spares the
+system ones, because the demo's hourly reset was deleting the collections commerce, the payment plugins, ai and
+translations own until a fresh isolate's bootstrap recreated them, and `$app.findPluginCollections()` hands a reset
+hook those collections to truncate instead (docs/hooks.md).
 
 ## What to correct on the site when this lands
 

@@ -1,17 +1,21 @@
-// A plugin creates what it owns, and only that; bootstrap work runs once per isolate, in load order; and after-read
-// work runs on every read, in load order, over the rows the response will carry.
+// A plugin creates what it owns, and only that, and an import that deletes what it does not name leaves it alone;
+// bootstrap work runs once per isolate, in load order; and after-read work runs on every read, in load order, over the
+// rows the response will carry.
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { createKernel, load, onAfterRead, onBootstrap, runAfterRead, runBootstraps, type Kernel } from "../../src/server/kernel";
+import { createKernel, load, onAfterRead, onBootstrap, ownedCollections, runAfterRead, runBootstraps, type Kernel } from "../../src/server/kernel";
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { insertCollection } from "../../src/server/bootstrap";
-import { findCollection, invalidateCollections } from "../../src/server/collections/model";
+import { findCollection, invalidateCollections, loadCollections } from "../../src/server/collections/model";
+import { createCollection, importCollections } from "../../src/server/collections/service";
 import { systemCollections } from "../../src/server/collections/system";
 import { d1 } from "../../src/node/d1";
+import { $app, hookStore, type HookStore } from "../../src/server/hooks/runtime";
 import { ensureCollections, reconcileDefinition } from "../../src/server/plugins/collections";
 import type { Plugin } from "../../src/server/plugins/manifest";
+import type { Settings } from "../../src/server/settings";
 import type { Bindings } from "../../src/server/types";
 
 const untouched = new Proxy({}, { get() { throw new Error("the database was touched"); } }) as unknown as D1Database;
@@ -25,16 +29,18 @@ describe("owning a collection", () => {
   });
 });
 
+// an instance on bun:sqlite behind the D1 shim: voidbase's migrations and its system collections, nothing else
+const ROOT = resolve(import.meta.dir, "../..");
+async function instance() {
+  const sqlite = new Database(":memory:");
+  for (const file of readdirSync(`${ROOT}/db/migrations`).filter((x) => x.endsWith(".sql")).sort()) for (const s of readFileSync(`${ROOT}/db/migrations/${file}`, "utf8").split("--> statement-breakpoint")) if (s.trim()) sqlite.run(s);
+  const db = d1(sqlite);
+  invalidateCollections();
+  for (const c of systemCollections()) await insertCollection(db, c);
+  return { sqlite, db };
+}
+
 describe("reconciling an owned collection", () => {
-  const ROOT = resolve(import.meta.dir, "../..");
-  async function instance() {
-    const sqlite = new Database(":memory:");
-    for (const file of readdirSync(`${ROOT}/db/migrations`).filter((x) => x.endsWith(".sql")).sort()) for (const s of readFileSync(`${ROOT}/db/migrations/${file}`, "utf8").split("--> statement-breakpoint")) if (s.trim()) sqlite.run(s);
-    const db = d1(sqlite);
-    invalidateCollections();
-    for (const c of systemCollections()) await insertCollection(db, c);
-    return { sqlite, db };
-  }
   const plugin: Plugin = { manifest: { name: "notes", version: "1.0.0", tier: "community", voidbase: "*", collections: ["notes"] } };
   const v1 = { name: "notes", type: "base", listRule: "user = @request.auth.id", viewRule: "user = @request.auth.id", createRule: null, updateRule: null, deleteRule: null, fields: [{ name: "user", type: "text" }, { name: "title", type: "text" }] };
   const v1i = { ...v1, indexes: ["CREATE INDEX `idx_notes_by` ON `notes` (`user`)"] };
@@ -78,6 +84,59 @@ describe("reconciling an owned collection", () => {
     expect(reconcileDefinition(before, v1)).toBeNull();
     await ensureCollections(plugin, db, [v1]);
     expect((await findCollection(db, "notes"))!.updated).toBe(before.updated);
+  });
+});
+
+describe("an import that deletes what it does not name", () => {
+  // the shop owns two collections; its bootstrap has created only one of them (the other waits on a key, say)
+  const shop: Plugin = { manifest: { name: "shop", version: "1.0.0", tier: "community", voidbase: "*", collections: ["orders", "refunds"] } };
+  const base = (name: string) => ({ name, type: "base", listRule: null, viewRule: null, createRule: null, updateRule: null, deleteRule: null, fields: [{ name: "title", type: "text" }] });
+  // a kernel that loaded no plugins: how a test forgets what an earlier load recorded, and how each one leaves it
+  const forget = () => load(createKernel(new Hono() as never), [], "0.9.0");
+  async function shopInstance() {
+    const { db } = await instance();
+    await load(createKernel(new Hono() as never), [shop], "0.9.0");
+    await ensureCollections(shop, db, [base("orders")]);
+    await createCollection(db, base("posts"));
+    await createCollection(db, base("scratch"));
+    return db;
+  }
+
+  test("the kernel records what the loaded plugins own when it loads", async () => {
+    try {
+      await load(createKernel(new Hono() as never), [shop, { manifest: { name: "plain", version: "1.0.0", tier: "community", voidbase: "*" } }], "0.9.0");
+      expect([...ownedCollections()]).toEqual(["orders", "refunds"]);
+      await load(createKernel(new Hono() as never), [], "0.9.0");
+      expect([...ownedCollections()]).toEqual([]);
+    } finally { await forget(); }
+  });
+
+  test("keeps a collection a loaded plugin owns, and still deletes one nobody owns", async () => {
+    try {
+      const db = await shopInstance();
+      // the demo's reset, in miniature: its own list, deleteMissing on
+      await importCollections(db, [base("posts")], true);
+      expect(await findCollection(db, "orders")).not.toBeNull();
+      expect(await findCollection(db, "posts")).not.toBeNull();
+      expect(await findCollection(db, "scratch")).toBeNull();
+      // nothing is spared once no plugin owns it: the same sweep with the shop gone deletes its collection
+      await forget();
+      await importCollections(db, [base("posts")], true);
+      expect(await findCollection(db, "orders")).toBeNull();
+    } finally { await forget(); }
+  });
+
+  test("a hook is handed the collections plugins own that exist here, of the types it names", async () => {
+    try {
+      const db = await shopInstance();
+      const store: HookStore = { c: null, ctx: async () => { throw new Error("no record context in this test"); }, collections: await loadCollections(db), settings: {} as Settings, env: { DB: db } };
+      hookStore.run(store, () => {
+        // "refunds" is owned but was never created, so it is not handed over: every answer can be truncated
+        expect($app.findPluginCollections().map((c) => c.name)).toEqual(["orders"]);
+        expect($app.findPluginCollections("base", "auth").map((c) => c.name)).toEqual(["orders"]);
+        expect($app.findPluginCollections("view")).toEqual([]);
+      });
+    } finally { await forget(); }
   });
 });
 

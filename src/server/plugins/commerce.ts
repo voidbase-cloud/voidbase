@@ -171,7 +171,10 @@ export async function collectionDefinitions(db: D1Database): Promise<Record<stri
   const carts = collectionId("base", "carts"), orders = collectionId("base", "orders");
   const autodates = [{ name: "created", type: "autodate", onCreate: true, onUpdate: false }, { name: "updated", type: "autodate", onCreate: true, onUpdate: true }];
   const noWrites = { createRule: null, updateRule: null, deleteRule: null };
-  const ownOrder = "order.customer.user = @request.auth.id";
+  // The rules name the order's own `user`, not the payments plugin's `customers.user`: a rule that traverses a
+  // collection another plugin creates only when its key is set is invalid on an instance without one, and an
+  // invalid rule fails the create, which used to take every request down with it (seen on the demo, 2026-09-11).
+  const ownOrder = "order.user = @request.auth.id";
   return [
     {
       name: "products", type: "base", listRule: "active = true", viewRule: "active = true", ...noWrites,
@@ -240,10 +243,11 @@ export async function collectionDefinitions(db: D1Database): Promise<Record<stri
       indexes: ["CREATE UNIQUE INDEX `idx_commerce_cart_item` ON `cart_items` (`cart`, `variant`)"],
     },
     {
-      name: "orders", type: "base", listRule: "customer.user = @request.auth.id", viewRule: "customer.user = @request.auth.id", ...noWrites,
+      name: "orders", type: "base", listRule: "user = @request.auth.id", viewRule: "user = @request.auth.id", ...noWrites,
       fields: [
         { name: "number", type: "text", required: true, presentable: true },
         { name: "customer", type: "relation", collectionId: customers, maxSelect: 1, cascadeDelete: false },
+        { name: "user", type: "relation", collectionId: users, maxSelect: 1, cascadeDelete: false },
         { name: "email", type: "text" },
         { name: "status", type: "select", maxSelect: 1, values: [...ORDER_STATUSES] },
         { name: "currency", type: "text" },
@@ -638,7 +642,7 @@ export function commerceWith(overrides: Partial<CommerceDeps> = {}): Plugin & { 
       const customer = await payments.customer(c.env, auth);
       for (const l of lines) await reserve(rows, str(l.variant.id), l.quantity);
       const order = await rows.create("orders", {
-        number: deps.number(), customer, email: str(auth.row.email), status: "pending", currency: str(cart.currency),
+        number: deps.number(), customer, user: str(auth.row.id), email: str(auth.row.email), status: "pending", currency: str(cart.currency),
         subtotal: q.subtotal, tax: q.tax.total, shipping, total, address: q.address, placedAt: iso(),
       });
       for (const l of lines) {

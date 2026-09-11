@@ -55,6 +55,14 @@ describe("reconciling an owned collection", () => {
     expect(reconcileDefinition(c, v2)).toBeNull();
   });
 
+  test("a collection the instance refuses to create is logged, not thrown: every other request still answers", async () => {
+    const { db } = await instance();
+    // a rule naming a collection that is not there: the demo went down this way on 2026-09-11
+    const bad = { ...v1, name: "notes", listRule: "buyer.user = @request.auth.id" };
+    await expect(ensureCollections(plugin, db, [bad])).resolves.toEqual([]);
+    expect(await findCollection(db, "notes")).toBeNull();
+  });
+
   test("a shape the instance refuses is logged, not thrown: the instance keeps running on the old shape", async () => {
     const { db } = await instance();
     await ensureCollections(plugin, db, [v1]);

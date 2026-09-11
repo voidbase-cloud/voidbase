@@ -227,13 +227,16 @@ describe("the collections it owns", () => {
     expect(by.inventory!.listRule).toBe("variant.active = true");
     expect(by.carts).toMatchObject({ listRule: "user = @request.auth.id" });
     expect(by.cart_items!.listRule).toBe("cart.user = @request.auth.id");
-    expect(by.orders!.listRule).toBe("customer.user = @request.auth.id");
-    for (const name of ["order_items", "shipments", "refunds"]) expect(by[name]!.listRule).toBe("order.customer.user = @request.auth.id");
+    expect(by.orders!.listRule).toBe("user = @request.auth.id");
+    for (const name of ["order_items", "shipments", "refunds"]) expect(by[name]!.listRule).toBe("order.user = @request.auth.id");
+    // the rules name the order's own user rather than the payments plugin's customers.user: that collection exists
+    // only once a provider key is set, and a rule naming a collection that is not there fails the create
+    expect(JSON.stringify(by.orders!.fields)).toContain('"name":"user"');
     // the audit trail is superuser-read and, like every other collection here, superuser-write
     expect(by.commerce_audit).toMatchObject({ listRule: null, viewRule: null });
     for (const d of defs) expect([d.createRule, d.updateRule, d.deleteRule]).toEqual([null, null, null]);
     const fields = (name: string) => (by[name]!.fields as { name: string }[]).map((f) => f.name);
-    expect(fields("orders")).toEqual(["number", "customer", "email", "status", "currency", "subtotal", "tax", "shipping", "total", "address", "payment", "placedAt", "created", "updated"]);
+    expect(fields("orders")).toEqual(["number", "customer", "user", "email", "status", "currency", "subtotal", "tax", "shipping", "total", "address", "payment", "placedAt", "created", "updated"]);
     expect(fields("order_items")).toEqual(["order", "variant", "sku", "title", "quantity", "unitPrice", "total", "created", "updated"]);
     expect(fields("commerce_audit")).toEqual(["at", "actor", "action", "subject", "detail", "created", "updated"]);
   });

@@ -60,8 +60,11 @@ export async function ensureCollections(plugin: Plugin, db: D1Database, definiti
       }
       continue;
     }
-    await createCollection(db, def);
-    created.push(name);
+    // A create that the instance refuses (a rule naming a collection that is not there, say) must not take every
+    // request down with it: the plugin runs without that collection and says why, which is what the routes then
+    // answer. Seen on the demo, 2026-09-11, when one bad rule made every request a 400.
+    try { await createCollection(db, def); created.push(name); }
+    catch (e) { logger.warn(`voidbase: ${plugin.manifest.name} could not create its collection "${name}"`, { error: e instanceof Error ? e.message : String(e) }); }
   }
   return created;
 }

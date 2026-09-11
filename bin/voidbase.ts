@@ -120,6 +120,14 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      --from-token / --to-token take an existing superuser token instead of a sign-in
                                      (env: VOIDBASE_MIGRATE_FROM_EMAIL/_PASSWORD/_TOKEN and _TO_*); --keep leaves the
                                      migration archive on both sides; --dry-run signs in, says what would happen, stops
+  check --security <url> [--json] [--file /api/files/c/id/name] [--burst 20]
+                                     read a running instance from outside and say what its response policy is
+                                     missing: the security headers, the Content-Security-Policy (--file shows the
+                                     one served files get, which nothing else reveals), the CORS list and whether
+                                     credentials ride a wildcard, the cookies it sets, a rate-limit spot check (a
+                                     small burst to one cheap route, not proof), what /api/health tells a stranger,
+                                     and whether a CSRF rule is on. One line each, pass / warn / fail with what to
+                                     set; exits 1 when anything failed. It only ever reads: GET, HEAD and OPTIONS
   types --url http://vb [--token t | --email a@b --password p] [--out src/voidbase.ts] [--json file]
         [--watch [--interval 5]]
                                      write a typed client for the PocketBase JS SDK from the instance's own API
@@ -321,6 +329,19 @@ switch (cmd) {
       const n = collectionsOf(doc).length;
       console.log(`wrote ${out}: ${n} collection${n === 1 ? "" : "s"} from ${source}`);
     } catch (err) { console.error(`types failed: ${err instanceof Error ? err.message : String(err)}`); process.exit(1); }
+    break;
+  }
+  case "check": {
+    // `voidbase check --security <url>`: the hardening plugin's own surface, measured from outside (src/node/
+    // security-check.ts). Reads only, so it runs against production; the exit code is what a pipeline reads.
+    if (!("security" in flags)) { console.error("usage: voidbase check --security <url> [--json] [--file /api/files/<collection>/<id>/<name>] [--burst 20]"); process.exit(1); }
+    const target = flags.security !== "1" ? flags.security! : (sub ?? url);
+    const { securityCheck, formatReport } = await import("../src/node/security-check");
+    try {
+      const report = await securityCheck({ url: target, file: flags.file, burst: flags.burst ? Number(flags.burst) : undefined });
+      console.log("json" in flags ? JSON.stringify(report, null, 2) : formatReport(report));
+      if (report.fail) process.exit(1);
+    } catch (err) { console.error(`security check of ${target} failed: ${err instanceof Error ? err.message : String(err)}`); process.exit(1); }
     break;
   }
   case "migrate": {

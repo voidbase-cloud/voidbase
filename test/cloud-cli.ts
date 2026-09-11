@@ -3,7 +3,7 @@
 // onto test/cf-mock.ts and GitHub's onto an inline mock; an instance's plugins are served by an inline instance.
 // The CLI runs as a child process with XDG_CONFIG_HOME in a temporary directory, so the session file is checked too.
 //   bun test/cloud-cli.ts
-import { mkdtempSync, rmSync, statSync, existsSync, readFileSync } from "node:fs";
+import { writeFileSync, mkdtempSync, rmSync, statSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { assetHash, contentTypeFor, type ReleaseManifest } from "../src/cloud/rest";
@@ -96,9 +96,11 @@ const INSTANCE = `http://127.0.0.1:${instance.port}`;
 
 // ---- the CLI, as a child process with its own config directory --------------------------------------------------
 const home = mkdtempSync(join(tmpdir(), "vb-cloud-cli-")); const CONFIG = join(home, "voidbase", "cloud.json");
+// Bun loads the cwd's .env into the child on its own; a checkout's superuser there must not sign the CLI in
+const noEnv = join(home, "empty.env"); writeFileSync(noEnv, "");
 const env: Record<string, string | undefined> = { ...process.env, XDG_CONFIG_HOME: home, VOIDBASE_CLOUD_TOKEN: undefined, VOIDBASE_SUPERUSER_EMAIL: undefined, VOIDBASE_SUPERUSER_PASSWORD: undefined };
 async function cli(...args: string[]): Promise<{ code: number; out: string; err: string; all: string }> {
-  const p = Bun.spawn(["bun", resolve(ROOT, "bin/voidbase.ts"), "cloud", ...args], { cwd: ROOT, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const p = Bun.spawn(["bun", `--env-file=${noEnv}`, resolve(ROOT, "bin/voidbase.ts"), "cloud", ...args], { cwd: ROOT, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]); const code = await p.exited;
   return { code, out, err, all: out + err };
 }

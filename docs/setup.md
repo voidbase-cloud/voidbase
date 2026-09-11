@@ -148,12 +148,14 @@ them for a multi-select, `unknown` for `json`, `{ lon; lat }` for a `geoPoint`, 
 name or names for a `file`, plus `id`, `collectionId`, `collectionName`, `created` and `updated`; `expand` is typed
 from the relation fields whose target the document names), a `Collections` map from name to interface, and
 `TypedPocketBase`, which narrows the SDK's `collection(name)` to the right record type for a known name and leaves
-any other name untyped. Apply it with `const pb = new PocketBase(url) as TypedPocketBase`, or
-`as TypedPocketBase<PocketBase>` to keep everything the SDK's class has; a renamed field is then a compile error.
+any other name untyped. With `@voidbase-cloud/sdk`, voidbase's fork of the SDK, the map is the type argument:
+`const pb = new VoidBase<Collections>(url)`. With the upstream `pocketbase` package apply it as
+`const pb = new PocketBase(url) as TypedPocketBase`, or `as TypedPocketBase<PocketBase>` to keep everything the
+SDK's class has. Either way a renamed field is then a compile error.
 The file imports nothing: the few SDK shapes it needs are declared in it, structurally, so it compiles on its own
 and against whichever SDK version the project installed. `--json <file>` generates from a saved document instead
 of the network, for tests and offline use. There is no `--watch`: run the command again when the collections
-change (or put it in the build). The client plugin surface the roadmap names beside this is not built yet.
+change (or put it in the build). The client plugin surface beside this is the fork's `client.use(plugin)`.
 
 `voidbase migrate <from-url> <to-url>` moves an instance's data to another running instance, whichever way each one
 runs (the executable, the npm package, Cloudflare) and in either direction. It is a backup taken on the source and

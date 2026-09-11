@@ -282,9 +282,93 @@ time, a `_redirects` rule per file the static build does not carry (`/robots.txt
 two others; `writeSeoRedirects` in hooks-plugin.ts, appended to the app's own `_redirects` when it has one). The
 asset layer evaluates those at the edge, crawlers follow the redirect (Google follows several hops for robots.txt
 and sitemaps), and the Worker answers. The knobs are read from the request's env first, then the
-runtime's, like hardening's. The plugin takes an injectable source for tests, `seoWith({ collections, appName,
-records })` (`test/unit/seo.test.ts`). Not here, and said so on purpose: JSON-LD, OpenGraph and Twitter tags,
-canonical URLs, share images rendered on request, and deployment skew, which are the roadmap entry's other half.
+runtime's, like hardening's.
+
+**A record's page metadata.** The roadmap entry's other half is what one page says about itself, answered as data
+so the app that renders the page does not compute it again: `GET /api/seo/meta?path=/blog/hello-world` (or
+`?collection=posts&id=<record id>`). The path is resolved through the `VOIDBASE_SITEMAP` templates in reverse: the
+first entry whose pattern matches the path (`posts:/blog/{slug}` matches `/blog/hello-world`, each `{field}` one
+path segment, URL-decoded; a trailing slash is tolerated) names the collection and the field, and the record is
+read through the same listing the records API does for the request's caller, with the entry's filter and the
+captured value as the filter (`(status="live") && slug = "hello-world"`), so the collection's list rule is judged
+for the token that asks: an anonymous caller gets a public record or a 404, a locked collection a 403, a record the
+entry's filter leaves out (a draft) a 404. Send the path as a loader would, `encodeURIComponent(location.pathname)`,
+so a slug that is itself escaped survives the query string. The answer is
+`{ canonical, title, description, image, type, locale, alternates, jsonld, og, twitter, html }`: `canonical` is
+`VOIDBASE_SITE_URL` (else the request's origin) plus the template path rebuilt from the record's own values (one
+page has one address, whatever spelling asked for it); `type` the schema.org type; `jsonld` the object; `og` the
+`og:*` properties as keys (`og:site_name` is the settings' app name, `og:type` is `article` for a type ending in
+`Article` or `Posting`, `website` otherwise, `og:image` the image); `twitter` the `twitter:*` names
+(`summary_large_image`); `html` the ready fragment, `<title>`, `<link rel="canonical">`, `<meta name="description">`,
+the `og:*` and `twitter:*` metas and `<script type="application/ld+json">`, every value escaped (and `<` in the
+JSON-LD written as `\u003c`, so no value can close the script). An unknown path, an id the filter leaves out, or
+a collection no sitemap entry names is a 404 with a JSON message; no parameter at all is a 400.
+
+Which fields feed which tag is one knob, `VOIDBASE_SEO`, comma-separated entries of `collection:Type{key=field,...}`:
+
+```
+VOIDBASE_SEO=posts:Article{title=title,description=summary,image=cover,datePublished=created,dateModified=updated,author=author.name},pages:WebPage
+```
+
+`Type` is the schema.org type of that collection's pages. `title`, `description` and `image` are the page-level
+keys (the tags and the JSON-LD both use them); every other key lands in the JSON-LD as it is, with a `date*` key
+normalised to ISO and `author` and `publisher` written as a `Person` and an `Organization` with that name. A field
+path may reach through one relation, `author.name`, which the lookup expands (and the related collection's view
+rule judges, like any expand). `image` names a file field: the answer is the file's URL through the files route,
+`/api/files/<collection>/<id>/<filename>`, with `?thumb=<size>` appended when `VOIDBASE_SEO_IMAGE_SIZE` names one
+of the field's thumb sizes; a `url` field's value is used as is. The title is the field's text with tags stripped,
+the description the first 200 characters of it (tags stripped, entities decoded, cut back to a word and closed
+with an ellipsis when longer). A collection that is in the sitemap but not in `VOIDBASE_SEO` gets sensible defaults:
+type `WebPage`, the title from the first text field named `title`, `name` or `headline`, the description from
+`summary`, `description` or `excerpt`, no image field. A malformed entry or mapping is skipped with a warning.
+
+**Share images rendered on request.** `GET /api/seo/og/<collection>/<id>.svg` is a 1200x630 card: the app's name,
+the record's title wrapped onto at most three lines of thirty characters (the last one ellipsised), the description
+on one line, every string escaped, on the background colour `VOIDBASE_SEO_THEME` names (a hex colour or a CSS
+colour name; default a neutral dark, `#1f2430`; the text is white on a dark colour and near-black on a light hex
+one). Fonts are the generic system stack only, no font file is shipped or fetched. Served
+`Cache-Control: public, max-age=3600`. The record is found the way the meta route finds it, through the first
+sitemap entry naming the collection, its filter, and the caller's list rule. `image` in the meta answer (so
+`og:image` and `twitter:image`) is this URL whenever no image field is mapped or the record has no file in it, so
+every page has a share image without one being uploaded. `<id>.png` exists for the platforms whose image library
+can rasterise an SVG; photon (`#platform/photon`, the resizer the thumbnails use) decodes raster formats only, on
+Workers and on Node alike, so today `.png` answers 406 with a JSON message saying so and SVG is what is served. A
+test or a platform with a rasteriser hands one in through the source (`rasterize(svg)`, below).
+
+**Deployment skew.** A crawler that arrives during a deploy must not get half a page. On Cloudflare that is the
+platform's own guarantee: each request is served, start to finish, by one Worker version (a gradual deployment
+splits requests between versions, never one request), and the meta answer, the card and the fragment inside it are
+computed in that one request from that one version, so no answer mixes two. What is left is the caches: a cache
+that stored the answer before the deploy has to learn the answer changed. Every answer from the two routes carries
+`ETag: "<voidbase VERSION>-<the record's updated, in ms>"`, so it changes when the record does and when voidbase
+does, and honours `If-None-Match` (strong or weak, or `*`) with a bodiless 304 that carries the same headers; the
+meta answer also carries `X-Voidbase-Version`, so a page that fetched it can say which version it was rendered
+against. A stack app's own assets are Void's to version; the instance's answers are what this covers.
+
+**Locales.** When the translations plugin is configured (`VOIDBASE_LOCALES` set, the first locale the source), the
+sitemap carries `xmlns:xhtml` and, per `<url>`, one `<xhtml:link rel="alternate" hreflang="<code>">` per locale plus
+`x-default`; the alternate is `?locale=<code>` on the URL or, when `VOIDBASE_SEO_LOCALE_PATH=prefix`, `/<code>` in
+front of the path, and the source locale keeps the bare URL either way. Without locales the sitemap is byte for
+byte what it was. The meta answer does the same: `locale` is the locale the path asks for (`?locale=ar` in the
+path, `/ar/...` in prefix mode, or `&locale=` on the meta request itself, which wins) or the source; `canonical`
+is that locale's URL; `alternates` lists them all; `og:locale` and `og:locale:alternate` (with `-` as `_`, the
+Open Graph spelling) and the `hreflang` links in `html` follow. The text is translated the way the records API
+translates it, through the kernel's after-read seam, so it follows the meta request's own `?locale=` or
+`Accept-Language`; put the locale on the meta request when the page is a translated one.
+
+**Using it from a stack app.** A page's loader fetches the answer and its head puts it in place. In a Void app
+(the site's own pages do their head this way, `pages/docs/*.server.ts`), `loader` is a `defineHandler` that fetches
+`/api/seo/meta?path=` + `encodeURIComponent(<the page's path>)` on the instance and returns the JSON as a prop, and
+`head` is a `defineHead` that maps it onto Void's `HeadDescriptor`: `title` from `title`, `meta` from the `og`
+entries (`{ property, content }`) and the `twitter` entries (`{ name, content }`) plus the description, `link` from
+`canonical` (`rel: "canonical"`) and `alternates` (`rel: "alternate", hreflang`), and `script` from `jsonld`
+(`{ type: "application/ld+json", innerHTML: JSON.stringify(jsonld) }`). A framework that takes a raw fragment puts
+`html` in the head as it is. Forward `If-None-Match` and the answer's `ETag` when the page is itself cached, and
+the loader pays for the meta only when the record or voidbase changed.
+
+The plugin takes an injectable source for tests, `seoWith({ collections, appName, records, record, rasterize })`
+(`test/unit/seo.test.ts`, which measures the three files, the path resolution through the template in reverse, the
+mapping grammar, the fragment's escaping, the JSON-LD, the defaults, the card, the ETags and the alternates).
 
 ## Mail from the instance's domain: mail
 
@@ -453,8 +537,9 @@ feature; `test/unit/kernel-invariant.test.ts` holds) and is what any plugin that
 would use. The plugin takes an injectable source for tests, `translationsWith({ collections, translations,
 recordIds, counts })`; `test/unit/translations.test.ts` measures the knob grammar, the negotiation, the swap and
 its fallback, the marker, the single lookup, the reports, the untouched collection, and the default source's SQL
-over the table the definition creates. Not here: a locale in the route, `hreflang` and canonical tags (the seo
-plugin's other half), a panel screen over the reports, and the interface strings.
+over the table the definition creates. The seo plugin reads `VOIDBASE_LOCALES` too, for `hreflang` alternates in
+the sitemap and `og:locale` plus canonical URLs per locale in the page metadata ("The crawlers' view of the
+instance"). Not here: a locale in the route, a panel screen over the reports, and the interface strings.
 
 ## Taking money: stripe
 

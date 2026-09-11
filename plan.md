@@ -516,7 +516,11 @@ with the token it holds and nothing more (docs/plugins.md). And the typed client
 documentation cannot disagree; no `--watch` yet, and the client plugin surface is the SDK fork's `client.use` (docs/setup.md). And
 the small half of the roadmap's SEO entry (2026-09-11): `seo` is a shipped plugin that generates `/robots.txt`, a
 `/sitemap.xml` from the public records `VOIDBASE_SITEMAP` names, and `/llms.txt` from the collections, a static
-file winning over each; JSON-LD, OpenGraph, canonical URLs and share images are still the other half (docs/plugins.md). And
+file winning over each, and (2026-09-11) the other half: `GET /api/seo/meta?path=` resolves a page through the sitemap
+templates in reverse and answers its canonical URL, OpenGraph and Twitter tags, JSON-LD from the schema.org type
+`VOIDBASE_SEO` maps onto the collection and the ready html fragment, `GET /api/seo/og/<collection>/<id>.svg` renders
+the share card on request, both with an ETag from the record and the VERSION so caches revalidate across a deploy
+(one request is one Worker version, Cloudflare's guarantee), and `VOIDBASE_LOCALES` adds hreflang alternates (docs/plugins.md). And
 (2026-09-11) mail from the instance's own domain: `mail` is a shipped plugin providing `mail@1` over Cloudflare's
 `send_email` binding, which `voidbase deploy` adds with `VOIDBASE_MAIL_DOMAIN`, the From held to that domain and SMTP
 staying the fallback for every other sender (docs/plugins.md). And (2026-09-11) the chat over the instance: `ai`

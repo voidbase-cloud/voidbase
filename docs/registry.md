@@ -85,6 +85,36 @@ never imports Node built-ins, because an instance may be a Worker. A bundle is e
 1 and 2 are `src/node/registry.ts`; 3 and 4 are `src/node/installed.ts`, `src/platform/*/plugins.ts` and the
 `voidbase plugins` commands (docs/plugins.md, Installing).
 
+## Kinds beside plugins
+
+A marketplace may list more than plugins. Every listing carries an optional `kind` (`"plugin"`, `"template"` or
+`"theme"`), and the index may carry a `themes` array beside `plugins` and `templates`. `problemsWithIndex`
+validates only the keys it knows and ignores the rest, so a marketplace can serve a kind this voidbase does not
+read and an older instance passes over it: `voidbase plugins add` reads `index.plugins` alone, and nothing else
+reaches it.
+
+**A theme** is a repository with a `theme.json` (`name`, `title`, `summary`, `version`, `licence`, `author`,
+optional `homepage`, and `carries: { public, styles }` naming the directory it overlays and the stylesheets it
+offers). Its version record lives at `/registry/v1/themes/<name>/<version>.json` and each file at
+`/registry/v1/themes/<name>/<version>/<path>`, with `bytes` and `integrity` per file; the version's own
+`integrity` is the SHA-256 of the file list written as checksum lines (`<integrity>  <path>`, in path order),
+because no single file is the release.
+
+**voidbase does not install a theme.** There is no `voidbase themes add`, nothing is pinned in `voidbase.lock`, and
+the files are fetched and copied by hand: read the version record, fetch each path, copy the overlay over your
+`pb_public/` and import the stylesheet. That is the whole mechanism today, and a listing says so rather than
+implying an installer exists.
+
+**A plugin version record may carry `files`**: the source at the commit it was built from, as `[{ path, bytes }]`,
+no content. It is what a marketplace's diff compares; a release published before it says `unknown` rather than
+guessing.
+
+**A diff is a marketplace's own extension, not part of this protocol.** Ours answers
+`GET /registry/v1/plugins/<name>/diff?from=<version>` with what changed in the files, what the manifest now asks
+for, and each side's audit, and refuses anything it cannot serve with a 400. An instance never needs it; a person
+deciding whether to update does. A marketplace served from an asset layer needs the same handler under `/api` with
+a redirect to it, the way this package's seo plugin reaches its own routes.
+
 ## Running your own
 
 Serve the files. The fixture is the layout: `registry/v1/index.json`, `registry/v1/plugins/<name>/<version>.json`,

@@ -1,14 +1,15 @@
 // The response policy hardening@1 provides, measured through the slot app.ts registers first in the chain: nothing
 // set is today's headers (origin *, the four security headers, the strict policy on a served file); each knob
-// its header; a named origin list that echoes and withholds; HSTS on https only; and the CSRF refusal that the
-// named list turns on for a cookie-carrying request from elsewhere.
+// its header; a named origin list that echoes and withholds; HSTS on https only; the per-route
+// Content-Security-Policy and the order it is decided in (routes, then files, then the global one); and the CSRF
+// refusal that the named list turns on for a cookie-carrying request from elsewhere.
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { ApiError, notFound } from "../../src/server/errors";
 import type { Hardening } from "../../src/server/interfaces";
 import { createKernel, load, using, type Kernel } from "../../src/server/kernel";
 import { hardening } from "../../src/server/plugins/hardening";
-import { FILE_CSP } from "../../src/server/response-policy";
+import { cspForPath, FILE_CSP, parseCspRoutes } from "../../src/server/response-policy";
 import type { AppEnv } from "../../src/server/types";
 
 const STRICT = "default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; sandbox";
@@ -90,7 +91,7 @@ describe("the defaults: nothing set is today's behaviour", () => {
 
   test("policy() reads the knobs from an env and answers the defaults for an empty one", async () => {
     const provided = using<Hardening>(await kernelWith(), "hardening@1");
-    expect(provided.policy({})).toEqual({ corsOrigins: "*", hstsMaxAge: 0, referrerPolicy: "", permissionsPolicy: "", csp: "", cspFiles: STRICT, crossOrigin: false });
+    expect(provided.policy({})).toEqual({ corsOrigins: "*", hstsMaxAge: 0, referrerPolicy: "", permissionsPolicy: "", csp: "", cspFiles: STRICT, cspRoutes: [], csrf: "off", crossOrigin: false });
     expect(provided.policy({ VOIDBASE_CORS_ORIGINS: "https://App.Example/, https://b.example", VOIDBASE_HSTS: "true" }).corsOrigins).toEqual(["https://app.example", "https://b.example"]);
     expect(provided.policy({ VOIDBASE_HSTS: "1" }).hstsMaxAge).toBe(31536000);
     expect(provided.policy({ VOIDBASE_HSTS: "600" }).hstsMaxAge).toBe(600);
@@ -137,6 +138,55 @@ describe("each knob produces its header", () => {
     expect((await get(app, "/api/health", { VOIDBASE_HSTS: "86400" }, {}, https)).headers.get("Strict-Transport-Security")).toBe("max-age=86400; includeSubDomains");
     expect((await get(app, "/api/health", { VOIDBASE_HSTS: "1" })).headers.get("Strict-Transport-Security")).toBeNull();
     expect((await get(app, "/api/health", {}, {}, https)).headers.get("Strict-Transport-Security")).toBeNull();
+  });
+});
+
+describe("VOIDBASE_CSP_ROUTES: a policy per route, first match wins", () => {
+  test("the grammar: `;` between entries, `\\;` a literal one inside a policy, the first `:` splitting an entry", () => {
+    expect(parseCspRoutes("/admin/*:default-src 'self'")).toEqual([{ glob: "/admin/*", policy: "default-src 'self'" }]);
+    expect(parseCspRoutes("/a/*:default-src 'none'\\; sandbox;/b/*:default-src 'self'")).toEqual([
+      { glob: "/a/*", policy: "default-src 'none'; sandbox" },
+      { glob: "/b/*", policy: "default-src 'self'" },
+    ]);
+    // an entry with no policy, no glob or nothing at all is dropped rather than half-applied
+    expect(parseCspRoutes("  /a/*:x  ;  ; /b/* ; :y ;/c:  ")).toEqual([{ glob: "/a/*", policy: "x" }]);
+    expect(parseCspRoutes("")).toEqual([]);
+  });
+
+  test("the glob is matched the way the hook router matches a path: segments, `*` for the rest", () => {
+    const routes = parseCspRoutes("/api/collections/*/records:a;/api/files/*:b;/api/health:c");
+    expect(cspForPath(routes, "/api/collections/posts/records")).toBe("a");
+    expect(cspForPath(routes, "/api/files/posts/1/x.png")).toBe("b");
+    expect(cspForPath(routes, "/api/health")).toBe("c");
+    expect(cspForPath(routes, "/api/health/")).toBe("c"); // a trailing slash is optional, as in the hook router
+    expect(cspForPath(routes, "/api/collections")).toBe("");
+  });
+
+  test("first match wins, and a path no glob names falls through to VOIDBASE_CSP", async () => {
+    const app = appOver(await kernelWith());
+    const env = { VOIDBASE_CSP_ROUTES: "/api/health:default-src 'self'\\; frame-ancestors 'none';/api/*:default-src 'none'", VOIDBASE_CSP: "default-src 'self'" };
+    expect((await get(app, "/api/health", env)).headers.get("Content-Security-Policy")).toBe("default-src 'self'; frame-ancestors 'none'");
+    expect((await post(app, "/api/collections/posts/records", env)).headers.get("Content-Security-Policy")).toBe("default-src 'none'");
+    expect((await get(app, "/nowhere", env)).headers.get("Content-Security-Policy")).toBe("default-src 'self'"); // no match: the global one
+  });
+
+  test("no match and no VOIDBASE_CSP is no policy at all, as with neither knob set", async () => {
+    const app = appOver(await kernelWith());
+    const env = { VOIDBASE_CSP_ROUTES: "/admin/*:default-src 'self'" };
+    expect((await get(app, "/api/health", env)).headers.get("Content-Security-Policy")).toBeNull();
+  });
+
+  test("the order is routes, then files, then the global one", async () => {
+    const app = appOver(await kernelWith());
+    const file = "/api/files/posts/1/a.png";
+    // no route names the file: the files' policy, as before
+    expect((await get(app, file, { VOIDBASE_CSP: "default-src 'self'" })).headers.get("Content-Security-Policy")).toBe(STRICT);
+    // a route that names it outranks the files' policy, because naming it was the operator's decision
+    const named = { VOIDBASE_CSP_ROUTES: "/api/files/*:default-src 'none'\\; img-src 'self'", VOIDBASE_CSP_FILES: STRICT, VOIDBASE_CSP: "default-src 'self'" };
+    expect((await get(app, file, named)).headers.get("Content-Security-Policy")).toBe("default-src 'none'; img-src 'self'");
+    // and over a policy the route set for itself, which the global one still yields to
+    expect((await get(app, "/api/backups/x.zip", { VOIDBASE_CSP_ROUTES: "/api/backups/*:default-src 'self'" })).headers.get("Content-Security-Policy")).toBe("default-src 'self'");
+    expect((await get(app, "/api/backups/x.zip", { VOIDBASE_CSP: "default-src 'self'" })).headers.get("Content-Security-Policy")).toBe("default-src 'none'");
   });
 });
 

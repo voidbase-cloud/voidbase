@@ -3,6 +3,7 @@ import { logger } from "#platform/log";
 import type { Hono, MiddlewareHandler } from "hono";
 import { files, hooks, hooksDir, modules } from "#platform/hooks";
 import { loadCollections } from "../collections/model";
+import { pathPattern, pathScore } from "../path-glob";
 import { dispatch, registerJobHandler, type Job } from "../jobs";
 import { loadSettings } from "../settings";
 import type { AppEnv } from "../types";
@@ -106,17 +107,9 @@ interface Compiled { route: (typeof routes)[number]; re: RegExp; keys: string[];
 let compiled: Compiled[] | null = null; let compiledFor = -1;
 function compile(): Compiled[] {
   if (compiled && compiledFor === routes.length) return compiled;
-  // Go's ServeMux picks the most specific pattern: literal segments beat params beat wildcards
-  const score = (p: string) => (p.includes("*") ? 0 : 1000) + p.split("/").filter((s) => s && !s.startsWith(":")).length * 10 + p.split("/").length;
-  compiled = routes.map((route) => {
-    const keys: string[] = [];
-    const src = route.path.split("/").map((seg) => {
-      if (seg === "*") return ".*";
-      if (seg.startsWith(":")) { keys.push(seg.slice(1)); return "([^/]+)"; }
-      return seg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    }).join("/");
-    return { route, re: new RegExp(`^${src}/?$`), keys, score: score(route.path) };
-  }).sort((a, b) => b.score - a.score);
+  // one matcher, shared with the response policy's per-route globs (../path-glob.ts); Go's ServeMux picks the most
+  // specific pattern, which is what pathScore orders by: literal segments beat params beat wildcards
+  compiled = routes.map((route) => ({ route, ...pathPattern(route.path), score: pathScore(route.path) })).sort((a, b) => b.score - a.score);
   compiledFor = routes.length;
   return compiled;
 }

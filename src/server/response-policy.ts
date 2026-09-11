@@ -13,10 +13,20 @@
 // with 403, naming the header the decision came from. Origin decides when the browser sent it; Sec-Fetch-Site
 // decides when it did not (same-origin and none pass, same-site and cross-site are refused); a request with
 // neither, which no browser makes cross-site, passes. A request without a cookie is never touched.
+//
+// Beside it, and off unless VOIDBASE_CSRF=double-submit says otherwise, the token half: csrf.ts. The origin rule
+// reads what the browser says about itself; the token is something a cross-site page cannot have.
+//
+// The Content-Security-Policy is decided in one order, and the order is the whole design: VOIDBASE_CSP_ROUTES
+// first (the first `<path glob>:<policy>` entry whose glob matches this path wins), then the files' policy on a
+// served file, then VOIDBASE_CSP as the fallback for everything else. So a route named explicitly is the
+// operator's decision and outranks both defaults, and an instance that names none behaves exactly as before.
 import type { Context, MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { env as runtimeEnv } from "#platform/env";
+import { csrfModeOf, csrfTokenRefusal, STATE_CHANGING, type CsrfMode } from "./csrf";
 import { ApiError } from "./errors";
+import { pathMatches } from "./path-glob";
 import type { AppEnv } from "./types";
 
 /** the policy on a served file, PocketBase's (apis/file.go): nothing runs, nothing loads, nothing escapes the sandbox */
@@ -25,7 +35,6 @@ export const FILE_CSP = "default-src 'none'; media-src 'self'; style-src 'unsafe
 const HSTS_DEFAULT_MAX_AGE = 31536000;
 const CORS_HEADERS = ["Authorization", "Content-Type"];
 const CORS_METHODS = ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS", "HEAD"];
-const STATE_CHANGING = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 
 /** The knobs, resolved: what `hardening@1`'s `policy(env)` answers and what the middleware applies. */
 export interface ResponsePolicy {
@@ -41,6 +50,10 @@ export interface ResponsePolicy {
   csp: string;
   /** Content-Security-Policy on a served file: FILE_CSP unless VOIDBASE_CSP_FILES replaces it */
   cspFiles: string;
+  /** VOIDBASE_CSP_ROUTES in the order it was written: the first glob that matches a path decides, before the two above */
+  cspRoutes: CspRoute[];
+  /** VOIDBASE_CSRF: `double-submit` requires the X-CSRF-Token header on a cookie request; off by default (csrf.ts) */
+  csrf: CsrfMode;
   /** VOIDBASE_CROSS_ORIGIN: Cross-Origin-Embedder-Policy require-corp and Cross-Origin-Resource-Policy same-origin */
   crossOrigin: boolean;
 }
@@ -50,6 +63,47 @@ const read = (name: string, env?: object): string => {
 };
 const truthy = (v: string): boolean => ["1", "true", "on", "yes"].includes(v.toLowerCase());
 const normalizeOrigin = (o: string): string => o.trim().toLowerCase().replace(/\/+$/, "");
+
+/** one VOIDBASE_CSP_ROUTES entry: the path glob it applies to and the policy it sends */
+export interface CspRoute { glob: string; policy: string }
+
+/** split on a separator a backslash may escape, so a policy of its own may contain one */
+function splitEscaped(raw: string, sep: string): string[] {
+  const parts: string[] = []; let cur = "";
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]!;
+    if (ch === "\\" && raw[i + 1] === sep) { cur += sep; i++; continue; }
+    if (ch === sep) { parts.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  parts.push(cur);
+  return parts;
+}
+
+/**
+ * `VOIDBASE_CSP_ROUTES`: `<path glob>:<policy>` entries separated by `;`, order kept.
+ *
+ * A policy contains commas and spaces, so `;` is the separator and `\;` is a literal `;` inside a policy
+ * (`/api/files/*:default-src 'none'\; sandbox;/admin/*:default-src 'self'`). A glob never contains a `:`, which is
+ * why the first one in an entry is what separates the two halves. An entry missing either half is dropped rather
+ * than half-applied.
+ */
+export function parseCspRoutes(raw: string): CspRoute[] {
+  const out: CspRoute[] = [];
+  for (const entry of splitEscaped(raw, ";")) {
+    const e = entry.trim(); if (!e) continue;
+    const i = e.indexOf(":"); if (i < 1) continue;
+    const glob = e.slice(0, i).trim(), policy = e.slice(i + 1).trim();
+    if (glob && policy) out.push({ glob, policy });
+  }
+  return out;
+}
+
+/** the policy the first matching glob names, or "" when none does: path-glob.ts decides what matching means */
+export function cspForPath(routes: CspRoute[], path: string): string {
+  for (const r of routes) if (pathMatches(r.glob, path)) return r.policy;
+  return "";
+}
 
 /** the knobs as this request's env sets them; nothing set is today's behaviour */
 export function responsePolicy(env?: object): ResponsePolicy {
@@ -62,6 +116,8 @@ export function responsePolicy(env?: object): ResponsePolicy {
     permissionsPolicy: read("VOIDBASE_PERMISSIONS_POLICY", env),
     csp: read("VOIDBASE_CSP", env),
     cspFiles: read("VOIDBASE_CSP_FILES", env) || FILE_CSP,
+    cspRoutes: parseCspRoutes(read("VOIDBASE_CSP_ROUTES", env)),
+    csrf: csrfModeOf(read("VOIDBASE_CSRF", env)),
     crossOrigin: truthy(read("VOIDBASE_CROSS_ORIGIN", env)),
   };
 }
@@ -88,7 +144,7 @@ export function responsePolicyMiddleware(): MiddlewareHandler<AppEnv> {
     // a named list: the matching origin is echoed and Vary: Origin added; a non-listed origin gets no CORS headers
     const corsFor = policy.corsOrigins === "*" ? wildcard : cors({ origin: (origin) => (policy.corsOrigins as string[]).includes(normalizeOrigin(origin)) ? origin : null, allowHeaders: CORS_HEADERS, allowMethods: CORS_METHODS });
     // refused here rather than thrown, so the headers below still land on the refusal
-    const refused = csrfRefusal(c, policy);
+    const refused = csrfRefusal(c, policy) ?? csrfTokenRefusal(c, policy.csrf);
     const preflight = await corsFor(c, refused ? async () => { c.res = new ApiError(403, refused, {}).response(); } : next);
     if (preflight instanceof Response) c.res = preflight; // OPTIONS: cors answers it without calling next
     c.header("X-Content-Type-Options", "nosniff");
@@ -102,9 +158,13 @@ export function responsePolicyMiddleware(): MiddlewareHandler<AppEnv> {
     if (policy.hstsMaxAge > 0 && new URL(c.req.url).protocol === "https:") c.header("Strict-Transport-Security", `max-age=${policy.hstsMaxAge}; includeSubDomains`);
     if (policy.referrerPolicy) c.header("Referrer-Policy", policy.referrerPolicy);
     if (policy.permissionsPolicy) c.header("Permissions-Policy", policy.permissionsPolicy);
-    // a served file (the route marks it: c.set("file", true)) gets the files' policy; anything else gets the
-    // instance's, when it has one, unless the route set its own (backups' download does)
-    if (c.get("file")) c.header("Content-Security-Policy", policy.cspFiles);
+    // routes, then files, then the global one: a path VOIDBASE_CSP_ROUTES names was named on purpose, so it wins
+    // over the files' policy and over a policy the route set for itself; a served file (the route marks it:
+    // c.set("file", true)) gets the files' policy; anything else gets the instance's, when it has one, unless the
+    // route set its own (backups' download does)
+    const routeCsp = policy.cspRoutes.length ? cspForPath(policy.cspRoutes, new URL(c.req.url).pathname) : "";
+    if (routeCsp) c.header("Content-Security-Policy", routeCsp);
+    else if (c.get("file")) c.header("Content-Security-Policy", policy.cspFiles);
     else if (policy.csp && !c.res.headers.has("Content-Security-Policy")) c.header("Content-Security-Policy", policy.csp);
   };
 }

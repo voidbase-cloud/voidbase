@@ -42,6 +42,8 @@ Secrets and settings that must exist in production (declared in `env.ts`):
 | `LEMONSQUEEZY_API_KEY`, `LEMONSQUEEZY_STORE_ID` | optional; the key is a secret, the store id (numeric) a var; the shipped `lemonsqueezy` plugin takes money through Lemon Squeezy with them: `POST /api/payments/lemonsqueezy/checkout`, `portal`, `cancel`, the same three collections. Both are needed |
 | `LEMONSQUEEZY_WEBHOOK_SECRET` | optional, a secret; the signing secret of the webhook registered at Lemon Squeezy as `https://<instance>/api/payments/lemonsqueezy/webhook` (`X-Signature`). Without it the webhook route answers 503 |
 | `VOIDBASE_CORS_ORIGINS`, `VOIDBASE_HSTS`, `VOIDBASE_REFERRER_POLICY`, `VOIDBASE_PERMISSIONS_POLICY`, `VOIDBASE_CSP`, `VOIDBASE_CSP_FILES`, `VOIDBASE_CROSS_ORIGIN` | optional, all off unless set; the response policy the hardening plugin applies to every response (the security headers, CORS as a named list, the CSRF rule that comes with it): "The response policy" below |
+| `VOIDBASE_CSP_ROUTES` | optional, unset; a `Content-Security-Policy` per route rather than one for everything: `<path glob>:<policy>` entries separated by `;` (a policy contains commas and spaces, so `;` is the separator and `\;` a literal one inside a policy), first match wins, falling back to `VOIDBASE_CSP`. The glob is matched segment by segment with `*` for the rest of a path, as a `_redirects` source is. The order is routes, then files, then the global one: "The response policy" below |
+| `VOIDBASE_CSRF` | optional, unset (off); `double-submit` turns the token half of the CSRF defence on beside the origin rule: `GET /api/csrf` answers `{ token }` and sets a cookie holding it, and a state-changing request that carries cookies must repeat it in `X-CSRF-Token` or be refused 403. A request authenticated with an `Authorization` header, which is what the SDK sends, is never subject to it: "The response policy" below |
 
 Everything else (SMTP, OAuth2 providers, rate limits, backups cron, trusted proxy) is configured from the
 panel's Settings pages and stored in D1.
@@ -325,7 +327,7 @@ The hardening plugin (`hardening@1`) sends PocketBase's headers on every respons
 `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `X-Xss-Protection: 1; mode=block`,
 `Cross-Origin-Opener-Policy: same-origin`, a strict `Content-Security-Policy` (`default-src 'none'; media-src
 'self'; style-src 'unsafe-inline'; sandbox`) on a served file, and CORS at origin `*` with `Authorization` and
-`Content-Type` allowed. That is what an instance sends with nothing set. Seven variables, read from the instance's
+`Content-Type` allowed. That is what an instance sends with nothing set. Nine variables, read from the instance's
 env like `VOIDBASE_PRESENCE`, change it:
 
 ```
@@ -339,9 +341,21 @@ VOIDBASE_PERMISSIONS_POLICY="camera=(), geolocation=()"        sent as Permissio
 VOIDBASE_CSP="default-src 'self'"                              Content-Security-Policy on every non-file response
                            (a route that set its own, like the backups download, keeps it)
 VOIDBASE_CSP_FILES="default-src 'none'; img-src 'self'"        replaces the strict policy on served files
+VOIDBASE_CSP_ROUTES="/api/files/*:default-src 'none'\; sandbox;/admin/*:default-src 'self'"
+                           a policy per route: <path glob>:<policy> entries separated by ";", a "\;" being a
+                           literal ";" inside a policy, first match wins. The glob is matched segment by
+                           segment with * for the rest of a path, as a _redirects source is
+VOIDBASE_CSRF=double-submit
+                           GET /api/csrf answers { token } and sets a cookie holding it; a state-changing
+                           request that carries cookies must repeat it in X-CSRF-Token or be refused 403
 VOIDBASE_CROSS_ORIGIN=1    adds Cross-Origin-Embedder-Policy: require-corp and Cross-Origin-Resource-Policy:
                            same-origin beside the Opener-Policy
 ```
+
+A `Content-Security-Policy` is decided in one order: routes, then files, then the global one. The first
+`VOIDBASE_CSP_ROUTES` glob that matches the path wins, over both defaults, because naming a path was a decision; a
+served file no glob names gets `VOIDBASE_CSP_FILES`; everything else gets `VOIDBASE_CSP`, which alone yields to a
+policy the route set for itself. Name no routes and nothing changes.
 
 The CSRF rule, and why naming the origins turns it on: origin `*` is safe while authentication is a bearer token,
 because nothing a browser sends on its own carries one; a cookie is sent on its own, which is what a cookie-based
@@ -352,6 +366,18 @@ ones is refused with 403 and a message naming `Origin` and `VOIDBASE_CORS_ORIGIN
 `Sec-Fetch-Site`); a request with neither header passes. A request without a cookie is never touched, so a
 bearer-only client is never affected. Removing the hardening plugin removes the policy, CORS included; a company
 with its own policy provides `hardening@1` from its own plugin (docs/plugins.md).
+
+`VOIDBASE_CSRF=double-submit` adds the second line, off by default and leaving the origin rule exactly as it is.
+`GET /api/csrf` answers `{ token }` (32 random bytes, base64url) and sets a cookie holding the same value:
+`__Host-vb_csrf` on https, `vb_csrf` on http, `Path=/`, `SameSite=Lax`, and not `HttpOnly`, because the page has to
+read it to send it back. A state-changing request that carries cookies must then repeat that value in
+`X-CSRF-Token`, compared in constant time, or be refused 403 with a reason naming the header. Asking again rotates
+the token. A request authenticated with an `Authorization` header is never subject to it, which is what the SDK
+sends, because a browser attaches cookies on its own and never attaches a bearer token on its own.
+
+To see what an instance actually sends, from outside it: `voidbase check --security https://<instance>` reports one
+line per check, `pass` / `warn` / `fail` with what to set, and exits 1 when anything failed (`--json` prints the
+same as data). It only reads.
 
 ### Every instance is isolated
 

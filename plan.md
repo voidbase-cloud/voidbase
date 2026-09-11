@@ -504,7 +504,14 @@ other branch that way; (2026-09-11) the first payment provider: `stripe`, a ship
 (2026-09-11) `polar` and `lemonsqueezy` behind the same interface: what the three share moved into
 `payments-shared.ts`, each provider file is its knobs, its calls, its signature and its events, and the three are
 one provider of `payments@1` to the loader (stripe claims it, the others join its family), so changing provider is
-changing which key is set; and (2026-09-11) `observability`, the second core plugin: `VOIDBASE_OBSERVABILITY` turns
+changing which key is set; and (2026-09-11) the rest of hardening: a `Content-Security-Policy` per route
+(`VOIDBASE_CSP_ROUTES`, `<path glob>:<policy>` entries decided routes, then files, then the global one, the globs
+matched by the one path matcher the hook router uses), a double-submit token (`VOIDBASE_CSRF=double-submit`:
+`GET /api/csrf` answers one and sets a cookie holding it, a cookie-authenticated write must repeat it in
+`X-CSRF-Token`, and an `Authorization`-authenticated request is exempt because a browser cannot forge one), and
+`voidbase check --security <url>`, which reads a running instance from outside and says pass, warn or fail per
+line with the knob to set, so the roadmap's list of what was left there is now empty; and
+(2026-09-11) `observability`, the second core plugin: `VOIDBASE_OBSERVABILITY` turns
 the Worker's own logs on at deploy, the plugin samples every request into Analytics Engine as one data point keyed
 by the matched route rather than the path, and three superuser routes (`/api/observability/summary`, `/errors`,
 `/logs`) answer the instance's own numbers from the SQL API when a token is set and from the D1 request log when it

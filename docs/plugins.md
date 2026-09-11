@@ -71,7 +71,9 @@ from each installed plugin's `release.json`.
   response policy (below). Middleware runs in registration order and the kernel loads after the routes, so a plugin
   cannot `use("*")` for itself; instead `app.ts` keeps the handlers' place in the chain with slots that ask the
   provider at request time, the policy first of all so it lands on every response, errors and files included. No
-  provider, no limits and no policy (CORS included); another limiter or another policy is another provider.
+  provider, no limits and no policy (CORS included); another limiter or another policy is another provider. It
+  mounts one route of its own, `GET /api/csrf`, because a token has to be handed back; that one is an ordinary
+  plugin route and leaves through the slot like everything else.
 
 ### The response policy, hardening's other half
 
@@ -84,6 +86,10 @@ and `Cross-Origin-Opener-Policy: same-origin` on every response, the strict
 `Content-Security-Policy: default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; sandbox` on a served
 file, CORS at origin `*` with `Authorization` and `Content-Type` allowed, and no CSRF check.
 
+As of 0.9.0-beta.37 the roadmap's list of what was left here is empty: the per-route `Content-Security-Policy`, the
+double-submit token for the flows that need one, and the check that reports what an instance is missing rather than
+quietly defaulting it are all below.
+
 | Variable | Default | Effect when set |
 | --- | --- | --- |
 | `VOIDBASE_CORS_ORIGINS` | `*` (unset means `*`) | comma-separated origins. Only a listed origin gets `Access-Control-Allow-Origin` (the matching origin echoed, with `Vary: Origin`); a request from any other origin gets no CORS headers at all. Naming the origins also turns on the CSRF rule below |
@@ -92,7 +98,27 @@ file, CORS at origin `*` with `Authorization` and `Content-Type` allowed, and no
 | `VOIDBASE_PERMISSIONS_POLICY` | unset | the `Permissions-Policy` value to send, as given |
 | `VOIDBASE_CSP` | unset | a `Content-Security-Policy` for every response that is not a served file; a route that set its own (the backups download) keeps it |
 | `VOIDBASE_CSP_FILES` | the strict policy above | replaces the `Content-Security-Policy` on served files |
+| `VOIDBASE_CSP_ROUTES` | unset | a `Content-Security-Policy` per route: `<path glob>:<policy>` entries separated by `;`, first match wins |
+| `VOIDBASE_CSRF` | unset (off) | `double-submit` turns the token on: `GET /api/csrf` answers one, and a cookie request that changes something must repeat it in `X-CSRF-Token` |
 | `VOIDBASE_CROSS_ORIGIN` | unset | `1` or `true` adds `Cross-Origin-Embedder-Policy: require-corp` and `Cross-Origin-Resource-Policy: same-origin` beside the Opener-Policy |
+
+**A policy per route.** `VOIDBASE_CSP_ROUTES` is a list of `<path glob>:<policy>` entries. A policy contains commas
+and spaces, so `;` separates the entries and `\;` is a literal `;` inside one; the first `:` in an entry splits the
+glob from the policy, which is unambiguous because a path never contains one. The glob is matched the way every
+other path pattern in voidbase is (`src/server/path-glob.ts`, shared with the hook router's `routerAdd` patterns):
+segment by segment, a literal segment matching itself, `:name` one segment, `*` the rest of the path, and a
+trailing slash optional. So `/api/files/*` means here what it means in a `_redirects` source or a
+`run_worker_first` glob.
+
+```
+VOIDBASE_CSP_ROUTES=/api/files/*:default-src 'none'\; sandbox;/admin/*:default-src 'self'
+```
+
+**The order a `Content-Security-Policy` is decided in: routes, then files, then the global one.** The first
+`VOIDBASE_CSP_ROUTES` glob that matches the path wins, and it wins over both defaults, because naming a path was
+the operator's decision and the defaults are not; a served file with no glob naming it gets `VOIDBASE_CSP_FILES`
+(the strict policy unless replaced); anything else gets `VOIDBASE_CSP`, and that one alone yields to a policy the
+route set for itself. An instance that names no routes behaves exactly as it did before the knob existed.
 
 **The CSRF rule.** Origin `*` is safe while authentication is a bearer token, because nothing a browser sends on
 its own carries one; a cookie is sent on its own, which is what a cookie-based auth plugin would expose. So the
@@ -103,6 +129,34 @@ header, `Sec-Fetch-Site` decides: `same-origin` and `none` pass, `same-site` and
 `Sec-Fetch-Site`. A request with neither header passes, since no browser makes a cross-site request without both.
 A request without a cookie is never touched, so a bearer-only client is never affected, and neither is any `GET`,
 `HEAD` or `OPTIONS`.
+
+**The double-submit token** (`src/server/csrf.ts`), off unless `VOIDBASE_CSRF=double-submit`, is the second line.
+The origin rule reads what the browser says about itself, which is the right first line and everything an operator
+gets for free; the token is something a cross-site page cannot have. `GET /api/csrf` answers `{ token }` (32 random
+bytes, base64url) and sets a cookie holding the same value: `__Host-vb_csrf` on https, `vb_csrf` on http where a
+`__Host-` cookie would need `Secure` and no browser would keep it, with `Path=/`, `SameSite=Lax` and deliberately
+**not** `HttpOnly`, since the page has to read it to send it back. Every call is a fresh token and a fresh cookie,
+so a page that asks twice has rotated its own. A state-changing request (`POST`, `PATCH`, `PUT`, `DELETE`) that
+carries cookies must then send that value in `X-CSRF-Token`, compared in constant time; a missing header, a
+mismatched one, or cookies with no token cookie at all is refused 403 with a reason naming the header. While the
+knob is off the route answers 404, since the knob is read per request and the routes are fixed when the app is
+built.
+
+**What is exempt, and why.** A request authenticated with an `Authorization` header is never subject to the token
+rule: a browser attaches cookies on its own and never attaches a bearer token on its own, so a header-authenticated
+request cannot be forged cross-site. That is what the SDK sends, so turning the knob on changes nothing for an SDK
+client and everything for a cookie one. Neither is a request with no `Cookie` header at all (there is no session to
+forge against), nor any `GET`, `HEAD` or `OPTIONS`.
+
+**Reading an instance from outside: `voidbase check --security <url>`** (`src/node/security-check.ts`). A handful
+of reads against a running instance, one line each, `pass` / `warn` / `fail` with the one thing to set: the
+security headers (`X-Content-Type-Options`, the frame and opener policies, HSTS on https, `Referrer-Policy`,
+`Permissions-Policy`, the cross-origin trio), the `Content-Security-Policy` and, with `--file <a served file>`,
+whether the files' one is `default-src 'none'`, the CORS answer an unlisted origin gets and whether credentials
+ride a wildcard (which is the dangerous combination, and the one that fails), the attributes of any cookie it saw
+set, a rate-limit spot check (a small burst to one cheap route, looking for a 429: a spot check, not proof), what
+`/api/health` tells a stranger, and whether either CSRF rule is on. It exits 1 when anything failed, `--json`
+prints the same as data, and it only ever reads: `GET`, `HEAD` and `OPTIONS`, no credentials, no sign-in.
 
 ## The rules
 

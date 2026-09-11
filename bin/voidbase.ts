@@ -102,6 +102,12 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      --from-token / --to-token take an existing superuser token instead of a sign-in
                                      (env: VOIDBASE_MIGRATE_FROM_EMAIL/_PASSWORD/_TOKEN and _TO_*); --keep leaves the
                                      migration archive on both sides; --dry-run signs in, says what would happen, stops
+  types --url http://vb [--token t | --email a@b --password p] [--out src/voidbase.ts] [--json file]
+                                     write a typed client for the PocketBase JS SDK from the instance's own API
+                                     description (GET /api/openapi.json as a superuser): an interface per collection,
+                                     a Collections map and a TypedPocketBase type, one file, overwritten. --json
+                                     reads a saved document instead of the network. No --watch: run it again
+                                     when the collections change
   version                            print the version
   bundle [--out dir] [--version v]   build the generic Worker + panel as a release directory (default .cloud/releases/<v>);
          [--plugins-dir pb_plugins]     --plugins-dir bakes a project's installed plugins (voidbase.lock beside them) into the Worker
@@ -240,6 +246,24 @@ switch (cmd) {
     if (code !== 0) { console.error(`\n${argv[0]} exited ${code}: nothing was changed by voidbase itself`); process.exit(code); }
     console.log(`\nvoidbase ${latest} installed.`);
     if (install.shape === "project") console.log("Your instance keeps running the version you last deployed. Deploy to put this one live:\n  voidbase deploy        (or push, if the repository deploys itself)");
+    break;
+  }
+  case "types": {
+    // A typed client from the instance's own OpenAPI description (src/node/typed-client.ts): fetched as a superuser so
+    // every collection is in it, or read from a saved document with --json. Works from the executable too.
+    const { collectionsOf, fetchDocument, generateTypes, readDocument } = await import("../src/node/typed-client");
+    const out = flags.out ?? "src/voidbase.ts";
+    const json = flags.json && flags.json !== "1" ? flags.json : undefined;
+    try {
+      const source = json ?? `${url}/api/openapi.json`;
+      const doc = json ? await readDocument(resolve(json)) : await fetchDocument({ url, token: flags.token, email: flags.email ?? admin().email, password: flags.password ?? admin().password });
+      const regenerate = `voidbase types ${json ? `--json ${json}` : `--url ${url}`} --out ${out}`;
+      const text = generateTypes(doc, { source, regenerate });
+      mkdirSync(resolve(out, ".."), { recursive: true });
+      writeFileSync(resolve(out), text);
+      const n = collectionsOf(doc).length;
+      console.log(`wrote ${out}: ${n} collection${n === 1 ? "" : "s"} from ${source}`);
+    } catch (err) { console.error(`types failed: ${err instanceof Error ? err.message : String(err)}`); process.exit(1); }
     break;
   }
   case "migrate": {

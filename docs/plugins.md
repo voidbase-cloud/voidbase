@@ -158,7 +158,9 @@ the rules that decide who may read and write each one, and this puts that in a f
   everyone; a rule with text needs a signed-in record to be judged against, so it appears for a signed-in caller with
   the rule quoted in the operation's description; a rule that is `null` is locked, superusers only. A view has no
   writes. Per collection the document carries the PocketBase record routes, a record schema built from the fields
-  (`select` as an enum, `relation` as an id, `file` as a name, `autodate` read-only, `id`, `created`, `updated`),
+  (`select` as an enum, `relation` as an id with its target collection in `x-collection`, `file` as a name,
+  `autodate` read-only, `id`, `created`, `updated`, every answered field required since a record always carries
+  all of them and only `expand` comes when asked for),
   the create and update bodies, the list shape (`page`, `perPage`, `totalItems`, `totalPages`, `items`) and the list
   query (`page`, `perPage`, `sort`, `filter`, `expand`, `fields`, `skipTotal`); an auth collection adds
   `auth-with-password`, `auth-methods` and, for a token of that collection, `auth-refresh`. `info.title` is the
@@ -172,8 +174,10 @@ the rules that decide who may read and write each one, and this puts that in a f
   none.
 
 The plugin reads the collections and settings through the same functions the routes do, and takes a source of its own
-for tests (`openapiWith({ collections, appName })`, `test/unit/openapi.test.ts`). The stateless MCP server the roadmap
-names beside this is the `mcp` plugin below, a client of this document: its tools are derived from it.
+for tests (`openapiWith({ collections, appName })`, `test/unit/openapi.test.ts`). Two things generate from this
+document: the typed client, `voidbase types` (docs/setup.md), which fetches it as a superuser and writes the record
+interfaces and the `TypedPocketBase` type from its schemas, so the client and the documentation cannot disagree; and
+the stateless MCP server, the `mcp` plugin below, whose tools are derived from it.
 
 ## An agent's view of the instance: mcp
 

@@ -146,8 +146,12 @@ describe("the document's shape", () => {
     expect(p.meta).toEqual({ description: "any JSON value" });
     expect(p.cover).toMatchObject({ type: "string" });
     expect(p.gallery).toMatchObject({ type: "array", items: { type: "string" } });
-    expect(p.author).toMatchObject({ type: "string", description: "id of a users record" });
-    expect(p.where).toMatchObject({ type: "object", properties: { lon: { type: "number" }, lat: { type: "number" } } });
+    expect(p.author).toMatchObject({ type: "string", description: "id of a users record", "x-collection": "users" });
+    expect(p.where).toMatchObject({ type: "object", properties: { lon: { type: "number" }, lat: { type: "number" } }, required: ["lon", "lat"] });
+    // every answered field is required, expand alone is optional: a record always carries all of its fields
+    const required = (await doc("superuser")).components.schemas.posts!.required!;
+    expect(required).toEqual(Object.keys(p).filter((k) => k !== "expand"));
+    expect(required).toContain("created");
     expect(p.created).toMatchObject({ type: "string", readOnly: true });
     expect(p.updated).toMatchObject({ type: "string", readOnly: true });
     const users = (await doc("superuser")).components.schemas.users!.properties;

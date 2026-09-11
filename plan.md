@@ -501,7 +501,9 @@ in the package (`voidbase/cloud-client`) and `voidbase cloud login | whoami | in
 from a terminal with the page's CLI token, so nothing voidbase.cloud does is dashboard-only (docs/setup.md). And
 (2026-09-11) the stateless MCP server: `mcp` is a shipped plugin whose tools are derived per request from the
 caller's OpenAPI document and whose calls run the instance's own routes in process, so an agent discovers an instance
-with the token it holds and nothing more (docs/plugins.md).
+with the token it holds and nothing more (docs/plugins.md). And the typed client (2026-09-11): `voidbase types` generates the record interfaces, the `Collections` map and a
+`TypedPocketBase` type from the instance's own OpenAPI document, fetched as a superuser, so the client and the
+documentation cannot disagree; no `--watch` yet, and the client plugin surface is still to come (docs/setup.md).
 
 ## What to correct on the site when this lands
 

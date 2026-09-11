@@ -136,6 +136,25 @@ project whose `package.json` depends on voidbase is updated as a dependency, a g
 the executable replaces itself as above. Updating a project changes what your next deploy will carry, not what is
 serving right now.
 
+`voidbase types --url <instance>` writes a typed client for the PocketBase JS SDK, generated from the instance's own
+API description rather than from a second reading of the collections, so the client and `/api/docs` cannot
+disagree. It fetches `GET /api/openapi.json` as a superuser (`--token <superuser token>`, or `--email` and
+`--password` to sign in through `_superusers/auth-with-password`; `--admin email:password` and
+`VOIDBASE_SUPERUSER_EMAIL`/`_PASSWORD` work as for the other commands), the one scope that describes every
+collection, and writes one file, `src/voidbase.ts` unless `--out` says otherwise, overwritten each time, with a
+header that says it is generated and how to regenerate it. The file has an interface per collection
+(`PostsRecord`, `UsersRecord`: `string`, `number`, `boolean`, a union of the literals for a `select`, an array of
+them for a multi-select, `unknown` for `json`, `{ lon; lat }` for a `geoPoint`, an id or ids for a `relation` and a
+name or names for a `file`, plus `id`, `collectionId`, `collectionName`, `created` and `updated`; `expand` is typed
+from the relation fields whose target the document names), a `Collections` map from name to interface, and
+`TypedPocketBase`, which narrows the SDK's `collection(name)` to the right record type for a known name and leaves
+any other name untyped. Apply it with `const pb = new PocketBase(url) as TypedPocketBase`, or
+`as TypedPocketBase<PocketBase>` to keep everything the SDK's class has; a renamed field is then a compile error.
+The file imports nothing: the few SDK shapes it needs are declared in it, structurally, so it compiles on its own
+and against whichever SDK version the project installed. `--json <file>` generates from a saved document instead
+of the network, for tests and offline use. There is no `--watch`: run the command again when the collections
+change (or put it in the build). The client plugin surface the roadmap names beside this is not built yet.
+
 `voidbase migrate <from-url> <to-url>` moves an instance's data to another running instance, whichever way each one
 runs (the executable, the npm package, Cloudflare) and in either direction. It is a backup taken on the source and
 restored on the target through the backups API over HTTP, so it works from the executable and needs nothing but the

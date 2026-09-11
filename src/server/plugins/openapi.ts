@@ -69,22 +69,25 @@ export function fieldSchema(f: Field, byId: Map<string, Collection>): Schema {
     case "select": return many(f, str({ enum: Array.isArray(f.values) ? (f.values as string[]) : [], ...help }));
     case "json": return { description: "any JSON value", ...help };
     case "file": return many(f, str({ description: "file name; send the file itself as multipart/form-data", ...help }));
-    case "relation": { const target = byId.get(String(f.collectionId ?? "")); return many(f, str({ description: `id of a ${target ? target.name : "related"} record`, ...help })); }
+    case "relation": { const target = byId.get(String(f.collectionId ?? "")); return many(f, str({ description: `id of a ${target ? target.name : "related"} record`, ...(target ? { "x-collection": target.name } : {}), ...help })); }
     case "password": return str({ format: "password", writeOnly: true, ...help });
-    case "geoPoint": return { type: "object", properties: { lon: { type: "number" }, lat: { type: "number" } }, ...help };
+    case "geoPoint": return { type: "object", properties: { lon: { type: "number" }, lat: { type: "number" } }, required: ["lon", "lat"], ...help };
   }
 }
 
 const fields = (c: Collection): Field[] => c.fields as Field[];
 const hasField = (c: Collection, name: string) => fields(c).some((f) => f.name === name);
 
-/** what a record of the collection looks like in a response: hidden fields dropped, ids and names added */
+/** what a record of the collection looks like in a response: hidden fields dropped, ids and names added. Every
+ * field is answered, zero-valued when unset, so all of them are required; only expand comes when asked for. A
+ * relation names its target in x-collection, which is what the typed client (voidbase types) reads. */
 function recordSchema(c: Collection, byId: Map<string, Collection>): Schema {
   const properties: Record<string, Schema> = { id: str({ description: "15-character id" }), collectionId: str({ readOnly: true }), collectionName: str({ readOnly: true, enum: [c.name] }) };
   for (const f of fields(c)) { if (f.hidden || f.name === "id") continue; properties[f.name] = fieldSchema(f, byId); }
   for (const name of ["created", "updated"]) if (!hasField(c, name)) properties[name] = str({ readOnly: true, description: "set by the instance" });
+  const required = Object.keys(properties);
   properties.expand = { type: "object", description: "the related records named by ?expand", additionalProperties: true };
-  return { type: "object", properties, required: ["id", "collectionId", "collectionName"] };
+  return { type: "object", properties, required };
 }
 
 /** what a request may send to create or update a record of the collection */

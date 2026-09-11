@@ -1,3 +1,10 @@
 {
-  "worker": { "compatibility_date": "2026-09-06" }
+  "worker": { "compatibility_date": "2026-09-06" },
+  "head": {
+    "title": "Void on voidbase",
+    "meta": [
+      { "name": "description", "content": "A Void app running on voidbase" },
+      { "name": "theme-color", "content": "#123456" }
+    ]
+  }
 }

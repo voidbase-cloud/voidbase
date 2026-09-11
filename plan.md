@@ -485,7 +485,9 @@ instance) or a voidbase project, which wraps the instance in the `pb_` folders y
 from CI/CD. A GitHub voidbase project and a Cloudflare voidbase project are synced with one CLI command, which is
 how CI/CD gets set up. The CLI moves data between all three ways in either direction. And the adapter builds
 voidbase stack semantics into voidbase project semantics, so a stack app is hosted on a machine or on Cloudflare
-like any project. What exists: the executable, the package on Bun, Cloudflare all three ways, both modes in shape,
+like any project, and (2026-09-11) its `pwa` option makes a stack app installable: the manifest, the icon set and
+a service worker written from what the app declares, with the client half in `@voidbase-cloud/sdk/pwa`. What
+exists: the executable, the package on Bun, Cloudflare all three ways, both modes in shape,
 `voidbase sync`, the adapter, and (2026-09-10) the installer: an instance changes its own plugins (`installer`, a
 shipped plugin: on disk on Bun, as a commit to the repository it deploys from on Workers), so nobody builds a
 release for a customer's instance; voidbase.cloud wraps voidbase and the user's Cloudflare account, plus the

@@ -211,6 +211,31 @@ Bun, which honours `paths` at runtime and would resolve those imports to a `.d.t
 adapter's fragment repoints those two at shims that take the values from Void's published runtime and the types
 from Void's declarations, and passes every other mapping (`@schema`, `void/routes`) through unchanged.
 
+## An installable app
+
+The `pwa` option writes into `pb_public` what an installable app needs, from what the app already declares:
+
+```ts
+voidbaseAdapter({ pwa: { icon: "icon.svg" } })
+```
+
+| written | what it is |
+| --- | --- |
+| `manifest.webmanifest` | name, short name and description from `void.json`'s `head` (`title`, the `description` meta), `theme_color` from its `theme-color` meta, `background_color` the same unless set, `start_url` and `scope` at `/`, `display: standalone`, and the icons |
+| `icons/` | the icon set from `icon`, one square PNG or SVG under `public/`. A PNG is resized to 192 and 512 with Photon, the resizer the thumbnails already use. An SVG is written as it is with `sizes: "any"`; the PNGs beside it need a rasterizer, so they are written when `sharp` is installed (`bun add -d sharp`) and skipped, with a warning, when it is not |
+| `sw.js` | the service worker: it precaches the shell (every prerendered page, the client build's hashed `assets/`, and the `precache` list) under a version hashed from those files, so a new build is a new worker; navigations go to the network first with the cached page or the shell as the fallback; hashed assets come from the cache first; `/api/*` and `/_/*` are never touched |
+
+Every option (`name`, `shortName`, `description`, `themeColor`, `backgroundColor`, `start`, `scope`, `precache`)
+overrides the default it is named for. Each prerendered page gets a `<link rel="manifest">` and a `<meta
+name="theme-color">` when it has none; nothing registers the worker, because that is the client's job:
+`@voidbase-cloud/sdk/pwa` registers it, shows the update prompt and unregisters it, over the messages `sw.js`
+answers to. A page posts `{ type: "SKIP_WAITING" }` to switch to a waiting version (the worker never skips
+waiting on its own) and receives `{ type: "UPDATED", version }` from the version that activated; `{ type:
+"UNREGISTER" }` makes the worker clear its caches and unregister itself, answering `{ type: "UNREGISTERED" }`,
+which is the way out of a stuck worker. A `precache` path the build does not have fails the build by name,
+because a missing entry would stop the worker from installing at all. The plugin's log line names the files and
+the version, and `adapt()` returns them as `pwa`.
+
 ## Two shapes of app
 
 The adapter looks at what the project actually has:
@@ -280,5 +305,7 @@ its reach over PocketBase's own endpoints, `void/db` through the shim, `void/sto
 run, both kinds of migration, an `onBootstrap` hook running exactly once, a tagged event hook, a tsconfig alias
 resolving to a directory's index file, the four build errors (a hook attached to nothing, a misspelt hook name, a
 hook left in `middleware/`, a secret value nothing declares), `vb_secrets/` reaching the app through `$os.getenv`,
-and that nothing is written outside `.voidbase/`. Run it with
+the `pwa` option (the manifest's defaults, the icon set, the worker's precache list and handshake, the tags in
+`index.html`, a new version for a changed shell, and nothing of it without the option), and that nothing is
+written outside `.voidbase/`. Run it with
 `bun test/adapter.ts`, or as part of `bash scripts/ci.sh` (step `adapter`).

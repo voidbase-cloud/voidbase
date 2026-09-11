@@ -1,7 +1,8 @@
 // The Void adapter end to end: generate a voidbase app under .voidbase/ from test/fixtures/void-app, boot it with
 // the generated main.ts and check that Void's own conventions still hold — route paths and params, middleware order, the
-// runtime env behind void/storage and void/queues, a queue consumer, a cron job, Drizzle migrations, and the
-// static build under pb_public. PocketBase's own API must keep winning over an app route of the same shape.
+// runtime env behind void/storage and void/queues, a queue consumer, a cron job, Drizzle migrations, the
+// static build under pb_public, and the `pwa` option (manifest, icons, service worker). PocketBase's own API must
+// keep winning over an app route of the same shape.
 //   bun test/adapter.ts
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -24,6 +25,10 @@ if (!existsSync(selfLink)) { mkdirSync(resolve(PKG, "node_modules/@voidbase-clou
 rmSync(WORK, { recursive: true, force: true });
 mkdirSync(WORK, { recursive: true });
 cpSync(FIXTURE, WORK, { recursive: true });
+// the copy resolves the package from the checkout this test lives in: in a worktree the shared node_modules links
+// @voidbase-cloud/voidbase to another checkout, and the build has to exercise this code, not a sibling's
+mkdirSync(resolve(WORK, "node_modules/@voidbase-cloud"), { recursive: true });
+symlinkSync(PKG, resolve(WORK, "node_modules/@voidbase-cloud/voidbase"));
 
 const procs: ReturnType<typeof Bun.spawn>[] = [];
 try {
@@ -106,9 +111,41 @@ try {
   check("the seo files the build does not carry are redirected to /api/seo in _redirects; the app's own robots.txt keeps the path", /^\/sitemap\.xml \/api\/seo\/sitemap\.xml 302$/m.test(redirects) && /^\/llms\.txt \/api\/seo\/llms\.txt 302$/m.test(redirects) && !/robots/.test(redirects), redirects);
   check("void/db and void/queues get runtime shims, because Void maps them to declaration files", existsSync(`${WORK}/.voidbase/shim-db.ts`) && existsSync(`${WORK}/.voidbase/shim-queues.ts`) && /shim-queues/.test(readFileSync(`${WORK}/.voidbase/tsconfig.json`, "utf8")), "");
 
+  // ---- pwa: the manifest, the icon set and the service worker, from what the app already declares -----------------
+  const pub = `${WORK}/.voidbase/pb_public`;
+  const webmanifest = JSON.parse(readFileSync(`${pub}/manifest.webmanifest`, "utf8")) as Record<string, string> & { icons: { src: string; sizes: string; type: string }[] };
+  check("manifest.webmanifest takes its name, description and colours from void.json's head, standalone at /", webmanifest.name === "Void on voidbase" && webmanifest.short_name === "Void on voidbase" && webmanifest.description === "A Void app running on voidbase" && webmanifest.theme_color === "#123456" && webmanifest.background_color === "#123456" && webmanifest.start_url === "/" && webmanifest.scope === "/" && webmanifest.display === "standalone", JSON.stringify(webmanifest));
+  check("the SVG icon is written as it is with sizes any, and every icon the manifest lists exists", webmanifest.icons.some((i) => i.src === "/icons/icon.svg" && i.sizes === "any" && i.type === "image/svg+xml") && webmanifest.icons.every((i) => existsSync(`${pub}${i.src}`)) && readFileSync(`${pub}/icons/icon.svg`, "utf8") === readFileSync(`${WORK}/public/icon.svg`, "utf8"), JSON.stringify(webmanifest.icons));
+  // rasterizing an SVG needs sharp, which is not a dependency; when it is installed (it is a transitive one here) the PNGs are written too
+  const hasSharp = await import("sharp").then(() => true, () => false);
+  const pngSizes = webmanifest.icons.filter((i) => i.type === "image/png").map((i) => i.sizes).sort();
+  const isPng = (f: string) => existsSync(f) && readFileSync(f).subarray(1, 4).toString() === "PNG";
+  check(`PNG icons at 192 and 512 are written ${hasSharp ? "from the SVG, since sharp is installed" : "only when sharp is installed, and it is not"}`, hasSharp ? pngSizes.join() === "192x192,512x512" && isPng(`${pub}/icons/icon-192.png`) && isPng(`${pub}/icons/icon-512.png`) : pngSizes.length === 0 && !existsSync(`${pub}/icons/icon-192.png`), pngSizes.join());
+  const sw = readFileSync(`${pub}/sw.js`, "utf8");
+  const hashed = readdirSync(`${pub}/assets`);
+  const version = /const VERSION = "([0-9a-f]{12})"/.exec(sw)?.[1] ?? "";
+  check("sw.js precaches the shell under a version hash: / and every hashed asset of the client build", version !== "" && sw.includes('"/",') && hashed.length > 0 && hashed.every((f) => sw.includes(`"/assets/${f}"`)) && !sw.includes('"/404.html"') && !sw.includes('"/robots.txt"'), `${version} ${hashed.join(" ")}`);
+  const installHandler = sw.split('addEventListener("install"')[1]?.split("addEventListener(")[0] ?? "";
+  check("sw.js speaks the handshake: SKIP_WAITING, UPDATED and UNREGISTER, does not skip waiting on install, and leaves /api/ and /_/ alone", sw.includes('"SKIP_WAITING"') && sw.includes('type: "UPDATED", version: VERSION') && sw.includes('"UNREGISTER"') && !/skipWaiting/.test(installHandler) && sw.includes('"/api/"') && sw.includes('"/_/"') && !/\bimport\b|\brequire\(/.test(sw), "");
+  const indexHtml = readFileSync(`${pub}/index.html`, "utf8");
+  check("index.html and the 404 shell link the manifest and carry the theme colour, with no registration script", indexHtml.includes('<link rel="manifest" href="/manifest.webmanifest">') && indexHtml.includes('<meta name="theme-color" content="#123456">') && !/sw\.js/.test(indexHtml) && readFileSync(`${pub}/404.html`, "utf8").includes('rel="manifest"'), indexHtml.slice(0, 240));
+
   // a second pass must not duplicate or drift
-  const again = await adapt(WORK, { quiet: true, clientDir: "dist/client" });
-  check("converting again is idempotent", readFileSync(`${WORK}/.voidbase/void-entry.ts`, "utf8") === generated && again.manifest.routes.length === m.routes.length, "");
+  const again = await adapt(WORK, { quiet: true, clientDir: "dist/client", pwa: { icon: "icon.svg" } });
+  check("converting again is idempotent", readFileSync(`${WORK}/.voidbase/void-entry.ts`, "utf8") === generated && again.manifest.routes.length === m.routes.length && readFileSync(`${pub}/sw.js`, "utf8") === sw && again.pwa?.version === version && readFileSync(`${pub}/index.html`, "utf8") === indexHtml, `${again.pwa?.version} vs ${version}`);
+  // a change to the shell is a new version of the worker: that is what makes browsers pick a new build up
+  writeFileSync(`${WORK}/dist/client/index.html`, readFileSync(`${WORK}/dist/client/index.html`, "utf8") + "<!-- changed -->");
+  const changed = await adapt(WORK, { quiet: true, clientDir: "dist/client", pwa: { icon: "icon.svg" } });
+  check("a change to the shell changes the version in sw.js, and the pass reports what it wrote", changed.pwa?.version !== version && changed.written.some((w) => w.endsWith("pb_public/sw.js")) && changed.written.some((w) => w.endsWith("pb_public/manifest.webmanifest")) && changed.written.some((w) => w.endsWith("pb_public/icons/icon.svg")), `${changed.pwa?.version} ${changed.written.filter((w) => w.includes("pb_public")).join(" ")}`);
+  // a precache entry the build does not have would stop the worker from installing, so the build says so
+  let missingPrecache = "";
+  try { await adapt(WORK, { quiet: true, clientDir: "dist/client", pwa: { icon: "icon.svg", precache: ["/fonts/nope.woff2"] } }); } catch (err) { missingPrecache = err instanceof Error ? err.message : String(err); }
+  check("a precache path the build does not have fails the build, by name", /pwa\.precache names "\/fonts\/nope\.woff2"/.test(missingPrecache), missingPrecache.split("\n")[0] ?? "(no error)");
+  // and without the option nothing of it appears
+  const plain = await adapt(WORK, { quiet: true, clientDir: "dist/client" });
+  check("without the pwa option nothing of it is written: no manifest, no icons, no worker, no tag in index.html", !plain.pwa && !existsSync(`${pub}/manifest.webmanifest`) && !existsSync(`${pub}/sw.js`) && !existsSync(`${pub}/icons`) && !readFileSync(`${pub}/index.html`, "utf8").includes("manifest") && !plain.written.some((w) => w.includes("pb_public")), readdirSync(pub).join(" "));
+  // the app below runs with it, so the worker and the manifest are served like any other file
+  await adapt(WORK, { quiet: true, clientDir: "dist/client", pwa: { icon: "icon.svg", precache: ["/robots.txt"] } });
 
   // ---- a static app: nothing to run, so nothing is generated to run it ------------------------------------------
   const staticApp = resolve(PKG, "test/.tmp/static-app");
@@ -187,6 +224,9 @@ try {
   check("an extensionless path resolves against <path>.html, like Cloudflare's asset layer", extensionless.status === 200 && extensionless.text.includes("<h1>faq</h1>"), `${extensionless.status} ${extensionless.text.slice(0, 40)}`);
   const robots = await get("/robots.txt");
   check("files from public/ ride along", robots.status === 200 && robots.text.includes("User-agent"), String(robots.status));
+  const swServed = await get("/sw.js");
+  const manifestServed = await get("/manifest.webmanifest");
+  check("sw.js and manifest.webmanifest are served from pb_public, the worker with the precache list the option asked for", swServed.status === 200 && /javascript/.test(swServed.type) && swServed.text.includes('"/robots.txt"') && manifestServed.status === 200 && manifestServed.json.name === "Void on voidbase", `${swServed.status} ${swServed.type} ${manifestServed.status} ${manifestServed.type}`);
   const collections = await get("/api/collections?perPage=1");
   check("PocketBase's own API is untouched by the app's routes", collections.status === 401 || collections.status === 200, String(collections.status));
 } finally {

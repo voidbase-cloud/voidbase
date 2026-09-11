@@ -614,6 +614,83 @@ Standard Webhooks, Lemon Squeezy with `X-Signature` HMAC over the raw body), its
 same six effects, and its own `customer`/`subscription`/`order` objects read into the same fields. Changing
 provider is removing one plugin and installing another; the rows keep their shape, with `provider` saying which.
 
+## Backups worth relying on: backups
+
+`backups` is the shipped plugin over `src/server/backups.ts` and answers the roadmap's "Enterprise backup, as an
+official plugin": two kinds of archive, each verified after it is written, each restorable on its own terms, a
+schedule with retention, and a copy in a bucket the instance's account does not own. Everything below is the same
+routes PocketBase has (list, create, upload, download, delete, restore) plus `verify`; the panel's Backups page and
+`voidbase migrate` keep working unchanged.
+
+**Two archive kinds.** `POST /api/backups` takes `{ kind?: "full" | "data", name? }`. The default is `full`, the
+kind the archives always were (every table and every file) with three entries added:
+
+- `full`: `data.json` (every D1 table, columns and rows, the `_collections` rows included, as before), every file in
+  storage as `storage/<collection id>/<record id>/<file name>`, `settings.json` (the settings as `GET /api/settings`
+  answers them: the SMTP password and the S3 secrets left out, so a full archive never holds them),
+  `collections.json` (every collection as the collections API exports it, token secrets left out as there too) and
+  `manifest.json` last: `{ format, kind, voidbase, created, tables, files: { count, bytes }, checksum, entries }`,
+  where `entries` is the sha256 of every other entry and `checksum` the sha256 over `"<name>\n<sha256>\n"` for all
+  of them, names sorted. It rebuilds an instance from nothing but a voidbase of the same or a newer version.
+- `data`: the rows of every non-system collection (views have no rows), their files, their definitions in
+  `collections.json` (so a restore can create one the target lacks, on request) and `manifest.json`. No
+  `settings.json`, no `_superusers`, no `_authOrigins`, `_otps`, `_mfas` or `_externalAuths`, no `_params`, no token
+  secrets. For moving content between environments or putting rows back after a bad migration. An auth collection's
+  own rows travel whole, password hashes and token keys included, because a move that signs every user out is not a
+  move; strip them on the target if that is not wanted.
+
+Files are streamed into the zip a chunk at a time (fflate's streaming `Zip`), never held whole. The archive itself
+streams to R2 as a multipart upload in 10 MiB parts; a backups storage that offers no multipart upload (the S3
+backups bucket from the settings, the Bun runtime's local store) takes it as one object, so it is held in memory
+first and the write is refused past 256 MiB (`BUFFERED_MAX`) with a message saying so. Archives written before
+this (only `data.json` and `storage/`) read as `kind: "legacy"` everywhere and restore exactly as they did.
+
+**Verification.** After the write the archive is read back as a stream, every entry hashed and the manifest
+compared: the checksum, each entry's hash (a corrupted one is named), entries the manifest lists that are gone,
+entries it does not list. The outcome lives in a sidecar next to the archive (`__backups__/<name>.meta.json`, never
+listed, deleted with it), which is what `GET /api/backups` reads: each item is
+`{ key, size, modified, kind, verified, voidbase }` plus `verifyError` when it failed, `offsite`/`offsiteError`
+when a copy was attempted (below) and `restore` after one (below). A legacy archive is `kind: "legacy"`,
+`verified: false`, `voidbase: null`: there is nothing to compare it to. `POST /api/backups/:key/verify` re-checks on
+demand and answers `{ key, kind, verified, voidbase, checksum, entries, corrupted, missing, error? }`, updating the
+sidecar; an uploaded archive is verified on arrival, so the listing knows its kind and version at once.
+
+**Restore per kind.** `POST /api/backups/:key/restore` still answers 204 and does the work in the background under
+the same lock `/api/health` reports as `canBackup`, but the archive is opened first, so a refusal is the answer: an
+archive whose `voidbase` major.minor is newer than the instance's is refused with
+`written by voidbase X.Y.Z, newer than this instance (A.B.C)`, and so is one that is not a voidbase archive. A
+`full` (or legacy) archive is restored entirely: the settings merged over the current ones (the secrets it never
+held stay as they are), every user collection dropped and recreated from the archive's `_collections` rows before
+their rows are loaded, the system tables' rows replaced, every file replaced. A `data` archive lands on the existing
+schema: for each collection in the archive that the instance has, its rows are replaced (columns the instance's
+table lacks are dropped) and its files are replaced under the instance's own collection id; a collection the
+instance lacks is skipped and reported, never invented, unless the body is `{ createMissing: true }`, in which case
+it is created from the archive's definition first; a system collection or a view in its place is skipped too. The
+report `{ at, kind, restored, created, skipped: [{ collection, reason }], settings }` is written to the sidecar and
+shown on the listing as `restore`, and the skips are logged.
+
+**The off-site copy.** With `VOIDBASE_BACKUP_S3_ENDPOINT`, `VOIDBASE_BACKUP_S3_BUCKET`,
+`VOIDBASE_BACKUP_S3_ACCESS_KEY_ID` and `VOIDBASE_BACKUP_S3_SECRET_ACCESS_KEY` set (`VOIDBASE_BACKUP_S3_REGION` is
+optional, `auto` by default; all read from the request's env first, then the runtime's, like the other plugins'
+knobs), every archive written is also `PUT` at the root of that bucket, another R2 account, Backblaze B2, AWS S3 or
+anything S3-compatible, path-style, with a Signature Version 4 computed here over `fetch` and WebCrypto (no SDK):
+the sha256 of the body when the archive was in memory, `UNSIGNED-PAYLOAD` when it streams from the backups
+storage after a multipart write. `GET /api/backups` marks the item `offsite: true` when the copy succeeded; a
+failed copy is logged and reported as `offsite: false, offsiteError` and never fails the backup, which is written
+and verified either way. The sidecar is not copied: the manifest inside the archive is what a restore from that
+bucket needs (`POST /api/backups/upload` it on any instance).
+
+**Schedule.** The cron from Settings > Backups runs as before, through the jobs queue on Cloudflare. Two knobs
+shape what it writes: `VOIDBASE_BACKUP_KIND=full|data` (default `full`, the kind it always wrote) and
+`VOIDBASE_BACKUP_KEEP=<n>`, the number of automatic archives to keep, the oldest beyond it deleted with their
+sidecars only after a successful, verified write. Without the knob the settings' `cronMaxKeep` applies as it
+always did (3 by default, 0 for unlimited). Named backups are never pruned.
+
+The unit test (`test/unit/backups.test.ts`) measures both archives' contents and manifests over an in-memory D1
+and R2, verification catching a corrupted and a missing entry, each restore with its refusals, retention, the
+signer against AWS's published SigV4 example, and a failed copy leaving the backup intact; the conformance suite
+(`test/conformance/backups.ts`) still runs the PocketBase contract against a live server.
+
 ## Auth is the core plugin
 
 Auth left the core on 2026-09-09 (plan.md, decision 0.3): `src/server/plugins/auth.ts` is a plugin of tier `core`

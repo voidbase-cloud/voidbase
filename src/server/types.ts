@@ -29,6 +29,14 @@ export interface Bindings {
   VOIDBASE_PROJECT_REPO?: string;
   VOIDBASE_PROJECT_BRANCH?: string;
   VOIDBASE_GH_TOKEN?: string;
+  // the backups plugin's schedule and off-site copy (src/server/backups.ts)
+  VOIDBASE_BACKUP_KIND?: string;
+  VOIDBASE_BACKUP_KEEP?: string;
+  VOIDBASE_BACKUP_S3_ENDPOINT?: string;
+  VOIDBASE_BACKUP_S3_BUCKET?: string;
+  VOIDBASE_BACKUP_S3_ACCESS_KEY_ID?: string;
+  VOIDBASE_BACKUP_S3_SECRET_ACCESS_KEY?: string;
+  VOIDBASE_BACKUP_S3_REGION?: string;
 }
 
 export interface Variables {

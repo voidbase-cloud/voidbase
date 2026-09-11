@@ -531,6 +531,11 @@ And (2026-09-11) the content half of translations:
 `translations` is a shipped plugin that owns a `translations` collection and, for the fields `VOIDBASE_TRANSLATABLE`
 declares, answers the records API in the locale the request asks for among `VOIDBASE_LOCALES`, falling back down
 their order, through a new after-read seam in the kernel; interface strings are still the project's (docs/plugins.md).
+And (2026-09-11) backups worth relying on: `backups` writes a `full` archive (tables, files, settings redacted,
+schema, manifest) or a `data` one (the non-system collections' rows and files), reads each back and verifies it,
+restores each on its own terms (refusing an archive from a newer voidbase, never inventing a collection unasked),
+keeps `VOIDBASE_BACKUP_KEEP` of the scheduled ones and copies every archive to a `VOIDBASE_BACKUP_S3_*` bucket
+outside the account with a SigV4 signature of its own, so losing the account is not losing the data (docs/plugins.md).
 
 ## What to correct on the site when this lands
 

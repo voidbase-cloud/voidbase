@@ -7,6 +7,11 @@
 //
 // It owns no collections and provides no interface: it reads whatever is there. That is what makes it the right
 // first one, and also what makes it a poor test of the parts of the loader that matter most.
+//
+// What ../backups.ts does now (docs/plugins.md, "Backups worth relying on"): two archive kinds (`full`, the whole
+// instance with its settings and schema; `data`, the non-system collections' rows and files), each read back and
+// verified after the write, restorable per kind, copied to an off-site S3 bucket when VOIDBASE_BACKUP_S3_* are set,
+// and a scheduled write shaped by VOIDBASE_BACKUP_KIND and VOIDBASE_BACKUP_KEEP. Still no collections of its own.
 import { mountBackupsApi } from "../backups";
 import type { Kernel } from "../kernel";
 import type { Plugin } from "./manifest";

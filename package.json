@@ -59,6 +59,7 @@
     "./plugins/lemonsqueezy": "./src/server/plugins/lemonsqueezy.ts",
     "./plugins/payments-shared": "./src/server/plugins/payments-shared.ts",
     "./plugins/domains": "./src/server/plugins/domains.ts",
+    "./plugins/previews": "./src/server/plugins/previews.ts",
     "./plugins/collections": "./src/server/plugins/collections.ts",
     "./registry": "./src/node/registry.ts",
     "./secrets": "./src/env/define.ts"

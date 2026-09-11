@@ -17,6 +17,7 @@ export type DeployRegistry = Partial<Record<string, () => Promise<DeployPlugin>>
 
 /** the shipped plugins that have a deploy-time half (src/node/plugins/<name>.ts) */
 export const SHIPPED_DEPLOY: DeployRegistry = {
+  previews: () => import("./plugins/previews").then((m) => m.previewsDeploy),
   domains: () => import("./plugins/domains").then((m) => m.domainsDeploy),
 };
 

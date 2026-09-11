@@ -159,6 +159,19 @@ describe("the archives", () => {
     it.sqlite.close();
   });
 
+  test("a schema archive: the non-system definitions, views included, and a manifest; no rows, no files", async () => {
+    const it = await instance();
+    await createCollection(it.db, { name: "recent", type: "view", fields: [], viewQuery: "SELECT id, title FROM posts" });
+    const { manifest, entries } = await archive(it.env, "schema");
+    expect(Object.keys(entries).sort()).toEqual(["collections.json", "manifest.json"]);
+    expect(manifest.kind).toBe("schema");
+    expect(manifest.tables).toEqual([]);
+    expect(manifest.files).toEqual({ count: 0, bytes: 0 });
+    expect(json<{ name: string; type: string }[]>(entries["collections.json"]).map((c) => `${c.name}:${c.type}`).sort()).toEqual(["posts:base", "recent:view", "users:auth"]);
+    expect(text(entries["collections.json"])).not.toContain("cover_p1.png"); // definitions, not rows
+    it.sqlite.close();
+  });
+
   test("verification catches a corrupted entry, a missing one, and an archive without a manifest", async () => {
     const it = await instance();
     const { bytes, entries } = await archive(it.env, "full");
@@ -258,6 +271,31 @@ describe("restore", () => {
     expect([plan2.created, plan2.skipped, plan2.restored.sort()]).toEqual([["tags"], [], ["posts", "tags", "users"]]);
     expect(target.sqlite.query("SELECT label FROM tags").all()).toEqual([{ label: "news" }]);
     expect((await listCollections(target.db)).find((c) => c.name === "tags")?.type).toBe("base");
+    source.sqlite.close(); target.sqlite.close();
+  });
+
+  test("a schema archive creates the collections the instance lacks and updates the ones it has; the rows stay", async () => {
+    const source = await instance();
+    await createCollection(source.db, { name: "tags", type: "base", fields: [{ name: "label", type: "text" }] });
+    source.sqlite.run("INSERT INTO tags (id, label) VALUES ('t1', 'news')");
+    await createBackup(source.env, "pb_backup_schema.zip", { kind: "schema" });
+    const bytes = archiveOf(source.storage, "pb_backup_schema.zip");
+    expect(openArchive(bytes).kind).toBe("schema");
+    // a fresh target: the same posts (with a row of its own) and users, no tags
+    const target = await instance();
+    target.sqlite.run("DELETE FROM posts; INSERT INTO posts (id, title, cover) VALUES ('p9', 'Target', '')");
+    await target.storage.put("__backups__/pb_backup_schema.zip", bytes);
+    const plan = await restoreBackup(target.env, "pb_backup_schema.zip");
+    expect(plan.kind).toBe("schema");
+    expect(plan.created).toEqual(["tags"]);
+    expect(plan.restored.sort()).toEqual(["posts", "tags", "users"]);
+    expect(plan.skipped).toEqual([]);
+    expect(plan.settings).toBe(false);
+    expect((await listCollections(target.db)).find((c) => c.name === "tags")?.type).toBe("base");
+    expect(target.sqlite.query("SELECT id, title FROM posts ORDER BY id").all()).toEqual([{ id: "p9", title: "Target" }]);
+    expect(target.sqlite.query("SELECT count(*) AS n FROM tags").get()).toEqual({ n: 0 });
+    expect(target.sqlite.query("SELECT email FROM _superusers").all()).toEqual([{ email: "admin@example.com" }]);
+    expect(metaOf(target.storage, "pb_backup_schema.zip").restore).toMatchObject({ kind: "schema", created: ["tags"] });
     source.sqlite.close(); target.sqlite.close();
   });
 
@@ -416,7 +454,7 @@ describe("the routes", () => {
     const it = await instance();
     const { call, settle } = appOver(it.env);
     expect((await call("GET", "/api/backups", undefined, "nobody")).status).toBe(401);
-    expect((await call("POST", "/api/backups", { name: "pb_backup_a.zip", kind: "weekly" })).json.data).toEqual({ kind: { code: "validation_in_invalid", message: "Must be one of: full, data." } });
+    expect((await call("POST", "/api/backups", { name: "pb_backup_a.zip", kind: "weekly" })).json.data).toEqual({ kind: { code: "validation_in_invalid", message: "Must be one of: full, data, schema." } });
     expect((await call("POST", "/api/backups", { name: "pb_backup_a.zip" })).status).toBe(204);
     expect((await call("POST", "/api/backups", { name: "pb_backup_b.zip", kind: "data" })).status).toBe(204);
     await it.storage.put("__backups__/pb_backup_old.zip", zipSync({ "data.json": enc.encode(JSON.stringify({ format: "voidbase-backup", version: 1, tables: {}, files: [] })) }));

@@ -7,11 +7,14 @@
 // hostname through the Workers Custom Domains API (Cloudflare adds the DNS record and issues the certificate),
 // waits for that certificate to be active (up to 90 seconds, and says where it got), and sets a zone Redirect Rule
 // per non-canonical hostname sending everything under it, 301, to the same path on the canonical one. On
-// `voidbase deploy --remove` it detaches every hostname pointing at the Worker and deletes those rules.
+// `voidbase deploy --remove` it detaches every hostname pointing at the Worker and deletes those rules. A preview
+// instance (the previews plugin, which runs first and bakes VOIDBASE_PREVIEW into ctx.vars) is left on workers.dev:
+// the production hostnames are never attached to a preview, whatever the environment says.
 import { attachCustomDomain, listCustomDomains, type CfApi, type CustomDomain } from "../../cloud/rest";
 import { CANONICAL_DOMAIN_VAR, DOMAINS_VAR, domains } from "../../server/plugins/domains";
+import { PREVIEW_VAR } from "../../server/plugins/previews";
 import type { RedirectEntry } from "../cloud-init";
-import type { DeployPlugin } from "../deploy-plugin";
+import type { DeployContext, DeployPlugin } from "../deploy-plugin";
 import { applyZoneRedirects, clearZoneRedirects } from "../zone-redirects";
 
 /** the knob: the same name as the var it bakes, so the shell's value and the Worker's are one thing */
@@ -63,12 +66,16 @@ export async function waitForCertificate(api: CfApi, account: string, d: Pick<Cu
   }
 }
 
+/** a preview deploy: the previews plugin ran before this one and baked the branch as a var */
+const isPreview = (ctx: DeployContext): boolean => !!ctx.vars[PREVIEW_VAR];
+
 export const domainsDeploy: DeployPlugin = {
   name: "domains",
   manifest: domains.manifest,
   deploy: {
     async before(ctx) {
       const hosts = hostnamesOf(ctx.env); if (!hosts.length) return;
+      if (isPreview(ctx)) { ctx.log(`custom domain${hosts.length > 1 ? "s" : ""} ${hosts.join(", ")}: skipped, a preview stays on workers.dev`); return; }
       validateHostnames(hosts);
       const canonical = hosts[0]!; const others = hosts.slice(1);
       ctx.config.workers_dev = false;
@@ -78,7 +85,7 @@ export const domainsDeploy: DeployPlugin = {
       ctx.log(`custom domain${hosts.length > 1 ? "s" : ""} ${hosts.join(", ")} (workers.dev off): ${plan}`);
     },
     async after(ctx) {
-      const hosts = hostnamesOf(ctx.env); if (!hosts.length || ctx.local || !ctx.api) return;
+      const hosts = hostnamesOf(ctx.env); if (!hosts.length || ctx.local || !ctx.api || isPreview(ctx)) return;
       const { api, log } = ctx; const account = ctx.account.id; const canonical = hosts[0]!; const others = hosts.slice(1);
       if (ctx.dryRun) { log(`dry run: would attach ${hosts.join(", ")} to ${ctx.name}, wait for ${hosts.length === 1 ? "its" : "each"} certificate${others.length ? ` and set ${others.length} redirect rule(s) to ${canonical}` : ""}`); return; }
       for (const host of hosts) {
@@ -92,6 +99,7 @@ export const domainsDeploy: DeployPlugin = {
       if (others.length) await applyZoneRedirects(api, account, ctx.name, others.map((h) => canonicalRedirect(h, canonical)), log, SCOPE);
     },
     async remove(ctx) {
+      if (isPreview(ctx)) return;
       const hosts = hostnamesOf(ctx.env); const { api, log } = ctx;
       if (!api) { if (hosts.length) log("custom domains: nothing to detach on this machine"); return; }
       const attached = await listCustomDomains(api, ctx.account.id, { service: ctx.name });

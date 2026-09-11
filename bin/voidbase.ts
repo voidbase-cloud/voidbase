@@ -52,20 +52,30 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   dev [--port 5180]                  start the Void dev server (vp dev)
   build | preview [--port 5181]      production build / run the built Worker locally (vp build / vp preview)
   deploy [--name worker] [--account id] [--domain example.com,api.example.com] [--public-dir pb_public] [--dry-run] [--no-queue] [--no-hub] [--no-cron]
-         [--analytics] [--rate-limit 300/10]
+         [--analytics] [--rate-limit 300/10] [--preview <branch>]
                                      go live on your Cloudflare account with VOIDBASE_DEPLOY_CF_API_KEY: creates the D1
                                      database and R2 bucket, writes cloud/ (voidbase cloud init) with wrangler.jsonc,
                                      stores the superuser as worker secrets and runs void deploy --backend cloudflare
-  deploy --remove [--name worker] [--yes] [--dry-run]
+  deploy --preview <branch>          a preview instance for the branch (or VOIDBASE_PREVIEW, which a Workers build sets
+                                     from WORKERS_CI_BRANCH): a Worker of its own, <name>-pr-<slug>, with its own database,
+                                     bucket and queue, on workers.dev, seeded from production (VOIDBASE_PREVIEW_SEED=
+                                     schema|data|none), its address posted on the branch's pull request (VOIDBASE_GH_TOKEN)
+  deploy --remove [--name worker] [--yes] [--dry-run] [--preview <branch>]
                                      take the Worker down: the deploy plugins undo their part (custom domains and
                                      their redirect rules), then the Worker is deleted; the database, the bucket
-                                     and the queue stay (voidbase destroy removes those). Asks first unless --yes
+                                     and the queue stay (voidbase destroy removes those). Asks first unless --yes.
+                                     With --preview the branch's preview goes with everything it owns
+  previews [list] [--name worker]    the previews of this project's Worker on the account: branch, address, created
+  previews remove <branch> [--yes]   the same as deploy --remove --preview <branch>
+  previews prune --merged [--dry-run] remove every preview whose pull request is merged or closed (VOIDBASE_GH_TOKEN,
+                                     VOIDBASE_PROJECT_REPO); the production build does this with VOIDBASE_PREVIEW_PRUNE=1
   deploy --void                      deploy to the Void platform instead (void auth login first)
-  sync [dir] [--repo owner/name] [--branch main] [--no-build] [--ci] [--no-ci] [--dry-run]
+  sync [dir] [--repo owner/name] [--branch main] [--no-build] [--ci] [--no-ci] [--dry-run] [--previews | --no-previews]
                                      the instance and its pipeline: deploy (a Void app is built first and deployed from
                                      .voidbase/), then connect the GitHub repository to Cloudflare Workers Builds so a
                                      push to the branch deploys and other branches build. Needs CLOUDFLARE_BUILDS_TOKEN
-                                     (a local() key) for the pipeline part; in CI, sync is the deploy alone (--ci forces it)
+                                     (a local() key) for the pipeline part; in CI, sync is the deploy alone (--ci forces it).
+                                     --previews adds the second trigger: every other branch builds and deploys a preview
   local new <name> [--dir path] [--port n] [--email a@b] [--password p]
                                      create an instance on this machine: a directory, a port and a superuser. The
                                      npm answer to downloading the executable, and it never touches Cloudflare
@@ -185,6 +195,21 @@ async function listTemplates(): Promise<void> {
   console.log(`\nstart one: voidbase init [dir] --template <name>   (or any public repository: --template owner/name)`);
 }
 if (cmd && TOOLCHAIN.has(cmd) && isExecutable()) { console.error(`"${cmd}" needs the Cloudflare toolchain, which comes with the npm package, not the prebuilt executable:\n  bunx @voidbase-cloud/voidbase ${argv.join(" ")}`); process.exit(1); }
+// `voidbase deploy --remove [--preview <branch>]` and `voidbase previews remove <branch>`: the Worker (a preview with
+// everything it owns) after its deploy plugins undo their part. A destructive command says what it will do and waits,
+// unless the caller has already decided (--yes), and refuses when nobody can be asked.
+async function removeWorker(preview: string | undefined): Promise<void> {
+  const { deployTarget, removeDeployment } = await import("../src/node/deploy-cf");
+  if (!flags["dry-run"] && !("yes" in flags)) {
+    if (!process.stdin.isTTY) { console.error("refusing to delete the Worker without a confirmation: rerun with --yes"); process.exit(1); }
+    const { name } = await deployTarget({ name: flags.name, account: flags.account, preview, log: () => undefined });
+    process.stdout.write(preview ? `This deletes the preview ${name} (branch ${preview}): the Worker, its database, its bucket and its queue. Type the worker name to confirm: ` : `This deletes the Worker ${name} after its deploy plugins undo their part (custom domains, redirect rules).\nIts database, bucket and queue stay. Type the worker name to confirm: `);
+    const typed = (await new Promise<string>((r) => { process.stdin.once("data", (d: Buffer) => r(d.toString().trim())); })).trim();
+    if (typed !== name) { console.error(`"${typed}" is not "${name}": nothing deleted`); process.exit(1); }
+  }
+  await removeDeployment({ name: flags.name, account: flags.account, dryRun: !!flags["dry-run"], preview });
+}
+
 switch (cmd) {
   case undefined: case "help": case "--help": console.log(HELP); break;
   case "version": case "--version": console.log(await currentVersion()); break;
@@ -577,27 +602,39 @@ switch (cmd) {
   case "sync": {
     // the instance and its pipeline in one go (src/node/sync.ts): deploy, then connect the repository to Workers Builds
     const { sync } = await import("../src/node/sync");
-    await sync({ dir: sub, name: flags.name, account: flags.account, domain: flags.domain, dryRun: !!flags["dry-run"], build: !flags["no-build"], ci: flags["no-ci"] ? false : flags.ci ? true : undefined, repo: flags.repo, branch: flags.branch });
+    await sync({ dir: sub, name: flags.name, account: flags.account, domain: flags.domain, dryRun: !!flags["dry-run"], build: !flags["no-build"], ci: flags["no-ci"] ? false : flags.ci ? true : undefined, repo: flags.repo, branch: flags.branch, previews: flags["no-previews"] ? false : flags.previews ? true : undefined, preview: flags.preview });
     break;
   }
   case "deploy": {
     if (flags.void) { await run("./node_modules/.bin/void", ["deploy"]); break; } // the Void platform (void auth login first)
-    if (flags.remove) {
-      const { deployTarget, removeDeployment } = await import("../src/node/deploy-cf");
-      // a destructive command says what it will do and waits, unless the caller has already decided
-      if (!flags["dry-run"] && !("yes" in flags)) {
-        if (!process.stdin.isTTY) { console.error("refusing to delete the Worker without a confirmation: rerun with --yes"); process.exit(1); }
-        const { name } = await deployTarget({ name: flags.name, account: flags.account, log: () => undefined });
-        process.stdout.write(`This deletes the Worker ${name} after its deploy plugins undo their part (custom domains, redirect rules).\nIts database, bucket and queue stay. Type the worker name to confirm: `);
-        const typed = (await new Promise<string>((r) => { process.stdin.once("data", (d: Buffer) => r(d.toString().trim())); })).trim();
-        if (typed !== name) { console.error(`"${typed}" is not "${name}": nothing deleted`); process.exit(1); }
-      }
-      await removeDeployment({ name: flags.name, account: flags.account, dryRun: !!flags["dry-run"] });
+    if (flags.remove) { await removeWorker(flags.preview); break; }
+    const { deployToCloudflare } = await import("../src/node/deploy-cf");
+    await deployToCloudflare({ name: flags.name, account: flags.account, dir: flags.dir, publicDir: flags["public-dir"] ?? flags.publicDir, dryRun: !!flags["dry-run"], regenerate: !!flags.regenerate, queue: flags["no-queue"] ? false : undefined, cron: flags["no-cron"] ? false : undefined, domain: flags.domain as string | undefined, analytics: flags.analytics ? true : undefined, rateLimit: flags["rate-limit"], hub: flags["no-hub"] ? false : undefined, preview: flags.preview });
+    break;
+  }
+  case "previews": {
+    // the previews of this project's production Worker (src/node/plugins/previews.ts): list, remove one, prune the merged
+    const action = sub ?? "list";
+    if (action === "remove" || action === "rm") { if (!rest[0]) { console.error("usage: voidbase previews remove <branch> [--yes]"); process.exit(1); } await removeWorker(rest[0]); break; }
+    const { deployTarget } = await import("../src/node/deploy-cf");
+    const { githubOf, listPreviews, pruneMerged } = await import("../src/node/plugins/previews");
+    const { api, account, production } = await deployTarget({ name: flags.name, account: flags.account, log: () => undefined });
+    if (action === "list" || action === "ls") {
+      const list = await listPreviews(api, account.id, production);
+      if (!list.length) { console.log(`no previews of ${production} on account ${account.name} (voidbase deploy --preview <branch> makes one)`); break; }
+      console.log(`${list.length} preview(s) of ${production} on ${account.name}:`);
+      for (const p of list) console.log(`  ${p.name.padEnd(40)} ${(p.branch ?? "?").padEnd(28)} ${p.url ?? ""}${p.created ? `  created ${p.created.slice(0, 10)}` : ""}`);
       break;
     }
-    const { deployToCloudflare } = await import("../src/node/deploy-cf");
-    await deployToCloudflare({ name: flags.name, account: flags.account, dir: flags.dir, publicDir: flags["public-dir"] ?? flags.publicDir, dryRun: !!flags["dry-run"], regenerate: !!flags.regenerate, queue: flags["no-queue"] ? false : undefined, cron: flags["no-cron"] ? false : undefined, domain: flags.domain as string | undefined, analytics: flags.analytics ? true : undefined, rateLimit: flags["rate-limit"], hub: flags["no-hub"] ? false : undefined });
-    break;
+    if (action === "prune") {
+      if (!("merged" in flags)) { console.error("usage: voidbase previews prune --merged [--dry-run]"); process.exit(1); }
+      const { readSecretsValues, SECRETS_DIR } = await import("../src/node/secrets");
+      const env = { ...(readSecretsValues(resolve(process.env.VOIDBASE_SECRETS_DIR || SECRETS_DIR)) ?? {}), ...(process.env as Record<string, string>) };
+      const r = await pruneMerged({ api, account: account.id, production, github: githubOf(env), dryRun: "dry-run" in flags, log: (l) => console.log(l) });
+      console.log(`${r.removed.length} ${"dry-run" in flags ? "would be removed" : "removed"}, ${r.kept.length} kept`);
+      break;
+    }
+    console.error("usage: voidbase previews [list] | remove <branch> [--yes] | prune --merged [--dry-run]"); process.exit(1);
   }
   case "superuser": {
     if (!flags.url && sub === "upsert" && rest.length >= 2) {

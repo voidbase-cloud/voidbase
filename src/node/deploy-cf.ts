@@ -12,7 +12,8 @@ import { pathToFileURL } from "node:url";
 import { loadEnv } from "./serve";
 import { STORE_KEYS_VAR } from "../server/secrets-store";
 import { deleteWorkerSecrets, loadSecrets, putStoreSecrets, readSecretsValues, SECRETS_DIR, STORE_KNOB, storeBindings, storeSecretName, storeSecrets, workerSecretNames, type LoadedSecrets, putWorkerSecrets } from "./secrets";
-import { CfApi, ensureD1, ensureQueue, ensureR2, findQueue, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
+import { CfApi, destroyInstance, ensureD1, ensureQueue, ensureR2, findQueue, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
+import { PREVIEW_OF_VAR, PREVIEW_VAR, previewWorkerName } from "../server/plugins/previews";
 import { ensureFlags, ensureFlagshipApp, FLAGS_BINDING, FLAGS_VAR } from "./flagship";
 import { MAIL_BINDING, MAIL_DOMAIN_VAR } from "../server/plugins/mail-binding";
 import { AI_BINDING, AI_VAR, aiModelOf } from "../server/plugins/ai-binding";
@@ -52,6 +53,12 @@ export interface DeployOptions { cron?: boolean; domain?: string; name?: string;
   /** `voidbase serve --workers`: generate the same project for Cloudflare's local runtime and stop there. No token,
    *  no account, no resource is created and nothing is uploaded; the ids in wrangler.jsonc are local ones. */
   local?: boolean;
+  /**
+   * `--preview <branch>` (or VOIDBASE_PREVIEW): a preview instance of this project for the branch, a Worker of its
+   * own named `<name>-pr-<slug>` with its own database, bucket and queue, seeded from production by the previews
+   * plugin (src/node/plugins/previews.ts). `name` stays the production Worker's name.
+   */
+  preview?: string;
 }
 
 export interface DeployResult {
@@ -81,7 +88,7 @@ function projectName(): string {
 const randomPassword = () => { const a = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const b = crypto.getRandomValues(new Uint8Array(20)); return Array.from(b, (x) => a[x % a.length]).join(""); };
 
 // Bun only loads the .env of the working directory; the starter keeps its PB_* and deploy variables one level up.
-const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DOMAINS", "VOIDBASE_DEPLOY_DOMAIN", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", MAIL_DOMAIN_VAR, AI_VAR, "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
+const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DOMAINS", "VOIDBASE_PREVIEW_SEED", "VOIDBASE_PREVIEW_SOURCE_URL", "VOIDBASE_GH_TOKEN", "VOIDBASE_PROJECT_REPO", "VOIDBASE_DEPLOY_DOMAIN", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", MAIL_DOMAIN_VAR, AI_VAR, "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
 export function loadEnvFiles(files = [".env", ".env.local", "../.env", "../.env.local"]): string[] {
   const loaded: string[] = [];
   for (const f of files) {
@@ -109,7 +116,7 @@ async function loadProjectEnv(log: (line: string) => void): Promise<{ secretsDir
   return { secretsDir, secrets };
 }
 
-/** The worker name: --name, VOIDBASE_DEPLOY_NAME or the project's, checked against what pb_secrets/main.ts declares. */
+/** The production worker name: --name, VOIDBASE_DEPLOY_NAME or the project's, checked against what pb_secrets/main.ts declares. */
 function resolveWorkerName(opts: Pick<DeployOptions, "name">, secrets: LoadedSecrets, secretsDir: string): string {
   const name = slug(opts.name || process.env.VOIDBASE_DEPLOY_NAME || projectName());
   // A project that declares its own deploy target may not be deployed onto another one by an ambient environment:
@@ -124,32 +131,46 @@ function resolveWorkerName(opts: Pick<DeployOptions, "name">, secrets: LoadedSec
   return name;
 }
 
+/**
+ * The Worker a deploy targets: the production name, or `<production>-pr-<slug>` for a preview of a branch (`--preview`,
+ * else VOIDBASE_PREVIEW, which a Workers build sets from WORKERS_CI_BRANCH). Resolved here, before any resource is
+ * named, so a preview's database, bucket and queue are its own; the naming rule is the previews plugin's.
+ */
+function resolveTarget(opts: Pick<DeployOptions, "name" | "preview">, secrets: LoadedSecrets, secretsDir: string): { name: string; production: string; preview: string | null } {
+  const production = resolveWorkerName(opts, secrets, secretsDir);
+  const preview = (opts.preview ?? process.env[PREVIEW_VAR] ?? "").trim() || null;
+  return { name: preview ? previewWorkerName(production, preview) : production, production, preview };
+}
+
+export interface DeployTarget { api: CfApi; token: string; account: { id: string; name: string }; name: string; production: string; preview: string | null; secretsDir: string; secrets: LoadedSecrets }
 /** The environment, the token, the account and the worker name a deploy (or `voidbase secrets`) targets. */
-export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" | "log"> = {}): Promise<{ api: CfApi; token: string; account: { id: string; name: string }; name: string; secretsDir: string; secrets: LoadedSecrets }> {
+export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" | "log" | "preview"> = {}): Promise<DeployTarget> {
   const log = opts.log ?? ((l: string) => console.log(l));
   const { secretsDir, secrets } = await loadProjectEnv(log);
   const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || ""; // empty means unset
   if (!token) { log(`${TOKEN_ENV} is not set.\n\n${tokenHelp()}`); throw new Error(`${TOKEN_ENV} missing`); }
-  const name = resolveWorkerName(opts, secrets, secretsDir);
+  const target = resolveTarget(opts, secrets, secretsDir);
   const api = new CfApi(token, API);
   const account = await resolveAccount(api, opts.account || process.env.VOIDBASE_DEPLOY_CF_ACCOUNT_ID || undefined).catch((e: Error) => { throw new Error(`${e.message} (is it ${TOKEN_ENV} with Account Settings read?)`); });
-  return { api, token, account, name, secretsDir, secrets };
+  return { api, token, account, ...target, secretsDir, secrets };
 }
 
 /** The same, for a run on this machine (`voidbase serve --workers`): no token, no account, the API never called. */
-async function localTarget(opts: Pick<DeployOptions, "name" | "log"> = {}): Promise<{ api: null; token: ""; account: { id: string; name: string }; name: string; secretsDir: string; secrets: LoadedSecrets }> {
+async function localTarget(opts: Pick<DeployOptions, "name" | "log" | "preview"> = {}): Promise<{ api: null; token: ""; account: { id: string; name: string }; name: string; production: string; preview: string | null; secretsDir: string; secrets: LoadedSecrets }> {
   const log = opts.log ?? ((l: string) => console.log(l));
   const { secretsDir, secrets } = await loadProjectEnv(log);
-  return { api: null, token: "", account: { id: "", name: "this machine" }, name: resolveWorkerName(opts, secrets, secretsDir), secretsDir, secrets };
+  return { api: null, token: "", account: { id: "", name: "this machine" }, ...resolveTarget(opts, secrets, secretsDir), secretsDir, secrets };
 }
+/** what the hooks read about a preview: the branch and the production Worker, the way the plugin's knobs are named */
+const previewEnv = (t: { production: string; preview: string | null }): Record<string, string> => (t.preview ? { [PREVIEW_VAR]: t.preview, [PREVIEW_OF_VAR]: t.production } : {});
 
 export async function deployToCloudflare(opts: DeployOptions = {}): Promise<DeployResult> {
   const log = opts.log ?? ((l: string) => console.log(l));
   // local: the same project, generated for Cloudflare's local runtime (`voidbase serve --workers`, src/node/serve-workers.ts).
   // `api` is null there, and every step that would reach Cloudflare is answered locally instead.
   const local = !!opts.local;
-  const { api, token, account, name, secretsDir, secrets: pbSecrets } = local ? await localTarget(opts) : await deployTarget(opts);
-  if (api) log(`account ${account.name} (${account.id}), worker "${name}"`);
+  const { api, token, account, name, production, preview, secretsDir, secrets: pbSecrets } = local ? await localTarget(opts) : await deployTarget(opts);
+  if (api) log(`account ${account.name} (${account.id}), worker "${name}"${preview ? ` (a preview of ${production} for branch ${preview})` : ""}`);
   else log(`worker "${name}" on Cloudflare's local runtime (this machine): no token, no account, nothing reaches Cloudflare`);
   // the local ids: "local" is what Void's dev server names its Miniflare D1, and where it applies db/migrations
   const db = api ? await ensureD1(api, account.id, `${name}-db`) : { uuid: "local", created: false };
@@ -286,7 +307,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   // the deploy plugins' `before`: the config and the vars are theirs to change here, and a plugin may claim the
   // URL (a custom domain); the config is written again once they ran. `env` is read the way the deploy's own knobs
   // are: the shell and the .env files first, then pb_secrets/secrets.json; --domain is the knob's flag form.
-  const hookCtx: DeployContext = { name, account: { id: account.id }, api, env: hookEnv(secretsDir, opts.domain ? { VOIDBASE_DEPLOY_DOMAIN: opts.domain } : {}), config: workerConfig, vars: baked, url: null, log, local, dryRun: !!opts.dryRun };
+  const hookCtx: DeployContext = { name, account: { id: account.id }, api, env: hookEnv(secretsDir, { ...(opts.domain ? { VOIDBASE_DEPLOY_DOMAIN: opts.domain } : {}), ...previewEnv({ production, preview }) }), config: workerConfig, vars: baked, url: null, log, local, dryRun: !!opts.dryRun };
   await runDeployHooks("before", deployPlugins, hookCtx); writeWorkerConfig();
   if (mailDomain) log(await mailDomainReport(api, account.id, mailDomain));
   log(`project: ${cloud}`);
@@ -420,15 +441,24 @@ function hookEnv(secretsDir: string, extra: Record<string, string> = {}): Record
 /**
  * `voidbase deploy --remove`: the deploy plugins undo their part (`remove` hooks), then the Worker is deleted. Its
  * database, bucket and queue stay, with the data in them: `voidbase destroy` is the command that removes those.
+ * With `--preview <branch>` the target is the branch's preview instance, and everything it owns goes with the
+ * Worker (a preview is disposable by definition; the CLI still asks, or takes `--yes`).
  */
-export async function removeDeployment(opts: Pick<DeployOptions, "name" | "account" | "dryRun" | "log"> = {}): Promise<{ name: string; deleted: boolean; hooks: string[] }> {
+export async function removeDeployment(opts: Pick<DeployOptions, "name" | "account" | "dryRun" | "log" | "preview"> = {}): Promise<{ name: string; deleted: boolean; hooks: string[] }> {
   const log = opts.log ?? ((l: string) => console.log(l));
-  const { api, account, name, secretsDir } = await deployTarget(opts);
-  log(`account ${account.name} (${account.id}), worker "${name}"`);
+  const { api, account, name, production, preview, secretsDir } = await deployTarget(opts);
+  log(`account ${account.name} (${account.id}), worker "${name}"${preview ? ` (the preview of ${production} for branch ${preview})` : ""}`);
   const deployPlugins = await discoverDeployPlugins(resolve(".", process.env.VOIDBASE_PLUGINS_DIR || "pb_plugins"));
   if (deployPlugins.length) log(`deploy plugins: ${deployPlugins.map((p) => `${p.name} (${p.origin})`).join(", ")}`);
-  const ctx: DeployContext = { name, account: { id: account.id }, api, env: hookEnv(secretsDir), config: {}, vars: {}, url: null, log, local: false, dryRun: !!opts.dryRun };
+  const ctx: DeployContext = { name, account: { id: account.id }, api, env: hookEnv(secretsDir, previewEnv({ production, preview })), config: {}, vars: { ...previewEnv({ production, preview }) }, url: null, log, local: false, dryRun: !!opts.dryRun };
   const hooks = await runDeployHooks("remove", deployPlugins, ctx);
+  if (preview) {
+    if (opts.dryRun) { log(`dry run: would delete the preview ${name} with its database, bucket and queue`); return { name, deleted: false, hooks }; }
+    const out = await destroyInstance(api, { account: account.id, name, log: (l) => log(`  ${l}`) });
+    if (out.errors.length) throw new Error(`removing the preview ${name}: ${out.errors.join("; ")}`);
+    log(`preview ${name} removed: ${out.deleted.length} deleted, ${out.skipped.length} not there`);
+    return { name, deleted: out.deleted.includes(`worker ${name}`), hooks };
+  }
   const stays = `its database, bucket and queue stay (voidbase destroy ${name} removes those)`;
   if (opts.dryRun) { log(`dry run: would delete the Worker ${name}; ${stays}`); return { name, deleted: false, hooks }; }
   if (!(await workerExists(api, account.id, name))) { log(`worker ${name}: not on the account; ${stays}`); return { name, deleted: false, hooks }; }

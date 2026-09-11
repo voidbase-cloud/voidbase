@@ -814,8 +814,8 @@ schedule with retention, and a copy in a bucket the instance's account does not 
 routes PocketBase has (list, create, upload, download, delete, restore) plus `verify`; the panel's Backups page and
 `voidbase migrate` keep working unchanged.
 
-**Two archive kinds.** `POST /api/backups` takes `{ kind?: "full" | "data", name? }`. The default is `full`, the
-kind the archives always were (every table and every file) with three entries added:
+**Three archive kinds.** `POST /api/backups` takes `{ kind?: "full" | "data" | "schema", name? }`. The default is
+`full`, the kind the archives always were (every table and every file) with three entries added:
 
 - `full`: `data.json` (every D1 table, columns and rows, the `_collections` rows included, as before), every file in
   storage as `storage/<collection id>/<record id>/<file name>`, `settings.json` (the settings as `GET /api/settings`
@@ -873,7 +873,7 @@ and verified either way. The sidecar is not copied: the manifest inside the arch
 bucket needs (`POST /api/backups/upload` it on any instance).
 
 **Schedule.** The cron from Settings > Backups runs as before, through the jobs queue on Cloudflare. Two knobs
-shape what it writes: `VOIDBASE_BACKUP_KIND=full|data` (default `full`, the kind it always wrote) and
+shape what it writes: `VOIDBASE_BACKUP_KIND=full|data|schema` (default `full`, the kind it always wrote) and
 `VOIDBASE_BACKUP_KEEP=<n>`, the number of automatic archives to keep, the oldest beyond it deleted with their
 sidecars only after a successful, verified write. Without the knob the settings' `cronMaxKeep` applies as it
 always did (3 by default, 0 for unlimited). Named backups are never pruned.
@@ -903,6 +903,63 @@ permission is the one docs/deploy.md names for `_redirects`; without it the rule
 `test/unit/domains-plugin.test.ts` measures the pure parts; `test/deploy-cf.ts` runs `after` and `--remove` against
 the mock's domains, certificate packs and rulesets. The deploy itself now knows only whether workers.dev is on and
 which URL to report. The control plane (`src/cloud/client.ts`) still attaches domains for the instances it provisions.
+
+## A preview per pull request: previews
+
+`previews` is the second plugin whose work is at deploy time, and the one the roadmap's "Preview environments, as
+an official plugin" asked for in its first shape: a new instance for the branch, seeded from the production schema,
+with a working address that disappears on merge, the pull request carrying the address. The runtime half
+(`src/server/plugins/previews.ts`) provides nothing and reports `previews: { of, branch }` on `/api/plugins` from
+the two vars the deploy baked (nothing on a production instance); it also holds the naming rule, because both halves
+need it. The deploy half (`src/node/plugins/previews.ts`) does the rest.
+
+**The name.** `voidbase deploy --preview <branch>` (or `VOIDBASE_PREVIEW=<branch>`, which a Workers build sets from
+`WORKERS_CI_BRANCH`) targets `<name>-pr-<slug>`, where the slug is the branch lowercased, every run of characters
+outside `[a-z0-9]` turned into one dash, cut at 20 characters, then a dash and a 4-character base-36 hash of the whole
+branch (FNV-1a), so `feature/login` and `feature-login` are two Workers and the same branch is always the same one;
+the words are shortened, down to the hash alone, when the whole would pass Cloudflare's 63 characters. The deploy
+resolves that name before it names anything else, so the preview's `-db`, `-storage` and `-jobs` are its own, as
+every instance's are (docs/deploy.md, "Every instance is isolated"). The production name is never touched: a
+preview is a second Worker beside it.
+
+**`before`.** Bakes `VOIDBASE_PREVIEW` and `VOIDBASE_PREVIEW_OF` as vars, keeps `workers_dev` on, and checks the
+seed knob. The `domains` plugin runs after it in shipped order and, seeing `VOIDBASE_PREVIEW` in `ctx.vars`, attaches
+nothing, claims no URL and detaches nothing on removal: a preview stays on workers.dev whatever `VOIDBASE_DOMAINS`
+says, because the production hostnames are production's.
+
+**`after`.** Seeds the preview from production, then comments on the pull request. The seed is a backup taken on
+production and restored on the preview through the backups API over HTTP, the way `voidbase migrate` moves data:
+`VOIDBASE_PREVIEW_SEED=schema` (the default) takes a `schema` archive, the kind added for this (the non-system
+collections' definitions, views included, and a manifest, no rows and no files; restoring one creates the
+collections the instance lacks and updates the ones it has, and never touches a system collection), `data` takes a
+`data` archive (rows and files too), `none` (or `0`) skips it. Production is `VOIDBASE_PREVIEW_SOURCE_URL` or
+`https://<production>.<subdomain>.workers.dev`; both sides are signed into with `VOIDBASE_SUPERUSER_EMAIL` and
+`VOIDBASE_SUPERUSER_PASSWORD`, the knobs the deploy already stores on the preview, and the archive is deleted on
+both sides afterwards. A seed that fails leaves the preview up and unseeded, says so in the log and in the comment,
+and does not fail the deploy. Then, with `VOIDBASE_GH_TOKEN` (a token with pull requests: write) and the repository
+(`VOIDBASE_PROJECT_REPO=owner/name`, else the checkout's origin remote; Workers Builds sets no repository variable,
+its own are `CI`, `WORKERS_CI`, `WORKERS_CI_BUILD_UUID`, `WORKERS_CI_COMMIT_SHA` and `WORKERS_CI_BRANCH`, per
+developers.cloudflare.com/workers/ci-cd/builds/configuration/#environment-variables), the branch's open pull
+request gets one comment, marked `<!-- voidbase-preview -->` on its first line: the address, the REST API and the
+dashboard under it, what it was seeded with, the voidbase version and the time. A later deploy of the branch finds
+the mark and updates that comment rather than adding another. Without a pull request yet, nothing is posted and the
+next deploy tries again. On a production deploy (no branch) the hook does one other thing when
+`VOIDBASE_PREVIEW_PRUNE=1`: it removes every preview whose pull request is merged or closed, which is how a preview
+disappears on merge without anything listening for GitHub events.
+
+**`remove`.** `voidbase deploy --remove --preview <branch>` (or `voidbase previews remove <branch>`) turns the
+comment into "removed" with the time, then the deploy deletes the Worker and, because a preview is disposable by
+definition, its database, bucket and queue with it (a production `--remove` keeps those; `voidbase destroy` is the
+command that removes them there). `voidbase previews` lists the previews of the project's Worker (every
+`<name>-pr-*` on the account, with the branch read back from its vars, the address and the creation date), and
+`voidbase previews prune --merged` is the prune above from a laptop.
+
+`test/unit/previews-plugin.test.ts` measures the naming rule, the knobs, `before`, the domains plugin standing down,
+the comment's body and its post-once-update-after behaviour against a fake GitHub, the prune decision against fake
+pull request states and the seeding sequence against two fake instances; `test/deploy-cf.ts` runs a `--preview` dry
+run, `after`, the listing, `--remove --preview` and the prune against the mock's Workers, D1, R2, queues, pull
+requests and comments. What the roadmap's second shape describes (the same instance with the branch's writes flagged
+as preview) is not built: every preview is a whole instance.
 
 ## Auth is the core plugin
 

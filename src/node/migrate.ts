@@ -38,7 +38,8 @@ export function sameInstance(a: string, b: string): boolean {
   return canon(normalizeUrl(a)) === canon(normalizeUrl(b));
 }
 
-async function call(base: string, method: string, path: string, opts: { token?: string; json?: unknown; body?: BodyInit } = {}): Promise<{ status: number; json: Record<string, unknown>; text: string }> {
+/** one HTTP call against an instance, the answer parsed as JSON when it is (shared with the previews plugin's seeding) */
+export async function call(base: string, method: string, path: string, opts: { token?: string; json?: unknown; body?: BodyInit } = {}): Promise<{ status: number; json: Record<string, unknown>; text: string }> {
   const headers: Record<string, string> = {};
   if (opts.token) headers.authorization = opts.token;
   if (opts.json !== undefined) headers["content-type"] = "application/json";
@@ -48,7 +49,7 @@ async function call(base: string, method: string, path: string, opts: { token?: 
   try { json = JSON.parse(text) as Record<string, unknown>; } catch { json = {}; }
   return { status: r.status, json, text };
 }
-const short = (r: { status: number; json: Record<string, unknown>; text: string }) => `${r.status} ${typeof r.json.message === "string" ? r.json.message : r.text.slice(0, 160)}`.trim();
+export const short = (r: { status: number; json: Record<string, unknown>; text: string }) => `${r.status} ${typeof r.json.message === "string" ? r.json.message : r.text.slice(0, 160)}`.trim();
 
 /** a superuser token for one side: the one given, or a sign-in with the email and password; verified against /api/health */
 export async function signIn(side: Side, label: string): Promise<string> {
@@ -73,7 +74,7 @@ export async function isControlPlane(url: string, token: string): Promise<boolea
   try { const r = await call(normalizeUrl(url), "GET", "/api/vbcloud/me", { token }); return r.status !== 404; } catch { return false; }
 }
 
-const canBackup = async (base: string, token: string): Promise<boolean | null> => {
+export const canBackup = async (base: string, token: string): Promise<boolean | null> => {
   try { const h = await call(base, "GET", "/api/health", { token }); const v = (h.json as Health).data?.canBackup; return typeof v === "boolean" ? v : null; } catch { return null; }
 };
 const listCollections = async (base: string, token: string): Promise<Collection[] | null> => {
@@ -81,7 +82,7 @@ const listCollections = async (base: string, token: string): Promise<Collection[
   if (r.status !== 200) return null;
   return ((r.json.items as Collection[]) ?? []).sort((a, b) => a.name.localeCompare(b.name));
 };
-const listBackups = async (base: string, token: string): Promise<string[]> => {
+export const listBackups = async (base: string, token: string): Promise<string[]> => {
   const r = await call(base, "GET", "/api/backups", { token });
   if (r.status !== 200) throw new Error(`GET ${base}/api/backups: ${short(r)}`);
   return ((r.json as unknown as { key: string }[]) ?? []).map((b) => b.key);

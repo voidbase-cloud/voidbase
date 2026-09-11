@@ -29,7 +29,7 @@ Secrets and settings that must exist in production (declared in `env.ts`):
 | `VOIDBASE_TRANSLATABLE`, `VOIDBASE_LOCALES` | optional, both needed for the shipped `translations` plugin to do anything: `posts:title,body;pages:title` declares the fields that have translations (`;` between collections, `,` between fields), `en,ar,fr` the locales (the first is the source, the order the fallback). The records API then answers in `?locale=` or the best `Accept-Language` match and says which in `Content-Language` (docs/plugins.md, "Content in the reader's language") |
 | `VOIDBASE_SITE_URL`, `VOIDBASE_SITEMAP`, `VOIDBASE_ROBOTS_DISALLOW`, `VOIDBASE_LLMS_NOTE` | optional; the shipped `seo` plugin's files: the site's URL when it is not the request's origin, `posts[status="live"]:/blog/{slug},pages:/{slug}` the sitemap entries (a collection, an optional filter, a path template; the collection must be publicly listable), extra `Disallow:` paths for robots.txt, and a paragraph for llms.txt (docs/plugins.md, "The crawlers' view of the instance") |
 | `VOIDBASE_SEO`, `VOIDBASE_SEO_IMAGE_SIZE`, `VOIDBASE_SEO_THEME`, `VOIDBASE_SEO_LOCALE_PATH` | optional; the `seo` plugin's page metadata (`GET /api/seo/meta?path=`) and share cards (`GET /api/seo/og/<collection>/<id>.svg`): `posts:Article{title=title,description=summary,image=cover,datePublished=created,author=author.name}` maps a schema.org type and fields onto a collection (a collection in the sitemap without one gets `WebPage` and the obvious fields), a thumb size for the mapped image, the card's background colour, and `prefix` to put the locale in the path (`/ar/...`) rather than `?locale=` for the `hreflang` alternates `VOIDBASE_LOCALES` adds |
-| `VOIDBASE_BACKUP_KIND`, `VOIDBASE_BACKUP_KEEP` | optional; what the scheduled backup (Settings > Backups cron) writes: `full` (default: tables, files, settings, schema) or `data` (the non-system collections' rows and files), and how many automatic archives to keep, the oldest beyond it deleted after a verified write (default: the settings' `cronMaxKeep`). Named backups are never pruned (docs/plugins.md, "Backups worth relying on") |
+| `VOIDBASE_BACKUP_KIND`, `VOIDBASE_BACKUP_KEEP` | optional; what the scheduled backup (Settings > Backups cron) writes: `full` (default: tables, files, settings, schema), `data` (the non-system collections' rows and files) or `schema` (the definitions alone), and how many automatic archives to keep, the oldest beyond it deleted after a verified write (default: the settings' `cronMaxKeep`). Named backups are never pruned (docs/plugins.md, "Backups worth relying on") |
 | `VOIDBASE_BACKUP_S3_ENDPOINT`, `VOIDBASE_BACKUP_S3_BUCKET`, `VOIDBASE_BACKUP_S3_ACCESS_KEY_ID`, `VOIDBASE_BACKUP_S3_SECRET_ACCESS_KEY`, `VOIDBASE_BACKUP_S3_REGION` | optional, the first four together (the key and secret as secrets in `env.ts`); every archive written is also `PUT` to that S3-compatible bucket (another R2 account, Backblaze B2, AWS S3) with a SigV4 signature computed by the plugin, so a copy survives losing this account. Region `auto` unless set. `GET /api/backups` says `offsite: true` per archive, or `offsite: false` with the error; a failed copy never fails the backup |
 | `STRIPE_SECRET_KEY` | optional, a secret (`secret(...)` in `env.ts`, so it lives in `pb_secrets`/`vb_secrets`); the shipped `stripe` plugin takes money through Stripe with it: `POST /api/payments/stripe/checkout`, `portal`, `cancel`, and the `customers`, `subscriptions` and `payments` collections created on the first request that carries a payment provider's key. Unset means the plugin is loaded and idle. With none of the three providers' keys `/api/plugins` says `payments: { via: "none" }`; with one, that provider; with two, the first in shipped order (stripe, polar, lemonsqueezy) answers and `/api/plugins` says which and why (docs/plugins.md, "Taking money") |
 | `STRIPE_WEBHOOK_SECRET` | optional, a secret; the signing secret of the endpoint registered in Stripe's dashboard as `https://<instance>/api/payments/stripe/webhook`. Without it the webhook route answers 503 rather than accepting unsigned events |
@@ -132,6 +132,51 @@ those rules before the Worker goes. Cloudflare still requires the account to hav
 accepts any upload (error 10063): open Workers & Pages once, or
 `PUT /accounts/<id>/workers/subdomain {"subdomain": "<name>"}`. `destroyInstance` in `voidbase/cloud` detaches
 custom domains before deleting the Worker, and the control plane attaches them itself for the instances it provisions.
+
+### A preview per pull request: `--preview`
+
+`voidbase deploy --preview <branch>` deploys the project as a second Worker, the branch's own instance, and the
+`previews` plugin does the rest (docs/plugins.md, "A preview per pull request: previews"). `VOIDBASE_PREVIEW=<branch>`
+is the knob's environment form, and it is what a Workers build sets from `WORKERS_CI_BRANCH`. The Worker is
+`<name>-pr-<slug>` (the branch lowercased, `[^a-z0-9]` runs to a dash, 20 characters at most, then a 4-character
+hash of the branch, so two branches never share a Worker), which names its database, bucket and queue as any
+instance's are named; it stays on workers.dev (the `domains` plugin attaches no production hostname to a preview);
+`VOIDBASE_PREVIEW` and `VOIDBASE_PREVIEW_OF` are baked as vars and reported on `/api/plugins`. After the upload the
+preview is seeded from production through the backups API (`VOIDBASE_PREVIEW_SEED=schema`, the default: the
+collections' definitions; `data`: rows and files too; `none`), signing in on both sides with
+`VOIDBASE_SUPERUSER_EMAIL` and `VOIDBASE_SUPERUSER_PASSWORD` (production at `VOIDBASE_PREVIEW_SOURCE_URL`, else its
+workers.dev address), and the branch's open pull request gets one comment with the address, updated by every later
+deploy of the branch, when `VOIDBASE_GH_TOKEN` and the repository (`VOIDBASE_PROJECT_REPO=owner/name`, else the
+checkout's origin remote) are known. `--dry-run` says all of it and touches nothing.
+
+```bash
+voidbase deploy --preview feature/login            # a preview of this project's Worker for the branch
+voidbase previews                                  # the previews on the account: branch, address, created
+voidbase deploy --remove --preview feature/login   # the preview goes with its database, bucket and queue (asks, or --yes)
+voidbase previews remove feature/login             # the same
+voidbase previews prune --merged                   # every preview whose pull request is merged or closed goes
+```
+
+A preview is disposable, so `--remove --preview` (and the prune) deletes the Worker and everything it owns, unlike a
+production `--remove`. On the production build `VOIDBASE_PREVIEW_PRUNE=1` makes every production deploy run the
+prune in its `after` hook, which is what makes a preview disappear on merge.
+
+**In CI.** A Worker takes two triggers at most, and two triggers may not watch the same branch, so a project with
+previews has exactly these: the production trigger (the production branch, as `voidbase sync` sets it up) and the
+previews trigger, `["*"]` minus the production branch, watching every path, with the same build command and the
+deploy `VOIDBASE_PREVIEW=$WORKERS_CI_BRANCH bun run deploy` (the spelled-out form when the project has no `deploy`
+verb: `bunx @voidbase-cloud/voidbase sync --name <name> --preview $WORKERS_CI_BRANCH`). `voidbase sync --previews`
+creates or updates it and puts on both triggers what the plugin needs: `VOIDBASE_PROJECT_REPO` (the repository; the
+build knows its branch and commit but not its repository), `VOIDBASE_GH_TOKEN` as a build secret when it is in the
+environment, `VOIDBASE_PREVIEW_PRUNE=1` on the production trigger, and on the previews trigger
+`VOIDBASE_SUPERUSER_EMAIL` and `VOIDBASE_SUPERUSER_PASSWORD` as build secrets when they are in the environment (the
+preview stores them as its own superuser and signs in on production with them). A plain `voidbase sync` afterwards
+leaves the previews trigger as it is; `--no-previews` removes it. Two things to set up by hand: the token, a
+fine-grained GitHub token with pull requests: write (and contents: read) on the repository, exported as
+`VOIDBASE_GH_TOKEN` when running `sync --previews` (or set later with the dashboard's build variables); and the
+declared secrets, since a preview Worker is new and holds none: a secret `pb_secrets/main.ts` declares without a value
+in the build's environment fails the deploy the way it does for any new Worker, so either declare it optional or set
+it as a build secret on the previews trigger.
 
 ### What the deploy wires up, and the knobs
 
@@ -341,7 +386,9 @@ A brand-new project is four steps:
    the Worker keeps its secrets, the build's environment carries the deploy token and the declared server values).
 4. Push. Cloudflare builds, and the instance stays in step with the repository.
 
-`--dry-run` prints the plan; `--no-ci` deploys only; `--repo owner/name` and `--branch` override what git says.
+`--dry-run` prints the plan; `--no-ci` deploys only; `--repo owner/name` and `--branch` override what git says;
+`--previews` adds the second trigger, every other branch deploying a preview instance (above, "A preview per pull
+request"), and `--no-previews` removes it.
 
 **One trigger per instance.** A Cloudflare build may only deploy the Worker its trigger belongs to, so a repository
 that holds two instances (a site and a demo, say) gets a trigger for each, both watching the same branch. `sync`

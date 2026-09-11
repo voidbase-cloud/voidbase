@@ -1,10 +1,13 @@
-// Backups (apis/backup*.go): zip archives kept in R2 under __backups__/. Two kinds of archive, both restorable here:
+// Backups (apis/backup*.go): zip archives kept in R2 under __backups__/. Three kinds of archive, all restorable here:
 //   full  - data.json (every D1 table: columns and rows, as the first archives held), settings.json (the settings
 //           as GET /api/settings answers them, secrets left out), collections.json (every collection as the
 //           collections API exports it), storage/<collection>/<record>/<file> for every uploaded file, and
 //           manifest.json last (kind, version, tables, file count and bytes, a sha256 per entry and one over them).
 //   data  - the rows of every non-system collection, their files, their definitions, and manifest.json. No
 //           settings, no _superusers, no auth origins, OTPs, MFAs or external auths, no token secrets.
+//   schema - collections.json (the non-system collections' definitions, views included) and manifest.json, nothing
+//           else: no rows, no files. Restoring one imports the definitions, creating the collections the instance
+//           lacks and updating the ones it has; the rows it has stay. What a preview instance is seeded with.
 // Archives written before the manifest existed (data.json and storage/ only) read as kind "legacy" and restore as
 // they always did. PocketBase archives (SQLite files) cannot be restored here.
 //
@@ -44,7 +47,7 @@ const PART_SIZE = 10 * 1024 * 1024;
 /** the largest archive a storage without multipart uploads takes (it is held in memory before the single put) */
 export const BUFFERED_MAX = 256 * 1024 * 1024;
 
-export type BackupKind = "full" | "data";
+export type BackupKind = "full" | "data" | "schema";
 export const DEFAULT_KIND: BackupKind = "full";
 export const KIND_VAR = "VOIDBASE_BACKUP_KIND";
 export const KEEP_VAR = "VOIDBASE_BACKUP_KEEP";
@@ -72,7 +75,7 @@ export interface RestoreOptions { createMissing?: boolean }
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 const knob = (env: AppEnv["Bindings"], name: string) => String((env as unknown as Record<string, unknown>)[name] ?? (voidEnv as Record<string, unknown>)[name] ?? "").trim();
-export const parseKind = (raw: string): BackupKind | null => (raw === "full" || raw === "data" ? raw : null);
+export const parseKind = (raw: string): BackupKind | null => (raw === "full" || raw === "data" || raw === "schema" ? raw : null);
 
 // ---- sha256, incrementally: WebCrypto digests only whole buffers, and entries are streamed ------------------
 const K = new Uint32Array([
@@ -263,12 +266,20 @@ export async function writeArchive(env: AppEnv["Bindings"], kind: BackupKind, si
 
   const collections = await listCollections(db);
   const dataCollections = collections.filter((c) => !c.system && c.type !== "view");
+  const created = nowString();
+  if (kind === "schema") {
+    // the definitions alone: every non-system collection, views included, since a view is part of the schema
+    await add("collections.json", json(collections.filter((c) => !c.system).map(collectionToJSON)), true);
+    const manifest: Manifest = { format: "voidbase-backup", kind, voidbase: VERSION, created, tables: [], files: { count: 0, bytes: 0 }, checksum: checksumOf(entries), entries: { ...entries } };
+    await add("manifest.json", json(manifest), true);
+    zip.end(); await flush();
+    return manifest;
+  }
   const existing = await tableNames(db);
   const tables = kind === "full" ? existing : dataCollections.map((c) => c.name).filter((t) => existing.includes(t));
   const objects: R2Object[] = [];
   if (kind === "full") objects.push(...(await listAll(env.STORAGE, "")).filter((o) => !o.key.startsWith(PREFIX)));
   else for (const c of dataCollections) objects.push(...(await listAll(env.STORAGE, c.id + "/")));
-  const created = nowString();
 
   if (kind === "full") await add("settings.json", json(publicSettings(await loadSettings(db))), true);
   await add("collections.json", json((kind === "full" ? collections : dataCollections).map(collectionToJSON)), true);
@@ -406,15 +417,18 @@ export function newerThanInstance(archive: string, instance = VERSION): boolean 
 export function openArchive(bytes: Uint8Array): Opened {
   let entries: Record<string, Uint8Array>;
   try { entries = unzipSync(bytes); } catch { throw new Error("missing or invalid backup file"); }
-  const raw = entries["data.json"];
-  if (!raw) throw new Error("not a voidbase backup archive (PocketBase SQLite archives cannot be restored on this server)");
-  const dump = JSON.parse(dec.decode(raw)) as Dump;
-  if (dump.format !== "voidbase-backup") throw new Error("unsupported backup format");
   const parse = <T>(name: string): T | null => (entries[name] ? (JSON.parse(dec.decode(entries[name])) as T) : null);
   const manifest = parse<Manifest>("manifest.json");
   if (manifest && newerThanInstance(manifest.voidbase)) throw new Error(`the archive was written by voidbase ${manifest.voidbase}, newer than this instance (${VERSION}); update the instance before restoring it`);
   const kind: Opened["kind"] = manifest ? parseKind(String(manifest.kind)) ?? "full" : "legacy";
-  return { kind, entries, dump, manifest, collections: parse<Record<string, unknown>[]>("collections.json"), settings: kind === "full" ? parse<unknown>("settings.json") : null };
+  // a schema archive carries no data.json: its dump is empty by definition
+  const raw = entries["data.json"];
+  if (!raw && kind !== "schema") throw new Error("not a voidbase backup archive (PocketBase SQLite archives cannot be restored on this server)");
+  const dump: Dump = raw ? (JSON.parse(dec.decode(raw)) as Dump) : { format: "voidbase-backup", version: 1, created: manifest?.created ?? nowString(), tables: {}, files: [] };
+  if (dump.format !== "voidbase-backup") throw new Error("unsupported backup format");
+  const collections = parse<Record<string, unknown>[]>("collections.json");
+  if (kind === "schema" && !collections) throw new Error("a schema archive without collections.json");
+  return { kind, entries, dump, manifest, collections, settings: kind === "full" ? parse<unknown>("settings.json") : null };
 }
 async function fetchArchive(env: AppEnv["Bindings"], key: string): Promise<Opened> {
   const obj = await (await backupsStorage(env)).get(PREFIX + key);
@@ -424,6 +438,17 @@ async function fetchArchive(env: AppEnv["Bindings"], key: string): Promise<Opene
 
 export async function planRestore(db: D1Database, a: Opened, opts: RestoreOptions = {}): Promise<RestorePlan> {
   const plan: RestorePlan = { kind: a.kind, voidbase: a.manifest?.voidbase ?? null, restored: [], created: [], skipped: [], settings: a.settings != null };
+  if (a.kind === "schema") {
+    // the definitions land on the instance: a collection it has is updated to the archive's, one it lacks is created
+    const have = new Map((await listCollections(db)).map((c) => [c.name.toLowerCase(), c]));
+    for (const def of a.collections ?? []) {
+      const name = String(def.name ?? ""); const c = have.get(name.toLowerCase());
+      if (c?.system) plan.skipped.push({ collection: name, reason: "a system collection is never restored from a schema archive" });
+      else if (c) plan.restored.push(name);
+      else { plan.created.push(name); plan.restored.push(name); }
+    }
+    return plan;
+  }
   if (a.kind !== "data") {
     const cols = a.dump.tables["_collections"];
     if (cols) { const name = cols.columns.indexOf("name"), system = cols.columns.indexOf("system"); for (const r of cols.rows) if (!r[system]) plan.restored.push(String(r[name])); }
@@ -481,6 +506,13 @@ async function applyFull(env: AppEnv["Bindings"], a: Opened): Promise<void> {
   invalidateCollections();
 }
 
+async function applySchema(env: AppEnv["Bindings"], a: Opened, plan: RestorePlan): Promise<void> {
+  const wanted = new Set(plan.restored.map((n) => n.toLowerCase()));
+  const defs = (a.collections ?? []).filter((j) => wanted.has(String(j.name ?? "").toLowerCase()));
+  if (defs.length) await importCollections(env.DB, defs, false);
+  invalidateCollections();
+}
+
 async function applyData(env: AppEnv["Bindings"], a: Opened, plan: RestorePlan): Promise<void> {
   const db = env.DB;
   if (plan.created.length) {
@@ -516,7 +548,7 @@ async function restoreOpened(env: AppEnv["Bindings"], key: string, a: Opened, op
   await lock(db, key);
   try {
     const ev = { app: undefined as unknown, name: key, exclude: [] as string[], next: async () => undefined as unknown };
-    await trigger("onBackupRestore", ev, null, async () => { if (a.kind === "data") await applyData(env, a, plan); else await applyFull(env, a); });
+    await trigger("onBackupRestore", ev, null, async () => { if (a.kind === "data") await applyData(env, a, plan); else if (a.kind === "schema") await applySchema(env, a, plan); else await applyFull(env, a); });
     const bk = await backupsStorage(env);
     const meta = (await readMeta(bk, key)) ?? { kind: a.kind, voidbase: a.manifest?.voidbase ?? null, created: a.manifest?.created ?? null, checksum: a.manifest?.checksum ?? null, verified: false, verifiedAt: null };
     meta.restore = { at: nowString(), kind: a.kind, restored: plan.restored, created: plan.created, skipped: plan.skipped, settings: plan.settings };
@@ -588,7 +620,7 @@ export function mountBackupsApi(app: Hono<AppEnv>) {
     }
     const rawKind = body.kind === undefined || body.kind === null || body.kind === "" ? DEFAULT_KIND : String(body.kind);
     const kind = parseKind(rawKind);
-    if (!kind) throw validation("kind", "validation_in_invalid", "Must be one of: full, data.");
+    if (!kind) throw validation("kind", "validation_in_invalid", "Must be one of: full, data, schema.");
     try { await createBackup(c.env, name, { kind }); } catch (err) { console.error("voidbase: failed to create backup", name, err); throw badRequest("Failed to create backup."); }
     return c.body(null, 204);
   });

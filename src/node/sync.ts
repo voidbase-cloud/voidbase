@@ -5,9 +5,9 @@
 //      again, it updates what changed (pb_hooks, pb_migrations, the site). A Void app is built first, and deployed
 //      from its generated .voidbase/.
 //   2. the pipeline: Cloudflare Workers Builds connected to the GitHub repository, so every push to the production
-//      branch runs the same deploy on Cloudflare and every other branch is built and checked. This part runs only on
-//      a machine that has CLOUDFLARE_BUILDS_TOKEN (a local() key in pb_secrets), never inside a build: in CI, `sync`
-//      is just the deploy.
+//      branch runs the same deploy on Cloudflare. With --previews a second trigger takes every other branch and
+//      deploys it as a preview instance (src/node/plugins/previews.ts). This part runs only on a machine that has
+//      CLOUDFLARE_BUILDS_TOKEN (a local() key in pb_secrets), never inside a build: in CI, `sync` is just the deploy.
 //
 // Two layouts, named the way their directories are:
 //
@@ -29,7 +29,7 @@ import { SECRETS_DIR, secretsState } from "./secrets";
 const API = (process.env.CLOUDFLARE_API_BASE ?? "https://api.cloudflare.com/client/v4").replace(/\/$/, "");
 export const BUILDS_TOKEN_ENV = "CLOUDFLARE_BUILDS_TOKEN";
 
-export interface SyncOptions extends Pick<DeployOptions, "name" | "account" | "domain" | "dryRun" | "log"> {
+export interface SyncOptions extends Pick<DeployOptions, "name" | "account" | "domain" | "dryRun" | "log" | "preview"> {
   /** the project (default: the current directory); a Void app is recognised by its vb_secrets/ or .voidbase/ */
   dir?: string;
   /** build a Void app before deploying (default: yes on a machine, never in CI) */
@@ -40,6 +40,12 @@ export interface SyncOptions extends Pick<DeployOptions, "name" | "account" | "d
   repo?: string;
   /** the production branch (default: the checkout's current branch) */
   branch?: string;
+  /**
+   * the second trigger, "<name> (previews)": every branch but the production one builds and deploys a preview
+   * instance (`voidbase deploy --preview $WORKERS_CI_BRANCH`). true creates or updates it, false removes it; by
+   * default an existing one is kept as it is.
+   */
+  previews?: boolean;
 }
 
 const sh = (cmd: string[], cwd: string): string => { const r = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe" }); return r.exitCode === 0 ? r.stdout.toString().trim() : ""; };
@@ -79,7 +85,7 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   // 1. the instance
   const before = process.cwd(); process.chdir(pbDir);
   let deployed: Awaited<ReturnType<typeof deployToCloudflare>>;
-  try { deployed = await deployToCloudflare({ name: opts.name, account: opts.account, domain: opts.domain, dryRun: opts.dryRun, log }); }
+  try { deployed = await deployToCloudflare({ name: opts.name, account: opts.account, domain: opts.domain, dryRun: opts.dryRun, preview: opts.preview, log }); }
   finally { process.chdir(before); }
 
   // 2. the pipeline. A build deploys and nothing more (it has no Builds token and nothing to connect that the
@@ -104,8 +110,12 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   const buildCmd = hasScript("build") ? `${step}bun run build` : voidApp ? `${step}bunx --bun vite build` : prefix ? `echo "${prefix}: nothing to build"` : "true";
   const deployCmd = hasScript("deploy") ? `${step}bun run deploy` : `${step}bunx @voidbase-cloud/voidbase sync --name ${deployed.name}${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN ? ` --domain ${opts.domain || process.env.VOIDBASE_DEPLOY_DOMAIN}` : ""}`;
   // One trigger, one branch: a push to it builds and deploys, other branches build nowhere (the plainest pipeline;
-  // `bun run version` stays a verb for a laptop).
-  if (opts.dryRun) { log(`\nci (dry run): would connect ${repo} to Worker ${deployed.name}: branch ${branch} builds \`${buildCmd}\` and deploys \`${deployCmd}\`; other branches build nowhere`); return; }
+  // `bun run version` stays a verb for a laptop). With --previews, the Worker's second and last trigger (the API
+  // refuses a third with 12030, and two triggers may not watch the same branch) takes every other branch and deploys
+  // it as a preview instance: the same build, then the deploy with the branch Workers Builds names in WORKERS_CI_BRANCH.
+  const previewsName = `${deployed.name} (previews)`;
+  const previewCmd = hasScript("deploy") ? `${step}VOIDBASE_PREVIEW=$WORKERS_CI_BRANCH bun run deploy` : `${deployCmd} --preview $WORKERS_CI_BRANCH`;
+  if (opts.dryRun) { log(`\nci (dry run): would connect ${repo} to Worker ${deployed.name}: branch ${branch} builds \`${buildCmd}\` and deploys \`${deployCmd}\`; ${opts.previews ? `every other branch builds \`${buildCmd}\` and deploys a preview with \`${previewCmd}\`` : "other branches build nowhere"}`); return; }
 
   const cf = new CfApi(buildsToken, API);
   const account = await resolveAccount(cf, deployed.account).catch((e: Error) => { throw new Error(`${e.message} (is ${BUILDS_TOKEN_ENV} a user token that reaches account ${deployed.account}?)`); });
@@ -124,8 +134,10 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   const existing = await triggers(cf, account.id, tag);
   const common = { root_directory: "/", build_caching: true, path_includes: ["*"], path_excludes: [] as string[] };
   const prod = await ensureTrigger(cf, account.id, tag, connection, buildToken, { trigger_name: `${deployed.name} (${branch})`, build_command: buildCmd, deploy_command: deployCmd, branch_includes: [branch], branch_excludes: [], ...common });
-  // the branches trigger of earlier layouts goes: nothing builds but a push to the branch
-  const stale = existing.filter((t) => t.trigger_uuid !== prod.uuid);
+  const wantPreviews = opts.previews ?? existing.some((t) => t.trigger_name === previewsName);
+  const previewsTrigger = wantPreviews ? await ensureTrigger(cf, account.id, tag, connection, buildToken, { trigger_name: previewsName, build_command: buildCmd, deploy_command: previewCmd, branch_includes: ["*"], branch_excludes: [branch], ...common }) : null;
+  // the branches trigger of earlier layouts goes: nothing builds but a push to the branch (and, with previews, the rest)
+  const stale = existing.filter((t) => t.trigger_uuid !== prod.uuid && t.trigger_uuid !== previewsTrigger?.uuid);
   for (const t of stale) await cf.json("DELETE", `/accounts/${account.id}/builds/triggers/${t.trigger_uuid}`);
 
   // what a build on Cloudflare needs: Bun, the deploy token, and the declared server/public values this machine has
@@ -136,11 +148,18 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   if (deployToken) env.VOIDBASE_DEPLOY_CF_API_KEY = { value: deployToken, is_secret: true };
   const plain: string[] = [];
   if (state.definition) for (const k of state.definition.of("server", "public")) { const v = state.values?.[k]; if (v !== undefined) { env[k] = { value: v, is_secret: false }; plain.push(k); } }
-  await setTriggerEnv(cf, account.id, prod.uuid, env);
+  // what the previews need on both triggers: the repository (Workers Builds sets no variable for it), the GitHub token
+  // for the pull request comment, and on the production trigger the prune switch; the previews trigger also needs the
+  // superuser, which is how the preview signs in on production to seed itself
+  const ghToken = process.env.VOIDBASE_GH_TOKEN; const superuser = { email: process.env.VOIDBASE_SUPERUSER_EMAIL, password: process.env.VOIDBASE_SUPERUSER_PASSWORD };
+  const forPreviews: BuildEnv = wantPreviews ? { VOIDBASE_PROJECT_REPO: { value: repo, is_secret: false }, ...(ghToken ? { VOIDBASE_GH_TOKEN: { value: ghToken, is_secret: true } } : {}) } : {};
+  await setTriggerEnv(cf, account.id, prod.uuid, { ...env, ...forPreviews, ...(wantPreviews ? { VOIDBASE_PREVIEW_PRUNE: { value: "1", is_secret: false } } : {}) });
+  if (previewsTrigger) await setTriggerEnv(cf, account.id, previewsTrigger.uuid, { ...env, ...forPreviews, ...(superuser.email && superuser.password ? { VOIDBASE_SUPERUSER_EMAIL: { value: superuser.email, is_secret: true }, VOIDBASE_SUPERUSER_PASSWORD: { value: superuser.password, is_secret: true } } : {}) });
 
   log(`\nci: ${repo} -> Worker ${deployed.name} (account ${account.name})`);
   log(`  ${prod.created ? "created" : "updated"} trigger "${deployed.name} (${branch})": a push to ${branch} runs \`${buildCmd}\`, then \`${deployCmd}\`${existing.length && !prod.created ? " (watch paths left as they were)" : ""}`);
-  for (const t of stale) log(`  removed trigger "${t.trigger_name}": only a push to ${branch} builds`);
-  log(`  build environment: BUN_VERSION${deployToken ? ", VOIDBASE_DEPLOY_CF_API_KEY (secret)" : ""}${plain.length ? `, ${plain.join(", ")}` : ""}`);
+  if (previewsTrigger) log(`  ${previewsTrigger.created ? "created" : "updated"} trigger "${previewsName}": a push to any other branch runs \`${buildCmd}\`, then \`${previewCmd}\`; the production build prunes the previews whose pull request is over (VOIDBASE_PREVIEW_PRUNE=1)${ghToken ? "" : "; set VOIDBASE_GH_TOKEN in the environment and rerun for the pull request comments"}${superuser.email && superuser.password ? "" : "; set VOIDBASE_SUPERUSER_EMAIL and VOIDBASE_SUPERUSER_PASSWORD in the environment and rerun for the seeding"}`);
+  for (const t of stale) log(`  removed trigger "${t.trigger_name}": only a push to ${branch} builds${wantPreviews ? ", and the previews trigger" : ""}`);
+  log(`  build environment: BUN_VERSION${deployToken ? ", VOIDBASE_DEPLOY_CF_API_KEY (secret)" : ""}${plain.length ? `, ${plain.join(", ")}` : ""}${wantPreviews ? `, VOIDBASE_PROJECT_REPO${ghToken ? ", VOIDBASE_GH_TOKEN (secret)" : ""}` : ""}`);
   log(`  the pipeline: push to ${branch} and watch it at ${link}`);
 }

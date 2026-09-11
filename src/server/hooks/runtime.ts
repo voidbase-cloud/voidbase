@@ -155,6 +155,8 @@ export const $dbx = {
 };
 let services: AppServices | null = null;
 export function installServices(s: AppServices) { services = s; }
+/** the services installed now, so a test that swaps them can put them back */
+export function installedServices(): AppServices | null { return services; }
 const svc = () => { if (!services) throw new Error("hooks: services not installed"); return services; };
 
 export interface AppApi {

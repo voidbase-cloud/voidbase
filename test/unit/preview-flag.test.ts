@@ -4,22 +4,26 @@
 // One instance on bun:sqlite with real collections, real rows, real rules and the real records service, so what is
 // measured is the SQL the read path builds and not a description of it. The seam under test is `selectSQL` in
 // records/service.ts, which is behind the list, its count, the view route and the write path's own fetch, and the
-// two queries records/expand.ts runs for an expanded record; the realtime feed reaches the same two.
+// two queries records/expand.ts runs for an expanded record; the realtime feed reaches the same two. The schema around
+// the mark is here too: an import or an update whose definition was written before the column existed keeps it.
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { d1 } from "../../src/node/d1";
 import { insertCollection } from "../../src/server/bootstrap";
-import { invalidateCollections, listCollections, loadCollections, type Collection } from "../../src/server/collections/model";
-import { createCollection } from "../../src/server/collections/service";
+import type { Field } from "../../src/server/collections/fields";
+import { collectionToJSON, invalidateCollections, listCollections, loadCollections, type Collection } from "../../src/server/collections/model";
+import { createCollection, importCollections, RUNTIME_SYSTEM_FIELDS, updateCollection } from "../../src/server/collections/service";
 import { systemCollections } from "../../src/server/collections/system";
 import { ApiError } from "../../src/server/errors";
+import { $app, hookStore, installedServices, installServices, type AppServices, type HookStore } from "../../src/server/hooks/runtime";
 import type { RealtimeClient } from "../../src/server/interfaces";
 import { flaggedBranches, previewsInfo, removeFlagged } from "../../src/server/plugins/previews";
-import { hasPreviewField, PREVIEW_FIELD, PREVIEW_HEADER, previewOf, visibleInPreview } from "../../src/server/records/preview";
+import { addPreviewField, hasPreviewField, PREVIEW_FIELD, PREVIEW_HEADER, previewOf, visibleInPreview } from "../../src/server/records/preview";
 import { createRecord, deleteRecord, fetchRecord, listRecords, updateRecord, viewRecord, type ListQuery, type RecordContext } from "../../src/server/records/service";
 import { parseSubscription } from "../../src/server/realtime";
+import type { Settings } from "../../src/server/settings";
 import type { AuthRecord, Bindings, Row } from "../../src/server/types";
 
 const ROOT = resolve(import.meta.dir, "../..");
@@ -260,6 +264,81 @@ describe("cleaning up", () => {
     expect(await flaggedBranches(env.DB, await listCollections(env.DB))).toEqual([]);
     await createRecord((await ctx("feature/login")), await fresh("posts"), { title: "Draft" }, {});
     expect(await flaggedBranches(env.DB, await listCollections(env.DB))).toEqual([{ branch: "feature/login", rows: 1, collections: ["posts"] }]);
+  });
+});
+
+describe("the schema around the mark", () => {
+  // an app's own definitions of its collections, taken before any flagged write: what the demo's hourly reset imports
+  // with deleteMissing, and what a client that keeps its schema in code sends
+  const definitions = async (db: D1Database) => (await listCollections(db)).filter((c) => !c.system).map((c) => collectionToJSON(c));
+  const markField = (c: Collection) => (c.fields as Field[]).find((f) => f.name === PREVIEW_FIELD);
+  const markOfRow = (sqlite: Database, id: string) => sqlite.query(`SELECT ${PREVIEW_FIELD} AS m FROM posts WHERE id = ?`).get(id);
+
+  test("an import with deleteMissing that leaves the column out keeps it, the marks in it and the lane they make", async () => {
+    const { ctx, db, fresh, sqlite } = await instance();
+    const written = await definitions(db);
+    const draft = String((await createRecord((await ctx("feature/login")), await fresh("posts"), { title: "Draft" }, {})).id);
+    const field = markField(await fresh("posts"))!;
+    expect((written.find((d) => d.name === "posts")!.fields as Field[]).some((f) => f.name === PREVIEW_FIELD)).toBe(false);
+    // the demo's reset in miniature: refused as deleting a system field, every hour from the first flagged write on
+    await importCollections(db, written, true);
+    const posts = await fresh("posts");
+    expect(markField(posts)).toEqual(field);
+    expect(markOfRow(sqlite, draft)).toEqual({ m: "feature/login" });
+    expect(ids(await listRecords((await ctx()), posts, query()))).toEqual(["paaaaaaaaaaaaa1"]);
+    expect(ids(await listRecords((await ctx("feature/login")), posts, query()))).toEqual([draft, "paaaaaaaaaaaaa1"].sort());
+  });
+
+  test("so does an update whose fields leave it out: the panel sends the column back, a client with its own definition does not", async () => {
+    const { ctx, db, fresh, sqlite } = await instance();
+    const written = (await definitions(db)).find((d) => d.name === "posts")!;
+    const draft = String((await createRecord((await ctx("feature/login")), await fresh("posts"), { title: "Draft" }, {})).id);
+    const field = markField(await fresh("posts"))!;
+    const updated = await updateCollection(db, await fresh("posts"), { fields: [...(written.fields as Field[]), { name: "summary", type: "text" }] });
+    expect((updated.fields as Field[]).map((f) => f.name)).toEqual(["id", "title", "author", "summary", PREVIEW_FIELD]);
+    expect(markField(updated)).toEqual(field);
+    expect(markOfRow(sqlite, draft)).toEqual({ m: "feature/login" });
+    expect(ids(await listRecords((await ctx()), await fresh("posts"), query()))).toEqual(["paaaaaaaaaaaaa1"]);
+  });
+
+  test("only what voidbase added is carried over: a renamed or retyped mark is refused, and so is an id the defaults cannot stand in for", async () => {
+    const { ctx, db, fresh } = await instance();
+    await createRecord((await ctx("feature/login")), await fresh("posts"), { title: "Draft" }, {});
+    const stored = collectionToJSON(await fresh("posts"));
+    const fields = stored.fields as Field[];
+    const refusal = async (raw: Record<string, unknown>) => JSON.stringify((await status(importCollections(db, [raw], false))).data);
+    // named by its id under another name, and named by its name as another type: both are the definition's to answer for
+    expect(await refusal({ ...stored, fields: fields.map((f) => (f.name === PREVIEW_FIELD ? { ...f, name: "_mark" } : f)) })).toContain("validation_system_field_change");
+    expect(await refusal({ ...stored, fields: fields.map((f) => (f.name === PREVIEW_FIELD ? { name: PREVIEW_FIELD, type: "number" } : f)) })).toContain("validation_field_type_change");
+    // and a definition that names it may not turn it into an ordinary field, which the next definition could then drop
+    expect(await refusal({ ...stored, fields: fields.map((f) => (f.name === PREVIEW_FIELD ? { ...f, system: false } : f)) })).toContain("validation_system_field_change");
+    expect(markField(await fresh("posts"))).toMatchObject({ type: "text", system: true, hidden: true });
+    // id is not carried over. Left out, it is put back from PocketBase's defaults, which stand in only for a field with
+    // the default id; a collection whose id field has another one is refused, with the mark left out or not
+    const notes = await createCollection(db, { name: "notes", type: "base", fields: [{ id: "text_notes_pk", name: "id", type: "text", system: true, required: true, primaryKey: true, min: 15, max: 15, pattern: "^[a-z0-9]+$", autogeneratePattern: "[a-z0-9]{15}" }, { name: "body", type: "text" }] });
+    const marked = collectionToJSON(await addPreviewField(db, notes));
+    expect(await refusal({ ...marked, fields: (marked.fields as Field[]).filter((f) => f.name !== "id") })).toContain("validation_system_field_change");
+    expect(await refusal({ ...marked, fields: (marked.fields as Field[]).filter((f) => f.name !== "id" && f.name !== PREVIEW_FIELD) })).toContain("validation_system_field_change");
+    expect(((await fresh("notes")).fields as Field[]).map((f) => f.id)).toEqual(["text_notes_pk", (notes.fields as Field[])[1]!.id, markField(await fresh("notes"))!.id]);
+    // the one list of fields treated this way names the mark, and none of the fields a collection's type implies
+    expect(RUNTIME_SYSTEM_FIELDS).toContain(PREVIEW_FIELD);
+    for (const core of ["id", "password", "tokenKey", "email", "emailVisibility", "verified"]) expect(RUNTIME_SYSTEM_FIELDS).not.toContain(core);
+  });
+
+  test("$app.importCollections, which the demo's reset calls, keeps it the same way", async () => {
+    const { ctx, db, fresh, sqlite } = await instance();
+    const written = await definitions(db);
+    const draft = String((await createRecord((await ctx("feature/login")), await fresh("posts"), { title: "Draft" }, {})).id);
+    const field = markField(await fresh("posts"))!;
+    // the binding app.ts installs, down to the call it makes: the hook global reaches the collections service's import
+    const previous = installedServices();
+    installServices({ importCollections: async (items, deleteMissing) => importCollections((await hookStore.getStore()!.ctx()).db, items, deleteMissing) } as AppServices);
+    const store: HookStore = { c: null, ctx: () => ctx(), collections: await loadCollections(db), settings: {} as Settings, env: { DB: db } };
+    // the services go back afterwards: bun test runs every file in one process, and a later one may use the real ones
+    try { await hookStore.run(store, () => $app.importCollections(written, true)); } finally { installServices(previous as AppServices); }
+    expect(markField(await fresh("posts"))).toEqual(field);
+    expect(markOfRow(sqlite, draft)).toEqual({ m: "feature/login" });
+    expect(ids(await listRecords((await ctx()), await fresh("posts"), query()))).toEqual(["paaaaaaaaaaaaa1"]);
   });
 });
 

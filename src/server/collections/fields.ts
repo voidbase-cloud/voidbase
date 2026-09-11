@@ -118,3 +118,12 @@ export function columnType(f: Field): string {
 }
 
 export const SYSTEM_AUTH_FIELDS = ["password", "tokenKey", "email", "emailVisibility", "verified"] as const;
+
+// System fields voidbase adds to a collection at runtime for a feature of its own, as opposed to the ones a collection's
+// type implies (collections/service.ts ensureDefaultFields). Nobody writing a definition wrote them, so a definition that
+// leaves one out keeps it (service.ts keepRuntimeFields), and one that names it may not turn its system flag off
+// (validate.ts). A new field of this kind is listed here. The name is spelled out rather than imported as PREVIEW_FIELD,
+// because records/preview.ts imports the collections service.
+export const RUNTIME_SYSTEM_FIELDS: readonly string[] = [
+  "_preview", // records/preview.ts PREVIEW_FIELD: the flagged preview lane's mark, added on a collection's first flagged write
+];

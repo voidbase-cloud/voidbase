@@ -7,7 +7,7 @@ import { badRequest, notFound, type FieldErrors } from "../errors";
 import { nowString, randomString } from "../ids";
 import { ownedCollections } from "../kernel";
 import { createIndexesSQL, createTableSQL, createViewSQL, dropIndexesSQL, dropTableSQL, dropViewSQL, parseIndex, buildIndex, syncTableSQL, truncateSQL } from "./ddl";
-import { defaultFieldId, normalizeField, sortKeys, type Field } from "./fields";
+import { defaultFieldId, normalizeField, RUNTIME_SYSTEM_FIELDS, sortKeys, type Field } from "./fields";
 import { collectionToJSON, invalidateCollections, jsonToCollection, listCollections, loadCollections, type Collection } from "./model";
 import { validateCollection, type ValidateContext } from "./validate";
 import scaffolds from "./scaffolds.json";
@@ -59,7 +59,8 @@ export function prepareCollection(raw: Record<string, unknown>, old: Collection 
   // fields: normalize, reuse ids by name (PocketBase FieldsList.Add semantics), generate missing ids
   const oldFields = (old?.fields ?? []) as Field[];
   const taken = new Set<string>();
-  const rawFields = Array.isArray(merged.fields) ? (merged.fields as Record<string, unknown>[]) : [];
+  const given = Array.isArray(merged.fields) ? (merged.fields as Record<string, unknown>[]) : [];
+  const rawFields = old && old.type !== "view" ? keepRuntimeFields(given, old) : given;
   c.fields = rawFields.map((rf) => {
     const f = normalizeField(rf ?? {});
     if (!f.id) {
@@ -131,6 +132,23 @@ function ensureDefaultFields(c: Collection, taken: Set<string>) {
       pos++;
     }
   }
+}
+
+// the system fields voidbase adds to a collection at runtime (fields.ts); a definition that leaves one out keeps it
+export { RUNTIME_SYSTEM_FIELDS };
+
+// A stored runtime system field that the incoming fields do not name, by id or by name in any case, is carried over as
+// stored, so its column and every row's value in it survive. Without this, an app's own definitions stop importing the
+// moment a flagged write gives one of its collections `_preview`: validateFields refuses them as deleting a system field,
+// which is how the demo's hourly reset aborted from 2026-09-11 on. A definition that names the field is judged as before,
+// so renaming or retyping it is still refused, and the core system fields are never carried over.
+// A PATCH gets the same, since prepareCollection is behind both: the panel sends back the collection as it read it,
+// `_preview` included, while a client that sends its own fields (the SDK's collections.update) works on PocketBase, which
+// refuses a missing system field but never adds one, so refusing it here would break that client only on voidbase.
+function keepRuntimeFields(fields: Record<string, unknown>[], old: Collection): Record<string, unknown>[] {
+  const named = (f: Field) => fields.some((rf) => (!!rf?.id && rf.id === f.id) || String(rf?.name ?? "").toLowerCase() === f.name.toLowerCase());
+  const kept = (old.fields as Field[]).filter((f) => f.system && RUNTIME_SYSTEM_FIELDS.includes(f.name) && !named(f));
+  return kept.length ? [...fields, ...kept.map((f) => ({ ...f }))] : fields;
 }
 
 function throwIfErrors(errs: Record<string, unknown>, message: string) {
@@ -212,6 +230,9 @@ export async function truncateCollection(db: D1Database, c: Collection): Promise
 
 // PUT /api/collections/import
 export async function importCollections(db: D1Database, items: Record<string, unknown>[], deleteMissing: boolean): Promise<void> {
+  // read fresh rather than from this isolate's five-second cache: another isolate may just have given a collection a
+  // runtime system field, and a plan made against the older shape would write the definition without it
+  invalidateCollections();
   const existing = await listCollections(db);
   const byId = new Map(existing.map((c) => [c.id, c]));
   const byName = new Map(existing.map((c) => [c.name.toLowerCase(), c]));

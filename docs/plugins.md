@@ -215,7 +215,9 @@ verified against the integrity the marketplace promised, and `voidbase.lock` pin
 integrity and the source commit. `plugins remove`, `plugins enable`, `plugins update` and `plugins ls` are the rest
 of it (`bin/voidbase.ts`, `src/node/installed.ts`). The marketplaces a project uses are the lockfile's list (ours is
 the default and can be removed) or `VOIDBASE_PLUGIN_MARKETPLACES`; one name served by two marketplaces is refused
-until `--marketplace` says which, the same rule the loader applies to two providers of one interface.
+until `--marketplace` says which, the same rule the loader applies to two providers of one interface. `--marketplace`
+may also name a marketplace the project has never used: the command runs on the owner's own checkout, and the
+marketplace it records on the plugin's entry is one the instance's installer then trusts for that plugin (the installer, below).
 
 An instance reads the same files when it starts. On Bun (`voidbase serve`, a local instance, the executable)
 `src/platform/node/plugins.ts` verifies every bundle against the lockfile, refuses a changed byte by name, and imports
@@ -281,14 +283,38 @@ fake plugins; `test/deploy-cf.ts` runs an installed `deploy.js` through the CLI 
 
 `installer` is a shipped plugin, and it is how an instance changes its own plugins: `POST /api/plugins/install`
 `{ name, version?, marketplace? }`, `POST /api/plugins/remove { name }`, `POST /api/plugins/update { name? }`,
-and `GET /api/plugins/available?marketplace=` for what a marketplace serves (superusers, like `/api/plugins`, which
-now says where the plugins live under `installer`). Three places they can live, and the installer knows which:
+and `GET /api/plugins/available?marketplace=` for what the official marketplace, or another named by URL, serves
+(superusers, like `/api/plugins`, which now says where the plugins live under `installer`). Three places they can
+live, and the installer knows which:
 
 | mode | where | what a change is |
 | --- | --- | --- |
 | `filesystem` | Bun: `voidbase serve`, the executable | `pb_plugins/` and `voidbase.lock` changed in place, as the CLI does; the instance loads them when it restarts |
 | `repository` | a project deployed from a repository: `VOIDBASE_PROJECT_REPO` (owner/name, `VOIDBASE_PROJECT_BRANCH` if not master) and `VOIDBASE_GH_TOKEN` on the Worker | one commit to the repository (`src/server/project-sync.ts`: the bundle downloaded and verified in the instance, `pb_plugins/<name>/{bundle.js,release.json}` written or deleted, the lockfile entry added or removed, through GitHub's Git Data API), which the repository's own build deploys |
 | `fixed` | a Worker built without either | nothing: the answer says what to connect |
+
+A marketplace named in a request has to be one the project already trusts: one its `voidbase.lock` lists under
+`marketplaces`, or, for a plugin already installed, the one it came from (the `marketplace` on its own lock entry,
+which is also where `update` looks); a marketplace on one plugin's entry does not cover a plugin of another name. Anything else is a 400 before the marketplace is asked for anything and before a commit is made or
+a file is written, and the answer names the lockfile and the two ways to trust it. In `filesystem` mode the list is
+the one `voidbase plugins ls` prints, which `VOIDBASE_PLUGIN_MARKETPLACES` replaces when it is set. URLs are compared
+whole, after trimming and dropping trailing slashes, so `https://listed.example/x`,
+`https://listed.example.evil.example` and `https://listed.example@evil.example` are not `https://listed.example`.
+
+The rule is there because of what an installed plugin is. The integrity hash comes from the same index as the
+bundle, so it proves the bytes are the ones that marketplace promised and says nothing about whether the project
+wanted that marketplace; the plugin runs with the Worker's env, which holds every secret, and its `deploy.js` runs
+in the build with the deploy token. A superuser session is not the project's owner (the demo publishes its login),
+so a marketplace is trusted where the owner works, and no command edits the `marketplaces` list. Either add the URL
+to it in `voidbase.lock` and commit that (on disk, save the file), or install a plugin from it on a checkout with
+`voidbase plugins add <name> --marketplace <url>`, then commit `pb_plugins/<name>` and the lockfile and push, which
+records the marketplace on that plugin's entry. That trusts it for that plugin alone, and only until the plugin is removed. `voidbase cloud plugins
+<instance> install --marketplace` reaches this route and is held to the rule; `voidbase plugins add` on the owner's
+own checkout is not, which is what makes it one of the two ways in.
+
+`GET /api/plugins/available` lists the official marketplace, and `?marketplace=` reads another by URL, so the /cloud
+panel can show what a marketplace serves before its owner trusts it. Reading installs nothing, and an install from
+that marketplace is still held to the rule above.
 
 That is the whole cloud story. A cloud instance is the user's Worker in the user's account, deployed from a
 repository in the user's GitHub by the user's own Workers Build; voidbase.cloud creates the repository from a
@@ -1389,6 +1415,16 @@ and the write path sets it from the request and overwrites whatever the body sai
 lane it is not in, or take one out. A request carrying `X-Voidbase-Preview: <branch>` writes `_preview = <branch>`;
 a request without one writes `''`. System collections and views never get the column.
 
+The column is voidbase's, not the schema author's, so a definition that does not name it keeps it.
+`PUT /api/collections/import` (with or without `deleteMissing`, and `$app.importCollections`, which the demo's hourly
+reset calls with its own list) and `PATCH /api/collections/:id` carry the stored field over, column and marks, when a
+definition written before the first flagged write leaves it out; they used to refuse it as deleting a system field.
+A definition that names it is judged as before, so renaming or retyping it is refused. The panel sends the column back
+on an update anyway, because it sends the collection as it read it. `RUNTIME_SYSTEM_FIELDS` in
+`src/server/collections/fields.ts` is the one list of fields treated this way, and a definition that names one of them
+has to keep it a system field. An import reads the stored collections fresh rather than from the isolate's cache, so a
+column another isolate added a moment ago is carried over too.
+
 **The filter.** `selectSQL` in `src/server/records/service.ts` is where every read's SQL is built: the list, the
 list's count, and `fetchRecord`, which is behind the view route, `can-update`, the update and delete path's own
 fetch, and the realtime feed's create and update events. The lane condition is added there, so a `filter`, a `sort`,
@@ -1433,8 +1469,10 @@ and the flagged remove and prune against a fake instance. `test/unit/preview-fla
 records half on a real database: the column added on the first flagged write and on no other write, the filter on a
 list, its count, a filter, a sort, the view route, `fetchRecord`, a forward expand, a back-relation expand and a view
 collection, the mark that no body can set, the refusal on a production row, the removal taking one branch's rows
-only, and an instance nobody previews being answered exactly as before. `test/deploy-cf.ts` runs a `--preview` dry
-run, `after`, the listing, `--remove --preview` and the prune against the mock's Workers, D1, R2, queues, pull
+only, an import (through the service and through `$app.importCollections`) and an update whose definition leaves the
+column out keeping it with its marks, a renamed or retyped mark still refused and so is a missing `id` that
+PocketBase's defaults cannot stand in for, and an instance nobody previews being answered exactly as before.
+`test/deploy-cf.ts` runs a `--preview` dry run, `after`, the listing, `--remove --preview` and the prune against the mock's Workers, D1, R2, queues, pull
 requests and comments.
 
 ## The two core plugins: auth and observability

@@ -2,8 +2,10 @@
 
 A marketplace is a server that answers three GETs. Ours is one; anyone can run another; an instance connects to
 several and is locked to none of them, our official plugins included. The protocol is small on purpose: a static
-site with object storage is enough to run a marketplace, and an instance trusts a bundle because of its integrity
-hash and the recorded audit, not because of whose host name served it.
+site with object storage is enough to run a marketplace, and an instance checks a bundle by its integrity hash and
+the recorded audit, not by whose host name served it. Which marketplaces it takes bundles from at all is the
+project's choice, written in its `voidbase.lock`: the hash comes from the same index as the bundle, so it proves the
+bytes and not the source.
 
 `src/node/registry.ts` is the instance's side (types, the validator, integrity, fetch, pick, download), and
 `test/fixtures/registry/` is a complete marketplace on disk, served by `Bun.serve` in `test/unit/registry.test.ts`.
@@ -84,6 +86,11 @@ never imports Node built-ins, because an instance may be a Worker. A bundle is e
 
 1 and 2 are `src/node/registry.ts`; 3 and 4 are `src/node/installed.ts`, `src/platform/*/plugins.ts` and the
 `voidbase plugins` commands (docs/plugins.md, Installing).
+
+The marketplace in 1 is one the project already trusts. `voidbase plugins add --marketplace <url>`, run by the owner
+on their own checkout, may name a new one, and records it on the plugin's lock entry; the instance's installer
+(`POST /api/plugins/install` and `/update`) refuses a marketplace that is neither under the lockfile's
+`marketplaces` nor the one that plugin was installed from (docs/plugins.md, the installer).
 
 ## Kinds beside plugins
 

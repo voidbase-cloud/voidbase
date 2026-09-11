@@ -72,6 +72,14 @@ every collection a loaded plugin owns stay, because the plugin owns that schema 
 Deleting one of those is a deliberate `DELETE /api/collections/:name`, not a sweep; clearing its rows is
 `findPluginCollections` and `truncateCollection`.
 
+The list is the schema as the app wrote it, so a system field voidbase adds to a collection at runtime is kept when
+the list leaves it out. Today that is `_preview`, the flagged preview lane's mark ([plugins.md](./plugins.md)), which a
+collection gains on its first flagged write. The import keeps the column and the rows' marks in it, where it used to
+refuse the list from then on as deleting a system field. A definition that names such a field is judged like any
+other, so renaming or retyping it is refused. `id` and an auth collection's `password`, `tokenKey`, `email`,
+`emailVisibility` and `verified` are never carried over: left out, they are put back from PocketBase's defaults, and
+the import is refused (`validation_system_field_change`) when those do not match the stored field.
+
 Together they are enough for an app to restore itself, the rows its plugins keep included:
 
 ```js

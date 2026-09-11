@@ -384,7 +384,8 @@ voidbase cloud repos create shop --template voidbase-site --name my-site --priva
 voidbase cloud repos link shop owner/name   # one you already have; unlink owner/name forgets it (GitHub keeps it)
 voidbase cloud plugins shop --email you@example.com --password ...     # ls (default), install name[@version]
                                             # [--marketplace url], remove name, update [name]: the instance's own
-                                            # installer, signed in as its superuser
+                                            # installer, signed in as its superuser; --marketplace has to be one
+                                            # the project's voidbase.lock already trusts
 ```
 
 An instance is named by its name (`shop` finds `vb-shop`) or its id, and every verb takes `--json` for the raw

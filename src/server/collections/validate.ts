@@ -3,7 +3,7 @@ import type { FieldErrors } from "../errors";
 import { compileFilter, FilterError } from "../filter/compile";
 import { FilterSyntaxError } from "../filter/lexer";
 import { parseIndex } from "./ddl";
-import { FIELD_TYPES, isFieldType, type Field } from "./fields";
+import { FIELD_TYPES, isFieldType, RUNTIME_SYSTEM_FIELDS, type Field } from "./fields";
 import type { Collection } from "./model";
 
 type Errs = Record<string, unknown>; // nested: { name: {code,message}, fields: { "1": { name: {...} } } }
@@ -157,6 +157,8 @@ function validateFields(c: Collection, old: Collection | null): Errs | { code: s
         if (!of.system) continue;
         const nf = fields.find((x) => x.id === of.id);
         if (!nf || nf.name !== of.name) return err("validation_system_field_change", "System fields cannot be deleted or renamed.");
+        // a runtime system field keeps its flag: turned off, the next definition that left it out would drop its column and marks
+        if (RUNTIME_SYSTEM_FIELDS.includes(of.name) && !nf.system) return err("validation_system_field_change", "System fields cannot be deleted or renamed.");
       }
     }
   }

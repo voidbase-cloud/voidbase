@@ -2,9 +2,11 @@
 // trusts a bundle (docs/registry.md).
 //
 // A marketplace is a server that answers three GETs, two of them JSON and one a file, and nothing here cares whose
-// server it is: the official one, a competitor's, or a directory on disk behind Bun.serve in a test. Trust comes from
-// the integrity hash and the recorded audit rather than from the host name, which is what keeps an instance free to
-// connect to several marketplaces and to leave any of them.
+// server it is: the official one, a competitor's, or a directory on disk behind Bun.serve in a test. A bundle is checked
+// by the integrity hash and the recorded audit rather than by the host name, which is what keeps an instance free to
+// connect to several marketplaces and to leave any of them. The hash comes from the same index as the bundle, so it
+// proves the bytes and not the source: which marketplaces to ask is the project's choice, in voidbase.lock, and the
+// instance's installer refuses any other (server/plugins/installer.ts).
 import { checkManifest, type PluginManifest } from "../server/plugins/manifest";
 
 /** the protocol version this voidbase reads; a marketplace serving another is refused, not guessed at */

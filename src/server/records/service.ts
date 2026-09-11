@@ -8,6 +8,7 @@ import { compileFilter, compileSort, FilterError, renderJoin, type Join, type Re
 import { FilterSyntaxError } from "../filter/lexer";
 import { nowString, randomId, randomString } from "../ids";
 import { hashPassword, verifyPassword } from "../password";
+import { writtenRow } from "../tx-d1";
 import type { AuthRecord, Row } from "../types";
 import { expandRecords } from "./expand";
 import { deleteAllRecordFiles, deleteFiles, normalizeFilename, putUpload, sniffMime } from "./files";
@@ -389,7 +390,9 @@ export async function createRecord(ctx: RecordContext, c: Collection, body: RawB
   await withAfterError("Create", modelEv, c, () => (reqEv ? trigger("onRecordCreateRequest", reqEv, c.name, withModelHooks) : withModelHooks()));
   await trigger("onRecordAfterCreateSuccess", modelEv, c.name, async () => undefined);
   await trigger("onModelAfterCreateSuccess", modelEv, c.name, async () => undefined);
-  const row = await one(ctx.db, `SELECT * FROM ${ident(c.name)} WHERE id = ?`, [rec.values.id]);
+  // inside a transaction the row is not on disk yet and reading the table back is refused, so the transaction
+  // hands over exactly what was written (src/server/tx-d1.ts); outside one this is the read it always was
+  const row = writtenRow(ctx.db, c.name, String(rec.values.id)) ?? (await one(ctx.db, `SELECT * FROM ${ident(c.name)} WHERE id = ?`, [rec.values.id]));
   return (await enrich(ctx, c, [row!], opts))[0];
 }
 
@@ -508,7 +511,7 @@ export async function updateRecord(ctx: RecordContext, c: Collection, id: string
   await withAfterError("Update", modelEv, c, () => (reqEv ? trigger("onRecordUpdateRequest", reqEv, c.name, withModelHooks) : withModelHooks()));
   await trigger("onRecordAfterUpdateSuccess", modelEv, c.name, async () => undefined);
   await trigger("onModelAfterUpdateSuccess", modelEv, c.name, async () => undefined);
-  const fresh = await one(ctx.db, `SELECT * FROM ${ident(c.name)} WHERE id = ?`, [id]);
+  const fresh = writtenRow(ctx.db, c.name, id) ?? (await one(ctx.db, `SELECT * FROM ${ident(c.name)} WHERE id = ?`, [id]));
   return (await enrich(ctx, c, [fresh!], opts))[0];
 }
 
@@ -629,7 +632,7 @@ export async function saveHookRecord(ctx: RecordContext, rec: HookRecord): Promi
   }
   const sctx: RecordContext = { ...ctx, superuser: true, hookEvent: undefined };
   const out = rec.isNew() ? await createRecord(sctx, c, body, {}) : await updateRecord(sctx, c, rec.id, body, {});
-  const row = await one(ctx.db, `SELECT * FROM ${ident(c.name)} WHERE id = ?`, [String(out.id)]);
+  const row = writtenRow(ctx.db, c.name, String(out.id)) ?? (await one(ctx.db, `SELECT * FROM ${ident(c.name)} WHERE id = ?`, [String(out.id)]));
   const saved = HookRecord.fromRow(c, row!);
   rec.values = saved.values; rec.setOriginal(saved.values); rec.markAsNotNew();
   return rec;

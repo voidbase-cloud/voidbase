@@ -169,9 +169,34 @@ tables come from the same `db/migrations/*.sql` Void applies to a D1, carried as
 **What goes away: D1's batch as an approximation of a transaction.** The object is a single writer over its own SQLite
 file, so `batch` runs inside `ctx.storage.transactionSync`: all or nothing, rolled back on the first error.
 `test/workers-durable.ts` runs it on workerd: two inserts in one batch, the second violating a unique index, leave no
-row; the same two statements outside a batch leave the first. Hook code still has no interactive transaction (a
-`transaction(steps)` RPC where a step reads an earlier result is the next step, not this one), and `POST /api/batch`
-keeps its emulated rollback, which holds on the object too.
+row; the same two statements outside a batch leave the first. `POST /api/batch` keeps its emulated rollback, which
+holds on the object too.
+
+**And what a hook gets: `$app.runInTransaction(fn)`, real here and a plain call on D1 (2026-09-11).** On the object
+the writes `fn` makes are held in `src/server/tx-d1.ts` and sent as one `batch` when `fn` returns, so all of them
+land or none do; `fn` throwing rolls everything back by never sending it, and rethrows. Realtime events the writes
+announced are held with them, so a transaction that rolled back announces nothing. Nesting throws rather than
+flattening, and `$app.transactionsAreReal()` tells a hook which database it is on. The same call on D1 still runs
+`fn` directly, which is what it always did. `test/workers-durable.ts` proves the three cases on workerd: two records
+where the second write throws leave neither, the same transaction without the throw leaves both, and a read of what
+the transaction just wrote throws instead of answering without it.
+
+**What a Durable Object can hold open, measured rather than assumed.** On workerd 1.20260903.1 through
+`wrangler dev --local`, against a SQLite-backed object: `sql.exec("BEGIN TRANSACTION")` and `sql.exec("SAVEPOINT s")`
+are refused by the runtime itself ("To execute a transaction, please use the state.storage.transaction() or
+state.storage.transactionSync() APIs instead of the SQL BEGIN TRANSACTION or SAVEPOINT statements"), so a
+transaction cannot be opened in one RPC and closed in another. `ctx.storage.transactionSync` with an async callback
+commits at the first await: a callback that inserted, awaited, inserted again and then threw left both rows behind,
+which is what Cloudflare's "the callback must complete synchronously" means in practice. `ctx.storage.transaction`
+does roll `sql.exec` writes back across an await, but only inside one RPC: an object that awaits a callback into the
+Worker while that transaction is open never hears the Worker's next RPC ("A call to blockConcurrencyWhile() in a
+Durable Object waited for too long. The call was canceled and the Durable Object was reset"), and the re-entrant
+write landed afterwards, outside the transaction. So the Worker cannot drive an interactive transaction on the
+object, and one batch is the whole of what a transaction can be. The consequence is stated where hooks read it
+(`docs/hooks.md`): buffered writes, and a read of your own uncommitted write inside the transaction is not visible.
+The failure is loud rather than stale: a read of a table the transaction has already written to throws, and the one
+thing that does know what was written is the transaction itself, which is how `$app.save()` hands back the record it
+saved without reading it back.
 
 **What does not go away: the ceilings.** The roadmap entry expected D1's 100 bound parameters and 100 columns to stop
 applying. They do not: workerd enforces the same limits on a Durable Object's SQLite storage (Cloudflare documents

@@ -7,11 +7,14 @@ import { AsyncLocalStorage } from "node:async_hooks";
 (globalThis as { AsyncLocalStorage?: unknown }).AsyncLocalStorage ??= AsyncLocalStorage;
 import type { Context } from "hono";
 import type { Collection } from "../collections/model";
+import { isDurableDatabase } from "../durable-d1";
 import { ApiError } from "../errors";
+import type { RealtimeClient } from "../interfaces";
 import { normalizeFilename, sniffMime } from "../records/files";
 import type { RecordContext } from "../records/service";
 import type { Upload } from "../records/values";
 import type { Settings } from "../settings";
+import { bufferedTransaction, type HookTransaction } from "../tx-d1";
 import type { AppEnv, AuthRecord } from "../types";
 import { CollectionRef, HookRecord } from "./record";
 
@@ -21,6 +24,8 @@ export interface HookStore {
   collections: Map<string, Collection>;
   settings: Settings;
   env: Record<string, unknown>;
+  /** the transaction $app.runInTransaction has open, while it has one: how a nested call is caught */
+  tx?: HookTransaction;
 }
 export const hookStore = new AsyncLocalStorage<HookStore>();
 const store = () => hookStore.getStore();
@@ -177,7 +182,15 @@ export interface AppApi {
   logger(): Console;
   dao(): AppApi;
   isDev(): boolean;
+  /**
+   * Run `fn` as one unit of work. On the database Durable Object (VOIDBASE_DATABASE=durable) the writes `fn` makes
+   * are collected and sent as one batch when it returns, which the object runs inside ctx.storage.transactionSync:
+   * all of them land or none do, and a throw rolls everything back and is rethrown. On D1 there is no transaction
+   * and `fn` runs directly, as it always has. `transactionsAreReal()` says which one this instance is getting.
+   */
   runInTransaction(fn: (txApp: AppApi) => unknown): Promise<unknown>;
+  /** whether runInTransaction is a real transaction here (the database Durable Object) or a plain call (D1) */
+  transactionsAreReal(): boolean;
 }
 
 export const $app: AppApi = {
@@ -227,8 +240,50 @@ export const $app: AppApi = {
   logger() { return console; },
   dao() { return $app; }, // deprecated alias kept for older hooks
   isDev() { return false; },
-  async runInTransaction(fn: (txApp: typeof $app) => unknown) { return fn($app); },
+  transactionsAreReal() { return isDurableDatabase(hookDatabase()); },
+  async runInTransaction(fn: (txApp: typeof $app) => unknown) {
+    const s = mustStore();
+    // D1, and the Bun runtime over bun:sqlite: exactly what this did before, fn called with $app and no transaction
+    if (!isDurableDatabase(hookDatabase())) return fn($app);
+    if (s.tx) throw new Error("$app.runInTransaction: a transaction is already open. Transactions do not nest: do the whole unit of work in the outer callback.");
+    const outer = s.ctx;
+    const base = (await outer()).db;
+    const tx = bufferedTransaction(base);
+    // a change announces itself as soon as the write is issued, which inside a transaction is before it is on disk:
+    // hold what the writes announced until the batch commits, so a rollback announces nothing
+    const held: RealtimeChange[] = [];
+    let live: RealtimeClient | null = null;
+    s.tx = tx;
+    s.ctx = async () => {
+      const ctx = await outer();
+      live = ctx.realtime;
+      return { ...ctx, db: tx.db, realtime: holdChanges(ctx.realtime, held) };
+    };
+    try {
+      const out = await fn($app);
+      await tx.commit();
+      if (held.length && live) await (live as RealtimeClient).publish(held.splice(0));
+      return out;
+    } finally {
+      s.ctx = outer;
+      s.tx = undefined;
+    }
+  },
 };
+
+/** the database this hook run is against, whichever store it is running in (a request, a cron tick, a migration) */
+const hookDatabase = (): D1Database | undefined => (store()?.env as { DB?: D1Database } | undefined)?.DB;
+
+type RealtimeChange = Parameters<RealtimeClient["publish"]>[0][number];
+/** the realtime client, with publish held in `held` until the transaction commits */
+const holdChanges = (real: RealtimeClient, held: RealtimeChange[]): RealtimeClient => ({
+  active: () => real.active(),
+  publish: async (changes) => { held.push(...changes); },
+  presence: (op, member, o) => real.presence(op, member, o),
+  publishToClient: (clientId, event, data) => real.publishToClient(clientId, event, data),
+  controlClient: (clientId, subscriptions, token) => real.controlClient(clientId, subscriptions, token),
+  openSocket: (clientId) => real.openSocket(clientId),
+});
 
 export class MailerMessage {
   from: { address: string; name?: string } = { address: "" };

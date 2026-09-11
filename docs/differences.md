@@ -9,7 +9,7 @@ this page lists where the platform forces a different shape, and the limits that
 | Topic | PocketBase | voidbase |
 | --- | --- | --- |
 | Database | one SQLite file on local disk | one D1 database (SQLite semantics, remote) |
-| Transactions | interactive, `RunInTransaction` | none: every write validates first, then runs as **one D1 batch** (atomic). Hook code cannot open a transaction; `$app.runInTransaction(fn)` runs `fn` directly |
+| Transactions | interactive, `RunInTransaction` | every write validates first, then runs as **one D1 batch** (atomic). `$app.runInTransaction(fn)` is a real transaction on the Durable Object database (`VOIDBASE_DATABASE=durable`): the writes are held and sent as one batch the object runs inside `transactionSync`, and a read of what it wrote throws rather than answering stale. On D1 it runs `fn` directly. `$app.transactionsAreReal()` says which. See docs/hooks.md |
 | Bound parameters | SQLite default (32766) | **100 per statement** (D1). Large `IN (...)` lists and wide inserts are chunked by the server; hand-written `$app.dao()` SQL must respect it |
 | Columns per table | 2000 | 100 (D1) |
 | Row / query size | SQLite limits | 1 MB per row, 128 MB per query result (D1). List endpoints paginate anyway |

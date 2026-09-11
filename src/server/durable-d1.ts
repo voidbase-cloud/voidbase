@@ -35,6 +35,13 @@ export interface DatabaseStub {
 // what src/server/db.ts bindValue leaves is already null/number/string/0-1/ArrayBuffer; a bare undefined becomes null
 const conv = (v: unknown) => (v === undefined ? null : v);
 
+// The marker the rest of the server asks about when it needs to know whether `batch` is a real transaction. D1's is
+// a best effort of one and bun:sqlite's (src/node/d1.ts) is real but local; only the object's runs inside
+// ctx.storage.transactionSync, which is what $app.runInTransaction needs (src/server/tx-d1.ts).
+const DURABLE = Symbol.for("voidbase.durableDatabase");
+/** whether this D1 interface is the instance's database Durable Object, whose `batch` is one real transaction */
+export const isDurableDatabase = (db: D1Database | undefined | null): boolean => (db as unknown as Record<symbol, boolean> | null)?.[DURABLE] === true;
+
 class DurableStatement {
   constructor(private readonly stub: () => DatabaseStub, readonly sql: string, readonly params: unknown[] = []) {}
   bind(...values: unknown[]) { return new DurableStatement(this.stub, this.sql, values.map(conv)); }
@@ -67,6 +74,7 @@ export function d1OverDurable(stub: DatabaseStub | (() => DatabaseStub)): D1Data
     dump: async () => { throw new Error("dump is not supported"); },
     withSession: () => { throw new Error("sessions are not supported"); },
   };
+  Object.defineProperty(api, DURABLE, { value: true });
   return api as unknown as D1Database;
 }
 

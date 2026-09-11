@@ -25,7 +25,33 @@ const check = (l: string, ok: boolean, d = "") => { ok ? pass++ : fail++; consol
 // the way any composed project does, for the two proofs no public endpoint expresses (a raw batch, the ceilings)
 const root = mkdtempSync(join(tmpdir(), "vb-durable-"));
 mkdirSync(`${root}/pb_hooks`); mkdirSync(`${root}/pb_migrations`);
-writeFileSync(`${root}/pb_hooks/main.pb.js`, `routerAdd("GET", "/api/hello", (e) => e.json(200, { hello: "durable" }));\n`);
+// the hook half: a route that does its writes inside $app.runInTransaction, which on the object is a real one
+writeFileSync(`${root}/pb_hooks/main.pb.js`, [
+  'routerAdd("GET", "/api/hello", (e) => e.json(200, { hello: "durable" }));',
+  'routerAdd("POST", "/api/tx-hook", (e) => {',
+  '  const mode = e.queryParam("mode");',
+  '  const out = { real: $app.transactionsAreReal(), error: "", readback: "", nested: "" };',
+  '  $app.truncateCollection("tx_a"); $app.truncateCollection("tx_b");',
+  '  try {',
+  '    $app.runInTransaction((txApp) => {',
+  '      const a = new Record(txApp.findCollectionByNameOrId("tx_a"), { title: "one" });',
+  '      txApp.save(a);',
+  '      if (mode === "readback") {',
+  '        try { txApp.findRecordById("tx_a", a.id); out.readback = "answered"; } catch (err) { out.readback = String(err.message || err); }',
+  '      }',
+  '      if (mode === "nested") {',
+  '        try { txApp.runInTransaction(() => 1); out.nested = "allowed"; } catch (err) { out.nested = String(err.message || err); }',
+  '      }',
+  '      if (mode === "fail") throw new Error("the second write is refused");',
+  '      txApp.save(new Record(txApp.findCollectionByNameOrId("tx_b"), { title: "two" }));',
+  '    });',
+  '  } catch (err) { out.error = String(err.message || err); }',
+  '  out.a = $app.countRecords("tx_a");',
+  '  out.b = $app.countRecords("tx_b");',
+  '  return e.json(200, out);',
+  '});',
+  '',
+].join("\n"));
 writeFileSync(`${root}/package.json`, JSON.stringify({ name: NAME, private: true }) + "\n");
 writeFileSync(`${root}/main.ts`, [
   `import type { VoidbaseApp } from ${JSON.stringify(`${PKG}/src/server/api`)};`,
@@ -90,6 +116,19 @@ try {
   check("the request reaches the database through DB_OBJECT (the seam rebound DB)", !!txBody?.durable, `${tx.status} ${JSON.stringify(txBody).slice(0, 200)}`);
   check("a batch whose second statement fails leaves the first rolled back, with SQLite's own message (unprefixed: the object's, not D1's)", !!txBody && /^UNIQUE constraint failed: tx_proof\.v/.test(txBody.error) && txBody.rows.length === 0, JSON.stringify(txBody).slice(0, 300));
   check("the same two statements outside a batch: the first survives (the contrast), the second fails the same way", !!txBody && /UNIQUE constraint failed: tx_proof\.v/.test(txBody.single) && txBody.after.length === 1 && txBody.after[0]?.v === "second", JSON.stringify(txBody).slice(0, 300));
+
+  // the hook's own transaction: $app.runInTransaction, whose writes are held and sent as one batch at the end
+  const txColl = async (name: string) => (await fetch(`${base}/api/collections`, { method: "POST", headers: H, body: JSON.stringify({ name, type: "base", fields: [{ name: "title", type: "text" }] }) })).status;
+  const txColls = [await txColl("tx_a"), await txColl("tx_b")];
+  const hookTx = async (mode: string) => (await json(await fetch(`${base}/api/tx-hook?mode=${mode}`, { method: "POST", headers: H }))) as { real: boolean; error: string; readback: string; nested: string; a: number; b: number };
+  const txFail = await hookTx("fail");
+  check("a hook's transaction whose second write throws leaves neither record, and the throw reaches the hook", txColls.every((s) => s === 200) && txFail.real === true && /the second write is refused/.test(txFail.error) && txFail.a === 0 && txFail.b === 0, JSON.stringify(txFail));
+  const txOk = await hookTx("commit");
+  check("the same transaction without the throw leaves both records, sent as one batch when the callback returned", txOk.error === "" && txOk.a === 1 && txOk.b === 1, JSON.stringify(txOk));
+  const txRead = await hookTx("readback");
+  check(`reading back what the transaction just wrote throws instead of answering without it (measured: "${txRead.readback.slice(0, 80)}")`, /has written to .tx_a. and has not committed/.test(txRead.readback) && txRead.error === "" && txRead.a === 1 && txRead.b === 1, JSON.stringify(txRead));
+  const txNest = await hookTx("nested");
+  check("a transaction inside a transaction is refused with a message that says so, not silently flattened", /a transaction is already open\. Transactions do not nest/.test(txNest.nested) && txNest.error === "" && txNest.a === 1 && txNest.b === 1, JSON.stringify(txNest));
   // the ceilings, measured
   const at = async (n: number) => (await json(await fetch(`${base}/api/limits?n=${n}`, { headers: H }))) as { columns: string; params: string };
   const at100 = await at(100), at101 = await at(101);

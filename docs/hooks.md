@@ -78,11 +78,55 @@ cronAdd("reset", "0 * * * *", () => {
 });
 ```
 
+### Transactions
+
+`$app.runInTransaction(fn)` runs `fn` as one unit of work. What that is worth depends on which database the
+instance is on.
+
+On the **Durable Object database** (`VOIDBASE_DATABASE=durable`) it is a real transaction. The writes `fn` makes
+are collected and sent as one batch when `fn` returns, and the object runs a batch inside
+`ctx.storage.transactionSync`: all of them land or none do. `fn` throwing rolls everything back, by never sending
+it, and rethrows. Realtime events the writes announced are held until the batch commits, so a transaction that
+rolled back announces nothing.
+
+On **D1** there is no transaction and nothing has changed: `fn` is called directly with `$app`, and a throw halfway
+leaves behind whatever it had already written. A hook can ask which one it is getting:
+
+```js
+if ($app.transactionsAreReal()) { /* runInTransaction is all or nothing here */ }
+```
+
+**Buffered writes, and a read of your own uncommitted write inside the transaction is not visible.** That is the
+price of the only honest mechanism there is, and it is not hidden. A Durable Object can hold a transaction open
+only inside a single RPC: `ctx.storage.transactionSync` takes a callback that must be synchronous, and `sql.exec`
+refuses `BEGIN TRANSACTION` and `SAVEPOINT` outright ("use the state.storage.transaction() or
+state.storage.transactionSync() APIs instead"), so the one batch at the end is the only place the transaction can
+exist. Rather than quietly answer a stale row, a read of a table this transaction has already written to throws:
+
+```js
+$app.runInTransaction((txApp) => {
+  const post = new Record(txApp.findCollectionByNameOrId("posts"), { title: "hello" });
+  txApp.save(post);                        // held, not written
+  txApp.findRecordById("posts", post.id);  // throws: `posts` has uncommitted writes in this transaction
+});
+```
+
+| inside a transaction you can | you cannot |
+| --- | --- |
+| `$app.save()` a new record, and use what it hands back: that is the row that was written, not a read of it | read any table the transaction has already written to. `findRecordById`, `findRecordsByFilter`, `countRecords`, a filter or an expand over it all throw |
+| `$app.delete()` a record the transaction has not written | `$app.save()` an existing record or `$app.delete()` a record the transaction has already written: both read it first |
+| read anything the transaction has not written to | run a statement with `RETURNING`, whose rows exist only once the batch commits |
+| write to as many collections as you like | nest transactions: an inner `runInTransaction` throws rather than silently flatten into the outer one |
+
+Do the reads first and the writes last and none of that is in the way. Unique indexes are still enforced, just at
+the commit rather than at the call: two records in one transaction that clash leave nothing behind, and the
+`UNIQUE constraint failed` error is what `runInTransaction` throws.
+
 ## Globals
 
 | Global | Supported members |
 | --- | --- |
-| `$app` | `findCollectionByNameOrId`, `findAllCollections`, `findRecordById`, `findFirstRecordByData`, `findFirstRecordByFilter`, `findRecordsByFilter`, `findAuthRecordByEmail`, `findAuthRecordByToken`, `countRecords`, `expandRecord(s)`, `save`, `saveNoValidate`, `delete`, `runInTransaction` (runs the callback directly), `settings()`, `isDev()`, `logger()`, `newMailClient()`, `dao()` (raw SQL, D1 limits apply) |
+| `$app` | `findCollectionByNameOrId`, `findAllCollections`, `findRecordById`, `findFirstRecordByData`, `findFirstRecordByFilter`, `findRecordsByFilter`, `findAuthRecordByEmail`, `findAuthRecordByToken`, `countRecords`, `expandRecord(s)`, `save`, `saveNoValidate`, `delete`, `runInTransaction` (a real transaction on the Durable Object database, a plain call on D1: see Transactions), `transactionsAreReal`, `settings()`, `isDev()`, `logger()`, `newMailClient()`, `dao()` (raw SQL, D1 limits apply) |
 | `$apis` | `requireAuth`, `requireSuperuserAuth`, `requireGuestOnly`, `requireSuperuserOrOwnerAuth`, `enrichRecord(s)` |
 | `$http` | `send({url, method, body, headers, timeout})` |
 | `$filesystem` | `fileFromURL`, `fileFromBytes`; `fileFromPath` throws (no filesystem) |

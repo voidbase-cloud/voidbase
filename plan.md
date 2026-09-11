@@ -505,7 +505,14 @@ browser attaches on its own is what those two exist for. What
 client types against, with `--check` as a build's gate. And (2026-09-11) its `panel` option serves PocketBase's own
 admin panel under the app's own path instead of `/_/`, rebasing at build time the two URLs its bundle hardcodes,
 with `guard: "superuser"` putting the entry behind a superuser session through the same `_redirects`-to-`/api`
-mechanism the seo plugin uses (404, never 403) and `hide` ruling `/_/` away. What
+mechanism the seo plugin uses (404, never 403) and `hide` ruling `/_/` away. And (2026-09-11) a hook's
+transaction is real where the database can give one: on the Durable Object database `$app.runInTransaction(fn)`
+holds the writes `fn` makes and sends them as one batch when it returns, which the object runs inside
+`transactionSync`, so a throw leaves nothing behind and the realtime events go out only once it has committed,
+while on D1 it stays the plain call it always was and `$app.transactionsAreReal()` says which you have; the
+price, measured on workerd rather than assumed, is that a Durable Object can hold a transaction open only
+inside one RPC, so a read of a table the transaction has already written throws instead of answering without
+it. What
 exists: the executable, the package on Bun, Cloudflare all three ways, both modes in shape,
 `voidbase sync`, the adapter, (2026-09-11) the ai plugin's memory as records: `ai_conversations` and `ai_messages`,
 created once the Workers AI binding is there, written through the records service so realtime sees each reply land,

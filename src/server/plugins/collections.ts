@@ -7,11 +7,31 @@
 // touched, because a plugin creating what it did not declare is exactly what the ownership rule exists to stop.
 // The auth plugin's five collections are the exception that predates this: they are system tables voidbase's own
 // schema creates, and the manifest owns them so nothing else can.
-import { findCollection } from "../collections/model";
-import { createCollection } from "../collections/service";
+import { collectionToJSON, findCollection, type Collection } from "../collections/model";
+import { createCollection, updateCollection } from "../collections/service";
 import type { Plugin } from "./manifest";
 
-/** create the owned collections that are missing; returns the names created */
+const RULES = ["listRule", "viewRule", "createRule", "updateRule", "deleteRule"] as const;
+
+/**
+ * What a newer definition adds to a collection the plugin created earlier: fields it lacks (by name), indexes it
+ * lacks (by text) and rules that changed. Fields the instance has and the definition no longer names are kept, as
+ * are their options: a plugin reconciles its own shape forward, it does not drop a column with data in it.
+ */
+export function reconcileDefinition(existing: Collection, def: Record<string, unknown>): Record<string, unknown> | null {
+  const have = new Set(existing.fields.map((f) => f.name));
+  const fields = ((def.fields as { name: string }[] | undefined) ?? []).filter((f) => !have.has(f.name));
+  const indexes = ((def.indexes as string[] | undefined) ?? []).filter((i) => !existing.indexes.includes(i));
+  const rules: Record<string, unknown> = {};
+  for (const r of RULES) if (r in def && (def[r] ?? null) !== (existing[r] ?? null)) rules[r] = def[r] ?? null;
+  if (!fields.length && !indexes.length && !Object.keys(rules).length) return null;
+  return { ...collectionToJSON(existing), ...rules, fields: [...existing.fields, ...fields], indexes: [...existing.indexes, ...indexes] };
+}
+
+/**
+ * create the owned collections that are missing, and bring the ones that exist up to the definition (a field, an
+ * index or a rule a newer version of the plugin declares); returns the names created
+ */
 export async function ensureCollections(plugin: Plugin, db: D1Database, definitions: Record<string, unknown>[]): Promise<string[]> {
   const owned = new Set(plugin.manifest.collections ?? []);
   for (const def of definitions) {
@@ -21,7 +41,12 @@ export async function ensureCollections(plugin: Plugin, db: D1Database, definiti
   const created: string[] = [];
   for (const def of definitions) {
     const name = String(def.name);
-    if (await findCollection(db, name)) continue;
+    const existing = await findCollection(db, name);
+    if (existing) {
+      const next = reconcileDefinition(existing, def);
+      if (next) await updateCollection(db, existing, next);
+      continue;
+    }
     await createCollection(db, def);
     created.push(name);
   }

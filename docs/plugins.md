@@ -126,7 +126,9 @@ const plugin = {
 ```
 
 The definition is what `POST /api/collections` takes, and the collection is created through the same service the
-panel uses, table and all, once, when it is missing. The kernel runs every plugin's bootstrap after voidbase's own
+panel uses, table and all, once, when it is missing; when it exists, a newer definition is reconciled forward (a
+field, an index or a rule the plugin now declares is added; nothing the instance has is dropped, so a column with
+data in it survives a plugin update: `reconcileDefinition`). The kernel runs every plugin's bootstrap after voidbase's own
 (the system collections, the settings row, the superuser), in load order, so a plugin that extends a collection
 another one owns runs after the owner created it; a failure is retried by the next request. A name the manifest
 does not own is refused before the database is touched. The auth plugin's five collections predate this: they are

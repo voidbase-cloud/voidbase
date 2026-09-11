@@ -36,6 +36,7 @@
     "./api": "./src/server/api.ts",
     "./passkeys": "./src/server/webauthn.ts",
     "./cloud": "./src/cloud/rest.ts",
+    "./cloud-client": "./src/cloud/client.ts",
     "./bundle": "./src/node/bundle.ts",
     "./adapter": "./src/adapter/runtime.ts",
     "./adapter/plugin": "./src/adapter/index.ts",

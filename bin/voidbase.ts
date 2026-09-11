@@ -10,7 +10,8 @@ import { embedded, isExecutable } from "../src/node/embedded";
 // the version: the executable carries it, a checkout reads package.json
 async function currentVersion(): Promise<string> { return (await embedded())?.version ?? (JSON.parse(await Bun.file(resolve(import.meta.dir, "../package.json")).text()) as { version: string }).version; }
 // the prebuilt executable serves; the Cloudflare toolchain (Void, Vite, wrangler) comes with the npm package
-const TOOLCHAIN = new Set(["dev", "build", "preview", "deploy", "sync", "bundle", "release", "cloud", "panel", "app", "init", "seed-user"]);
+// ("cloud" is not here: its verbs are plain HTTP against voidbase.cloud; only "cloud init" needs the toolchain)
+const TOOLCHAIN = new Set(["dev", "build", "preview", "deploy", "sync", "bundle", "release", "panel", "app", "init", "seed-user"]);
 
 const ROOT = resolve(`${import.meta.dir}/..`);
 const argv = process.argv.slice(2);
@@ -111,6 +112,28 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   export <outDir>                    SQLite + collections.json + storage/ from a running instance (--url, --admin)
   cloud init [dir=cloud]             write a Void project (routes, middleware, crons, db, env, vite/void config) that
                                      imports voidbase and uses ../pb_hooks and ../pb_migrations, for "void deploy"
+  cloud login --token <token> [--url https://voidbase.cloud]
+                                     sign in to voidbase.cloud from here: the token is the "CLI token" the cloud page
+                                     shows for the signed-in user; kept in ~/.config/voidbase/cloud.json (mode 600)
+  cloud logout | whoami              forget the session / who you are, the Cloudflare connection and its accounts,
+                                     the GitHub connection
+  cloud instances [ls]               your instances on voidbase.cloud (name, status, release, url)
+  cloud instances create <name> [--account id] [--email superuser@]
+                                     provision one in your own Cloudflare account from the site's release; the
+                                     superuser password is printed once and kept nowhere
+  cloud instances upgrade <name>     bring it to the site's current release, in place (data, secrets, domains stay)
+  cloud instances delete <name> [--yes]
+                                     delete it and everything it owns (Worker, D1, R2, queue, domains); asks first
+  cloud repos [ls]                   the GitHub repositories linked to your instances
+  cloud repos create <instance> --template <name> --name <repo> [--private] [--inputs k=v,k=v]
+                                     generate a repository from one of the site's templates, set its variables to
+                                     the instance and wire the instance to deploy from it
+  cloud repos link <instance> <owner/name> [--template name]
+                                     link a repository you already have; unlink <owner/name> forgets it (the
+                                     repository stays on GitHub)
+  cloud plugins <instance> [ls | install <name>[@version] [--marketplace url] | remove <name> | update [name]] --email .. --password ..
+                                     the instance's own installer, with its superuser (an instance by name or id;
+                                     every cloud verb takes --json for the raw result)
   panel sync [--brand <dir>]         copy PocketBase's ui/dist into public/_ (POCKETBASE_UI_DIST), optional branding
   app sync                           copy a static app build into public/ (VOIDBASE_APP_DIR)
   seed-user [email] [password]       create the app user (default user@example.com) on a running instance
@@ -569,10 +592,19 @@ switch (cmd) {
     console.log(`exported ${r.collections} collections, ${r.rows} rows, ${r.files} files to ${sub}`); break;
   }
   case "cloud": {
-    if (sub !== "init") { console.error("usage: voidbase cloud init [dir]"); process.exit(1); }
-    const { writeCloudProject } = await import("../src/node/cloud-init");
-    const r = writeCloudProject(resolve(rest[0] ?? "cloud"));
-    console.log(`wrote ${r.files} files + db/migrations to ${rest[0] ?? "cloud"}\nnext: voidbase deploy   (or: cd ${rest[0] ?? "cloud"} && bun install && bun run panel:sync && void deploy)`);
+    // "cloud init" writes a Void project and needs the toolchain; every other verb is voidbase.cloud over plain
+    // HTTP (src/node/cloud-cli.ts), which the prebuilt executable can do as well as the package
+    if (sub === "init") {
+      if (isExecutable()) { console.error(`"cloud init" needs the Cloudflare toolchain, which comes with the npm package, not the prebuilt executable:\n  bunx @voidbase-cloud/voidbase ${argv.join(" ")}`); process.exit(1); }
+      const { writeCloudProject } = await import("../src/node/cloud-init");
+      const r = writeCloudProject(resolve(rest[0] ?? "cloud"));
+      console.log(`wrote ${r.files} files + db/migrations to ${rest[0] ?? "cloud"}\nnext: voidbase deploy   (or: cd ${rest[0] ?? "cloud"} && bun install && bun run panel:sync && void deploy)`);
+      break;
+    }
+    const { runCloud } = await import("../src/node/cloud-cli");
+    const confirm = (prompt: string) => { process.stdout.write(prompt); return new Promise<string>((r) => { process.stdin.once("data", (d: Buffer) => r(d.toString())); }); };
+    const code = await runCloud(sub, rest, flags, { out: console.log, err: console.error, isTTY: !!process.stdin.isTTY, confirm });
+    if (code) process.exit(code);
     break;
   }
   // destinations resolve against the caller's directory (run() executes in the package root)

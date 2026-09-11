@@ -320,3 +320,28 @@ why, and what each generated file is.
 without a project or a deploy command of your own. It exists and it works, but it is still moving, so it is not yet
 documented as something to depend on. Until it settles, the three paths above are the supported ways to run an
 instance, and every one of them puts the instance in an account you control.
+
+Everything the cloud page does is also a command, so nothing is dashboard-only. Sign in once with the "CLI token"
+the cloud page shows for the signed-in user; it is kept in `~/.config/voidbase/cloud.json` (mode 600,
+`XDG_CONFIG_HOME` respected), and `--url` points at a site other than voidbase.cloud. The commands are plain HTTP
+against the site, so they work from the executable as well as the package.
+
+```bash
+voidbase cloud login --token <token>        # from the cloud page; logout forgets it, whoami says who you are
+voidbase cloud whoami                       # the user, the Cloudflare connection and its accounts, GitHub
+voidbase cloud instances                    # yours, with status, release and url
+voidbase cloud instances create shop        # provisioned in your own Cloudflare account from the site's release;
+                                            # --account picks one of several, --email the superuser (the password
+                                            # is printed once and kept nowhere)
+voidbase cloud instances upgrade shop       # to the site's current release, in place
+voidbase cloud instances delete shop --yes  # the Worker, its D1, R2, queue and domains; asks first without --yes
+voidbase cloud repos                        # the repositories linked to your instances
+voidbase cloud repos create shop --template voidbase-site --name my-site --private
+voidbase cloud repos link shop owner/name   # one you already have; unlink owner/name forgets it (GitHub keeps it)
+voidbase cloud plugins shop --email you@example.com --password ...     # ls (default), install name[@version]
+                                            # [--marketplace url], remove name, update [name]: the instance's own
+                                            # installer, signed in as its superuser
+```
+
+An instance is named by its name (`shop` finds `vb-shop`) or its id, and every verb takes `--json` for the raw
+result. A verb that fails exits non-zero with the site's, Cloudflare's or the instance's own message.

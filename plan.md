@@ -496,7 +496,9 @@ downloaded once into the cache) and prints the trycloudflare address in the bann
 the project a deploy would upload on workerd through Void's dev server, D1, R2, queue and hub local, nothing touching
 Cloudflare (docs/deploy.md). And templates (2026-09-11): `voidbase init --template <name>` starts from a template the
 marketplace's index lists, `--template owner/name` from any public GitHub repository, the tarball of one ref unpacked
-with the system tar and the next steps read from the files (docs/setup.md).
+with the system tar and the next steps read from the files (docs/setup.md). And the cloud page's client now lives
+in the package (`voidbase/cloud-client`) and `voidbase cloud login | whoami | instances | repos | plugins` drives it
+from a terminal with the page's CLI token, so nothing voidbase.cloud does is dashboard-only (docs/setup.md).
 
 ## What to correct on the site when this lands
 

@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.25](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.24...v0.9.0-beta.25) (2026-09-11)
+
+* chore(ci): start the first hot release
+
 ## [0.9.0-beta.24](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.23...v0.9.0-beta.24) (2026-09-10)
 
 

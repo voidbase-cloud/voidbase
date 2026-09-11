@@ -36,6 +36,12 @@ export interface Bindings {
   LEMONSQUEEZY_API_KEY?: string;
   LEMONSQUEEZY_STORE_ID?: string;
   LEMONSQUEEZY_WEBHOOK_SECRET?: string;
+  // the shop and the two flat-rate plugins beside it (plugins/commerce.ts, tax-flat.ts, shipping-flat.ts)
+  VOIDBASE_COMMERCE?: string;
+  VOIDBASE_COMMERCE_CURRENCY?: string;
+  VOIDBASE_TAX_RATE?: string;
+  VOIDBASE_SHIPPING_FLAT?: string;
+  VOIDBASE_SHIPPING_FREE_OVER?: string;
   // a project instance: the repository it deploys from and a token that commits there (plugins/installer.ts)
   VOIDBASE_PROJECT_REPO?: string;
   VOIDBASE_PROJECT_BRANCH?: string;

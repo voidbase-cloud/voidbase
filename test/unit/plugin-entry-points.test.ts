@@ -30,7 +30,10 @@ const expected: Record<string, string[]> = {
   "./plugins/stripe": ["stripe", "stripeWith", "verifySignature", "formEncode", "applyEvent"],
   "./plugins/polar": ["polar", "polarWith", "verifySignature", "applyEvent"],
   "./plugins/lemonsqueezy": ["lemonsqueezy", "lemonsqueezyWith", "verifySignature", "applyEvent"],
-  "./plugins/payments-shared": ["paymentsPlugin", "collectionDefinitions", "d1Rows", "ensureCustomer", "upsert", "customerForUser"],
+  "./plugins/payments-shared": ["paymentsPlugin", "collectionDefinitions", "d1Rows", "ensureCustomer", "upsert", "customerForUser", "onPaymentWritten"],
+  "./plugins/tax-flat": ["taxFlat", "taxRate", "taxQuote"],
+  "./plugins/shipping-flat": ["shippingFlat", "flatAmount", "freeOver", "flatRates"],
+  "./plugins/commerce": ["commerce", "commerceWith", "collectionDefinitions", "commerceOn", "COMMERCE_COLLECTIONS"],
   "./plugins/domains": ["domains", "domainsInfo"],
   "./plugins/previews": ["previews", "previewsInfo", "previewWorkerName"],
   "./plugins/collections": ["ensureCollections"],
@@ -50,9 +53,10 @@ describe("the plugin API is reachable from a package", () => {
   }
 
   test("each shipped plugin's manifest name is its entry point's last segment", async () => {
-    for (const name of ["auth", "observability", "backups", "realtime", "hardening", "openapi", "mcp", "seo", "mail", "ai", "translations", "stripe", "polar", "lemonsqueezy", "previews", "domains"]) {
+    const camel: Record<string, string> = { "tax-flat": "taxFlat", "shipping-flat": "shippingFlat" };
+    for (const name of ["auth", "observability", "backups", "realtime", "hardening", "openapi", "mcp", "seo", "mail", "ai", "translations", "stripe", "polar", "lemonsqueezy", "tax-flat", "shipping-flat", "commerce", "previews", "domains"]) {
       const mod = (await import(resolve(root, exportsMap[`./plugins/${name}`]!))) as Record<string, { manifest: { name: string } }>;
-      expect(mod[name]!.manifest.name).toBe(name);
+      expect(mod[camel[name] ?? name]!.manifest.name).toBe(name);
     }
   });
 });

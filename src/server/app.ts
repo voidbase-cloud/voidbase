@@ -35,6 +35,9 @@ import { translations as translationsPlugin, translationsInfo } from "./plugins/
 import { stripe as stripePlugin } from "./plugins/stripe";
 import { polar as polarPlugin } from "./plugins/polar";
 import { lemonsqueezy as lemonsqueezyPlugin } from "./plugins/lemonsqueezy";
+import { taxFlat as taxFlatPlugin, taxFlatInfo } from "./plugins/tax-flat";
+import { shippingFlat as shippingFlatPlugin, shippingFlatInfo } from "./plugins/shipping-flat";
+import { commerce as commercePlugin, commerceInfo } from "./plugins/commerce";
 import { previews as previewsPlugin, previewsReport } from "./plugins/previews";
 import { domains as domainsPlugin, domainsInfo } from "./plugins/domains";
 import { realtime as realtimePlugin } from "./plugins/realtime";
@@ -556,7 +559,7 @@ mountCronsApi(app);
 export const kernel = createKernel(app);
 // What ships, minus what the project turned off, minus what an installed plugin shadows by name; then what the
 // project installed (pb_plugins, verified against voidbase.lock by the platform module). One graph, resolved once.
-const shipped = [authPlugin, observabilityPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION, undefined, () => whatLoaded(kernel).plugins), openapiPlugin, mcpPlugin, seoPlugin, mailPlugin, aiPlugin, translationsPlugin, stripePlugin, polarPlugin, lemonsqueezyPlugin, previewsPlugin, domainsPlugin];
+const shipped = [authPlugin, observabilityPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION, undefined, () => whatLoaded(kernel).plugins), openapiPlugin, mcpPlugin, seoPlugin, mailPlugin, aiPlugin, translationsPlugin, stripePlugin, polarPlugin, lemonsqueezyPlugin, taxFlatPlugin, shippingFlatPlugin, commercePlugin, previewsPlugin, domainsPlugin];
 if (shipped.map((p) => p.manifest.name).join() !== SHIPPED.join()) throw new Error("voidbase: src/server/plugins/shipped.ts disagrees with the plugins app.ts loads");
 // and the facts the CLI reads out of that file without importing any of this: tier, provides, requires
 const factsOf = (f: { tier: string; provides?: readonly string[]; requires?: readonly string[] }) => JSON.stringify([f.tier, f.provides ?? [], f.requires ?? []]);
@@ -580,7 +583,7 @@ provideMailLookup(() => using<Mail | undefined>(kernel, "mail@1"));
 // the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface.
 app.get("/api/plugins", async (c) => {
   requireSuperuser(c);
-  return c.json({ ...whatLoaded(kernel), installer: installerInfo(c.env), mail: await mailRoute(c.env), ai: await aiRoute(c.env), observability: (await observing()?.report(c.env)) ?? null, translations: translationsInfo(c.env), domains: domainsInfo(c.env), previews: await previewsReport(c.env), payments: using<Payments | undefined>(kernel, "payments@1")?.route(c.env) ?? { via: "none" } });
+  return c.json({ ...whatLoaded(kernel), installer: installerInfo(c.env), mail: await mailRoute(c.env), ai: await aiRoute(c.env), observability: (await observing()?.report(c.env)) ?? null, translations: translationsInfo(c.env), domains: domainsInfo(c.env), previews: await previewsReport(c.env), payments: using<Payments | undefined>(kernel, "payments@1")?.route(c.env) ?? { via: "none" }, commerce: { ...commerceInfo(c.env), tax: taxFlatInfo(c.env), shipping: shippingFlatInfo(c.env) } });
 });
 mountSqlApi(app);
 

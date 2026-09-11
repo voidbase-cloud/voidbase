@@ -533,7 +533,13 @@ write to a row production already has; (2026-09-11) the first payment provider: 
 (2026-09-11) `polar` and `lemonsqueezy` behind the same interface: what the three share moved into
 `payments-shared.ts`, each provider file is its knobs, its calls, its signature and its events, and the three are
 one provider of `payments@1` to the loader (stripe claims it, the others join its family), so changing provider is
-changing which key is set; and (2026-09-11) the rest of hardening: a `Content-Security-Policy` per route
+changing which key is set; and (2026-09-11) `commerce`, the shop the other plugins plug into: ten collections
+(products, variants, inventory, carts, orders, shipments, refunds and an append-only audit trail), the cart and
+checkout routes under `/api/commerce/`, stock reserved at checkout and released when an order is cancelled or its
+payment fails, and two new interfaces it requires rather than any particular plugin (`tax@1` and `shipping@1`,
+with `tax-flat` and `shipping-flat` shipped so a shop works out of the box), learning that an order was paid
+through `onPaymentWritten`, the smallest seam the payment providers could offer for a webhook they own; and
+(2026-09-11) the rest of hardening: a `Content-Security-Policy` per route
 (`VOIDBASE_CSP_ROUTES`, `<path glob>:<policy>` entries decided routes, then files, then the global one, the globs
 matched by the one path matcher the hook router uses), a double-submit token (`VOIDBASE_CSRF=double-submit`:
 `GET /api/csrf` answers one and sets a cookie holding it, a cookie-authenticated write must repeat it in

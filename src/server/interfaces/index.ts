@@ -68,6 +68,12 @@ export interface PaymentsRoute {
 export interface Payments {
   /** where payments go with these bindings, for /api/plugins; null means this provider has no key here */
   route(env: Bindings): PaymentsRoute | null;
+  /**
+   * The `customers` row for a signed-in user, created at the provider on the first contact: the id every other
+   * method takes. Added 2026-09-11 with the commerce plugin, which has an auth record and needs the row id the
+   * provider's own checkout route would have looked up for itself.
+   */
+  customer(env: Bindings, auth: AuthRecord): Promise<string>;
   /** start a checkout for a customers row and return where to send the customer */
   checkout(env: Bindings, o: { customer: string; items: { price: string; quantity: number }[]; success: string; cancel?: string; mode?: "payment" | "subscription" }): Promise<{ url: string }>;
   /** where a customer manages their own billing, when the provider hosts such a page */
@@ -76,6 +82,67 @@ export interface Payments {
   webhook(env: Bindings, request: Request): Promise<{ kind: string; customer?: string; subscription?: string; payment?: string; raw: Row } | null>;
   /** stop a subscriptions row: at the period's end by default, or now; `resume` takes a period-end cancellation back */
   cancel(env: Bindings, subscription: string, o?: { now?: boolean; resume?: boolean }): Promise<void>;
+  /**
+   * Give money back for a `payments` row, when the provider offers it. Optional, and no shipped provider
+   * implements it yet: a caller asks whether the method is there and records the refund either way, which is what
+   * lets commerce refund an order against a provider that can only be refunded from its own dashboard.
+   */
+  refund?(env: Bindings, o: { payment: string; amount?: number; reason?: string }): Promise<{ providerId: string }>;
+}
+
+/**
+ * What a shop asks of somebody else. Two interfaces, deliberately small, added 2026-09-11 with the commerce
+ * plugin, which requires them rather than any particular plugin: a tax engine supplies the tax, a carrier
+ * supplies the rates, and commerce never learns which.
+ *
+ * They are shaped the way `payments@1` is, and for the same reason: an API key or a rate table arrives with the
+ * request rather than at module scope, so the env is the first argument of every method rather than something the
+ * provider holds. There is no `route(env)` twin, because neither of these has a webhook to register or a knob a
+ * caller has to be told about: a provider with nothing configured answers zero rather than refusing, which is what
+ * makes the shipped flat-rate pair a working default instead of a wall.
+ *
+ * Every amount is an integer in the currency's minor unit, like the `payments` collection's `amount`, because a
+ * price that has been through a float is a price you cannot reconcile.
+ */
+export interface QuoteAddress {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  region?: string;
+  postcode?: string;
+  /** ISO 3166-1 alpha-2, upper case, as a tax engine and a carrier both expect it */
+  country?: string;
+}
+/** one line of what is being quoted for: what it is, how many, and what each costs in the minor unit */
+export interface QuoteItem {
+  /** the `variants` row, when the caller has one */
+  variant?: string;
+  sku?: string;
+  title?: string;
+  quantity: number;
+  unitPrice: number;
+  /** grams, when the variant says; a carrier that prices by weight reads it */
+  weight?: number;
+}
+export interface TaxLine {
+  label: string;
+  amount: number;
+}
+export interface Tax {
+  /** what tax these items owe going to this address; `customer` is the `customers` row id when there is one */
+  quote(env: Bindings, o: { items: QuoteItem[]; to: QuoteAddress; customer?: string }): Promise<{ lines: TaxLine[]; total: number }>;
+}
+export interface ShippingRate {
+  /** stable for this quote: what a checkout names to choose this rate */
+  id: string;
+  label: string;
+  amount: number;
+  /** what the carrier says about delivery, free text ("2 to 4 working days") */
+  eta?: string;
+}
+export interface Shipping {
+  /** the ways these items can be sent to this address, cheapest first by convention; an empty list means none */
+  rates(env: Bindings, o: { items: QuoteItem[]; to: QuoteAddress }): Promise<ShippingRate[]>;
 }
 
 /**
@@ -162,6 +229,8 @@ export interface Observability {
 export interface Interfaces {
   "auth@1": Auth;
   "payments@1": Payments;
+  "tax@1": Tax;
+  "shipping@1": Shipping;
   "realtime@1": Realtime;
   "hardening@1": Hardening;
   "mail@1": Mail;
@@ -171,4 +240,4 @@ export interface Interfaces {
 export type Known = keyof Interfaces;
 
 /** the list, for the loader to check a manifest against something rather than accepting any string */
-export const KNOWN: Known[] = ["auth@1", "payments@1", "realtime@1", "hardening@1", "mail@1", "observability@1"];
+export const KNOWN: Known[] = ["auth@1", "payments@1", "tax@1", "shipping@1", "realtime@1", "hardening@1", "mail@1", "observability@1"];

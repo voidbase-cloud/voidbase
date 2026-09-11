@@ -12,9 +12,9 @@ working plan. What is here is what a contributor needs to touch it.
 | `src/server/kernel.ts` | the composition root: `createKernel(app)`, `load(kernel, plugins, VERSION)`, `serve()` / `using()` for interfaces, `whatLoaded()`. May import only cordis, hono, the platform log, its own types and the manifest/resolver; `test/unit/kernel-invariant.test.ts` fails when a feature leaks in. |
 | `src/server/plugins/manifest.ts` | the manifest format (`name`, `version`, `tier`, `voidbase` range, `provides`, `requires`, `collections`, `extends`) and `checkManifest()`. Data only. |
 | `src/server/plugins/resolve.ts` | the whole graph checked before a single plugin is applied: unknown interface names, version ranges, two providers of one interface, collection ownership, missing requirements, cycles. Everything wrong is reported at once. |
-| `src/server/interfaces/index.ts` | the interfaces a plugin may provide or require, versioned in the name (`auth@1`, `payments@1`, `realtime@1`, `hardening@1`, `mail@1`) and the closed `KNOWN` list. |
-| `src/server/plugins/*.ts` | the plugins voidbase ships with today: `auth`, `realtime`, `hardening`, `backups`, `installer`, `openapi`, `mcp`, `seo`, `mail`, `translations`. |
-| `GET /api/plugins` | what this instance loaded: names, providers, tiers, `plugins` (each with its tier, a `core` flag and its `provides`/`requires`), any core interface nobody provides, `mail`, where this instance's mail goes, and `translations`, the locales and the declared collections. Superuser only. |
+| `src/server/interfaces/index.ts` | the interfaces a plugin may provide or require, versioned in the name (`auth@1`, `payments@1`, `tax@1`, `shipping@1`, `realtime@1`, `hardening@1`, `mail@1`, `observability@1`) and the closed `KNOWN` list. |
+| `src/server/plugins/*.ts` | the plugins voidbase ships with today: `auth`, `observability`, `realtime`, `hardening`, `backups`, `installer`, `openapi`, `mcp`, `seo`, `mail`, `ai`, `translations`, `stripe`, `polar`, `lemonsqueezy`, `tax-flat`, `shipping-flat`, `commerce`, `previews`, `domains`. |
+| `GET /api/plugins` | what this instance loaded: names, providers, tiers, `plugins` (each with its tier, a `core` flag and its `provides`/`requires`), any core interface nobody provides, `mail`, where this instance's mail goes, `translations`, the locales and the declared collections, and `commerce`, whether the shop is on and what the flat-rate tax and shipping plugins are set to. Superuser only. |
 
 ## The entry points a plugin package uses
 
@@ -22,7 +22,7 @@ The package exposes the plugin API and the plugins it ships, so a plugin can liv
 against this voidbase: `@voidbase-cloud/voidbase/kernel` (`createKernel`, `load`, `serve`, `using`, `whatLoaded`,
 `Kernel`), `@voidbase-cloud/voidbase/plugins` (`Plugin`, `PluginManifest`, `checkManifest`),
 `@voidbase-cloud/voidbase/interfaces` (the interface types and `KNOWN`), and `@voidbase-cloud/voidbase/plugins/backups`,
-`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening`, `/plugins/openapi`, `/plugins/mcp`, `/plugins/seo`, `/plugins/mail`, `/plugins/translations` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
+`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening`, `/plugins/openapi`, `/plugins/mcp`, `/plugins/seo`, `/plugins/mail`, `/plugins/translations`, `/plugins/commerce`, `/plugins/tax-flat`, `/plugins/shipping-flat` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
 the map honest. The official plugin packages (`@voidbase-cloud/plugin-*`, one repository each) re-export the shipped
 objects through these entry points: the code lives here once, and the package is the plugin's name, manifest and
 version as the marketplace lists it.
@@ -1030,6 +1030,156 @@ Lemon Squeezy's JSON:API (`application/vnd.api+json`, `Authorization: Bearer`) a
 - Not verified against a live account: whether `POST /v1/customers` refuses an email the store already has (the
   lookup runs first either way), and whether `urls.customer_portal` on a customer is null before the first order
   (the create-customer example shows null, which is how the 400 is decided).
+
+## A shop the other plugins plug into: commerce
+
+`commerce` is a shipped plugin (tier `official`, `src/server/plugins/commerce.ts`) and the roadmap's "A shop the
+other plugins plug into": the parts of a shop that are the same everywhere, and none of the parts that are not.
+It requires `payments@1`, `tax@1` and `shipping@1` rather than stripe, tax-flat or shipping-flat, so a payment
+plugin supplies checkout, a shipping plugin supplies rates, a tax plugin supplies the tax, and commerce never
+learns which. `VOIDBASE_COMMERCE=1` turns it on; unset, it is loaded and idle, its ten collections are not created
+and every route answers 503 naming the knob, so an instance that does not sell anything never grows a shop.
+
+**The two interfaces beside it**, both new and both deliberately small (`src/server/interfaces/index.ts`):
+
+- `tax@1`: `quote(env, { items, to, customer? })` answers `{ lines: [{ label, amount }], total }`.
+- `shipping@1`: `rates(env, { items, to })` answers `[{ id, label, amount, eta? }]`, cheapest first by
+  convention; an empty list means this address cannot be shipped to.
+
+They are shaped the way `payments@1` is, and for the same reason: an API key or a rate table arrives with the
+request rather than at module scope, so the env is the first argument of every method rather than something the
+provider holds. They have no `route(env)` twin, because neither has a webhook to register or a knob a caller has
+to be told about, and a provider with nothing configured answers zero rather than refusing. An `item` is
+`{ variant?, sku?, title?, quantity, unitPrice, weight? }` and `to` is
+`{ line1?, line2?, city?, region?, postcode?, country? }`, the country upper-cased ISO 3166-1 alpha-2. Every
+amount is an integer in the currency's minor unit, like the `payments` collection's `amount`.
+
+**The flat-rate defaults**, two tiny shipped plugins (tier `official`) so a shop works out of the box and so that
+"requires the interface, not the plugin" is a claim with two implementations behind it:
+
+- `tax-flat` (`tax-flat.ts`) charges one percentage, `VOIDBASE_TAX_RATE` (`20`, `7.5`, `20%`), as one line
+  labelled `Tax (20%)`, rounded half away from zero on the subtotal rather than per line. Unset, zero or nonsense
+  is a shop that charges no tax, which is a valid shop and not an error.
+- `shipping-flat` (`shipping-flat.ts`) offers one rate, `VOIDBASE_SHIPPING_FLAT` in minor units, which becomes
+  zero once the subtotal reaches `VOIDBASE_SHIPPING_FREE_OVER`. Its id is `flat` and its label says which of the
+  two it is. Neither knob set is a shop that ships free.
+
+Replacing either is installing a plugin that provides the interface and removing ours; nothing in commerce
+changes, and `test/unit/commerce.test.ts` measures exactly that by running the whole shop against a tax engine and
+a carrier of its own.
+
+**The collections**, ten, owned and created by commerce at kernel bootstrap on the first request once the knob is
+set, each with `created` and `updated` autodates:
+
+- `products`: `title`, `slug` (unique), `description` (editor), `images` (file, up to 10), `active` (bool),
+  `metadata` (json).
+- `variants`: `product` (relation, required), `sku` (unique), `title`, `price` (number, minor units), `currency`,
+  `weight` (number, grams), `priceId` (text), `active`. `priceId` is what the payment provider knows this variant
+  by (a Stripe price, a Polar product, a Lemon Squeezy variant); the `sku` is sent when it is empty.
+- `inventory`: `variant` (relation, unique), `onHand`, `reserved`. A variant with no inventory row is untracked
+  and never blocks a sale, which is what lets a shop of downloads skip the table entirely.
+- `carts`: `user` (relation, optional), `token` (an anonymous cart's), `currency`, `status`
+  (`open` / `ordered` / `abandoned`), `expires` (thirty days), `address` (json: where `POST /cart/address` put it).
+- `cart_items`: `cart`, `variant`, `quantity`, `unitPrice` (the price at the moment it was added), unique per
+  (cart, variant).
+- `orders`: `number` (unique), `customer` (relation to the payments plugin's `customers`), `email`, `status`
+  (`pending` / `paid` / `fulfilled` / `cancelled` / `refunded`), `currency`, `subtotal`, `tax`, `shipping`,
+  `total`, `address` (json), `payment` (relation to the payments plugin's `payments` row), `placedAt`.
+- `order_items`: `order`, `variant`, `sku`, `title`, `quantity`, `unitPrice`, `total`. A record of what was
+  bought rather than a pointer to it, because a variant's title and price may change tomorrow and the order may
+  not.
+- `shipments`: `order`, `carrier`, `tracking`, `shippedAt`, `items` (json).
+- `refunds`: `order`, `amount`, `reason`, `providerId`, `refundedAt`.
+- `commerce_audit`: `at`, `actor`, `action`, `subject`, `detail` (json). Every state change writes one, it is
+  append-only, and it is superuser-read.
+
+**The rules** are the design said out loud. `products`, `variants` and `inventory` are a catalogue, so anyone may
+read them and `active = true` (and `product.active = true`, `variant.active = true`) is what hides a draft from
+everyone but a superuser. Everything else is somebody's, scoped through the payments plugin's `customers.user`
+(`customer.user = @request.auth.id`, `order.customer.user = @request.auth.id`) or through the cart's own user;
+`commerce_audit` is superuser-read. Nothing has a create, update or delete rule at all: every write goes through a
+route that checks the stock, records the audit row and answers with what happened, and a customer editing their
+own order's total through the records API is what that exists to stop. An anonymous cart is reachable by its
+token through the routes and not through the records API, because a rule cannot hold a secret.
+
+**The routes**, under `/api/commerce/`:
+
+- `GET|POST /cart`, anybody. The caller's open cart, made when there is none. Signed in it is the session's;
+  anonymous it is created with a token, which the answer carries and the caller sends back as `X-Cart-Token` (or
+  `?token=`, or `token` in the body). Signing in while carrying a token claims that cart rather than losing it.
+  Answers `{ id, token?, currency, status, expires, address, items: [{ id, variant, sku, title, quantity,
+  unitPrice, total }], subtotal }`, which is what every cart route answers.
+- `POST /cart/items`, body `{ variant, quantity? }` (default 1). Adds the line, or adds to it when the variant is
+  already in the cart, recording the variant's price as `unitPrice`. A quantity the stock cannot cover is 409
+  naming what is left; an unknown or inactive variant is 404 or 400.
+- `PATCH /cart/items/:id`, body `{ quantity }`. `0` takes the line away. Checks the stock again.
+- `DELETE /cart/items/:id`.
+- `POST /cart/address`, body `{ address: { line1, city, postcode, country, ... } }`. Sets the destination on the
+  cart and quotes both interfaces against it. Answers `{ cart, currency, address, subtotal, tax: { lines, total },
+  shipping: [rates] }`. An address with nothing recognisable in it is 400.
+- `POST /checkout`, signed-in user. Body `{ success, cancel?, shipping?: <rate id> }`. Quotes tax and shipping
+  again (a quote an hour old is not a quote), takes the named rate or the first one, asks `payments@1` for the
+  caller's `customers` row, reserves the stock, writes the `pending` order and its items, marks the cart
+  `ordered`, and hands the line items to `payments@1`'s checkout. Answers `{ order, url }`. If the provider
+  refuses, the stock goes back, the order is cancelled and the provider's error is the answer.
+- `POST /orders/:id/fulfil`, superuser. Body `{ carrier?, tracking? }`. A paid order only (409 otherwise): writes
+  a `shipments` row holding what shipped, takes the quantities off `onHand` and off the reservation with them, and
+  moves the order to `fulfilled`.
+- `POST /orders/:id/refund`, superuser. Body `{ amount?, reason? }`, defaulting to the whole total and refusing
+  more than it. A paid or fulfilled order only. Calls `payments@1`'s `refund` when the provider's plugin offers
+  one, keeps its id, and writes the `refunds` row either way, so an order refunded from a provider's own dashboard
+  is still recorded here. Moves the order to `refunded`. It does not put the stock back: a refunded order is not
+  an unsold one and only a person knows which it is.
+- `GET /orders` and `GET /orders/:id`, the caller's own (a superuser may read either). The single order carries
+  its items, its shipments and its refunds.
+
+**How commerce learns that an order was paid.** The webhook is the payment provider's, and that is the design
+rather than an oversight: nothing else may claim the path and nothing else can verify that provider's signature.
+Nothing in `payments-shared.ts` offered a seam, so this plugin added the smallest one there is and no more:
+`onPaymentWritten(app, watcher)`, a list of callbacks the shared webhook path calls once a provider has verified
+an event and upserted its `payments` row, with the env the request arrived with, that request's realtime client,
+the result the provider reported and the row it wrote. Watchers belong to one app, the identity the provider
+family is already keyed by, so two instances in one process never hear each other's payments. A watcher's error is
+the webhook's error on purpose: the provider then retries, every write on that path is an upsert by the provider's
+id, and the watcher's own move is idempotent for the same reason.
+
+Commerce's watcher matches the payments row to a `pending` order of the same `customers` row, preferring the one
+whose total and currency are the payment's and otherwise taking the oldest. A `succeeded` payment moves the order
+to `paid` and points it at the row; a `failed` one releases the reservation and cancels the order, which is the
+other half of "reserved at checkout, released when an order is cancelled or its payment fails". Both write a
+`commerce_audit` row whose actor is `payments:<provider>`. A payment with no pending order of ours is a log line
+and nothing else.
+
+Two smaller additions to `payments@1` came with it: `customer(env, auth)`, which answers the `customers` row id
+for a signed-in user (creating it at the provider on the first contact) because the interface previously only took
+an id the provider's own route had looked up for itself, and an optional `refund(env, { payment, amount?, reason? })`
+that no shipped provider implements yet and that the refund route asks for by name.
+
+**What it deliberately does not do.**
+
+- It does not charge tax and shipping at the provider. `payments@1`'s checkout takes the provider's own price ids,
+  and there is no price id for an amount computed a second ago, so the line items handed over are the variants and
+  the tax and shipping are computed and recorded on the order. A shop that needs the customer charged the whole
+  total either prices that in at the provider or uses a provider plugin that takes amounts.
+- Checkout needs a session. The `customers` row `payments@1` works in terms of belongs to a signed-in user, so an
+  anonymous cart has to sign in before it can be paid for. The cart survives that: signing in with its token
+  claims it.
+- It does not reopen the cart when a payment fails. The order is cancelled and the stock released; starting again
+  is a new cart, because a cart that comes back from the dead after a customer has edited nothing is a support
+  ticket.
+- No discounts, coupons, gift cards, tax exemptions, subscriptions-as-products, multi-currency price lists,
+  multi-warehouse inventory, backorders, partial shipments (one fulfilment ships the whole order), partial
+  refunds beyond the amount on the `refunds` row, or a panel screen. Subscriptions are the payment plugins'
+  (`subscriptions`), not this one's.
+- It does not sweep abandoned carts. `expires` is written and `abandoned` is a status the schema allows; nothing
+  yet sets it.
+
+`test/unit/commerce.test.ts` measures the cart's lifecycle, over-selling and untracked variants, the reservation
+and its release on a failed payment and on a refused checkout, both interfaces being asked with the cart's lines,
+what Stripe was actually handed at checkout, the paid webhook through the real seam and its replay, fulfilment,
+a refund with and without a provider that can give money back, the audit trail's rows in order, and one customer
+kept out of another's order. The payment provider is the real stripe plugin over a fake `fetch`; the tax engine
+and the carrier are the test's own.
 
 ## Backups worth relying on: backups
 

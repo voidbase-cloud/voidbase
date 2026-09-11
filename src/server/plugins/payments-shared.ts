@@ -5,7 +5,9 @@
 // what makes the next provider cheap to add". This is the shared shape: the three collections and their rules,
 // the rows written through the records service, the customer row behind a signed-in user, the four routes under
 // `/api/payments/<provider>/`, the upsert-by-`providerId` discipline that makes a replayed webhook a no-op, and the
-// `payments@1` implementation `/api/plugins` and other plugins reach. A provider hands in a `PaymentProvider` and
+// `payments@1` implementation `/api/plugins` and other plugins reach, and the seam a plugin built on top of
+// payments watches so that it can learn about a payment through a webhook route it does not own
+// (`onPaymentWritten`, added 2026-09-11 with the commerce plugin). A provider hands in a `PaymentProvider` and
 // gets a plugin back (`paymentsPlugin`).
 //
 // One provider is active at a time, and here is how the three shipped ones coexist. The loader refuses two plugins
@@ -330,7 +332,51 @@ async function customerOf(rows: PaymentRows, provider: PaymentProvider, id: stri
   return row;
 }
 
-async function webhookThrough(provider: PaymentProvider, deps: PaymentDeps, env: Bindings, rows: PaymentRows, request: Request): Promise<WebhookResult | null> {
+// ---- the seam: who else hears about a payment ---------------------------------------------------------------
+
+/**
+ * What a verified webhook wrote, for whoever else cares about it.
+ *
+ * A payment provider owns its webhook route, and that is the point of the design: nothing else may claim the
+ * path, and no other plugin can verify that provider's signature. But a plugin built on top of payments (the
+ * commerce plugin is the first) has to learn that an order was paid, and it cannot learn it from a route it does
+ * not own or from a collection it cannot hook. So this is the smallest seam that answers it and nothing more: a
+ * list of callbacks the shared webhook path calls once the provider has read the event and written its rows, with
+ * the env the request arrived with (the keys and bindings are in it), the realtime client of that request, the
+ * result the provider reported, and the `payments` row it wrote when it wrote one.
+ *
+ * A watcher's error is the webhook's error, on purpose: the provider then retries, every write on this path is an
+ * upsert by the provider's id, and a watcher is expected to be idempotent for the same reason. Nothing here reads
+ * anything a watcher could not read for itself; it is only told when to look.
+ *
+ * Watchers belong to one app, the same identity the family is keyed by, and not to the module: two instances in
+ * one process (a test suite, an executable serving two) must not hear each other's payments.
+ */
+export interface PaymentWritten {
+  /** the provider the event came from: `stripe`, `polar`, `lemonsqueezy` */
+  provider: string;
+  env: Bindings;
+  realtime?: RealtimeClient;
+  result: WebhookResult;
+  /** the `payments` row this event upserted, or null for an event that wrote none */
+  payment: Row | null;
+}
+export type PaymentWatcher = (e: PaymentWritten) => Promise<void> | void;
+
+const watchers = new WeakMap<Hono<AppEnv>, PaymentWatcher[]>();
+
+/** watch every payments row the providers on this app write; the returned function stops watching */
+export function onPaymentWritten(app: Hono<AppEnv>, watch: PaymentWatcher): () => void {
+  let list = watchers.get(app);
+  if (!list) watchers.set(app, (list = []));
+  list.push(watch);
+  return () => {
+    const i = list.indexOf(watch);
+    if (i >= 0) list.splice(i, 1);
+  };
+}
+
+async function webhookThrough(provider: PaymentProvider, deps: PaymentDeps, env: Bindings, rows: PaymentRows, request: Request, o: { realtime?: RealtimeClient; app?: Hono<AppEnv> } = {}): Promise<WebhookResult | null> {
   const secret = provider.webhookSecret(env);
   if (!secret) throw new ApiError(503, `${provider.label} webhooks are not configured on this instance: set ${provider.webhookSecretVar} (a secret) to the signing secret of the endpoint registered as ${webhookPathOf(provider.name)}`);
   const payload = await request.text();
@@ -338,7 +384,13 @@ async function webhookThrough(provider: PaymentProvider, deps: PaymentDeps, env:
   if (!verdict.ok) throw badRequest(`${provider.label} webhook refused: ${verdict.reason}`);
   let event: Row;
   try { event = obj(JSON.parse(payload)); } catch { throw badRequest(`${provider.label} webhook refused: the payload is not JSON`); }
-  return provider.applyEvent(rows, event);
+  const result = await provider.applyEvent(rows, event);
+  const watching = (o.app && watchers.get(o.app)) || [];
+  if (result && watching.length) {
+    const payment = result.payment ? await rows.find("payments", { id: result.payment }) : null;
+    for (const watch of [...watching]) await watch({ provider: provider.name, env, realtime: o.realtime, result, payment });
+  }
+  return result;
 }
 
 async function cancelThrough(provider: PaymentProvider, env: Bindings, rows: PaymentRows, sub: Row, mode: CancelMode): Promise<Row> {
@@ -358,6 +410,8 @@ export function paymentsPlugin(provider: PaymentProvider, deps: PaymentDeps, o: 
   const plugin = {} as Plugin & { payments: Payments };
   // standalone until applied: then the family of the app it was applied to, shared with the other providers
   let family: Family = { members: [{ provider, plugin }] };
+  // the app this plugin was applied to, which is what the payment watchers are keyed by
+  let mounted: Hono<AppEnv> | undefined;
 
   const payments: Payments = {
     route(env): PaymentsRoute | null {
@@ -365,6 +419,10 @@ export function paymentsPlugin(provider: PaymentProvider, deps: PaymentDeps, o: 
       if (!all.length) return null;
       const [p, ...rest] = all as [PaymentProvider, ...PaymentProvider[]];
       return { via: p.name, webhook: webhookPathOf(p.name), livemode: p.livemode(env), ...(rest.length ? { also: rest.map((r) => r.name), reason: whyNot(p, rest) } : {}) };
+    },
+    async customer(env, auth) {
+      const p = activeProvider(family, env);
+      return str((await customerForUser(deps.rows(env), p, env, auth)).id);
     },
     async checkout(env, o) {
       const p = activeProvider(family, env);
@@ -381,7 +439,7 @@ export function paymentsPlugin(provider: PaymentProvider, deps: PaymentDeps, o: 
       const path = new URL(request.url).pathname;
       const byPath = family.members.find((m) => webhookPathOf(m.provider.name) === path)?.provider;
       const p = byPath ?? activeProvider(family, env);
-      return webhookThrough(p, deps, env, deps.rows(env), request);
+      return webhookThrough(p, deps, env, deps.rows(env), request, { ...(mounted ? { app: mounted } : {}) });
     },
     async cancel(env, subscription, o = {}) {
       const p = activeProvider(family, env);
@@ -407,6 +465,7 @@ export function paymentsPlugin(provider: PaymentProvider, deps: PaymentDeps, o: 
     },
     payments,
     apply(ctx: Kernel) {
+      mounted = ctx.app;
       const shared = familyOf(ctx.app);
       shared.members.push({ provider, plugin });
       family = shared;
@@ -468,7 +527,7 @@ export function paymentsPlugin(provider: PaymentProvider, deps: PaymentDeps, o: 
 
       app.post(WEBHOOK, async (c) => {
         mustBeActive(family, provider, c.env);
-        const result = await webhookThrough(provider, deps, c.env, rowsFor(c), c.req.raw);
+        const result = await webhookThrough(provider, deps, c.env, rowsFor(c), c.req.raw, { realtime: c.get("realtime"), app });
         return c.json({ received: true, handled: !!result, ...(result ? { kind: result.kind } : {}) });
       });
     },

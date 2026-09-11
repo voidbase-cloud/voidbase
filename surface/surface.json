@@ -1864,7 +1864,7 @@
           "hours": 6,
           "status": "done",
           "milestone": "m5",
-          "notes": "src/server/backups.ts: POST /api/backups (name validation, uniqueness, lock) builds a zip (fflate) with data.json (every D1 table's columns and rows, logs included, change feed excluded) plus storage/<key> for every R2 file, stored under __backups__/ in R2; __pbAutoBackup__ from settings.backups.cron with cronMaxKeep pruning. test/conformance/backups.ts 17/17."
+          "notes": "src/server/backups.ts: POST /api/backups (name validation, uniqueness, lock) builds a zip (fflate) with header.json, data.jsonl (every D1 table's columns and rows, one JSON object per line, logs included, change feed excluded) plus storage/<key> for every R2 file, stored under __backups__/ in R2; __pbAutoBackup__ from settings.backups.cron with cronMaxKeep pruning. test/conformance/backups.ts 17/17."
         },
         {
           "id": "bak.list",
@@ -1890,7 +1890,7 @@
           "hours": 4,
           "status": "done",
           "milestone": "m5",
-          "notes": "POST /api/backups/:key/restore rebuilds in the background: drops user tables/views, restores _collections, recreates tables from the schema, reloads every table's rows, replaces the R2 files. Only voidbase archives (data.json) restore; PocketBase's SQLite archives are refused with a clear error. Upload accepts any zip. Verified by a create/modify/restore round trip in backups.ts."
+          "notes": "POST /api/backups/:key/restore rebuilds in the background: drops user tables/views, restores _collections, recreates tables from the schema, reloads every table's rows, replaces the R2 files. It is one streaming pass over the zip, so an archive larger than the isolate's memory restores; archives in the older data.json layout are read whole. Only voidbase archives restore; PocketBase's SQLite archives are refused with a clear error. Upload accepts any zip. Verified by a create/modify/restore round trip in backups.ts."
         },
         {
           "id": "bak.download",

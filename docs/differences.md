@@ -15,7 +15,7 @@ this page lists where the platform forces a different shape, and the limits that
 | Row / query size | SQLite limits | 1 MB per row, 128 MB per query result (D1). List endpoints paginate anyway |
 | `_logs`, `_changes` | logs in a second SQLite file | tables in the same D1 database, pruned by the built-in crons |
 | Files | local `pb_data/storage` or S3 | R2 bucket bound as `STORAGE` (keys `{collectionId}/{recordId}/{filename}`), or any S3-compatible bucket when `settings.s3.enabled` (SigV4 over fetch, path-style or virtual-host); `settings.backups.s3` likewise for archives |
-| Backups | zip of the SQLite files + storage | zip of `data.json` (every table) + `storage/`, kept in R2 under `__backups__/`. A PocketBase backup cannot be restored here and vice versa; use import/export for cross-migration |
+| Backups | zip of the SQLite files + storage | zip of `data.jsonl` (every table) + `storage/`, kept in R2 under `__backups__/`. A PocketBase backup cannot be restored here and vice versa; use import/export for cross-migration |
 
 ## Runtime
 

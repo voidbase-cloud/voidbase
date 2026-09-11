@@ -875,7 +875,10 @@ routes PocketBase has (list, create, upload, download, delete, restore) plus `ve
 **Three archive kinds.** `POST /api/backups` takes `{ kind?: "full" | "data" | "schema", name? }`. The default is
 `full`, the kind the archives always were (every table and every file) with three entries added:
 
-- `full`: `data.json` (every D1 table, columns and rows, the `_collections` rows included, as before), every file in
+- `full`: `header.json` first (`{ format, kind, voidbase, created, tables }`, the one entry a restore must read
+  before it applies anything), `data.jsonl` (every D1 table as one JSON object per line: a head line, then per
+  table a `{ table, columns }` line and one `{ row: [...] }` line for each of its rows, `_collections` first so a
+  restore can rebuild the schema before any row of a user table arrives), every file in
   storage as `storage/<collection id>/<record id>/<file name>`, `settings.json` (the settings as `GET /api/settings`
   answers them: the SMTP password and the S3 secrets left out, so a full archive never holds them),
   `collections.json` (every collection as the collections API exports it, token secrets left out as there too) and
@@ -889,11 +892,15 @@ routes PocketBase has (list, create, upload, download, delete, restore) plus `ve
   own rows travel whole, password hashes and token keys included, because a move that signs every user out is not a
   move; strip them on the target if that is not wanted.
 
+The manifest's `format` says which layout the archive uses: `voidbase-backup/2` is the one above. Archives written
+before it hold `data.json`, one JSON document with every table's columns and rows, and no `header.json`; they are
+still read, and still restore, exactly as they did. Archives written before the manifest existed (only `data.json`
+and `storage/`) read as `kind: "legacy"` everywhere and restore as they always did too.
+
 Files are streamed into the zip a chunk at a time (fflate's streaming `Zip`), never held whole. The archive itself
 streams to R2 as a multipart upload in 10 MiB parts; a backups storage that offers no multipart upload (the S3
 backups bucket from the settings, the Bun runtime's local store) takes it as one object, so it is held in memory
-first and the write is refused past 256 MiB (`BUFFERED_MAX`) with a message saying so. Archives written before
-this (only `data.json` and `storage/`) read as `kind: "legacy"` everywhere and restore exactly as they did.
+first and the write is refused past 256 MiB (`BUFFERED_MAX`) with a message saying so.
 
 **Verification.** After the write the archive is read back as a stream, every entry hashed and the manifest
 compared: the checksum, each entry's hash (a corrupted one is named), entries the manifest lists that are gone,
@@ -906,9 +913,10 @@ demand and answers `{ key, kind, verified, voidbase, checksum, entries, corrupte
 sidecar; an uploaded archive is verified on arrival, so the listing knows its kind and version at once.
 
 **Restore per kind.** `POST /api/backups/:key/restore` still answers 204 and does the work in the background under
-the same lock `/api/health` reports as `canBackup`, but the archive is opened first, so a refusal is the answer: an
+the same lock `/api/health` reports as `canBackup`, but the archive is prepared first, so a refusal is the answer: an
 archive whose `voidbase` major.minor is newer than the instance's is refused with
-`written by voidbase X.Y.Z, newer than this instance (A.B.C)`, and so is one that is not a voidbase archive. A
+`written by voidbase X.Y.Z, newer than this instance (A.B.C)`, and so is one that is not a voidbase archive. For a
+format 2 archive that check reads `header.json` alone, a few hundred bytes off the front of the stream. A
 `full` (or legacy) archive is restored entirely: the settings merged over the current ones (the secrets it never
 held stay as they are), every user collection dropped and recreated from the archive's `_collections` rows before
 their rows are loaded, the system tables' rows replaced, every file replaced. A `data` archive lands on the existing
@@ -918,6 +926,22 @@ instance lacks is skipped and reported, never invented, unless the body is `{ cr
 it is created from the archive's definition first; a system collection or a view in its place is skipped too. The
 report `{ at, kind, restored, created, skipped: [{ collection, reason }], settings }` is written to the sidecar and
 shown on the listing as `restore`, and the skips are logged.
+
+**A restore is one streaming pass.** A format 2 archive is never read whole: it is pushed through fflate's `Unzip`
+a slice at a time and each entry is handled as it arrives, so an archive larger than the isolate's memory restores.
+`data.jsonl` is parsed line by line into `INSERT OR REPLACE` batches (200 statements per `db.batch`, or fewer when
+256 KB of rows have piled up; one statement per row keeps every statement inside D1's ceiling of 100 bound
+parameters), and every `storage/` entry goes straight from the zip into the storage `put` as a stream, never
+buffered whole. The slice pushed into the unzipper shrinks when one of them inflates to more than 1 MiB, so the
+peak is a slice's output and not the archive: restoring 306 MB of rows adds about 40 MB of RSS, measured by the
+unit test, and that figure does not move when the archive grows. An archive in the older `data.json` layout is
+read whole, as it always was, so for those the old ceiling still applies.
+
+A streaming restore applies what it reads as it reads it, and D1 has no transaction across batches, so **a restore
+that fails part way leaves the instance partly loaded**: the tables the archive had already reached hold the
+archive's rows, the rest hold what they held. The error says so (`the backup archive <name> could not be read to
+the end (...): the restore stopped part way, so the instance holds what had already been loaded`), no `restore`
+record is written to the sidecar, and the lock is released. Restoring a good archive is what puts it right.
 
 **The off-site copy.** With `VOIDBASE_BACKUP_S3_ENDPOINT`, `VOIDBASE_BACKUP_S3_BUCKET`,
 `VOIDBASE_BACKUP_S3_ACCESS_KEY_ID` and `VOIDBASE_BACKUP_S3_SECRET_ACCESS_KEY` set (`VOIDBASE_BACKUP_S3_REGION` is
@@ -937,7 +961,9 @@ sidecars only after a successful, verified write. Without the knob the settings'
 always did (3 by default, 0 for unlimited). Named backups are never pruned.
 
 The unit test (`test/unit/backups.test.ts`) measures both archives' contents and manifests over an in-memory D1
-and R2, verification catching a corrupted and a missing entry, each restore with its refusals, retention, the
+and R2, verification catching a corrupted and a missing entry, each restore with its refusals, an archive in the
+older `data.json` layout still restoring, a truncated one refused with the message above, a 306 MB archive
+restoring inside a measured RSS budget, retention, the
 signer against AWS's published SigV4 example, and a failed copy leaving the backup intact; the conformance suite
 (`test/conformance/backups.ts`) still runs the PocketBase contract against a live server.
 

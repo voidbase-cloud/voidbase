@@ -1,5 +1,5 @@
 // Backups (apis/backup*.go): zip archives kept in R2 under __backups__/. Three kinds of archive, all restorable here:
-//   full  - data.json (every D1 table: columns and rows, as the first archives held), settings.json (the settings
+//   full  - data.jsonl (every D1 table: one JSON object per line, _collections first), settings.json (the settings
 //           as GET /api/settings answers them, secrets left out), collections.json (every collection as the
 //           collections API exports it), storage/<collection>/<record>/<file> for every uploaded file, and
 //           manifest.json last (kind, version, tables, file count and bytes, a sha256 per entry and one over them).
@@ -8,8 +8,11 @@
 //   schema - collections.json (the non-system collections' definitions, views included) and manifest.json, nothing
 //           else: no rows, no files. Restoring one imports the definitions, creating the collections the instance
 //           lacks and updating the ones it has; the rows it has stay. What a preview instance is seeded with.
-// Archives written before the manifest existed (data.json and storage/ only) read as kind "legacy" and restore as
-// they always did. PocketBase archives (SQLite files) cannot be restored here.
+// Every archive opens with header.json (format, kind, voidbase, created, tables), the one entry a restore must
+// read before it applies anything. Archives written before header.json hold data.json, one JSON document with
+// every table's rows; they still restore, read whole as they always were. Archives written before the manifest
+// existed (data.json and storage/ only) read as kind "legacy". PocketBase archives (SQLite files) cannot be
+// restored here.
 //
 // Files are streamed into the zip one chunk at a time (fflate's streaming Zip), never held whole. The archive
 // itself streams to R2 as a multipart upload in 10 MiB parts when the backups storage offers one (R2 does); a
@@ -17,6 +20,10 @@
 // as one object, so it is buffered whole, capped at BUFFERED_MAX. After the write the archive is read back as a
 // stream, every entry hashed and the manifest compared; the result and the off-site copy's outcome live in a
 // sidecar (<name>.meta.json) next to the archive, which is what the listing reads.
+//
+// A restore of a format 2 archive is one streaming pass too (fflate's Unzip): entries arrive in the order they
+// were written, data.jsonl is parsed line by line into batched inserts, and every storage/ entry goes straight
+// from the zip into a storage put, so the peak does not scale with the archive.
 import type { Hono } from "hono";
 import { Unzip, UnzipInflate, Zip, ZipDeflate, ZipPassThrough, unzipSync } from "fflate";
 import { env as voidEnv } from "#platform/env";
@@ -46,6 +53,16 @@ const SKIP_TABLES = new Set(["_changes", "_realtime_clients"]);
 const PART_SIZE = 10 * 1024 * 1024;
 /** the largest archive a storage without multipart uploads takes (it is held in memory before the single put) */
 export const BUFFERED_MAX = 256 * 1024 * 1024;
+const HEADER_JSON = "header.json", DATA_JSON = "data.json", DATA_JSONL = "data.jsonl", MANIFEST_JSON = "manifest.json";
+const STORAGE_PREFIX = "storage/";
+/** what a format 2 archive says it is: header.json first, the rows as data.jsonl. Format 1 is data.json whole. */
+export const FORMAT = "voidbase-backup/2";
+/** rows per db.batch, and the bytes that force one early. One statement per row keeps every statement inside D1's
+ * ceiling of 100 bound parameters (a row binds one parameter per column). */
+const BATCH_ROWS = 200, BATCH_BYTES = 256 * 1024;
+/** the archive is pushed into the unzipper in slices this big, shrunk when one slice inflates to more than
+ * SLICE_OUT, so what is held at once is one slice's output and not the archive */
+const SLICE_MAX = 16 * 1024, SLICE_MIN = 1024, SLICE_OUT = 1024 * 1024;
 
 export type BackupKind = "full" | "data" | "schema";
 export const DEFAULT_KIND: BackupKind = "full";
@@ -53,9 +70,11 @@ export const KIND_VAR = "VOIDBASE_BACKUP_KIND";
 export const KEEP_VAR = "VOIDBASE_BACKUP_KEEP";
 export const OFFSITE_VARS = { endpoint: "VOIDBASE_BACKUP_S3_ENDPOINT", bucket: "VOIDBASE_BACKUP_S3_BUCKET", accessKey: "VOIDBASE_BACKUP_S3_ACCESS_KEY_ID", secret: "VOIDBASE_BACKUP_S3_SECRET_ACCESS_KEY", region: "VOIDBASE_BACKUP_S3_REGION" } as const;
 
-interface Dump { format: "voidbase-backup"; version: 1; created: string; tables: Record<string, { columns: string[]; rows: unknown[][] }>; files: string[] }
+interface Dump { format: "voidbase-backup"; version: number; created: string; tables: Record<string, { columns: string[]; rows: unknown[][] }>; files: string[] }
+/** the first entry of a format 2 archive: everything a restore must know before it applies anything */
+export interface BackupHeader { format: string; kind: BackupKind; voidbase: string; created: string; tables: string[] }
 export interface Manifest {
-  format: "voidbase-backup";
+  format: string;
   kind: BackupKind;
   voidbase: string;
   created: string;
@@ -244,6 +263,25 @@ async function dumpTable(db: D1Database, t: string): Promise<{ columns: string[]
   const columns = rows.length ? Object.keys(rows[0]!) : (await all<{ name: string }>(db, `PRAGMA table_info(${ident(t)})`)).map((c) => c.name);
   return { columns, rows: rows.map((r) => columns.map((c) => r[c] ?? null)) };
 }
+/** _collections first, the rest of the system tables next, the user ones last: a streaming restore rebuilds the
+ * schema from _collections before any row of a user table arrives */
+const orderTables = (ts: string[]) => {
+  const rank = (t: string) => (t === "_collections" ? 0 : t.startsWith("_") ? 1 : 2);
+  return [...ts].sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0));
+};
+/** data.jsonl: a head line, then per table a {table, columns} line and one {row} line each, a chunk at a time */
+async function* dataLines(db: D1Database, tables: string[], files: string[], created: string): AsyncGenerator<Uint8Array> {
+  let buf = `${JSON.stringify({ format: "voidbase-backup", version: 2, created, files })}\n`;
+  for (const t of tables) {
+    const { columns, rows } = await dumpTable(db, t);
+    buf += `${JSON.stringify({ table: t, columns })}\n`;
+    for (const r of rows) {
+      buf += `${JSON.stringify({ row: r })}\n`;
+      if (buf.length >= 65536) { yield enc.encode(buf); buf = ""; }
+    }
+  }
+  if (buf.length) yield enc.encode(buf);
+}
 
 /** streams one archive of the given kind into the sink and returns its manifest (the last entry written) */
 export async function writeArchive(env: AppEnv["Bindings"], kind: BackupKind, sink: Sink): Promise<Manifest> {
@@ -253,12 +291,12 @@ export async function writeArchive(env: AppEnv["Bindings"], kind: BackupKind, si
   const zip = new Zip((err, chunk) => { if (err) zipError = err; else pending.push(chunk); });
   const flush = async () => { if (zipError) throw zipError; while (pending.length) await sink.write(pending.shift()!); };
   const entries: Record<string, string> = {};
-  const add = async (name: string, data: Uint8Array | ReadableStream<Uint8Array>, compress: boolean) => {
+  const add = async (name: string, data: Uint8Array | ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>, compress: boolean) => {
     const file = compress ? new ZipDeflate(name, { level: 6 }) : new ZipPassThrough(name);
     zip.add(file);
     const h = new Sha256();
     if (data instanceof Uint8Array) { h.update(data); file.push(data, true); }
-    else { for await (const chunk of chunksOf(data)) { h.update(chunk); file.push(chunk); await flush(); } file.push(new Uint8Array(0), true); }
+    else { for await (const chunk of (data instanceof ReadableStream ? chunksOf(data) : data)) { h.update(chunk); file.push(chunk); await flush(); } file.push(new Uint8Array(0), true); }
     await flush();
     entries[name] = h.hex();
   };
@@ -267,34 +305,33 @@ export async function writeArchive(env: AppEnv["Bindings"], kind: BackupKind, si
   const collections = await listCollections(db);
   const dataCollections = collections.filter((c) => !c.system && c.type !== "view");
   const created = nowString();
+  const existing = kind === "schema" ? [] : await tableNames(db);
+  const tables = kind === "schema" ? [] : orderTables(kind === "full" ? existing : dataCollections.map((c) => c.name).filter((t) => existing.includes(t)));
+  await add(HEADER_JSON, json({ format: FORMAT, kind, voidbase: VERSION, created, tables } satisfies BackupHeader), true);
   if (kind === "schema") {
     // the definitions alone: every non-system collection, views included, since a view is part of the schema
     await add("collections.json", json(collections.filter((c) => !c.system).map(collectionToJSON)), true);
-    const manifest: Manifest = { format: "voidbase-backup", kind, voidbase: VERSION, created, tables: [], files: { count: 0, bytes: 0 }, checksum: checksumOf(entries), entries: { ...entries } };
-    await add("manifest.json", json(manifest), true);
+    const manifest: Manifest = { format: FORMAT, kind, voidbase: VERSION, created, tables: [], files: { count: 0, bytes: 0 }, checksum: checksumOf(entries), entries: { ...entries } };
+    await add(MANIFEST_JSON, json(manifest), true);
     zip.end(); await flush();
     return manifest;
   }
-  const existing = await tableNames(db);
-  const tables = kind === "full" ? existing : dataCollections.map((c) => c.name).filter((t) => existing.includes(t));
   const objects: R2Object[] = [];
   if (kind === "full") objects.push(...(await listAll(env.STORAGE, "")).filter((o) => !o.key.startsWith(PREFIX)));
   else for (const c of dataCollections) objects.push(...(await listAll(env.STORAGE, c.id + "/")));
 
   if (kind === "full") await add("settings.json", json(publicSettings(await loadSettings(db))), true);
   await add("collections.json", json((kind === "full" ? collections : dataCollections).map(collectionToJSON)), true);
-  const dump: Dump = { format: "voidbase-backup", version: 1, created, tables: {}, files: objects.map((o) => o.key) };
-  for (const t of tables) dump.tables[t] = await dumpTable(db, t);
-  await add("data.json", enc.encode(JSON.stringify(dump)), true);
+  await add(DATA_JSONL, dataLines(db, tables, objects.map((o) => o.key), created), true);
   let count = 0, bytes = 0;
   for (const obj of objects) {
     const body = await env.STORAGE.get(obj.key);
     if (!body) continue;
-    await add(`storage/${obj.key}`, body.body, false);
+    await add(STORAGE_PREFIX + obj.key, body.body, false);
     count++; bytes += body.size;
   }
-  const manifest: Manifest = { format: "voidbase-backup", kind, voidbase: VERSION, created, tables, files: { count, bytes }, checksum: checksumOf(entries), entries: { ...entries } };
-  await add("manifest.json", json(manifest), true);
+  const manifest: Manifest = { format: FORMAT, kind, voidbase: VERSION, created, tables, files: { count, bytes }, checksum: checksumOf(entries), entries: { ...entries } };
+  await add(MANIFEST_JSON, json(manifest), true);
   zip.end(); await flush();
   return manifest;
 }
@@ -308,8 +345,8 @@ export async function verifyArchive(source: ReadableStream<Uint8Array> | Uint8Ar
   u.register(UnzipInflate);
   u.onfile = (file) => {
     const h = new Sha256();
-    const collect = file.name === "manifest.json" ? ([] as Uint8Array[]) : null;
-    if (file.name === "data.json") hasData = true;
+    const collect = file.name === MANIFEST_JSON ? ([] as Uint8Array[]) : null;
+    if (file.name === DATA_JSON || file.name === DATA_JSONL) hasData = true;
     file.ondata = (err, chunk, final) => {
       if (err) { error ??= `${file.name}: ${err.message}`; return; }
       h.update(chunk);
@@ -405,8 +442,15 @@ export async function createBackup(env: AppEnv["Bindings"], name: string, opts: 
 }
 
 // ---- restore ------------------------------------------------------------------------------------------------
+// Two ways in. A format 2 archive (header.json first, rows as data.jsonl) restores in one streaming pass, so the
+// peak does not scale with the archive. An archive written before that (data.json, one JSON document with every
+// table's rows) is read whole, exactly as it always was. Both are prepared first - the version refusal and "not a
+// voidbase archive" have to be the answer to POST /restore, before anything is applied.
 interface Opened { kind: BackupKind | "legacy"; entries: Record<string, Uint8Array>; dump: Dump; manifest: Manifest | null; collections: Record<string, unknown>[] | null; settings: unknown }
+type Collection = Awaited<ReturnType<typeof listCollections>>[number];
 export interface RestorePlan { kind: BackupKind | "legacy"; voidbase: string | null; restored: string[]; created: string[]; skipped: { collection: string; reason: string }[]; settings: boolean }
+/** what a prepared archive is: the streaming pass needs only its header, the whole-read one its entries */
+interface Prepared { kind: BackupKind | "legacy"; voidbase: string | null; header: BackupHeader | null; opened: Opened | null }
 
 const majorMinor = (v: string): [number, number] => { const m = /^v?(\d+)\.(\d+)/.exec(v.trim()); return m ? [Number(m[1]), Number(m[2])] : [0, 0]; };
 /** an archive from a newer major.minor than the instance cannot be restored on it */
@@ -414,30 +458,79 @@ export function newerThanInstance(archive: string, instance = VERSION): boolean 
   const [am, an] = majorMinor(archive), [im, iN] = majorMinor(instance);
   return am > im || (am === im && an > iN);
 }
+const tooNew = (voidbase: string) => new Error(`the archive was written by voidbase ${voidbase}, newer than this instance (${VERSION}); update the instance before restoring it`);
+
+/** data.jsonl read whole, back into the shape data.json held (openArchive and the whole-read restore) */
+function linesToDump(text: string, created: string): Dump {
+  const dump: Dump = { format: "voidbase-backup", version: 2, created, tables: {}, files: [] };
+  let head = true, current: { columns: string[]; rows: unknown[][] } | null = null;
+  for (const raw of text.split("\n")) {
+    if (!raw) continue;
+    const v = JSON.parse(raw) as { format?: string; created?: string; files?: string[]; table?: string; columns?: string[]; row?: unknown[] };
+    if (head) { head = false; dump.format = (v.format ?? "") as Dump["format"]; dump.created = v.created ?? created; dump.files = v.files ?? []; continue; }
+    if (typeof v.table === "string") { current = { columns: v.columns ?? [], rows: [] }; dump.tables[v.table] = current; }
+    else if (v.row) current?.rows.push(v.row);
+  }
+  return dump;
+}
+
 export function openArchive(bytes: Uint8Array): Opened {
   let entries: Record<string, Uint8Array>;
   try { entries = unzipSync(bytes); } catch { throw new Error("missing or invalid backup file"); }
   const parse = <T>(name: string): T | null => (entries[name] ? (JSON.parse(dec.decode(entries[name])) as T) : null);
-  const manifest = parse<Manifest>("manifest.json");
-  if (manifest && newerThanInstance(manifest.voidbase)) throw new Error(`the archive was written by voidbase ${manifest.voidbase}, newer than this instance (${VERSION}); update the instance before restoring it`);
+  const manifest = parse<Manifest>(MANIFEST_JSON);
+  if (manifest && newerThanInstance(manifest.voidbase)) throw tooNew(manifest.voidbase);
   const kind: Opened["kind"] = manifest ? parseKind(String(manifest.kind)) ?? "full" : "legacy";
-  // a schema archive carries no data.json: its dump is empty by definition
-  const raw = entries["data.json"];
-  if (!raw && kind !== "schema") throw new Error("not a voidbase backup archive (PocketBase SQLite archives cannot be restored on this server)");
-  const dump: Dump = raw ? (JSON.parse(dec.decode(raw)) as Dump) : { format: "voidbase-backup", version: 1, created: manifest?.created ?? nowString(), tables: {}, files: [] };
+  // a schema archive carries no rows: its dump is empty by definition
+  const raw = entries[DATA_JSON], rawLines = entries[DATA_JSONL];
+  if (!raw && !rawLines && kind !== "schema") throw new Error("not a voidbase backup archive (PocketBase SQLite archives cannot be restored on this server)");
+  const dump: Dump = rawLines ? linesToDump(dec.decode(rawLines), manifest?.created ?? nowString())
+    : raw ? (JSON.parse(dec.decode(raw)) as Dump)
+    : { format: "voidbase-backup", version: 1, created: manifest?.created ?? nowString(), tables: {}, files: [] };
   if (dump.format !== "voidbase-backup") throw new Error("unsupported backup format");
   const collections = parse<Record<string, unknown>[]>("collections.json");
   if (kind === "schema" && !collections) throw new Error("a schema archive without collections.json");
   return { kind, entries, dump, manifest, collections, settings: kind === "full" ? parse<unknown>("settings.json") : null };
 }
-async function fetchArchive(env: AppEnv["Bindings"], key: string): Promise<Opened> {
+
+/** the archive read only as far as it must be: a format 2 archive stops after header.json (a few hundred bytes),
+ * anything older is read whole and opened the way it always was */
+async function prepareRestore(env: AppEnv["Bindings"], key: string): Promise<Prepared> {
   const obj = await (await backupsStorage(env)).get(PREFIX + key);
   if (!obj) throw new Error("missing or invalid backup file");
-  return openArchive(new Uint8Array(await obj.arrayBuffer()));
+  const u = new Unzip();
+  u.register(UnzipInflate);
+  let first: string | null = null, done = false, headLen = 0;
+  const head: Uint8Array[] = [];
+  u.onfile = (file) => {
+    first ??= file.name;
+    if (file.name === HEADER_JSON) file.ondata = (err, chunk, final) => { if (err) return; head.push(chunk); headLen += chunk.length; if (final) done = true; };
+    else file.ondata = () => undefined;
+    file.start();
+  };
+  const held: Uint8Array[] = [];
+  let total = 0, readable = true;
+  for await (const chunk of chunksOf(obj.body)) {
+    if (readable && first !== null && first !== HEADER_JSON) readable = false;
+    if (readable) { try { u.push(chunk, false); } catch { readable = false; } }
+    if (done) break;
+    held.push(chunk); total += chunk.length;
+  }
+  if (done) {
+    await obj.body.cancel().catch(() => undefined);
+    const header = JSON.parse(dec.decode(concat(head, headLen))) as BackupHeader;
+    const kind = parseKind(String(header.kind));
+    if (!kind) throw new Error("unsupported backup format");
+    if (newerThanInstance(header.voidbase)) throw tooNew(header.voidbase);
+    return { kind, voidbase: header.voidbase, header: { ...header, kind, tables: header.tables ?? [] }, opened: null };
+  }
+  const opened = openArchive(concat(held, total));
+  return { kind: opened.kind, voidbase: opened.manifest?.voidbase ?? null, header: null, opened };
 }
 
-export async function planRestore(db: D1Database, a: Opened, opts: RestoreOptions = {}): Promise<RestorePlan> {
-  const plan: RestorePlan = { kind: a.kind, voidbase: a.manifest?.voidbase ?? null, restored: [], created: [], skipped: [], settings: a.settings != null };
+/** what a plan is decided from, whichever way the archive was read */
+interface PlanInput { kind: BackupKind | "legacy"; collections: Record<string, unknown>[] | null; tables: string[]; fullNames: string[] }
+async function planInto(db: D1Database, a: PlanInput, opts: RestoreOptions, plan: RestorePlan): Promise<void> {
   if (a.kind === "schema") {
     // the definitions land on the instance: a collection it has is updated to the archive's, one it lacks is created
     const have = new Map((await listCollections(db)).map((c) => [c.name.toLowerCase(), c]));
@@ -447,16 +540,12 @@ export async function planRestore(db: D1Database, a: Opened, opts: RestoreOption
       else if (c) plan.restored.push(name);
       else { plan.created.push(name); plan.restored.push(name); }
     }
-    return plan;
+    return;
   }
-  if (a.kind !== "data") {
-    const cols = a.dump.tables["_collections"];
-    if (cols) { const name = cols.columns.indexOf("name"), system = cols.columns.indexOf("system"); for (const r of cols.rows) if (!r[system]) plan.restored.push(String(r[name])); }
-    return plan;
-  }
+  if (a.kind !== "data") { plan.restored.push(...a.fullNames); return; }
   const instance = new Map((await listCollections(db)).map((c) => [c.name, c]));
   const defs = new Map((a.collections ?? []).map((j) => [String(j.name), j]));
-  for (const table of Object.keys(a.dump.tables)) {
+  for (const table of a.tables) {
     const c = instance.get(table);
     if (c?.system) plan.skipped.push({ collection: table, reason: "a system collection is never restored from a data archive" });
     else if (c?.type === "view") plan.skipped.push({ collection: table, reason: "the instance's collection is a view" });
@@ -464,36 +553,33 @@ export async function planRestore(db: D1Database, a: Opened, opts: RestoreOption
     else if (opts.createMissing && defs.has(table)) { plan.created.push(table); plan.restored.push(table); }
     else plan.skipped.push({ collection: table, reason: opts.createMissing ? "the instance has no such collection and the archive carries no definition to create it from" : "the instance has no such collection (pass createMissing to create it from the archive's definition)" });
   }
+}
+export async function planRestore(db: D1Database, a: Opened, opts: RestoreOptions = {}): Promise<RestorePlan> {
+  const plan: RestorePlan = { kind: a.kind, voidbase: a.manifest?.voidbase ?? null, restored: [], created: [], skipped: [], settings: a.settings != null };
+  const cols = a.dump.tables["_collections"];
+  const fullNames: string[] = [];
+  if (cols) { const name = cols.columns.indexOf("name"), system = cols.columns.indexOf("system"); for (const r of cols.rows) if (!r[system]) fullNames.push(String(r[name])); }
+  await planInto(db, { kind: a.kind, collections: a.collections, tables: Object.keys(a.dump.tables), fullNames }, opts, plan);
   return plan;
 }
 
+const insertSQL = (table: string, columns: string[]) => `INSERT OR REPLACE INTO ${ident(table)} (${columns.map(ident).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`;
+const insertBatch = (db: D1Database, sql: string, rows: unknown[][]) => db.batch(rows.map((r) => stmt(db, sql, r.map((v) => (v === undefined ? null : v)))));
 const insertRows = async (db: D1Database, table: string, columns: string[], rows: unknown[][]) => {
-  for (let i = 0; i < rows.length; i += 40) {
-    const chunk = rows.slice(i, i + 40);
-    await db.batch(chunk.map((r) => stmt(db, `INSERT OR REPLACE INTO ${ident(table)} (${columns.map(ident).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`, r.map((v) => (v === undefined ? null : v)))));
-  }
+  const sql = insertSQL(table, columns);
+  for (let i = 0; i < rows.length; i += BATCH_ROWS) await insertBatch(db, sql, rows.slice(i, i + BATCH_ROWS));
 };
 
+// ---- the whole-read restore (archives written before header.json) ---------------------------------------------
 async function applyFull(env: AppEnv["Bindings"], a: Opened): Promise<void> {
   const db = env.DB;
   // 0. the settings (a full archive): merged over the current ones, the secrets the archive never held kept
   if (a.settings != null) await saveSettings(db, mergeSettings(await loadSettings(db), a.settings));
   // 1. drop every user collection table/view, 2. restore _collections and rebuild the tables, 3. rows, 4. files
-  const current = await loadCollections(db);
-  const drops: D1PreparedStatement[] = [];
-  for (const c of new Set(current.values())) if (!c.system) drops.push(stmt(db, c.type === "view" ? `DROP VIEW IF EXISTS ${ident(c.name)}` : `DROP TABLE IF EXISTS ${ident(c.name)}`, []));
-  if (drops.length) await db.batch(drops);
+  await dropUserTables(db);
   const coll = a.dump.tables["_collections"];
   if (coll) { await run(db, "DELETE FROM `_collections`"); await insertRows(db, "_collections", coll.columns, coll.rows); }
-  invalidateCollections();
-  const restored = await loadCollections(db);
-  const creates: D1PreparedStatement[] = [];
-  for (const c of new Set(restored.values())) {
-    if (c.system) continue;
-    if (c.type === "view") creates.push(db.prepare(createViewSQL(c.name, String(c.options.viewQuery ?? ""))));
-    else for (const sql of planCreate(c)) creates.push(db.prepare(sql));
-  }
-  if (creates.length) await db.batch(creates);
+  await rebuildTables(db);
   for (const [table, data] of Object.entries(a.dump.tables)) {
     if (table === "_collections") continue;
     const exists = await one(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", [table]);
@@ -502,15 +588,12 @@ async function applyFull(env: AppEnv["Bindings"], a: Opened): Promise<void> {
     await insertRows(db, table, data.columns, data.rows);
   }
   for (const o of await listAll(env.STORAGE, "")) if (!o.key.startsWith(PREFIX)) await env.STORAGE.delete(o.key);
-  for (const f of a.dump.files) { const bytes = a.entries[`storage/${f}`]; if (bytes) await env.STORAGE.put(f, bytes); }
+  for (const f of a.dump.files) { const bytes = a.entries[STORAGE_PREFIX + f]; if (bytes) await env.STORAGE.put(f, bytes); }
   invalidateCollections();
 }
 
 async function applySchema(env: AppEnv["Bindings"], a: Opened, plan: RestorePlan): Promise<void> {
-  const wanted = new Set(plan.restored.map((n) => n.toLowerCase()));
-  const defs = (a.collections ?? []).filter((j) => wanted.has(String(j.name ?? "").toLowerCase()));
-  if (defs.length) await importCollections(env.DB, defs, false);
-  invalidateCollections();
+  await importSchema(env.DB, a.collections, plan);
 }
 
 async function applyData(env: AppEnv["Bindings"], a: Opened, plan: RestorePlan): Promise<void> {
@@ -533,25 +616,253 @@ async function applyData(env: AppEnv["Bindings"], a: Opened, plan: RestorePlan):
     // the files: the archive's are keyed by its collection id, the instance's by its own
     const from = (archiveIds.get(table) ?? c.id) + "/", to = c.id + "/";
     for (const o of await listAll(env.STORAGE, to)) await env.STORAGE.delete(o.key);
-    for (const f of a.dump.files) { if (!f.startsWith(from)) continue; const bytes = a.entries[`storage/${f}`]; if (bytes) await env.STORAGE.put(to + f.slice(from.length), bytes); }
+    for (const f of a.dump.files) { if (!f.startsWith(from)) continue; const bytes = a.entries[STORAGE_PREFIX + f]; if (bytes) await env.STORAGE.put(to + f.slice(from.length), bytes); }
   }
   invalidateCollections();
 }
 
-export async function restoreBackup(env: AppEnv["Bindings"], key: string, opts: RestoreOptions = {}): Promise<RestorePlan> {
-  const a = await fetchArchive(env, key);
-  return restoreOpened(env, key, a, opts);
+// ---- the steps both ways share ---------------------------------------------------------------------------------
+async function dropUserTables(db: D1Database): Promise<void> {
+  const current = await loadCollections(db);
+  const drops: D1PreparedStatement[] = [];
+  for (const c of new Set(current.values())) if (!c.system) drops.push(stmt(db, c.type === "view" ? `DROP VIEW IF EXISTS ${ident(c.name)}` : `DROP TABLE IF EXISTS ${ident(c.name)}`, []));
+  if (drops.length) await db.batch(drops);
 }
-async function restoreOpened(env: AppEnv["Bindings"], key: string, a: Opened, opts: RestoreOptions): Promise<RestorePlan> {
+/** the tables and views the restored _collections rows call for */
+async function rebuildTables(db: D1Database): Promise<void> {
+  invalidateCollections();
+  const restored = await loadCollections(db);
+  const creates: D1PreparedStatement[] = [];
+  for (const c of new Set(restored.values())) {
+    if (c.system) continue;
+    if (c.type === "view") creates.push(db.prepare(createViewSQL(c.name, String(c.options.viewQuery ?? ""))));
+    else for (const sql of planCreate(c)) creates.push(db.prepare(sql));
+  }
+  if (creates.length) await db.batch(creates);
+}
+async function importSchema(db: D1Database, collections: Record<string, unknown>[] | null, plan: RestorePlan): Promise<void> {
+  const wanted = new Set(plan.restored.map((n) => n.toLowerCase()));
+  const defs = (collections ?? []).filter((j) => wanted.has(String(j.name ?? "").toLowerCase()));
+  if (defs.length) await importCollections(db, defs, false);
+  invalidateCollections();
+}
+
+// ---- the streaming restore (format 2 archives) -----------------------------------------------------------------
+/** one storage put fed from the zip entry as it arrives; ready() is the put's backpressure */
+interface PutSink { write(chunk: Uint8Array): void; ready(): Promise<void>; close(): Promise<void> }
+function openPut(bucket: R2Bucket, key: string): PutSink {
+  let ctrl!: ReadableStreamDefaultController<Uint8Array>;
+  let wake: (() => void) | null = null;
+  const stream = new ReadableStream<Uint8Array>({ start: (c) => { ctrl = c; }, pull: () => { const w = wake; wake = null; w?.(); } });
+  const done = bucket.put(key, stream as unknown as ReadableStream).then(() => undefined);
+  const settled = done.catch(() => undefined);
+  return {
+    write: (chunk) => ctrl.enqueue(chunk),
+    ready: async () => { const d = ctrl.desiredSize; if (d === null || d > 0) return; await Promise.race([new Promise<void>((r) => { wake = r; }), settled]); },
+    close: async () => { ctrl.close(); await done; },
+  };
+}
+
+/** what one push into the unzipper hands the restore, in the order the archive holds it */
+type Op =
+  | { t: "entry"; name: string; data: Uint8Array }
+  | { t: "table"; name: string; columns: string[] }
+  | { t: "rows"; rows: unknown[][] }
+  | { t: "data-end" }
+  | { t: "file"; name: string; chunk: Uint8Array | null };
+
+const truncated = (key: string, why: string) =>
+  new Error(`the backup archive ${key} could not be read to the end (${why}): the restore stopped part way, so the instance holds what had already been loaded`);
+
+/** the whole restore of a format 2 archive in one pass over the zip; the plan is filled in as the archive says it */
+async function streamRestore(env: AppEnv["Bindings"], key: string, header: BackupHeader, opts: RestoreOptions, plan: RestorePlan): Promise<Manifest | null> {
   const db = env.DB;
-  const plan = await planRestore(db, a, opts);
+  const obj = await (await backupsStorage(env)).get(PREFIX + key);
+  if (!obj) throw new Error("missing or invalid backup file");
+  const kind = header.kind;
+  const small = new Set([HEADER_JSON, "settings.json", "collections.json", MANIFEST_JSON]);
+
+  // what the pass has learnt so far
+  let manifest: Manifest | null = null;
+  let defs: Record<string, unknown>[] | null = null;
+  let instance = new Map<string, Collection>();
+  let archiveIds = new Map<string, string>();
+  const fileTargets: [string, string][] = [];
+  let table: { sql: string; map: number[] | null } | null = null;
+  let rebuilt = false, storageReady = false;
+  let put: { name: string; sink: PutSink | null } | null = null;
+
+  const prepareStorage = async () => {
+    if (storageReady) return;
+    storageReady = true;
+    if (kind === "full") { for (const o of await listAll(env.STORAGE, "")) if (!o.key.startsWith(PREFIX)) await env.STORAGE.delete(o.key); return; }
+    if (kind !== "data") return;
+    for (const t of plan.restored) {
+      const c = instance.get(t);
+      if (!c) continue;
+      fileTargets.push([(archiveIds.get(t) ?? c.id) + "/", c.id + "/"]);
+      for (const o of await listAll(env.STORAGE, c.id + "/")) await env.STORAGE.delete(o.key);
+    }
+  };
+  const targetKey = (rel: string): string | null => {
+    if (kind === "full") return rel;
+    for (const [from, to] of fileTargets) if (rel.startsWith(from)) return to + rel.slice(from.length);
+    return null;
+  };
+  // collections.json is the last entry before the rows: the plan and everything the rows land on is decided here
+  const beforeData = async () => {
+    if (kind === "schema") { await planInto(db, { kind, collections: defs, tables: [], fullNames: [] }, opts, plan); await importSchema(db, defs, plan); return; }
+    if (kind === "data") {
+      await planInto(db, { kind, collections: defs, tables: header.tables, fullNames: [] }, opts, plan);
+      if (plan.created.length) await importCollections(db, (defs ?? []).filter((j) => plan.created.includes(String(j.name))), false);
+      invalidateCollections();
+      instance = new Map((await listCollections(db)).map((c) => [c.name, c]));
+      archiveIds = new Map((defs ?? []).map((j) => [String(j.name), String(j.id)]));
+      return;
+    }
+    // full: the archive's own _collections rows decide the schema, and collections.json names what it restores
+    plan.restored.push(...(defs ?? []).filter((j) => !j.system).map((j) => String(j.name)));
+    await dropUserTables(db);
+  };
+  const onTable = async (name: string, columns: string[]) => {
+    table = null;
+    if (kind === "full") {
+      if (name === "_collections") { await run(db, "DELETE FROM `_collections`"); table = { sql: insertSQL(name, columns), map: null }; return; }
+      if (!rebuilt) { await rebuildTables(db); rebuilt = true; }
+      if (!(await one(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", [name]))) return;
+      await run(db, `DELETE FROM ${ident(name)}`);
+      table = { sql: insertSQL(name, columns), map: null };
+      return;
+    }
+    if (kind !== "data" || !plan.restored.includes(name)) return;
+    const c = instance.get(name);
+    if (!c) return;
+    const have = new Set((await all<{ name: string }>(db, `PRAGMA table_info(${ident(name)})`)).map((x) => x.name));
+    const keep = columns.map((col, i) => [col, i] as const).filter(([col]) => have.has(col));
+    await run(db, `DELETE FROM ${ident(name)}`);
+    if (keep.length) table = { sql: insertSQL(name, keep.map(([col]) => col)), map: keep.map(([, i]) => i) };
+  };
+  const closePut = async () => { const open = put; put = null; if (open?.sink) await open.sink.close(); };
+  const onFile = async (name: string, chunk: Uint8Array | null) => {
+    await prepareStorage();
+    if (put?.name !== name) {
+      await closePut();
+      const target = targetKey(name.slice(STORAGE_PREFIX.length));
+      put = { name, sink: target ? openPut(env.STORAGE, target) : null };
+    }
+    const sink = put?.sink;
+    if (!chunk) { await closePut(); return; }
+    if (sink) { sink.write(chunk); await sink.ready(); }
+  };
+  const apply = async (op: Op): Promise<void> => {
+    if (op.t === "entry") {
+      if (op.name === "settings.json" && kind === "full") { plan.settings = true; await saveSettings(db, mergeSettings(await loadSettings(db), JSON.parse(dec.decode(op.data)) as unknown)); }
+      else if (op.name === "collections.json") { defs = JSON.parse(dec.decode(op.data)) as Record<string, unknown>[]; await beforeData(); }
+      else if (op.name === MANIFEST_JSON) manifest = JSON.parse(dec.decode(op.data)) as Manifest;
+      return;
+    }
+    if (op.t === "table") return onTable(op.name, op.columns);
+    if (op.t === "rows") { const t = table; if (!t) return; const map = t.map; await insertBatch(db, t.sql, map ? op.rows.map((r) => map.map((i) => r[i])) : op.rows); return; }
+    if (op.t === "data-end") { table = null; if (kind === "full" && !rebuilt) { await rebuildTables(db); rebuilt = true; } await prepareStorage(); return; }
+    return onFile(op.name, op.chunk);
+  };
+
+  // the pass: each slice of the archive is pushed into the unzipper, then what it produced is applied
+  const ops: Op[] = [];
+  let at = 0, produced = 0, readError: string | null = null, headLine = false, rest = "";
+  let rows: unknown[][] = [], rowBytes = 0;
+  const lines = new TextDecoder();
+  const flushRows = () => { if (rows.length) { ops.push({ t: "rows", rows }); rows = []; rowBytes = 0; } };
+  const u = new Unzip();
+  u.register(UnzipInflate);
+  u.onfile = (file) => {
+    const name = file.name;
+    if (small.has(name)) {
+      const held: Uint8Array[] = [];
+      let n = 0;
+      file.ondata = (err, chunk, final) => {
+        if (err) { readError ??= `${name}: ${err.message}`; return; }
+        produced += chunk.length; held.push(chunk); n += chunk.length;
+        if (final) ops.push({ t: "entry", name, data: concat(held, n) });
+      };
+    } else if (name === DATA_JSONL) {
+      file.ondata = (err, chunk, final) => {
+        if (err) { readError ??= `${name}: ${err.message}`; return; }
+        produced += chunk.length;
+        rest += lines.decode(chunk, { stream: !final });
+        let from = 0, nl = rest.indexOf("\n");
+        for (; nl >= 0; nl = rest.indexOf("\n", from)) {
+          const line = rest.slice(from, nl);
+          from = nl + 1;
+          if (!line) continue;
+          const v = JSON.parse(line) as { format?: string; table?: string; columns?: string[]; row?: unknown[] };
+          if (!headLine) { headLine = true; if (v.format !== "voidbase-backup") readError ??= "unsupported backup format"; continue; }
+          if (typeof v.table === "string") { flushRows(); ops.push({ t: "table", name: v.table, columns: v.columns ?? [] }); }
+          else if (v.row) { rows.push(v.row); rowBytes += line.length; if (rows.length >= BATCH_ROWS || rowBytes >= BATCH_BYTES) flushRows(); }
+        }
+        rest = from ? rest.slice(from) : rest;
+        if (final) { flushRows(); ops.push({ t: "data-end" }); }
+      };
+    } else if (name.startsWith(STORAGE_PREFIX)) {
+      file.ondata = (err, chunk, final) => {
+        if (err) { readError ??= `${name}: ${err.message}`; return; }
+        produced += chunk.length;
+        if (chunk.length) ops.push({ t: "file", name, chunk });
+        if (final) ops.push({ t: "file", name, chunk: null });
+      };
+    } else file.ondata = (err, chunk) => { if (err) readError ??= `${name}: ${err.message}`; else produced += chunk.length; };
+    file.start();
+  };
+  const drain = async () => {
+    for (; at < ops.length; at++) await apply(ops[at]!);
+    ops.length = 0; at = 0;
+    if (readError) throw new Error(readError);
+  };
+  const push = (chunk: Uint8Array, final: boolean) => {
+    try { u.push(chunk, final); } catch (err) { throw truncated(key, err instanceof Error ? err.message : String(err)); }
+  };
+
+  let slice = SLICE_MAX;
+  for await (const chunk of chunksOf(obj.body)) {
+    for (let i = 0; i < chunk.length;) {
+      const n = Math.min(slice, chunk.length - i);
+      produced = 0;
+      push(chunk.subarray(i, i + n), false);
+      i += n;
+      await drain();
+      if (produced > SLICE_OUT) slice = Math.max(SLICE_MIN, Math.floor((n * SLICE_OUT) / produced));
+    }
+  }
+  push(new Uint8Array(0), true);
+  await drain();
+  await closePut();
+  if (!manifest) throw truncated(key, `${MANIFEST_JSON} never arrived`);
+  invalidateCollections();
+  return manifest;
+}
+
+// ---- what a restore does, whichever way the archive was read ---------------------------------------------------
+export async function restoreBackup(env: AppEnv["Bindings"], key: string, opts: RestoreOptions = {}): Promise<RestorePlan> {
+  return runRestore(env, key, await prepareRestore(env, key), opts);
+}
+async function runRestore(env: AppEnv["Bindings"], key: string, prep: Prepared, opts: RestoreOptions): Promise<RestorePlan> {
+  const db = env.DB;
+  const a = prep.opened;
+  let plan: RestorePlan = { kind: prep.kind, voidbase: prep.voidbase, restored: [], created: [], skipped: [], settings: false };
+  if (a) plan = await planRestore(db, a, opts);
+  let manifest: Manifest | null = a?.manifest ?? null;
   await lock(db, key);
   try {
     const ev = { app: undefined as unknown, name: key, exclude: [] as string[], next: async () => undefined as unknown };
-    await trigger("onBackupRestore", ev, null, async () => { if (a.kind === "data") await applyData(env, a, plan); else if (a.kind === "schema") await applySchema(env, a, plan); else await applyFull(env, a); });
+    await trigger("onBackupRestore", ev, null, async () => {
+      if (!a) { manifest = await streamRestore(env, key, prep.header!, opts, plan); return; }
+      if (a.kind === "data") await applyData(env, a, plan);
+      else if (a.kind === "schema") await applySchema(env, a, plan);
+      else await applyFull(env, a);
+    });
     const bk = await backupsStorage(env);
-    const meta = (await readMeta(bk, key)) ?? { kind: a.kind, voidbase: a.manifest?.voidbase ?? null, created: a.manifest?.created ?? null, checksum: a.manifest?.checksum ?? null, verified: false, verifiedAt: null };
-    meta.restore = { at: nowString(), kind: a.kind, restored: plan.restored, created: plan.created, skipped: plan.skipped, settings: plan.settings };
+    const meta = (await readMeta(bk, key)) ?? { kind: plan.kind, voidbase: manifest?.voidbase ?? prep.voidbase, created: manifest?.created ?? null, checksum: manifest?.checksum ?? null, verified: false, verifiedAt: null };
+    meta.restore = { at: nowString(), kind: plan.kind, restored: plan.restored, created: plan.created, skipped: plan.skipped, settings: plan.settings };
     await writeMeta(bk, key, meta).catch(() => undefined);
     if (plan.skipped.length) console.warn("voidbase: restore skipped", key, plan.skipped.map((s) => `${s.collection}: ${s.reason}`).join("; "));
   } finally { await unlock(db); }
@@ -678,10 +989,10 @@ export function mountBackupsApi(app: Hono<AppEnv>) {
     let body: Record<string, unknown> = {};
     try { body = (await c.req.json()) ?? {}; } catch { body = {}; }
     const opts: RestoreOptions = { createMissing: body.createMissing === true };
-    // the archive is opened here so a refusal (not a voidbase archive, written by a newer voidbase) is the answer
-    let opened: Opened;
-    try { opened = await fetchArchive(c.env, key); } catch (err) { throw badRequest(`Failed to restore backup. Raw error: \n${err instanceof Error ? err.message : String(err)}`); }
-    c.executionCtx.waitUntil(restoreOpened(c.env, key, opened, opts).catch((err) => console.error("voidbase: Failed to restore backup", key, err)));
+    // the archive is prepared here so a refusal (not a voidbase archive, written by a newer voidbase) is the answer
+    let prep: Prepared;
+    try { prep = await prepareRestore(c.env, key); } catch (err) { throw badRequest(`Failed to restore backup. Raw error: \n${err instanceof Error ? err.message : String(err)}`); }
+    c.executionCtx.waitUntil(runRestore(c.env, key, prep, opts).catch((err) => console.error("voidbase: Failed to restore backup", key, err)));
     return c.body(null, 204);
   });
 }

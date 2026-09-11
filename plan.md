@@ -557,6 +557,10 @@ And (2026-09-11) the content half of translations:
 `translations` is a shipped plugin that owns a `translations` collection and, for the fields `VOIDBASE_TRANSLATABLE`
 declares, answers the records API in the locale the request asks for among `VOIDBASE_LOCALES`, falling back down
 their order, through a new after-read seam in the kernel; interface strings are still the project's (docs/plugins.md).
+And (2026-09-11) a restore is a streaming pass too: an archive now opens with `header.json` and carries its rows as
+`data.jsonl`, so `POST /api/backups/<key>/restore` reads it a slice at a time, batches the rows into D1 and streams
+each file straight into storage, and an archive larger than the isolate's memory restores (306 MB of rows cost about
+40 MB of RSS); archives in the older `data.json` layout are still read whole and still restore (docs/plugins.md).
 And (2026-09-11) backups worth relying on: `backups` writes a `full` archive (tables, files, settings redacted,
 schema, manifest) or a `data` one (the non-system collections' rows and files), reads each back and verifies it,
 restores each on its own terms (refusing an archive from a newer voidbase, never inventing a collection unasked),

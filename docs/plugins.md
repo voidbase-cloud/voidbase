@@ -56,10 +56,42 @@ opt-in) and `community`.
   Workers the HUB binding arrives with each request and not once per isolate, so a service built at load time would
   hold nothing. The per-request middleware puts the client on the context (`c.get("realtime")`), and it answers
   `active()` so the write path knows whether a change has anywhere to go.
-- **Middleware, through a slot.** `hardening` provides `hardening@1`, the body limit and the rate limit. Middleware
-  runs in registration order and the kernel loads after the routes, so a plugin cannot `use("*")` for itself; instead
-  `app.ts` keeps the two handlers' place in the chain with a slot that asks the provider at request time. No
-  provider, no limits; another limiter is another provider.
+- **Middleware, through a slot.** `hardening` provides `hardening@1`: the body limit, the rate limit and the
+  response policy (below). Middleware runs in registration order and the kernel loads after the routes, so a plugin
+  cannot `use("*")` for itself; instead `app.ts` keeps the handlers' place in the chain with slots that ask the
+  provider at request time, the policy first of all so it lands on every response, errors and files included. No
+  provider, no limits and no policy (CORS included); another limiter or another policy is another provider.
+
+### The response policy, hardening's other half
+
+What an instance sends back is a security decision, so it is the plugin's rather than a list of headers in `app.ts`
+(`src/server/response-policy.ts`; `hardening@1` exposes it as the `responsePolicy` middleware and `policy(env)`, the
+knobs as an env resolves them). Every knob is read from the instance's env on each request, like `VOIDBASE_PRESENCE`,
+and every one is off unless set: an instance that sets nothing answers exactly as before. The defaults are
+PocketBase's: `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `X-Xss-Protection: 1; mode=block`
+and `Cross-Origin-Opener-Policy: same-origin` on every response, the strict
+`Content-Security-Policy: default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; sandbox` on a served
+file, CORS at origin `*` with `Authorization` and `Content-Type` allowed, and no CSRF check.
+
+| Variable | Default | Effect when set |
+| --- | --- | --- |
+| `VOIDBASE_CORS_ORIGINS` | `*` (unset means `*`) | comma-separated origins. Only a listed origin gets `Access-Control-Allow-Origin` (the matching origin echoed, with `Vary: Origin`); a request from any other origin gets no CORS headers at all. Naming the origins also turns on the CSRF rule below |
+| `VOIDBASE_HSTS` | unset | `1` or `true` for one year, or a max-age in seconds: `Strict-Transport-Security: max-age=<n>; includeSubDomains`, on https requests only |
+| `VOIDBASE_REFERRER_POLICY` | unset | the `Referrer-Policy` value to send, as given |
+| `VOIDBASE_PERMISSIONS_POLICY` | unset | the `Permissions-Policy` value to send, as given |
+| `VOIDBASE_CSP` | unset | a `Content-Security-Policy` for every response that is not a served file; a route that set its own (the backups download) keeps it |
+| `VOIDBASE_CSP_FILES` | the strict policy above | replaces the `Content-Security-Policy` on served files |
+| `VOIDBASE_CROSS_ORIGIN` | unset | `1` or `true` adds `Cross-Origin-Embedder-Policy: require-corp` and `Cross-Origin-Resource-Policy: same-origin` beside the Opener-Policy |
+
+**The CSRF rule.** Origin `*` is safe while authentication is a bearer token, because nothing a browser sends on
+its own carries one; a cookie is sent on its own, which is what a cookie-based auth plugin would expose. So the
+check exists exactly when `VOIDBASE_CORS_ORIGINS` is set: a state-changing request (`POST`, `PATCH`, `PUT`,
+`DELETE`) that carries a `Cookie` header and whose `Origin` is neither the instance's own origin nor one of the
+named ones is refused with 403 and a message naming `Origin` and `VOIDBASE_CORS_ORIGINS`. Without an `Origin`
+header, `Sec-Fetch-Site` decides: `same-origin` and `none` pass, `same-site` and `cross-site` are refused, naming
+`Sec-Fetch-Site`. A request with neither header passes, since no browser makes a cross-site request without both.
+A request without a cookie is never touched, so a bearer-only client is never affected, and neither is any `GET`,
+`HEAD` or `OPTIONS`.
 
 ## The rules
 

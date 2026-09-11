@@ -1,5 +1,4 @@
 import { Hono, type Context } from "hono";
-import { cors } from "hono/cors";
 import { authenticate, fromToken, isSuperuser, provideAuthLookup, requireSuperuser } from "./auth-slot";
 import { ensureBootstrapped } from "./bootstrap";
 import { collectionToJSON, findCollection, invalidateCollections, listCollections, loadCollections, type Collection } from "./collections/model";
@@ -61,16 +60,13 @@ import { withFlags } from "./flags";
 export const app = new Hono<AppEnv>();
 let served = false; // onBootstrap / onServe fire once per isolate, on the first request
 
-app.use("*", cors({ origin: "*", allowHeaders: ["Authorization", "Content-Type"], allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS", "HEAD"] }));
-
-// PocketBase's default security headers.
-app.use("*", async (c, next) => {
-  await next();
-  c.header("X-Content-Type-Options", "nosniff");
-  c.header("X-Frame-Options", "SAMEORIGIN");
-  c.header("X-Xss-Protection", "1; mode=block");
-  c.header("Cross-Origin-Opener-Policy", "same-origin");
-});
+// The response policy (CORS, the security headers on every response, the files' Content-Security-Policy, the
+// CSRF check) from whichever plugin provides hardening@1, first in the chain so it lands on every answer: errors,
+// not-founds, preflights and files included. Middleware runs in registration order and the kernel loads after the
+// routes, so the slot asks the provider at request time (the kernel is a const declared at the end of this module,
+// fine here because this runs per request). No provider, no policy, and no CORS. The limits below share the slot.
+const hardened = () => using<Hardening | undefined>(kernel, "hardening@1");
+app.use("*", (c, next) => hardened()?.responsePolicy(c, next) ?? next());
 
 app.use("*", async (c, next) => {
   // secrets from the account's Secrets Store become strings on env before anything reads them (secrets-store.ts)
@@ -100,12 +96,9 @@ app.use("*", async (c, next) => {
   await next();
 });
 app.use("*", requestLogger());
-// The limits, from whichever plugin provides hardening@1. Middleware runs in registration order, so this is their
-// place in the chain, and the kernel loads after the routes; so the slot asks the provider at request time, the way
-// the realtime client above does. No provider, no limits.
-const limits = () => using<Hardening | undefined>(kernel, "hardening@1");
-app.use("*", (c, next) => limits()?.bodyLimit(c, next) ?? next());
-app.use("*", (c, next) => limits()?.rateLimit(c, next) ?? next());
+// The limits, from the same provider: this is their place in the chain. No provider, no limits.
+app.use("*", (c, next) => hardened()?.bodyLimit(c, next) ?? next());
+app.use("*", (c, next) => hardened()?.rateLimit(c, next) ?? next());
 app.use("*", hookMiddleware() as never);
 // PocketBase's routerUse: the app's own global middleware, around every request (see src/adapter for Void's middleware/)
 app.use("*", globalHookMiddleware() as never);
@@ -426,7 +419,7 @@ app.get("/api/files/:collection/:recordId/:filename", async (c) => {
   const headers = new Headers();
   headers.set("Content-Disposition", `${disposition}; filename=${JSON.stringify(served.name)}`);
   headers.set("Content-Type", contentType);
-  headers.set("Content-Security-Policy", "default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; sandbox");
+  c.set("file", true); // the response policy (hardening@1) adds the files' Content-Security-Policy
   headers.set("Cache-Control", "max-age=2592000, stale-while-revalidate=86400");
   headers.set("Last-Modified", served.uploaded.toUTCString());
   headers.set("Accept-Ranges", "bytes");

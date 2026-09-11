@@ -240,7 +240,13 @@ In this order, because it runs from proven to hardest.
    serves the body limit and the rate limit, `app.ts` keeps their place in the chain with a per-request slot, and
    `test/unit/hardening-plugin.test.ts` measures both halves, 413 with the plugin and pass-through without it. The
    IP helpers (`realIP`, `ipInList`) stay in `src/server/hardening.ts`: backups, files and auth use them, and they
-   are request identity rather than a limit. Gated by the full CI like realtime.
+   are request identity rather than a limit. Gated by the full CI like realtime. And (2026-09-11) the plugin owns
+   the whole response policy, the roadmap's "hardening, as a plugin" item: the security headers on every response
+   and the files' Content-Security-Policy moved out of `app.ts` into `src/server/response-policy.ts` behind a slot
+   that runs first, with seven env knobs (`VOIDBASE_CORS_ORIGINS` as a named list, `VOIDBASE_HSTS`,
+   `VOIDBASE_REFERRER_POLICY`, `VOIDBASE_PERMISSIONS_POLICY`, `VOIDBASE_CSP`, `VOIDBASE_CSP_FILES`,
+   `VOIDBASE_CROSS_ORIGIN`), all off unless set, and the CSRF rule that a named origin list turns on for
+   cookie-carrying state-changing requests (docs/plugins.md, `test/unit/response-policy.test.ts`).
    **Domains** and **email** are not extractions and not leaf-shaped, which an earlier version of this line claimed.
    The roadmap is explicit: attaching a hostname is an account-level action taken around a deploy rather than during
    a request, so domains want a deploy-time plugin surface that does not exist yet, and email is its pair (the

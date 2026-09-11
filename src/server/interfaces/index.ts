@@ -14,6 +14,7 @@
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv, AuthRecord, Bindings, Row } from "../types";
 import type { Field } from "../collections/fields";
+import type { ResponsePolicy } from "../response-policy";
 
 /**
  * Authentication. Three parts, not one (plan.md, decision 0.3, taken 2026-09-09).
@@ -79,18 +80,24 @@ export interface Realtime {
 }
 
 /**
- * The limits every request meets before a route sees it: PocketBase's body limit and its rate limit rules.
+ * The limits every request meets before a route sees it (PocketBase's body limit and its rate limit rules) and
+ * the response policy every answer leaves through (the security headers, the files' Content-Security-Policy,
+ * CORS, the CSRF check: src/server/response-policy.ts).
  *
  * Middleware runs in the order it was registered and the kernel loads after the routes are mounted, so the provider
- * does not mount anything. It hands over the two handlers and app.ts keeps their place in the chain with a slot
- * that asks for them at request time. No provider means no limits, which is what an instance stripped to the
- * loader is supposed to mean, and also how a different limiter takes this one's place.
+ * does not mount anything. It hands over the handlers and app.ts keeps their place in the chain with slots that
+ * ask for them at request time. No provider means no limits and no policy, which is what an instance stripped to
+ * the loader is supposed to mean, and also how a different limiter or a company's own policy takes this one's place.
  */
 export interface Hardening {
   /** refuses a body over the limit with 413 before anything reads it */
   bodyLimit: MiddlewareHandler<AppEnv>;
   /** PocketBase's rate limit rules per client, 429 when one is exceeded */
   rateLimit: MiddlewareHandler<AppEnv>;
+  /** first in the chain: CORS, the headers on every response, the files' policy, the CSRF refusal */
+  responsePolicy: MiddlewareHandler<AppEnv>;
+  /** the knobs as an env resolves them, for whoever wants to read the policy rather than apply it */
+  policy(env?: object): ResponsePolicy;
 }
 
 /** Sending mail. The core sends it; which service carries it is a plugin's business. */

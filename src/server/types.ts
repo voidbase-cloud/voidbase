@@ -26,6 +26,8 @@ export interface Variables {
   auth: AuthRecord | null;
   /** the realtime client for this request's bindings, from the realtime plugin (realtime@1) */
   realtime: import("./interfaces").RealtimeClient;
+  /** set by a route serving a stored file, so the response policy (hardening@1) applies the files' Content-Security-Policy */
+  file?: true;
 }
 
 export type AppEnv = { Bindings: Bindings; Variables: Variables };

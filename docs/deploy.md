@@ -24,6 +24,7 @@ Secrets and settings that must exist in production (declared in `env.ts`):
 | `AUDITLOG` | only if your `pb_hooks` read it, like the starter's audit log |
 | `VOIDBASE_ALERT_WEBHOOK_URL` | optional; every unhandled request error (HTTP 500) is POSTed there as JSON `{source, level, message, status, time, method, path, error, stack}` (Slack/Discord/PagerDuty-style receivers or your own endpoint) |
 | `VOIDBASE_MAIL_HTTP_URL`, `VOIDBASE_MAIL_HTTP_KEY` | optional HTTP mail provider (Resend-compatible JSON endpoint + bearer key) used instead of SMTP for every email, including the panel's test email |
+| `VOIDBASE_CORS_ORIGINS`, `VOIDBASE_HSTS`, `VOIDBASE_REFERRER_POLICY`, `VOIDBASE_PERMISSIONS_POLICY`, `VOIDBASE_CSP`, `VOIDBASE_CSP_FILES`, `VOIDBASE_CROSS_ORIGIN` | optional, all off unless set; the response policy the hardening plugin applies to every response (the security headers, CORS as a named list, the CSRF rule that comes with it): "The response policy" below |
 
 Everything else (SMTP, OAuth2 providers, rate limits, backups cron, trusted proxy) is configured from the
 panel's Settings pages and stored in D1.
@@ -227,6 +228,40 @@ Object that already holds the SSE connections) and never in D1; and watchers pay
 `VOIDBASE_PRESENCE=0` turns the whole thing off, which is the switch to pull if the fanout ever costs more than it
 is worth: `GET /api/presence` then answers `{"enabled": false}` and a page can fall back to something canned.
 voidbase.cloud's landing page does exactly that.
+
+### The response policy: the headers every answer carries
+
+The hardening plugin (`hardening@1`) sends PocketBase's headers on every response, errors and files included:
+`X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `X-Xss-Protection: 1; mode=block`,
+`Cross-Origin-Opener-Policy: same-origin`, a strict `Content-Security-Policy` (`default-src 'none'; media-src
+'self'; style-src 'unsafe-inline'; sandbox`) on a served file, and CORS at origin `*` with `Authorization` and
+`Content-Type` allowed. That is what an instance sends with nothing set. Seven variables, read from the instance's
+env like `VOIDBASE_PRESENCE`, change it:
+
+```
+VOIDBASE_CORS_ORIGINS=https://app.example,https://admin.example
+                           only these origins get Access-Control-Allow-Origin (echoed, with Vary: Origin);
+                           any other origin gets no CORS headers, and the CSRF rule below is on. Unset is *
+VOIDBASE_HSTS=1            Strict-Transport-Security: max-age=31536000; includeSubDomains on https requests only;
+                           a number instead of 1/true is the max-age in seconds
+VOIDBASE_REFERRER_POLICY=strict-origin-when-cross-origin      sent as Referrer-Policy
+VOIDBASE_PERMISSIONS_POLICY="camera=(), geolocation=()"        sent as Permissions-Policy
+VOIDBASE_CSP="default-src 'self'"                              Content-Security-Policy on every non-file response
+                           (a route that set its own, like the backups download, keeps it)
+VOIDBASE_CSP_FILES="default-src 'none'; img-src 'self'"        replaces the strict policy on served files
+VOIDBASE_CROSS_ORIGIN=1    adds Cross-Origin-Embedder-Policy: require-corp and Cross-Origin-Resource-Policy:
+                           same-origin beside the Opener-Policy
+```
+
+The CSRF rule, and why naming the origins turns it on: origin `*` is safe while authentication is a bearer token,
+because nothing a browser sends on its own carries one; a cookie is sent on its own, which is what a cookie-based
+auth plugin would expose. So once `VOIDBASE_CORS_ORIGINS` is set, a state-changing request (`POST`, `PATCH`, `PUT`,
+`DELETE`) that carries a `Cookie` header and whose `Origin` is neither the instance's own origin nor one of the named
+ones is refused with 403 and a message naming `Origin` and `VOIDBASE_CORS_ORIGINS`; without an `Origin` header,
+`Sec-Fetch-Site` decides (`same-origin` and `none` pass, `same-site` and `cross-site` are refused, naming
+`Sec-Fetch-Site`); a request with neither header passes. A request without a cookie is never touched, so a
+bearer-only client is never affected. Removing the hardening plugin removes the policy, CORS included; a company
+with its own policy provides `hardening@1` from its own plugin (docs/plugins.md).
 
 ### Every instance is isolated
 

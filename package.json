@@ -25,6 +25,7 @@
     "./workflows": "./src/server/workflows.ts",
     "./jobs": "./src/server/jobs.ts",
     "./hub": "./src/server/hub.ts",
+    "./durable-db": "./src/server/durable-db.ts",
     "./plugin": "./hooks-plugin.ts",
     "./schema": "./db/schema.ts",
     "./env": "./env.ts",

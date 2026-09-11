@@ -16,6 +16,7 @@ import { loadSettings } from "./settings";
 import { s3Bucket } from "./storage/s3";
 import type { AppEnv } from "./types";
 import { resolveSecretBindings } from "./secrets-store";
+import { bindDatabase } from "./durable-d1";
 
 export interface CronJob { id: string; expr: string; fn: (env: AppEnv["Bindings"]) => Promise<unknown> | unknown }
 
@@ -58,6 +59,7 @@ export function matches(expr: string, date: Date): boolean {
 }
 
 export async function runDue(env: AppEnv["Bindings"], date: Date): Promise<string[]> {
+  bindDatabase(env);
   await resolveSecretBindings(env as unknown as Record<string, unknown>);
   attachJobs(env);
   const ran: string[] = [];

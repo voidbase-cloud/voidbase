@@ -12,12 +12,14 @@ import "./app";
 import { loadHooks } from "./hooks";
 import { withHookStore } from "./hooks/migrations";
 import { resolveSecretBindings } from "./secrets-store";
+import { bindDatabase } from "./durable-d1";
 import type { AppEnv } from "./types";
 
 export async function withApp<T>(env: AppEnv["Bindings"], fn: () => Promise<T> | T): Promise<T> {
   // a Workflow step can run in an isolate that never served a request, where nothing has loaded the hook files
   // yet (they publish the PocketBase API the app's shared code reaches through `pb`); loading is once per isolate
   loadHooks();
+  bindDatabase(env);
   await resolveSecretBindings(env as unknown as Record<string, unknown>);
   return withHookStore(env.DB, env, fn);
 }

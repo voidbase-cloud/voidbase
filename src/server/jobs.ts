@@ -6,6 +6,7 @@ import { logger } from "#platform/log";
 import type { MailMessage } from "./mail/message";
 import type { Bindings } from "./types";
 import { resolveSecretBindings } from "./secrets-store";
+import { bindDatabase } from "./durable-d1";
 
 export type Job =
   | { type: "mail"; message: MailMessage; text: string }
@@ -62,6 +63,7 @@ export interface JobBatch { queue?: string; messages: QueuedMessage[] }
 /** The queue consumer: runs every message, retries failures with backoff (30 s, 60 s, ... up to 15 min) and logs the
  * ones Cloudflare is about to drop after `maxRetries` (the consumer file's export). */
 export async function consumeJobs(batch: JobBatch, env: Bindings, maxRetries = 5): Promise<{ done: number; failed: number }> {
+  bindDatabase(env);
   await resolveSecretBindings(env as unknown as Record<string, unknown>);
   attachJobs(env);
   let done = 0, failed = 0;

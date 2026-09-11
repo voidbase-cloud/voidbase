@@ -41,7 +41,7 @@ const PREFIX = "__backups__/";
 const META_SUFFIX = ".meta.json";
 const LOCK_KEY = "__activeBackup__";
 const NAME_RE = /^[a-z0-9_-]+\.zip$/;
-const INTERNAL_TABLES = /^(_cf_|__drizzle|_void|d1_migrations|sqlite_)/;
+const INTERNAL_TABLES = /^(_cf_|__miniflare|__drizzle|_void|d1_migrations|sqlite_)/;
 const SKIP_TABLES = new Set(["_changes", "_realtime_clients"]);
 const PART_SIZE = 10 * 1024 * 1024;
 /** the largest archive a storage without multipart uploads takes (it is held in memory before the single put) */

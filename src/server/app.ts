@@ -64,6 +64,7 @@ import { createCollection, deleteCollection, importCollections, inferViewFields,
 import { loadSettings, publicSettings } from "./settings";
 import type { AppEnv, Row, Bindings } from "./types";
 import { resolveSecretBindings } from "./secrets-store";
+import { bindDatabase } from "./durable-d1";
 import { withFlags } from "./flags";
 
 export const app = new Hono<AppEnv>();
@@ -78,6 +79,8 @@ const hardened = () => using<Hardening | undefined>(kernel, "hardening@1");
 app.use("*", (c, next) => hardened()?.responsePolicy(c, next) ?? next());
 
 app.use("*", async (c, next) => {
+  // the database first: DB is the D1 binding, or the instance's own Durable Object behind the same interface (durable-d1.ts)
+  bindDatabase(c.env);
   // secrets from the account's Secrets Store become strings on env before anything reads them (secrets-store.ts)
   await resolveSecretBindings(c.env as unknown as Record<string, unknown>);
   await ensureBootstrapped(c.env.DB, (db) => applyPendingMigrations(db, hookGlobals(), c.env));

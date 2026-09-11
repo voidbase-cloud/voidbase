@@ -16,6 +16,9 @@ export interface Bindings {
   RATE_LIMITER?: { limit(options: { key: string }): Promise<{ success: boolean }> };
   LOGS_ANALYTICS?: { writeDataPoint(point: { blobs?: string[]; doubles?: number[]; indexes?: string[] }): void };
   HUB?: DurableObjectNamespace; // the instance's realtime hub (src/server/hub.ts)
+  // the instance's database as a SQLite-backed Durable Object (src/server/durable-db.ts), bound instead of D1 with
+  // VOIDBASE_DATABASE=durable; every entry point rebinds DB to it first (src/server/durable-d1.ts bindDatabase)
+  DB_OBJECT?: DurableObjectNamespace;
   // Cloudflare Email Service: the send_email binding the deploy adds with VOIDBASE_MAIL_DOMAIN (plugins/mail.ts)
   SEND_EMAIL?: { send(message: EmailMessage): Promise<unknown> }; // EmailMessage: the global from @cloudflare/workers-types
   VOIDBASE_MAIL_DOMAIN?: string;

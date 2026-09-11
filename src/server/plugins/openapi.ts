@@ -11,7 +11,8 @@
 //   GET /api/docs           Scalar's API reference over that document, loaded from a CDN, no build step.
 // A collection's operation appears by its rule: the empty rule is public and appears for everyone; a rule with text
 // needs a signed-in record to be judged against, so it appears for a signed-in caller with the rule quoted; a rule
-// that is null is locked, superusers only. The MCP server the roadmap names beside this is not built yet.
+// that is null is locked, superusers only. The MCP server the roadmap names beside this (mcp.ts) derives its tools
+// from this document, so the two answer the same token the same way.
 import type { Context, Hono } from "hono";
 import { isSuperuser } from "../auth-slot";
 import { isMultiple, type Field } from "../collections/fields";

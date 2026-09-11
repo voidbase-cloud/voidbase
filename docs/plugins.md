@@ -13,7 +13,7 @@ working plan. What is here is what a contributor needs to touch it.
 | `src/server/plugins/manifest.ts` | the manifest format (`name`, `version`, `tier`, `voidbase` range, `provides`, `requires`, `collections`, `extends`) and `checkManifest()`. Data only. |
 | `src/server/plugins/resolve.ts` | the whole graph checked before a single plugin is applied: unknown interface names, version ranges, two providers of one interface, collection ownership, missing requirements, cycles. Everything wrong is reported at once. |
 | `src/server/interfaces/index.ts` | the interfaces a plugin may provide or require, versioned in the name (`auth@1`, `payments@1`, `realtime@1`, `hardening@1`, `mail@1`) and the closed `KNOWN` list. |
-| `src/server/plugins/*.ts` | the plugins voidbase ships with today: `auth`, `realtime`, `hardening`, `backups`, `installer`, `openapi`. |
+| `src/server/plugins/*.ts` | the plugins voidbase ships with today: `auth`, `realtime`, `hardening`, `backups`, `installer`, `openapi`, `mcp`. |
 | `GET /api/plugins` | what this instance loaded: names, providers, tiers, and any core interface nobody provides. Superuser only. |
 
 ## The entry points a plugin package uses
@@ -22,7 +22,7 @@ The package exposes the plugin API and the plugins it ships, so a plugin can liv
 against this voidbase: `@voidbase-cloud/voidbase/kernel` (`createKernel`, `load`, `serve`, `using`, `whatLoaded`,
 `Kernel`), `@voidbase-cloud/voidbase/plugins` (`Plugin`, `PluginManifest`, `checkManifest`),
 `@voidbase-cloud/voidbase/interfaces` (the interface types and `KNOWN`), and `@voidbase-cloud/voidbase/plugins/backups`,
-`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening`, `/plugins/openapi` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
+`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening`, `/plugins/openapi`, `/plugins/mcp` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
 the map honest. The official plugin packages (`@voidbase-cloud/plugin-*`, one repository each) re-export the shipped
 objects through these entry points: the code lives here once, and the package is the plugin's name, manifest and
 version as the marketplace lists it.
@@ -173,7 +173,43 @@ the rules that decide who may read and write each one, and this puts that in a f
 
 The plugin reads the collections and settings through the same functions the routes do, and takes a source of its own
 for tests (`openapiWith({ collections, appName })`, `test/unit/openapi.test.ts`). The stateless MCP server the roadmap
-names beside this is not built yet; it will be a client of this document.
+names beside this is the `mcp` plugin below, a client of this document: its tools are derived from it.
+
+## An agent's view of the instance: mcp
+
+`mcp` is a shipped plugin (tier `official`, `src/server/plugins/mcp.ts`) that serves the Model Context Protocol over
+the same scoping, so an agent discovers an instance rather than being told about it. `POST /api/mcp` speaks the
+Streamable HTTP transport in its stateless form: one JSON-RPC 2.0 request in, one JSON response out, no session id
+issued or read (`GET` and `DELETE /api/mcp`, which the transport uses to open and close a session, answer 405 and say
+the server is stateless). Stateless because an instance is a Worker: there is no process to keep a session in, so
+each call carries its own auth, the `Authorization: <token>` header the REST API reads, and the caller's scope is
+what the openapi plugin computes for the same token. The methods are `initialize` (protocol version `2025-03-26`, or
+the client's when it is one the server knows; `capabilities.tools`; `serverInfo` `voidbase` and the version),
+`notifications/initialized` (202, no body), `ping`, `tools/list` and `tools/call`. Unknown methods are JSON-RPC
+`-32601`, a body that is not JSON `-32700`, a batch or a non-request `-32600`, a tool the token cannot see or a
+missing argument `-32602`.
+
+The tools are built at request time from the caller's OpenAPI document, so they are exactly the routes the token
+may call: per collection `<collection>_list` (`page`, `perPage`, `sort`, `filter`, `expand`, `fields`, `skipTotal`),
+`<collection>_get` (`id`, `expand`, `fields`) and, where the rule allows, `<collection>_create` (`data`, an object
+shaped by the create body), `<collection>_update` (`id`, `data`) and `<collection>_delete` (`id`); for an auth
+collection `<collection>_auth_with_password` (`identity`, `password`), which answers the token to send on the calls
+that follow; plus `voidbase_describe`, the scoped document itself, and `voidbase_health`. Each tool's `inputSchema`
+is JSON Schema from the operation's parameters and body with the `$ref`s inlined, and its one-line description is
+the operation's summary and its rule note, so a gated tool says the rule it is judged by. `tools/call` runs the
+operation by calling the instance's own route in process, on the same Hono app, with the caller's token forwarded:
+the rules judge the call the way they judge any request, and nothing in the plugin decides access on its own. The
+answer is `content: [{ type: "text", text: <the route's JSON> }]`, with `isError: true` on a non-2xx.
+
+To point an MCP client at an instance, give it the URL and the token as a header:
+
+```json
+{ "url": "https://<instance>/api/mcp", "headers": { "Authorization": "<token>" } }
+```
+
+A token from `auth-with-password` on `_superusers` sees every collection and every write; a user's token sees what
+that user may call; no header at all sees the public API. The plugin takes the same injectable source as openapi
+(`mcpWith({ collections, appName }, version)`, `test/unit/mcp.test.ts`).
 
 ## Auth is the core plugin
 

@@ -498,7 +498,10 @@ Cloudflare (docs/deploy.md). And templates (2026-09-11): `voidbase init --templa
 marketplace's index lists, `--template owner/name` from any public GitHub repository, the tarball of one ref unpacked
 with the system tar and the next steps read from the files (docs/setup.md). And the cloud page's client now lives
 in the package (`voidbase/cloud-client`) and `voidbase cloud login | whoami | instances | repos | plugins` drives it
-from a terminal with the page's CLI token, so nothing voidbase.cloud does is dashboard-only (docs/setup.md).
+from a terminal with the page's CLI token, so nothing voidbase.cloud does is dashboard-only (docs/setup.md). And
+(2026-09-11) the stateless MCP server: `mcp` is a shipped plugin whose tools are derived per request from the
+caller's OpenAPI document and whose calls run the instance's own routes in process, so an agent discovers an instance
+with the token it holds and nothing more (docs/plugins.md).
 
 ## What to correct on the site when this lands
 

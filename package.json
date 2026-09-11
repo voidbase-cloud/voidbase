@@ -48,6 +48,7 @@
     "./plugins/realtime": "./src/server/plugins/realtime.ts",
     "./plugins/hardening": "./src/server/plugins/hardening.ts",
     "./plugins/openapi": "./src/server/plugins/openapi.ts",
+    "./plugins/mcp": "./src/server/plugins/mcp.ts",
     "./plugins/collections": "./src/server/plugins/collections.ts",
     "./registry": "./src/node/registry.ts",
     "./secrets": "./src/env/define.ts"

@@ -8,8 +8,12 @@
 // `collection(name)` to the right record type. The file declares the little it needs of the SDK's shape itself, so
 // it depends on nothing this package does not ship; the SDK is whatever the project installed.
 //
-// What is not here: `--watch` (the build refreshing the file on its own) and the client plugin surface the roadmap
-// names beside this. The generator is pure (generateTypes) so the command and the tests share it.
+// `--watch` (watchTypes, at the end) polls the same document and rewrites the file when the collections change; what
+// is not here is the client plugin surface the roadmap names beside this. The generator is pure (generateTypes), so
+// the one-shot command, the watch and the tests all share it.
+
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 /** the parts of an OpenAPI document the generator reads */
 export interface OpenApiDocument {
@@ -202,23 +206,44 @@ export interface FetchOptions {
   fetch?: typeof fetch;
 }
 
-/** the document as the superuser sees it: every collection, which is what the client has to know about */
-export async function fetchDocument(opts: FetchOptions): Promise<OpenApiDocument> {
+/** a token the instance stopped accepting: a run with credentials signs in again, a run given a raw --token cannot */
+export class TokenExpired extends Error { constructor(message: string) { super(message); this.name = "TokenExpired"; } }
+
+/** a sign-in that lasts: the document, again and again, on one token minted when there is none and when one expires */
+export interface DocumentSession { document(): Promise<OpenApiDocument> }
+
+/** the session behind both the one-shot command and the watch: one GET per document, a sign-in only when needed */
+export function openSession(opts: FetchOptions): DocumentSession {
   const f = opts.fetch ?? fetch;
   const base = opts.url.replace(/\/$/, "");
+  const canSignIn = !!(opts.email && opts.password);
   let token = opts.token;
-  if (!token) {
-    if (!opts.email || !opts.password) throw new Error("a superuser is needed: --token <token>, or --email and --password");
+  const signIn = async (): Promise<string> => {
+    if (!canSignIn) throw new Error("a superuser is needed: --token <token>, or --email and --password");
     const r = await f(`${base}/api/collections/_superusers/auth-with-password`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identity: opts.email, password: opts.password }) });
     if (!r.ok) throw new Error(`sign-in as ${opts.email} at ${base} failed: ${r.status} ${(await r.text()).slice(0, 200)}`);
-    token = String(((await r.json()) as { token?: string }).token ?? "");
-    if (!token) throw new Error(`sign-in at ${base} answered no token`);
-  }
-  const r = await f(`${base}/api/openapi.json`, { headers: { authorization: token } });
-  if (!r.ok) throw new Error(`GET ${base}/api/openapi.json failed: ${r.status} ${(await r.text()).slice(0, 200)}`);
-  const doc = (await r.json()) as OpenApiDocument;
-  return checkDocument(doc, base);
+    const minted = String(((await r.json()) as { token?: string }).token ?? "");
+    if (!minted) throw new Error(`sign-in at ${base} answered no token`);
+    return minted;
+  };
+  const get = () => f(`${base}/api/openapi.json`, { headers: { authorization: token ?? "" } });
+  return {
+    async document(): Promise<OpenApiDocument> {
+      if (!token) token = await signIn();
+      let r = await get();
+      if (r.status === 401) { // a superuser token expires; a long watch mints another rather than stopping
+        if (!canSignIn) throw new TokenExpired(`${base} no longer accepts the token (401): give --email and --password instead, and a long run signs in again by itself`);
+        token = await signIn();
+        r = await get();
+      }
+      if (!r.ok) throw new Error(`GET ${base}/api/openapi.json failed: ${r.status} ${(await r.text()).slice(0, 200)}`);
+      return checkDocument((await r.json()) as OpenApiDocument, base);
+    },
+  };
 }
+
+/** the document as the superuser sees it: every collection, which is what the client has to know about */
+export async function fetchDocument(opts: FetchOptions): Promise<OpenApiDocument> { return openSession(opts).document(); }
 
 /** the document must be an OpenAPI document of a voidbase instance, in the superuser's scope */
 export function checkDocument(doc: OpenApiDocument, source: string): OpenApiDocument {
@@ -233,4 +258,92 @@ export async function readDocument(path: string): Promise<OpenApiDocument> {
   let doc: OpenApiDocument;
   try { doc = JSON.parse(await Bun.file(path).text()) as OpenApiDocument; } catch (err) { throw new Error(`could not read ${path}: ${err instanceof Error ? err.message : String(err)}`); }
   return checkDocument(doc, path);
+}
+
+// --- watching ---------------------------------------------------------------------------------------------------------
+// `voidbase types --watch`: the file written once, then the same document fetched again every few seconds and the file
+// rewritten only when it would come out different. The comparison is the generated text against what is on disk, which
+// is the cheapest correct thing here: it ignores every part of the document the types do not express (the paths, the
+// examples, the instance's own version), so a poll that changes nothing writes nothing and prints nothing, and a poll
+// that does is compared to the file a build or an editor is actually reading.
+
+/** how long a watch waits between polls when nothing is failing; --interval sets it, in seconds */
+export const WATCH_INTERVAL_MS = 5000;
+/** the longest a run of failed polls backs off to: an instance that is restarting is worth waiting for, quietly */
+export const WATCH_MAX_BACKOFF_MS = 30_000;
+
+export interface WatchOptions extends FetchOptions {
+  /** the file to write, as --out gives it */
+  out: string;
+  /** the header's "generated from": the instance's document URL */
+  source: string;
+  /** the header's "to regenerate" line */
+  regenerate: string;
+  /** milliseconds between polls (default WATCH_INTERVAL_MS) */
+  intervalMs?: number;
+  log?: (line: string) => void;
+  warn?: (line: string) => void;
+}
+/** what the caller's Ctrl-C handler reads: how often the file was rewritten after the first write */
+export interface WatchRun { rewrites: number }
+
+/** every collection of a document with its field names: what the one-line summary compares */
+export function collectionFields(doc: OpenApiDocument): Map<string, string[]> {
+  return new Map(collectionsOf(doc).map((c) => [c.name, Object.keys(c.schema.properties ?? {})]));
+}
+
+/** one line for what changed between two documents: which collections came, went, or changed their fields */
+export function summarizeChanges(before: OpenApiDocument, after: OpenApiDocument): string {
+  const was = collectionFields(before), now = collectionFields(after);
+  const parts: string[] = [];
+  for (const name of now.keys()) if (!was.has(name)) parts.push(`added ${name}`);
+  for (const name of was.keys()) if (!now.has(name)) parts.push(`removed ${name}`);
+  for (const [name, fields] of now) {
+    const old = was.get(name);
+    if (!old) continue;
+    const gained = fields.filter((f) => !old.includes(f)), lost = old.filter((f) => !fields.includes(f));
+    if (gained.length || lost.length) parts.push(`changed ${name} (${[...gained.map((f) => `+${f}`), ...lost.map((f) => `-${f}`)].join(", ")})`);
+  }
+  if (!parts.length) return "the same collections, with a different shape"; // a field's type or its help text
+  return parts.length > 5 ? `${parts.slice(0, 5).join("; ")}; and ${parts.length - 5} more` : parts.join("; ");
+}
+
+/** Writes the file, then polls until the process is interrupted: never returns, and never exits on a failed poll. */
+export async function watchTypes(opts: WatchOptions, run: WatchRun = { rewrites: 0 }): Promise<never> {
+  const log = opts.log ?? ((l: string) => console.log(l));
+  const warn = opts.warn ?? ((l: string) => console.error(l));
+  const interval = opts.intervalMs ?? WATCH_INTERVAL_MS;
+  const file = resolve(opts.out);
+  const session = openSession(opts);
+  const generate = (doc: OpenApiDocument) => generateTypes(doc, { source: opts.source, regenerate: opts.regenerate });
+  const onDisk = (): string | null => { try { return readFileSync(file, "utf8"); } catch { return null; } };
+  const write = (text: string) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text); };
+
+  let doc = await session.document();
+  let text = generate(doc);
+  const n = collectionsOf(doc).length, count = `${n} collection${n === 1 ? "" : "s"}`;
+  if (onDisk() === text) log(`${opts.out} is already what ${opts.source} describes: ${count}`);
+  else { write(text); log(`wrote ${opts.out}: ${count} from ${opts.source}`); }
+  log(`watching ${opts.source} every ${Math.round(interval / 100) / 10}s; Ctrl-C to stop`);
+
+  for (let failures = 0; ; ) {
+    await Bun.sleep(failures ? Math.min(interval * 2 ** failures, WATCH_MAX_BACKOFF_MS) : interval);
+    let next: OpenApiDocument;
+    try {
+      next = await session.document();
+    } catch (err) {
+      if (err instanceof TokenExpired) throw err; // a raw token cannot be renewed: the caller says so and stops
+      if (!failures) warn(`poll of ${opts.source} failed: ${err instanceof Error ? err.message : String(err)} (still trying)`);
+      failures++;
+      continue;
+    }
+    if (failures) { log(`${opts.source} is answering again`); failures = 0; }
+    const generated = generate(next);
+    const changed = generated !== text;
+    if (!changed && onDisk() === text) continue; // an unchanged poll: nothing written, nothing said
+    const what = changed ? summarizeChanges(doc, next) : `${opts.out} no longer matched the instance`;
+    doc = next; text = generated;
+    write(text); run.rewrites++;
+    log(`rewrote ${opts.out}: ${what}`);
+  }
 }

@@ -119,11 +119,17 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      (env: VOIDBASE_MIGRATE_FROM_EMAIL/_PASSWORD/_TOKEN and _TO_*); --keep leaves the
                                      migration archive on both sides; --dry-run signs in, says what would happen, stops
   types --url http://vb [--token t | --email a@b --password p] [--out src/voidbase.ts] [--json file]
+        [--watch [--interval 5]]
                                      write a typed client for the PocketBase JS SDK from the instance's own API
                                      description (GET /api/openapi.json as a superuser): an interface per collection,
                                      a Collections map and a TypedPocketBase type, one file, overwritten. --json
-                                     reads a saved document instead of the network. No --watch: run it again
-                                     when the collections change
+                                     reads a saved document instead of the network. --watch writes the file once and
+                                     then polls, one request every --interval seconds (default 5, never under 1),
+                                     rewriting it only when the collections change and saying in one line what
+                                     changed; a failed poll is reported once and retried with a backoff, Ctrl-C
+                                     stops and says how many times it rewrote. A watch with --email and --password
+                                     signs in again when the token expires; one with --token stops instead.
+                                     --watch has nothing to poll with --json, and is refused there
   version                            print the version
   bundle [--out dir] [--version v]   build the generic Worker + panel as a release directory (default .cloud/releases/<v>);
          [--plugins-dir pb_plugins]     --plugins-dir bakes a project's installed plugins (voidbase.lock beside them) into the Worker
@@ -281,14 +287,32 @@ switch (cmd) {
   }
   case "types": {
     // A typed client from the instance's own OpenAPI description (src/node/typed-client.ts): fetched as a superuser so
-    // every collection is in it, or read from a saved document with --json. Works from the executable too.
-    const { collectionsOf, fetchDocument, generateTypes, readDocument } = await import("../src/node/typed-client");
+    // every collection is in it, or read from a saved document with --json. --watch keeps fetching it. Works from the
+    // executable too.
+    const { collectionsOf, fetchDocument, generateTypes, readDocument, watchTypes } = await import("../src/node/typed-client");
     const out = flags.out ?? "src/voidbase.ts";
     const json = flags.json && flags.json !== "1" ? flags.json : undefined;
+    const watching = "watch" in flags;
+    if (watching && json) { console.error(`--watch polls the instance, and --json ${json} is a saved document: there is nothing to poll. Drop one of them.`); process.exit(1); }
+    if (flags.interval && !watching) { console.error("--interval is how often --watch polls: add --watch, or drop --interval"); process.exit(1); }
+    const seconds = flags.interval ? Number(flags.interval) : 5;
+    if (watching && !(Number.isFinite(seconds) && seconds >= 1)) { console.error(`--interval is in seconds and cannot be under 1 (given: ${flags.interval})`); process.exit(1); }
+    // test-only: the suite polls faster than the floor a person is allowed. Not documented anywhere a user reads.
+    const intervalMs = Number(process.env.VOIDBASE_TYPES_WATCH_INTERVAL_MS) || seconds * 1000;
+    // a raw --token cannot be renewed; --email/--password (or --admin, or the environment's superuser) can
+    const credentials = { email: flags.email ?? admin().email, password: flags.password ?? admin().password };
+    const auth = flags.token && !(flags.email || flags.password || flags.admin) ? { token: flags.token } : { token: flags.token, ...credentials };
     try {
       const source = json ?? `${url}/api/openapi.json`;
-      const doc = json ? await readDocument(resolve(json)) : await fetchDocument({ url, token: flags.token, email: flags.email ?? admin().email, password: flags.password ?? admin().password });
+      // the same line whichever mode wrote it, so a watch does not rewrite what a plain run just generated
       const regenerate = `voidbase types ${json ? `--json ${json}` : `--url ${url}`} --out ${out}`;
+      if (watching) {
+        const run = { rewrites: 0 };
+        const bye = () => { console.log(`\nstopped watching ${source}: ${out} rewritten ${run.rewrites} time${run.rewrites === 1 ? "" : "s"}`); process.exit(0); };
+        process.on("SIGINT", bye); process.on("SIGTERM", bye);
+        await watchTypes({ url, ...auth, out, source, regenerate, intervalMs }, run);
+      }
+      const doc = json ? await readDocument(resolve(json)) : await fetchDocument({ url, ...auth });
       const text = generateTypes(doc, { source, regenerate });
       mkdirSync(resolve(out, ".."), { recursive: true });
       writeFileSync(resolve(out), text);

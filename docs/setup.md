@@ -154,8 +154,14 @@ any other name untyped. With `@voidbase-cloud/sdk`, voidbase's fork of the SDK, 
 SDK's class has. Either way a renamed field is then a compile error.
 The file imports nothing: the few SDK shapes it needs are declared in it, structurally, so it compiles on its own
 and against whichever SDK version the project installed. `--json <file>` generates from a saved document instead
-of the network, for tests and offline use. There is no `--watch`: run the command again when the collections
-change (or put it in the build). The client plugin surface beside this is the fork's `client.use(plugin)`.
+of the network, for tests and offline use. `--watch` writes the file once and then polls the instance, one request
+every `--interval` seconds (5 by default, never under 1), and rewrites the file only when what it would generate is
+not what is on disk, saying in one line which collections were added, removed or changed; a poll that changes
+nothing writes nothing and prints nothing. A poll that fails, because the instance is restarting or the network is
+gone, is reported once and tried again with a backoff of up to thirty seconds instead of ending the run; a watch
+given `--email` and `--password` signs in again when the superuser token expires, while one given `--token` says
+the token expired and stops; and Ctrl-C exits saying how many times it rewrote the file. `--watch` has nothing to
+poll with `--json`, and is refused there. The client plugin surface beside this is the fork's `client.use(plugin)`.
 
 `voidbase migrate <from-url> <to-url>` moves an instance's data to another running instance, whichever way each one
 runs (the executable, the npm package, Cloudflare) and in either direction. It is a backup taken on the source and

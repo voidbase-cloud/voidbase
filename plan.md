@@ -525,7 +525,10 @@ from a terminal with the page's CLI token, so nothing voidbase.cloud does is das
 caller's OpenAPI document and whose calls run the instance's own routes in process, so an agent discovers an instance
 with the token it holds and nothing more (docs/plugins.md). And the typed client (2026-09-11): `voidbase types` generates the record interfaces, the `Collections` map and a
 `TypedPocketBase` type from the instance's own OpenAPI document, fetched as a superuser, so the client and the
-documentation cannot disagree; no `--watch` yet, and the client plugin surface is the SDK fork's `client.use` (docs/setup.md). And
+documentation cannot disagree, and `voidbase types --watch` keeps that file current while the collections move: it
+polls the document every few seconds, rewrites the file only when what it generates changes, and names in one line
+which collections were added, removed or changed (the client plugin surface beside it is still the SDK fork's
+`client.use`; docs/setup.md). And
 the small half of the roadmap's SEO entry (2026-09-11): `seo` is a shipped plugin that generates `/robots.txt`, a
 `/sitemap.xml` from the public records `VOIDBASE_SITEMAP` names, and `/llms.txt` from the collections, a static
 file winning over each, and (2026-09-11) the other half: `GET /api/seo/meta?path=` resolves a page through the sitemap

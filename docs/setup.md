@@ -64,6 +64,10 @@ Every instance serves the admin panel at `/_/`, so `https://your-instance.exampl
 is PocketBase's own admin panel, unmodified, and it is where collections are designed, API rules are written,
 records are browsed and edited, mail and OAuth2 providers are configured, logs are read and backups are taken.
 
+Beside it, `/api/docs` is the instance's own API reference: an OpenAPI document generated from the collections you
+have, scoped to the token it is opened with (nothing signed in, the public API; a user, that user's; a superuser,
+everything), read through Scalar. The document itself is `/api/openapi.json` (docs/plugins.md, the `openapi` plugin).
+
 Sign in with a superuser account. If you are setting the instance up yourself, the next section makes one.
 
 PocketBase's documentation covers the panel screen by screen:

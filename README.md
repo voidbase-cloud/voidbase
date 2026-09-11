@@ -78,7 +78,7 @@ bun run panel:sync              # copies ../pocketbase/ui/dist to public/_ (set 
 ./scripts/dev.sh start 5180     # background dev server with a pidfile; stop / status / log
 ```
 
-Panel: http://127.0.0.1:5180/_/  ·  API: http://127.0.0.1:5180/api/health
+Panel: http://127.0.0.1:5180/_/  ·  API: http://127.0.0.1:5180/api/health  ·  API reference: http://127.0.0.1:5180/api/docs
 
 ## Verify against PocketBase
 

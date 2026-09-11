@@ -25,6 +25,7 @@ import { createKernel, load, runBootstraps, using, whatLoaded } from "./kernel";
 import { auth as authPlugin } from "./plugins/auth";
 import { backups as backupsPlugin } from "./plugins/backups";
 import { installer as installerPlugin, installerInfo } from "./plugins/installer";
+import { openapi as openapiPlugin } from "./plugins/openapi";
 import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
 import { SHIPPED } from "./plugins/shipped";
@@ -515,7 +516,7 @@ mountCronsApi(app);
 export const kernel = createKernel(app);
 // What ships, minus what the project turned off, minus what an installed plugin shadows by name; then what the
 // project installed (pb_plugins, verified against voidbase.lock by the platform module). One graph, resolved once.
-const shipped = [authPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION)];
+const shipped = [authPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION), openapiPlugin];
 if (shipped.map((p) => p.manifest.name).join() !== SHIPPED.join()) throw new Error("voidbase: src/server/plugins/shipped.ts disagrees with the plugins app.ts loads");
 const shadowed = new Set(installedPlugins.map((p) => p.name));
 const active = shipped.filter((p) => !disabledPlugins.includes(p.manifest.name) && !shadowed.has(p.manifest.name));

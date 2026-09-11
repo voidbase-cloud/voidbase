@@ -13,7 +13,7 @@ working plan. What is here is what a contributor needs to touch it.
 | `src/server/plugins/manifest.ts` | the manifest format (`name`, `version`, `tier`, `voidbase` range, `provides`, `requires`, `collections`, `extends`) and `checkManifest()`. Data only. |
 | `src/server/plugins/resolve.ts` | the whole graph checked before a single plugin is applied: unknown interface names, version ranges, two providers of one interface, collection ownership, missing requirements, cycles. Everything wrong is reported at once. |
 | `src/server/interfaces/index.ts` | the interfaces a plugin may provide or require, versioned in the name (`auth@1`, `payments@1`, `realtime@1`, `hardening@1`, `mail@1`) and the closed `KNOWN` list. |
-| `src/server/plugins/*.ts` | the plugins voidbase ships with today: `backups`, `realtime`, `hardening`. |
+| `src/server/plugins/*.ts` | the plugins voidbase ships with today: `auth`, `realtime`, `hardening`, `backups`, `installer`, `openapi`. |
 | `GET /api/plugins` | what this instance loaded: names, providers, tiers, and any core interface nobody provides. Superuser only. |
 
 ## The entry points a plugin package uses
@@ -22,7 +22,7 @@ The package exposes the plugin API and the plugins it ships, so a plugin can liv
 against this voidbase: `@voidbase-cloud/voidbase/kernel` (`createKernel`, `load`, `serve`, `using`, `whatLoaded`,
 `Kernel`), `@voidbase-cloud/voidbase/plugins` (`Plugin`, `PluginManifest`, `checkManifest`),
 `@voidbase-cloud/voidbase/interfaces` (the interface types and `KNOWN`), and `@voidbase-cloud/voidbase/plugins/backups`,
-`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
+`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening`, `/plugins/openapi` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
 the map honest. The official plugin packages (`@voidbase-cloud/plugin-*`, one repository each) re-export the shipped
 objects through these entry points: the code lives here once, and the package is the plugin's name, manifest and
 version as the marketplace lists it.
@@ -143,6 +143,37 @@ template, sets the two keys on the Worker, and its plugin page is a client of th
 built for an instance by anyone but its own pipeline. `voidbase-demo` is such a project, which is how the demo is the
 live testbed for install, uninstall and update (`bun run live` in voidbase-site). An upgrade of voidbase on a project
 instance is a change to the repository's dependency, not a re-provision.
+
+## Describing the API: openapi
+
+`openapi` is a shipped plugin (tier `official`, `src/server/plugins/openapi.ts`) that answers the roadmap's "a
+description of the API, generated and scoped". Every instance knows its own shape, the collections, their fields and
+the rules that decide who may read and write each one, and this puts that in a form other tools consume:
+
+- `GET /api/openapi.json` is an OpenAPI 3.1 document generated at request time from the instance's collections,
+  scoped to the token that asked. With no token it describes what an anonymous request may do; as a signed-in user,
+  what that user may do; as a superuser, everything, the superuser-only operations and the system routes
+  (`/api/collections`, `/api/settings`, `/api/logs`, `/api/backups`, `/api/plugins`) included. A collection's
+  list, view, create, update and delete operations appear by their rule: the empty rule is public and appears for
+  everyone; a rule with text needs a signed-in record to be judged against, so it appears for a signed-in caller with
+  the rule quoted in the operation's description; a rule that is `null` is locked, superusers only. A view has no
+  writes. Per collection the document carries the PocketBase record routes, a record schema built from the fields
+  (`select` as an enum, `relation` as an id, `file` as a name, `autodate` read-only, `id`, `created`, `updated`),
+  the create and update bodies, the list shape (`page`, `perPage`, `totalItems`, `totalPages`, `items`) and the list
+  query (`page`, `perPage`, `sort`, `filter`, `expand`, `fields`, `skipTotal`); an auth collection adds
+  `auth-with-password`, `auth-methods` and, for a token of that collection, `auth-refresh`. `info.title` is the
+  instance's name from its settings (`voidbase` when it has none), `servers[0].url` is the request's origin, and the
+  security scheme is the `Authorization: <token>` header the PocketBase SDKs send. `info["x-voidbase"]` says which
+  scope the document is, so a client can tell.
+- `GET /api/docs` is Scalar's API reference over that document, loaded from
+  `https://cdn.jsdelivr.net/npm/@scalar/api-reference` with no build step. The page says what the caller's token may
+  call, and because a browser cannot put a token on the navigation that opens it, the page fetches the document
+  itself with a token pasted into it (kept in `sessionStorage`), else the panel's session on the same origin, else
+  none.
+
+The plugin reads the collections and settings through the same functions the routes do, and takes a source of its own
+for tests (`openapiWith({ collections, appName })`, `test/unit/openapi.test.ts`). The stateless MCP server the roadmap
+names beside this is not built yet; it will be a client of this document.
 
 ## Auth is the core plugin
 

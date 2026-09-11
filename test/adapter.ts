@@ -144,6 +144,37 @@ try {
   // and without the option nothing of it appears
   const plain = await adapt(WORK, { quiet: true, clientDir: "dist/client" });
   check("without the pwa option nothing of it is written: no manifest, no icons, no worker, no tag in index.html", !plain.pwa && !existsSync(`${pub}/manifest.webmanifest`) && !existsSync(`${pub}/sw.js`) && !existsSync(`${pub}/icons`) && !readFileSync(`${pub}/index.html`, "utf8").includes("manifest") && !plain.written.some((w) => w.includes("pb_public")), readdirSync(pub).join(" "));
+  // ---- locales: a locale in the route, and the hreflang links that say so ----------------------------------------
+  check("without the locales option no page is tagged and no rule is written", !readFileSync(`${pub}/index.html`, "utf8").includes("hreflang") && !readFileSync(`${pub}/index.html`, "utf8").includes("<html") && !readFileSync(`${pub}/_redirects`, "utf8").includes("locale"), readFileSync(`${pub}/index.html`, "utf8").slice(0, 120));
+  // a second page, to see the page URL a prerendered file is served at and a language the page already declares
+  writeFileSync(`${WORK}/dist/client/guide.html`, '<!doctype html><html lang="en-GB"><head><title>guide</title></head><body>guide</body></html>');
+  const prefixed = await adapt(WORK, { quiet: true, clientDir: "dist/client", locales: { codes: ["en", "ar", "fr"], path: "prefix", default: "en" } });
+  const localeRedirects = readFileSync(`${pub}/_redirects`, "utf8");
+  check("prefix writes a _redirects rule per locale, to the same page in that locale, beside the seo rules", /^\/ar \/\?locale=ar 302$/m.test(localeRedirects) && /^\/ar\/\* \/:splat\?locale=ar 302$/m.test(localeRedirects) && /^\/fr\/\* \/:splat\?locale=fr 302$/m.test(localeRedirects) && /^\/en\/\* \/:splat 302$/m.test(localeRedirects) && /^\/sitemap\.xml \/api\/seo\/sitemap\.xml 302$/m.test(localeRedirects) && prefixed.locales?.rules.length === 6, localeRedirects);
+  const tagged = readFileSync(`${pub}/index.html`, "utf8");
+  check("every prerendered page gets the hreflang links the seo plugin emits, x-default included, and the lang attribute", tagged.includes('<html lang="en">') && tagged.includes('<link rel="alternate" hreflang="en" href="/">') && tagged.includes('<link rel="alternate" hreflang="ar" href="/ar/">') && tagged.includes('<link rel="alternate" hreflang="fr" href="/fr/">') && tagged.includes('<link rel="alternate" hreflang="x-default" href="/">'), tagged.slice(0, 300));
+  const guide = readFileSync(`${pub}/guide.html`, "utf8");
+  check("a page is named by the URL it is served at, its own language is kept when it is the same one, and the 404 shell gets no alternates", guide.includes('<link rel="alternate" hreflang="ar" href="/ar/guide">') && guide.includes('<html lang="en-GB">') && guide.includes("</head>") && !readFileSync(`${pub}/404.html`, "utf8").includes("hreflang") && readFileSync(`${pub}/404.html`, "utf8").includes('<html lang="en">'), guide.slice(0, 300));
+  const againLocales = await adapt(WORK, { quiet: true, clientDir: "dist/client", locales: { codes: ["en", "ar", "fr"], path: "prefix", default: "en" } });
+  check("the locales pass is idempotent: the same rules and the same pages", readFileSync(`${pub}/_redirects`, "utf8") === localeRedirects && readFileSync(`${pub}/index.html`, "utf8") === tagged && againLocales.locales?.pages.length === prefixed.locales?.pages.length, `${againLocales.locales?.rules.length} rules`);
+  const queried = await adapt(WORK, { quiet: true, clientDir: "dist/client", locales: { codes: ["en", "ar"], path: "query" } });
+  check("query writes no rule at all, because ?locale= already works, and the alternates say so", queried.locales?.rules.length === 0 && !readFileSync(`${pub}/_redirects`, "utf8").includes("locale=ar 302") && readFileSync(`${pub}/index.html`, "utf8").includes('<link rel="alternate" hreflang="ar" href="/?locale=ar">'), readFileSync(`${pub}/_redirects`, "utf8"));
+  process.env.VOIDBASE_SITE_URL = "https://example.com";
+  const absolute = await adapt(WORK, { quiet: true, clientDir: "dist/client", locales: { codes: ["en", "ar"], path: "prefix" } });
+  check("with VOIDBASE_SITE_URL the links are absolute, the way the sitemap's alternates are", readFileSync(`${pub}/index.html`, "utf8").includes('hreflang="ar" href="https://example.com/ar/"') && absolute.locales?.site === "https://example.com", readFileSync(`${pub}/index.html`, "utf8").slice(0, 300));
+  delete process.env.VOIDBASE_SITE_URL;
+  // the codes and VOIDBASE_LOCALES are one list in two places: hreflang links naming a locale the API cannot
+  // answer in are worse than none, so a disagreement stops the build with both lists in front of you
+  process.env.VOIDBASE_LOCALES = "en,ar";
+  let localeMismatch = "";
+  try { await adapt(WORK, { quiet: true, clientDir: "dist/client", locales: { codes: ["en", "ar", "fr"], path: "prefix" } }); } catch (err) { localeMismatch = err instanceof Error ? err.message : String(err); }
+  check("codes that disagree with VOIDBASE_LOCALES fail the build, with both lists", /do not agree/.test(localeMismatch) && /locales\.codes\s+en, ar, fr/.test(localeMismatch) && /VOIDBASE_LOCALES\s+en, ar/.test(localeMismatch), localeMismatch.split("\n")[0] ?? "(no error)");
+  let sourceMismatch = "";
+  try { await adapt(WORK, { quiet: true, clientDir: "dist/client", locales: { codes: ["en", "ar"], default: "ar" } }); } catch (err) { sourceMismatch = err instanceof Error ? err.message : String(err); }
+  check("a default that is not VOIDBASE_LOCALES' source locale fails the build too", /do not agree/.test(sourceMismatch) && /source en/.test(sourceMismatch), sourceMismatch.split("\n")[0] ?? "(no error)");
+  delete process.env.VOIDBASE_LOCALES;
+  rmSync(`${WORK}/dist/client/guide.html`);
+
   // the app below runs with it, so the worker and the manifest are served like any other file
   await adapt(WORK, { quiet: true, clientDir: "dist/client", pwa: { icon: "icon.svg", precache: ["/robots.txt"] } });
 

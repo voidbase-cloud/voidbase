@@ -13,6 +13,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { bundleHookApp, bundleWorkflow } from "./bundle";
+import { writeLocales, type LocalesOptions, type LocalesResult } from "./locales";
 import { generateHookWrapper, hasServerCode, writeVoidbaseApp, type GenerateOptions } from "./codegen";
 import { writePwa, type PwaOptions, type PwaResult } from "./pwa";
 import { scanVoidApp, SECRETS_DIR, type VoidManifest } from "./scan";
@@ -30,9 +31,11 @@ export interface AdapterOptions extends GenerateOptions {
   quiet?: boolean;
   /** make the site installable: manifest.webmanifest, the icon set and sw.js written into pb_public (src/adapter/pwa.ts) */
   pwa?: PwaOptions;
+  /** a locale in the route: the hreflang links on every prerendered page, and with path "prefix" the _redirects rules that carry /<code>/<path> to it (src/adapter/locales.ts) */
+  locales?: LocalesOptions;
 }
 
-export interface AdaptResult { manifest: VoidManifest; written: string[]; copied: number; bundleBytes: number; pwa?: PwaResult }
+export interface AdaptResult { manifest: VoidManifest; written: string[]; copied: number; bundleBytes: number; pwa?: PwaResult; locales?: LocalesResult }
 
 /** Runs the whole conversion once. Exported so `voidbase adapt` and the tests do not need Vite. */
 export async function adapt(root: string, opts: AdapterOptions & { clientDir?: string } = {}): Promise<AdaptResult> {
@@ -63,15 +66,22 @@ export async function adapt(root: string, opts: AdapterOptions & { clientDir?: s
   const publicDir = resolve(root, opts.publicDir ?? ".voidbase/pb_public");
   const client = opts.clientDir ? resolve(root, opts.clientDir) : firstExisting([join(root, "dist", "client"), join(root, "public")]);
   const copied = client ? syncPublic(client, publicDir) : 0;
+  const rel = opts.publicDir ?? ".voidbase/pb_public";
+  // locales: the hreflang links and the lang attribute on the pages, and the prefix's rules. Before pwa, because
+  // the worker's version is hashed from the pages as they will be served, tags included
+  let locales: LocalesResult | undefined;
+  if (opts.locales) {
+    locales = writeLocales(publicDir, opts.locales);
+    if (locales.rules.length) written.push(`${rel}/_redirects`);
+  }
   // pwa: the manifest, the icons and the service worker, from the build now in pb_public (so after the copy, and
   // idempotent: the copy above removed the previous pass's files)
   let pwa: PwaResult | undefined;
   if (opts.pwa) {
     pwa = await writePwa(root, publicDir, opts.pwa);
-    const rel = opts.publicDir ?? ".voidbase/pb_public";
     written.push(...pwa.files.map((f) => `${rel}/${f}`));
   }
-  return { manifest, written, copied, bundleBytes, pwa };
+  return { manifest, written, copied, bundleBytes, pwa, locales };
 }
 
 const firstExisting = (paths: string[]) => paths.find((p) => existsSync(p) && statSync(p).isDirectory());
@@ -145,10 +155,10 @@ export function voidbaseAdapter(options: AdapterOptions = {}) {
     // fires once per built environment; the work is idempotent and the client builds last, so report only then
     async closeBundle(this: { environment?: { name?: string } }) {
       const clientDir = options.clientDir ?? (clientOut && existsSync(resolve(root, clientOut)) ? clientOut : undefined);
-      const { manifest, copied, bundleBytes, pwa } = await report(() => adapt(root, { ...options, clientDir }));
+      const { manifest, copied, bundleBytes, pwa, locales } = await report(() => adapt(root, { ...options, clientDir }));
       const counts = `${manifest.routes.length} route(s), ${manifest.middleware.length} middleware, ${manifest.hooks.length} hook(s), ${manifest.crons.length} cron(s), ${manifest.queues.length} queue(s), ${manifest.migrations.length} migration(s)${manifest.secrets ? `, ${manifest.secrets.names.length} secret(s)` : ""}${bundleBytes ? ` -> pb_hooks/void-app.js (${Math.round(bundleBytes / 1024)} kB)` : ""}`;
       if (!hasClient || this.environment?.name === "client") {
-          log(`${manifest.mode === "static" ? "static site" : counts}; ${copied} entr(ies) into ${options.publicDir ?? ".voidbase/pb_public"}${pwa ? `; pwa ${pwa.version}: ${pwa.files.join(", ")} (${pwa.precache.length} precached)` : ""}`);
+          log(`${manifest.mode === "static" ? "static site" : counts}; ${copied} entr(ies) into ${options.publicDir ?? ".voidbase/pb_public"}${pwa ? `; pwa ${pwa.version}: ${pwa.files.join(", ")} (${pwa.precache.length} precached)` : ""}${locales ? `; locales ${locales.codes.join(", ")} (${locales.mode}${locales.site ? `, ${locales.site}` : ", relative links"}): ${locales.pages.length} page(s)${locales.rules.length ? `, ${locales.rules.length} rule(s)` : ""}` : ""}`);
         for (const u of manifest.unsupported) console.warn(`voidbase: ${u.what} is not carried over — ${u.why}`);
         for (const c of manifest.collisions) console.warn(`voidbase: ${c} is served by voidbase itself, so the app route never runs — move it off that path`);
       }

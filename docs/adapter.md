@@ -236,6 +236,66 @@ which is the way out of a stuck worker. A `precache` path the build does not hav
 because a missing entry would stop the worker from installing at all. The plugin's log line names the files and
 the version, and `adapt()` returns them as `pwa`.
 
+## A locale in the route
+
+The `locales` option gives each locale an address and puts the `hreflang` links that say so on every prerendered
+page:
+
+```ts
+voidbaseAdapter({ locales: { codes: ["en", "ar", "fr"], path: "prefix", default: "en" } })
+```
+
+`codes` are the locales the site is served in, `default` is the locale the bare URL is in (the first code unless
+you name another), and `path` is where a locale goes in a URL: `query`, the default, leaves `?locale=<code>` as the
+only address, and `prefix` adds `/<code>/<path>` beside it.
+
+Both modes tag every prerendered page under `pb_public`: one `<link rel="alternate" hreflang="<code>">` per locale
+plus `x-default`, and `<html lang>` set to the default locale. They are the links the seo plugin already emits in
+the sitemap and the meta answer, built by the same functions (`src/server/plugins/seo-locales.ts`), so the two
+cannot disagree. With `VOIDBASE_SITE_URL` set they are absolute, as the sitemap's are; without it they are paths.
+A page that already declares its language keeps it when it is the same language (`en-GB` stays `en-GB` under `en`),
+a page with no `<html>` element gets one opened after the doctype, since that is the only place the attribute can
+live, and the 404 shell gets the attribute but no alternates, because it answers every unknown path and has no
+page of its own to name.
+
+`prefix` also writes two rules per locale into `pb_public/_redirects`, beside the seo plugin's:
+
+```
+/ar /?locale=ar 302
+/ar/* /:splat?locale=ar 302
+```
+
+So `/ar/about` lands on `/about?locale=ar`: the page Void prerendered, with the locale in the address the
+translations plugin reads first (`?locale=`, ahead of `Accept-Language`). The default locale gets the same pair
+without the query, so `/en/about` is `/about` rather than a 404.
+
+**Why a redirect and not a rewrite.** Cloudflare's `_redirects` does support a 200 proxy line
+(`/ar/* /:splat 200`, relative destinations only), so the prefix could serve the page's bytes with no round trip.
+It is still the wrong mechanism here, three times over. A proxy serves one file for every locale, so `<html lang>`
+and the canonical URL on that page can only name one of them, and the rest would be served a page that says it is
+the first. `_redirects` cannot add a request header: the asset layer answers and the Worker is never invoked, so
+nothing on that path makes the request carry `Accept-Language: ar` for the API calls the page then makes, and a
+rule that looks like a locale and carries none is worse than no rule. And `voidbase deploy` forwards only 3xx path
+rules to the uploaded `_redirects` (`parseRedirects` in `src/node/cloud-init.ts`, and the test that pins it), so a
+200 line would be dropped on the way out and do nothing at all. The redirect has none of those problems, and the
+prefix stays what it was for: an address people can link and share. A Void route would have been the other way to
+do it, and is the one thing to avoid: outside `/api` it would put the Worker in front of every page, image and
+hashed chunk, which is what the asset layer is there to prevent (platform.md).
+
+The rules are the deployed asset layer's; `voidbase serve` on Bun does not read `_redirects`, so on a local
+instance the query form is the address that works. A rule is applied before the asset layer looks for a file, so a
+real directory named like a locale would stop being reachable: the build says so when it finds one.
+
+When `VOIDBASE_LOCALES` is set as well, the two lists have to be the same one and the option's `default` has to be
+its source locale (its first), or the build fails with both lists in front of you, because `hreflang` links naming
+a locale the API does not answer in are worse than no links at all. Without the option none of this is written:
+no rule, no link, no attribute. `adapt()` returns what it did as `locales`, and the plugin's log line names the
+locales, the mode, and how many pages and rules it wrote.
+
+Interface strings are the other half of the same problem and are not the adapter's: `voidbase i18n extract` writes
+the catalogues and the key union for them (setup.md), and content translations are the `translations` plugin's
+(plugins.md).
+
 ## Two shapes of app
 
 The adapter looks at what the project actually has:
@@ -306,6 +366,9 @@ run, both kinds of migration, an `onBootstrap` hook running exactly once, a tagg
 resolving to a directory's index file, the four build errors (a hook attached to nothing, a misspelt hook name, a
 hook left in `middleware/`, a secret value nothing declares), `vb_secrets/` reaching the app through `$os.getenv`,
 the `pwa` option (the manifest's defaults, the icon set, the worker's precache list and handshake, the tags in
-`index.html`, a new version for a changed shell, and nothing of it without the option), and that nothing is
+`index.html`, a new version for a changed shell, and nothing of it without the option), the `locales` option (the
+rules each mode writes, the `hreflang` links and the `lang` attribute on the pages, the 404 shell without
+alternates, absolute links under `VOIDBASE_SITE_URL`, a second pass writing the same bytes, nothing without the
+option, and codes that disagree with `VOIDBASE_LOCALES` failing the build), and that nothing is
 written outside `.voidbase/`. Run it with
 `bun test/adapter.ts`, or as part of `bash scripts/ci.sh` (step `adapter`).

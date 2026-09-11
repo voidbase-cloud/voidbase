@@ -488,7 +488,13 @@ from CI/CD. A GitHub voidbase project and a Cloudflare voidbase project are sync
 how CI/CD gets set up. The CLI moves data between all three ways in either direction. And the adapter builds
 voidbase stack semantics into voidbase project semantics, so a stack app is hosted on a machine or on Cloudflare
 like any project, and (2026-09-11) its `pwa` option makes a stack app installable: the manifest, the icon set and
-a service worker written from what the app declares, with the client half in `@voidbase-cloud/sdk/pwa`. What
+a service worker written from what the app declares, with the client half in `@voidbase-cloud/sdk/pwa`, and
+(2026-09-11) its `locales` option puts a locale in the route the same way, at build time: the `hreflang` links and
+`<html lang>` on every prerendered page, from the same functions the sitemap's alternates come from, and with
+`path: "prefix"` the `_redirects` rules that send `/<code>/<path>` to the same page with `?locale=<code>`, a
+redirect rather than a 200 proxy because a proxy could carry no locale and the deploy would drop the line, while
+`voidbase i18n extract` writes the project half's interface strings, one catalogue per locale plus the key union a
+client types against, with `--check` as a build's gate. What
 exists: the executable, the package on Bun, Cloudflare all three ways, both modes in shape,
 `voidbase sync`, the adapter, (2026-09-11) the ai plugin's memory as records: `ai_conversations` and `ai_messages`,
 created once the Workers AI binding is there, written through the records service so realtime sees each reply land,

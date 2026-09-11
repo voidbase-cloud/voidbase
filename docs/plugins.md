@@ -840,7 +840,19 @@ recordIds, counts })`; `test/unit/translations.test.ts` measures the knob gramma
 its fallback, the marker, the single lookup, the reports, the untouched collection, and the default source's SQL
 over the table the definition creates. The seo plugin reads `VOIDBASE_LOCALES` too, for `hreflang` alternates in
 the sitemap and `og:locale` plus canonical URLs per locale in the page metadata ("The crawlers' view of the
-instance"). Not here: a locale in the route, a panel screen over the reports, and the interface strings.
+instance").
+
+**The two halves around it, neither of them this plugin's.** Interface strings, the text written in the app rather
+than stored in a collection, are `voidbase i18n extract`: it scans the project's source for `t("key")` (and
+`i18n.t("key")`, and a default as the second argument), writes `i18n/<locale>.json` per locale and `i18n/keys.d.ts`,
+the union of the keys, so a client typed against it turns an unknown key into a compile error instead of showing a
+key to a reader, and `--check` exits 1 when a key has no text in some locale, which is the build gate the roadmap
+asked for ([setup.md](setup.md)). A locale in the route is the Void adapter's `locales` option: the `hreflang`
+links and `<html lang>` on every prerendered page, built from the same functions the sitemap's alternates are so
+the two cannot disagree, and with `path: "prefix"` the `_redirects` rules that send `/<code>/<path>` to the same
+page with `?locale=<code>`, which is the address this plugin negotiates on first. Both are build time and add no
+runtime at all, and the codes have to be `VOIDBASE_LOCALES` when both are set or the build stops with both lists
+([adapter.md](adapter.md)). What is left is the panel screen over the reports.
 
 ## Taking money: stripe, polar, lemonsqueezy
 

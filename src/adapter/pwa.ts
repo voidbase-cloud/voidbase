@@ -148,7 +148,7 @@ async function loadSharp(): Promise<Sharp | null> {
 // ---- the shell and its version ----------------------------------------------------------------------------------
 
 /** Every file under dir as a URL path, skipping the panel (`_/`), dotfiles and what this module writes itself. */
-function walkPublic(dir: string, base = dir): string[] {
+export function walkPublic(dir: string, base = dir): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).sort().flatMap((entry) => {
     if (entry.startsWith(".") || (dir === base && entry === "_")) return [];
@@ -206,18 +206,27 @@ export function injectHead(html: string, themeColor?: string): string {
   if (!/<link[^>]*\brel=["']?manifest\b/i.test(html)) tags.push(`<link rel="manifest" href="/${MANIFEST_FILE}">`);
   if (themeColor && !/<meta[^>]*\bname=["']?theme-color\b/i.test(html)) tags.push(`<meta name="theme-color" content="${escapeAttr(themeColor)}">`);
   if (!tags.length) return html;
-  const insert = tags.join("");
+  return insertIntoHead(html, tags.join(""));
+}
+
+/**
+ * Puts a fragment where a page's head is: before `</head>`, else after `<head>`, else after the `<html>` tag, else
+ * after the doctype. A link or meta ahead of the first body content still lands in the head, which is why the last
+ * two work at all. Shared with the `locales` pass (src/adapter/locales.ts), which adds its own tags the same way.
+ */
+export function insertIntoHead(html: string, insert: string): string {
   const headEnd = /<\/head\s*>/i.exec(html);
   if (headEnd) return html.slice(0, headEnd.index) + insert + html.slice(headEnd.index);
   const headStart = /<head(\s[^>]*)?>/i.exec(html);
   if (headStart) { const at = headStart.index + headStart[0].length; return html.slice(0, at) + insert + html.slice(at); }
-  // a page with no <head> element: a link or meta ahead of the first body content still lands in the head
+  const htmlTag = /<html(\s[^>]*)?>/i.exec(html);
+  if (htmlTag) { const at = htmlTag.index + htmlTag[0].length; return html.slice(0, at) + insert + html.slice(at); }
   const doctype = /<!doctype[^>]*>/i.exec(html);
   const at = doctype ? doctype.index + doctype[0].length : 0;
   return html.slice(0, at) + insert + html.slice(at);
 }
 
-const escapeAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+export const escapeAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 
 // ---- the service worker ------------------------------------------------------------------------------------------
 

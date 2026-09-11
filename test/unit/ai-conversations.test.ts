@@ -356,6 +356,10 @@ describe("on an instance: the collections, the rows through the records service,
     expect((conversations.fields as { name: string; collectionId?: string }[]).find((x) => x.name === "user")!.collectionId).toBe(users.id);
     expect((await listCollections(db)).find((c) => c.name === AI_MESSAGES)).toMatchObject({ listRule: "conversation.owner = @request.auth.id", viewRule: "conversation.owner = @request.auth.id" });
     expect(await aiRoute(env)).toEqual({ via: "workers-ai", model: DEFAULT_MODEL, conversations: true });
+    // the collections cache is per isolate, and it holds ai_conversations right now: a route with no database must
+    // not read it (in CI, 2026-09-11, the next test file asked with no database inside the cache's lifetime and
+    // was told there were conversations)
+    expect(await aiRoute({ ...env, DB: undefined } as typeof env)).toEqual({ via: "workers-ai", model: DEFAULT_MODEL, conversations: false });
     await runBootstraps(fresh, env); // a second time creates nothing
     expect((await listCollections(db)).filter((c) => c.name.startsWith("ai_"))).toHaveLength(2);
 

@@ -64,6 +64,10 @@ export type AiCollection = typeof AI_CONVERSATIONS | typeof AI_MESSAGES;
 
 /** whether the two collections exist on this instance: they do once a request carried the binding through bootstrap */
 export async function hasConversations(env: Bindings): Promise<boolean> {
+  // No database, no conversations, and no lookup: the collections cache is per isolate rather than per database, so
+  // asking it without one would answer for whichever database filled it last (a test process with several instances
+  // did exactly that in CI, 2026-09-11).
+  if (!env.DB) return false;
   try { return !!(await findCollection(env.DB, AI_CONVERSATIONS)); } catch { return false; }
 }
 

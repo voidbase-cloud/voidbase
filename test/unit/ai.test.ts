@@ -1,15 +1,19 @@
 // The ai plugin: a chat over the instance whose tools are the MCP server's tool list for the caller, run in process,
 // against a scripted fake AI binding. No model, no database.
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { provideAuthLookup } from "../../src/server/auth-slot";
-import type { Collection } from "../../src/server/collections/model";
+import { invalidateCollections, type Collection } from "../../src/server/collections/model";
 import { ApiError } from "../../src/server/errors";
 import { createKernel, load } from "../../src/server/kernel";
 import { aiRoute, aiWith, DEFAULT_MODEL, NOT_BOUND, RATE, toolCallsOf } from "../../src/server/plugins/ai";
 import { auth, provider } from "../../src/server/plugins/auth";
 import { openapiWith } from "../../src/server/plugins/openapi";
 import type { AppEnv, AuthRecord, Bindings } from "../../src/server/types";
+
+// the collections cache is per isolate, and other files in the same test process fill it; a test here must not
+// answer from what another file's database left behind
+beforeEach(() => invalidateCollections());
 
 const f = (name: string, type: string, extra: Record<string, unknown> = {}) => ({ id: `f_${name}`, name, type, system: false, hidden: false, presentable: false, required: false, help: "", ...extra });
 const collection = (name: string, type: Collection["type"], rules: Partial<Pick<Collection, "listRule" | "viewRule" | "createRule" | "updateRule" | "deleteRule">>, fields: Record<string, unknown>[], system = false): Collection =>

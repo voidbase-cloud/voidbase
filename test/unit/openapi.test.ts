@@ -56,6 +56,9 @@ describe("the document is scoped to the caller", () => {
     expect(methods(d, "/api/collections/posts/records")).toEqual(["get"]);
     expect(methods(d, "/api/collections/posts/records/{id}")).toEqual(["get"]);
     expect(d.paths["/api/collections/posts/records"]!.get!.description).toMatch(/^Public/);
+    // voidbase's own can-update is gated by the view rule, so it is described wherever the record's GET is
+    expect(methods(d, "/api/collections/posts/records/{id}/can-update")).toEqual(["get"]);
+    expect(d.paths["/api/collections/posts/records/{id}/can-update"]!.get!.description).not.toContain("author = @request.auth.id");
     expect(methods(d, "/api/collections/users/records")).toEqual(["post"]);
     expect(d.paths["/api/collections/users/records/{id}"]).toBeUndefined();
     expect(methods(d, "/api/collections/stats/records")).toEqual(["get"]);
@@ -100,8 +103,10 @@ describe("the document is scoped to the caller", () => {
     expect(methods(d, "/api/collections/_superusers/records")).toEqual(["get", "post"]);
     expect(methods(d, "/api/collections/users/auth-refresh")).toEqual(["post"]);
     expect(methods(d, "/api/collections/_superusers/auth-refresh")).toEqual(["post"]);
-    // a view has no writes whoever asks
+    // a view has no writes whoever asks, and so no can-update either
     expect(methods(d, "/api/collections/stats/records")).toEqual(["get"]);
+    expect(d.paths["/api/collections/stats/records/{id}/can-update"]).toBeUndefined();
+    expect(methods(d, "/api/collections/secrets/records/{id}/can-update")).toEqual(["get"]);
     expect(methods(d, "/api/collections")).toEqual(["get", "post"]);
     expect(methods(d, "/api/collections/{collection}")).toEqual(["delete", "get", "patch"]);
     expect(methods(d, "/api/settings")).toEqual(["get", "patch"]);

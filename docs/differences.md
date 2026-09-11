@@ -47,6 +47,36 @@ PocketBase. WebP output is not produced: JPEG in, JPEG out; PNG in, PNG out.
 - `$os.cmd` / `$os.exec`, `$filesystem.fileFromPath`, `$template` rendering from disk: there is no filesystem or shell on Workers.
 - PocketBase's own CLI (`pocketbase serve|migrate|superuser`). Use the panel, `bun run` scripts and Void's CLI ([deploy.md](./deploy.md)).
 
+## Routes voidbase adds
+
+PocketBase has no equivalent of these. A client that only speaks PocketBase never calls them and sees no
+difference; everything else on the records API stays PocketBase's.
+
+### `GET /api/collections/:collection/records/:id/can-update`
+
+May this token edit this record? It is the answer a `PATCH` gives by writing, given without writing anything:
+
+```json
+{ "allowed": true, "fields": ["title", "body", "cover"], "reason": null }
+```
+
+`allowed` is the collection's `updateRule` judged against the record's own stored values for the caller's token,
+read exactly as the write path reads it: a null rule is superusers only, an empty rule admits anyone, and a rule
+that names no token is still judged (it may well admit a caller with no session). `fields` are the names a `PATCH`
+would take: the collection's fields minus the system, hidden and autodate ones, which are the instance's to set and
+not a client's to send; it is empty when `allowed` is false. `reason` is a short string when `allowed` is false
+(`no session`, `the collection's update rule does not admit you`, `superusers only`) and null otherwise.
+
+The route needs the same access the record itself needs. The view rule decides whether it answers at all, so a
+caller who cannot see the record gets the same 404 the record's own `GET` gives them and this never becomes a way
+to probe for ids. A superuser is always allowed, with every writable field. A view collection is refused with the
+same 400 a `PATCH` of one gets.
+
+Why it exists: a client that renders an edit affordance (a pencil, an inline form, a Save button) should not have
+to attempt a write to find out whether the rule admits it, nor copy the rule into the browser and guess. The
+generated OpenAPI document (`/api/openapi.json`) describes it beside each collection's record `GET`, gated by the
+same view rule; the MCP tool list leaves it out, since an agent holding the `PATCH` tool finds out by calling it.
+
 ## Health endpoint
 
 `GET /api/health` returns `canBackup: false` while a backup or restore is running. `possibleProxyHeader` never

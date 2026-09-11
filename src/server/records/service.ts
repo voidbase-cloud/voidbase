@@ -406,6 +406,39 @@ async function storeUploads(ctx: RecordContext, c: Collection, id: string, uploa
   }
 }
 
+// ---- may I update this? (voidbase only: PocketBase has no such route) -----------------------------
+// The question updateRecord answers by writing, answered without writing: what a PATCH with this caller's token
+// would do to this record. Everything below mirrors updateRecord: the same reading of the rule (null is superusers
+// only, empty admits anyone), the rule judged against the record's own stored values, and the same fields a PATCH
+// would take. The record is fetched under the view rule first, so this is never a way to probe for ids: a caller
+// who cannot see the record gets exactly what GET .../records/:id gives them.
+export interface UpdateAccess {
+  allowed: boolean;
+  /** the field names the caller may send in a PATCH body; empty when allowed is false */
+  fields: string[];
+  /** why not, in a few words, when allowed is false; null otherwise */
+  reason: string | null;
+}
+
+/** the fields a PATCH accepts from a caller: prepareInput ignores unknown keys and autodate fields, updateRecord
+ *  puts id back whatever the body said, and system and hidden fields are the instance's, not a client's. */
+export function writableFields(c: Collection): string[] {
+  return (c.fields as Field[]).filter((f) => !f.system && !f.hidden && f.type !== "autodate").map((f) => f.name);
+}
+
+export async function canUpdateRecord(ctx: RecordContext, c: Collection, id: string): Promise<UpdateAccess> {
+  if (c.type === "view") throw badRequest("Unsupported collection type."); // as updateRecord refuses one
+  const row = await fetchRecord(ctx, c, id, c.viewRule);
+  if (!row) throw notFound();
+  const yes = (): UpdateAccess => ({ allowed: true, fields: writableFields(c), reason: null });
+  if (ctx.superuser) return yes();
+  if (c.updateRule === null) return { allowed: false, fields: [], reason: "superusers only" };
+  if (c.updateRule.trim() === "") return yes();
+  // the rule may well admit a caller with no token at all, so it is asked before no-session is blamed for the no
+  if (await recordMatchesRule(ctx, c, c.updateRule, rowToValues(c, row))) return yes();
+  return { allowed: false, fields: [], reason: ctx.auth ? "the collection's update rule does not admit you" : "no session" };
+}
+
 // ---- update ---------------------------------------------------------------------------------------
 export async function updateRecord(ctx: RecordContext, c: Collection, id: string, body: RawBody, opts: EnrichOptions) {
   if (c.type === "view") throw badRequest("Unsupported collection type.");

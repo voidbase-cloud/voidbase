@@ -132,6 +132,15 @@ const LIST_QUERY = [
   query("skipTotal", "1 to skip counting: totalItems and totalPages answer -1", { type: "boolean" }),
 ];
 const VIEW_QUERY = [query("expand", "comma-separated relation fields to embed"), query("fields", "comma-separated fields to keep in the answer")];
+const canUpdateSchema: Schema = {
+  type: "object",
+  properties: {
+    allowed: { type: "boolean", description: "whether the update rule admits this token for this record" },
+    fields: { type: "array", items: str(), description: "the field names a PATCH would take; empty when allowed is false" },
+    reason: str({ nullable: true, description: "why not, when allowed is false; null otherwise" }),
+  },
+  required: ["allowed", "fields", "reason"],
+};
 
 type Operation = Schema;
 const op = (tag: string, summary: string, description: string, extra: Schema): Operation => ({ tags: [tag], summary, description, ...extra });
@@ -149,6 +158,14 @@ function collectionPaths(c: Collection, caller: Caller, byId: Map<string, Collec
     gated(c.createRule, "post", base, `Create a ${c.name} record`, { parameters: VIEW_QUERY, requestBody: { required: true, content: { "application/json": { schema: ref(`${c.name}Create`) }, "multipart/form-data": { schema: ref(`${c.name}Create`) } } }, responses: { "200": { description: "The created record", ...json(ref(c.name)) }, "400": errors["400"], "403": errors["403"] } });
     gated(c.updateRule, "patch", `${base}/{id}`, `Update a ${c.name} record`, { parameters: [path("id", "the record id"), ...VIEW_QUERY], requestBody: { required: true, content: { "application/json": { schema: ref(`${c.name}Update`) }, "multipart/form-data": { schema: ref(`${c.name}Update`) } } }, responses: { "200": { description: "The updated record", ...json(ref(c.name)) }, "400": errors["400"], "403": errors["403"], "404": errors["404"] } });
     gated(c.deleteRule, "delete", `${base}/{id}`, `Delete a ${c.name} record`, { parameters: [path("id", "the record id")], responses: { "204": { description: "Deleted" }, "403": errors["403"], "404": errors["404"] } });
+    // voidbase's own: gated by the view rule, since that is the access it needs, and it never quotes the update
+    // rule back (a caller who may not call the PATCH is not shown the PATCH either)
+    if (may(caller, accessOf(c.viewRule))) {
+      add(`${base}/{id}/can-update`, "get", op(c.name, `May I edit this ${c.name} record`, `${ruleNote(c.viewRule)} Answers whether a PATCH of this record with this token would be allowed and which fields it would take, writing nothing.`, {
+        parameters: [path("id", "the record id")],
+        responses: { "200": { description: "The verdict", ...json(canUpdateSchema) }, "403": errors["403"], "404": errors["404"] },
+      }));
+    }
   }
   if (isAuth(c)) {
     const authResponse = { "200": { description: "A token and the record it belongs to", ...json(ref(`${c.name}Auth`)) }, "400": errors["400"] };

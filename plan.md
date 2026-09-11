@@ -525,7 +525,11 @@ is not, saying which, while hook CPU is left unmeasured because the clock is fro
 any number for it would be invented; and (2026-09-11) removing a core plugin is a deliberate act: `voidbase plugins remove`
 refuses a core-tier plugin, or one whose interface another installed plugin requires, without `--yes`, and
 `POST /api/plugins/remove` answers 409 with the same text unless the body carries `force: true`, both of them
-printing what stops working rather than finding out afterwards; and (2026-09-10) the installer: an instance changes its own plugins (`installer`, a
+printing what stops working rather than finding out afterwards; and (2026-09-11) a client may ask before it writes:
+`GET /api/collections/:c/records/:id/can-update` answers whether the update rule admits this token for this record
+and which fields a PATCH would take, under the same view rule as the record itself, so an edit affordance comes
+from the instance's own rules rather than from a rule copied into the browser or a write attempted to find out;
+and (2026-09-10) the installer: an instance changes its own plugins (`installer`, a
 shipped plugin: on disk on Bun, as a commit to the repository it deploys from on Workers), so nobody builds a
 release for a customer's instance; voidbase.cloud wraps voidbase and the user's Cloudflare account, plus the
 GitHub connection for templates and pipelines (Mahmood, 2026-09-10: "that shouldn't be us, it should be the user

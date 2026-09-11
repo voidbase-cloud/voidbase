@@ -3,7 +3,7 @@ import { authenticate, fromToken, isSuperuser, provideAuthLookup, requireSuperus
 import { ensureBootstrapped } from "./bootstrap";
 import { collectionToJSON, findCollection, invalidateCollections, listCollections, loadCollections, type Collection } from "./collections/model";
 import type { Field } from "./collections/fields";
-import { createRecord, deleteRecord, listRecords, updateRecord, viewRecord, type ListQuery, type RecordContext } from "./records/service";
+import { canUpdateRecord, createRecord, deleteRecord, listRecords, updateRecord, viewRecord, type ListQuery, type RecordContext } from "./records/service";
 import { fromColumn, toColumn } from "./records/values";
 import { expandRecords } from "./records/expand";
 import { globalHookMiddleware, hookGlobals, hookMiddleware, loadHooks, mountHookRoutes } from "./hooks";
@@ -357,6 +357,15 @@ app.get("/api/collections/:collection/records/:id", async (c) => {
     await runAfterRead(kernel, c, { collection: collection.name, rows: [record] });
     return record;
   });
+});
+
+// voidbase adds this one (PocketBase has none): may this token edit this record, and which fields would it take?
+// A GET because it changes nothing, gated by the view rule like the record's own GET, so it tells a caller nothing
+// they could not already read. A client that renders an edit affordance asks here instead of attempting a write.
+app.get("/api/collections/:collection/records/:id/can-update", async (c) => {
+  const collection = await mustFindCollection(c, c.req.param("collection"));
+  const ctx = await recordContext(c);
+  return c.json(await canUpdateRecord(ctx, collection, c.req.param("id")));
 });
 
 app.post("/api/collections/:collection/records", async (c) => {

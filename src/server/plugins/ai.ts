@@ -507,6 +507,7 @@ function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource, 
 export const aiWith = (source: Partial<OpenApiSource> = {}, version: string = VERSION, now: () => number = Date.now, rows: AiRowsFactory = d1AiRows): Plugin => {
   const plugin: Plugin = {
     manifest: { name: "ai", version: "0.2.0", tier: "official", voidbase: "*", collections: [AI_CONVERSATIONS, AI_MESSAGES] },
+    info: (env) => aiRoute(env),
     apply(ctx: Kernel) {
       // the collections exist only where the binding does: an instance without VOIDBASE_AI never sees them
       onBootstrap(ctx, async (env) => { if (env.AI) await ensureCollections(plugin, env.DB, await conversationDefinitions(env.DB)); });

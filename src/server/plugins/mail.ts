@@ -19,6 +19,7 @@ import { EmailMessage } from "#platform/email";
 import { env as voidEnv } from "#platform/env";
 import type { Mail } from "../interfaces";
 import { serve, type Kernel } from "../kernel";
+import { mailRoute } from "../mail";
 import { buildMime } from "../mail/message";
 import type { Bindings } from "../types";
 import type { Plugin } from "./manifest";
@@ -59,6 +60,9 @@ export const mail: Plugin = {
     voidbase: "*",
     provides: ["mail@1"],
   },
+  // where this instance's own mail goes with these bindings: this carrier when it takes the sender, else what the
+  // core falls back to. The core owns the transport, and whoever provides mail@1 answers for where it ends up.
+  info: (env) => mailRoute(env),
   apply(ctx: Kernel) {
     serve<Mail>(ctx, "mail@1", cloudflareMail);
   },

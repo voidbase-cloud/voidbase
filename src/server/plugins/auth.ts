@@ -22,6 +22,7 @@ import { notFound } from "../errors";
 import type { Auth } from "../interfaces";
 import { serve, type Kernel } from "../kernel";
 import { authWithOAuth2, mountOAuth2Redirect } from "../oauth2";
+import { recordContextFor } from "../record-slot";
 import type { AppEnv } from "../types";
 import { mountWebAuthn } from "../webauthn";
 import type { Plugin } from "./manifest";
@@ -43,8 +44,9 @@ export const provider: Auth = {
 function mountRoutes(app: Hono<AppEnv>) {
   const collection = async (c: Context<AppEnv>) => { const coll = await findCollection(c.env.DB, c.req.param("collection") ?? ""); if (!coll) throw notFound("Missing collection context."); return coll; };
   const authCollection = async (c: Context<AppEnv>) => { const coll = await collection(c); if (!isAuth(coll)) throw notFound("Missing or invalid auth collection context."); return coll; };
-  // the record context is the app's, and the app imports this module: asked for at request time, as ../auth.ts does
-  const ctx = async (c: Context<AppEnv>) => (await import("../app")).recordContextFor(c);
+  // the record context is the app's, and the app imports this module, so it is asked for through the core's slot
+  // (../record-slot.ts) rather than by importing the app: built per request, as the record routes build it
+  const ctx = (c: Context<AppEnv>) => recordContextFor(c);
   app.post("/api/collections/:collection/auth-with-password", async (c) => authWithPassword(c, await collection(c)));
   app.post("/api/collections/:collection/auth-with-oauth2", async (c) => authWithOAuth2(c, await authCollection(c), await ctx(c)));
   app.post("/api/collections/:collection/auth-refresh", async (c) => authRefresh(c, await collection(c)));

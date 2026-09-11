@@ -11,6 +11,7 @@ import { loadCollections } from "./collections/model";
 import { all, ident, one, run } from "./db";
 import { nowString, randomId } from "./ids";
 import { loadSettings } from "./settings";
+import { recordContextFor } from "./record-slot";
 import type { AppEnv, Row } from "./types";
 
 const RESPONSES = {
@@ -175,7 +176,6 @@ export function mountWebAuthn(router: Router) {
       if (!verification.verified) return c.json(RESPONSES.login_error, 500);
       try { await saveCredential(c.env.DB, String(user.id), { ...match.cred, counter: verification.authenticationInfo.newCounter }); } catch { return c.json(RESPONSES.cred_error, 500); }
       const users = (await loadCollections(c.env.DB)).get("users")!;
-      const { recordContextFor } = await import("./app");
       return recordAuthResponse(c, await recordContextFor(c), users, user, "passkey", { body });
     } catch (err) {
       console.error("voidbase: webauthn login", err);

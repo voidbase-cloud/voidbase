@@ -141,6 +141,13 @@ const loaded = new WeakMap<Kernel, Loaded>();
 export const whatLoaded = (kernel: Kernel): Loaded =>
   loaded.get(kernel) ?? { names: [], providers: {}, tiers: {}, plugins: [], missingCore: [], origins: {}, disabled: [] };
 
+// The plugin objects behind those names, for whatever has to ask one of them a question rather than read the data
+// about it: /api/plugins asks each loaded plugin what it says about itself, and the answer has to come from the
+// plugin that actually loaded under the name, shipped or installed (plugins/report.ts).
+const objects = new WeakMap<Kernel, Map<string, Plugin>>();
+/** the plugin this instance loaded under that name, or nothing when it loaded none */
+export const loadedPlugin = (kernel: Kernel, name: string): Plugin | undefined => objects.get(kernel)?.get(name);
+
 // The collections the loaded plugins' manifests own, by name: manifest data like the tiers, and a service the core
 // asks for. An import that deletes what it does not name leaves these alone (collections/service.ts), and a hook is
 // handed them by $app.findPluginCollections(). Kept for the isolate rather than per kernel, because the one asking
@@ -201,6 +208,7 @@ export async function load(kernel: Kernel, plugins: Plugin[], voidbaseVersion: s
     disabled: extra.disabled ?? [],
   };
   loaded.set(kernel, result);
+  objects.set(kernel, new Map(order.map((p) => [p.manifest.name, p])));
   owned = new Set(order.flatMap((p) => p.manifest.collections ?? []));
   logger.info("voidbase: plugins loaded", { plugins: result.names });
   if (missingCore.length) {

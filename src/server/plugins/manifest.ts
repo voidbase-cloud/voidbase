@@ -60,6 +60,15 @@ export interface Plugin {
   manifest: PluginManifest;
   /** mounts routes, hooks and cron handlers. Runs at module scope, before the app serves anything. */
   apply?: (ctx: import("../kernel").Kernel) => void | Promise<void>;
+  /**
+   * What this plugin says about itself on `GET /api/plugins`, under its own name: the knobs it found, where its
+   * work goes with these bindings. Per env, because a binding arrives with the request and not at module scope.
+   *
+   * It is the plugin's answer rather than the core's because a plugin installed under a shipped name replaces the
+   * shipped one, and the core calling the shipped module went on describing code that was no longer running. A
+   * plugin without one is simply not named in that part of the answer.
+   */
+  info?: (env: import("../types").Bindings) => object | Promise<object>;
 }
 
 const NAME = /^[a-z][a-z0-9-]*$/;

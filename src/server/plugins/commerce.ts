@@ -1240,6 +1240,7 @@ export function commerceWith(overrides: Partial<CommerceDeps> = {}): Plugin & { 
       requires: ["payments@1" as const, "tax@1" as const, "shipping@1" as const],
       collections: [...COMMERCE_COLLECTIONS],
     },
+    info: (env: Bindings) => commerceInfo(env),
     stopWatchingPayments: () => { stop?.(); stop = undefined; },
     apply(kernel: Kernel) {
       ctx = kernel;

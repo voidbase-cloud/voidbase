@@ -14,7 +14,10 @@ working plan. What is here is what a contributor needs to touch it.
 | `src/server/plugins/resolve.ts` | the whole graph checked before a single plugin is applied: unknown interface names, version ranges, two providers of one interface, collection ownership, missing requirements, cycles. Everything wrong is reported at once. |
 | `src/server/interfaces/index.ts` | the interfaces a plugin may provide or require, versioned in the name (`auth@1`, `payments@1`, `tax@1`, `shipping@1`, `realtime@1`, `hardening@1`, `mail@1`, `observability@1`) and the closed `KNOWN` list. |
 | `src/server/plugins/*.ts` | the plugins voidbase ships with today: `auth`, `observability`, `realtime`, `hardening`, `backups`, `installer`, `openapi`, `mcp`, `seo`, `mail`, `ai`, `translations`, `stripe`, `polar`, `lemonsqueezy`, `tax-flat`, `shipping-flat`, `commerce`, `previews`, `domains`. |
-| `GET /api/plugins` | what this instance loaded: names, providers, tiers, `plugins` (each with its tier, a `core` flag and its `provides`/`requires`), any core interface nobody provides, `mail`, where this instance's mail goes, `translations`, the locales and the declared collections, and `commerce`, whether the shop is on and what the flat-rate tax and shipping plugins are set to. Superuser only. |
+| `src/server/plugins/report.ts` | what `GET /api/plugins` answers: the graph the kernel resolved, then what each loaded plugin says about itself through its own `info(env)`, by name. |
+| `src/server/record-slot.ts` | how a plugin asks the core to build the `RecordContext` of a request it is answering, the way `auth-slot.ts` is how the core asks a plugin about auth. |
+| `src/server/realtime-slot.ts` | the guard on the `realtime@1` slot: the client for this request's bindings, or one that says realtime is off when nothing provides the interface. |
+| `GET /api/plugins` | what this instance loaded: names, providers, tiers, `plugins` (each with its tier, a `core` flag and its `provides`/`requires`), any core interface nobody provides, `mail`, where this instance's mail goes, `translations`, the locales and the declared collections, and `commerce`, whether the shop is on and what the tax and shipping providers are set to. The per-plugin fields are each plugin's own `info(env)`, so what answers is what loaded under the name; `installer` and `mail` are answered by the core when no plugin does. Superuser only. |
 
 ## The entry points a plugin package uses
 
@@ -43,6 +46,35 @@ interface from this plugin's own fiber, and `using<T>(ctx, "auth@1")` reads one.
 in `requires` is applied only once a provider exists, and cordis tears it down when that provider goes and
 re-applies it when a replacement arrives (measured in `test/unit/plugins.test.ts`).
 
+`info(env)` is the other half of the object, and it is optional: what this plugin says about itself on
+`GET /api/plugins` under its own name, per env because a binding arrives with the request. It exists because the
+answer has to describe what is running. `app.ts` used to call the shipped modules' own functions for those fields,
+so a plugin installed under a shipped name shadowed the shipped one at load and the answer went on describing the
+module that was not running: the swap was cosmetic. Now the answer is assembled from the plugins that loaded, by
+name (`plugins/report.ts`), and a name nothing loaded — or a plugin that says nothing about itself — is simply not
+in that part of the answer. `installer`, `mail`, `ai`, `translations`, `domains`, `previews`, `commerce`,
+`tax-flat` and `shipping-flat` each provide one; `payments@1` and `observability@1` answer through their
+interfaces instead, which is the older seam and the better one, since what is reported is the provider's whatever
+the plugin providing it is called.
+
+Which fields are always in the answer, and which depend on a plugin. `installer` (where this instance's plugins
+live) and `mail` (where its mail goes) are the core's own answers: a plugin loaded under either name answers for
+it, and when none does — turned off in `voidbase.lock`, or shadowed by a plugin with no `info()` — the core
+answers instead, because both are facts about the instance rather than about a plugin, and our own clients read
+into them (`voidbase cloud plugins <instance> ls` prints `installer.mode`). `payments` and `observability` are
+always there for the older reason: they are answered through an interface, and an instance with no provider says
+`{"via":"none"}` and `null` rather than leaving the field out. The rest depend on the plugin: `ai`,
+`translations`, `domains`, `previews` and `commerce` are in the answer only while a plugin of that name is loaded
+and has an `info()`, exactly as they were only there while the plugin was. Inside `commerce`, `tax` and `shipping`
+follow the interface instead: the key is there whenever something provides `tax@1` or `shipping@1`, and a provider
+with nothing to say about itself is `null`, so replacing the flat-rate pair — which is what the interfaces are for
+— cannot quietly change the shape of the answer.
+
+An `info()` is a plugin's code running inside a superuser's route, and on an instance that installed one it is
+community code. So each call is held at arm's length: one that throws, or that answers with something which is not
+an object, becomes `{"error": "..."}` in that one field and is logged, and the graph half and every other plugin
+still answer.
+
 The tiers are `core` (the instance is not usable without a provider; `CORE` in `resolve.ts` lists `auth@1` since
 auth left the core), `official` (ours, versioned with voidbase, opt-in) and `community`.
 
@@ -66,7 +98,12 @@ from each installed plugin's `release.json`.
 - **A factory over the request's bindings.** `realtime` provides `realtime@1` as `for(env): RealtimeClient`. On
   Workers the HUB binding arrives with each request and not once per isolate, so a service built at load time would
   hold nothing. The per-request middleware puts the client on the context (`c.get("realtime")`), and it answers
-  `active()` so the write path knows whether a change has anywhere to go.
+  `active()` so the write path knows whether a change has anywhere to go. The slot is guarded like the two below
+  (`src/server/realtime-slot.ts`): `using()` answers `undefined` when nothing provides an interface, and this one
+  is read on every request, so an instance whose realtime plugin is turned off in `voidbase.lock` or replaced by a
+  plugin that does not provide `realtime@1` gets a client that answers `active()` false. Every request is served,
+  a write falls back to the D1 change feed as it does without a hub, and `/api/presence` says realtime is off.
+  `realtime@1` is deliberately not in `CORE`: an instance without it is a working instance, not a gap to report.
 - **Middleware, through a slot.** `hardening` provides `hardening@1`: the body limit, the rate limit and the
   response policy (below). Middleware runs in registration order and the kernel loads after the routes, so a plugin
   cannot `use("*")` for itself; instead `app.ts` keeps the handlers' place in the chain with slots that ask the
@@ -74,6 +111,20 @@ from each installed plugin's `release.json`.
   provider, no limits and no policy (CORS included); another limiter or another policy is another provider. It
   mounts one route of its own, `GET /api/csrf`, because a token has to be handed back; that one is an ordinary
   plugin route and leaves through the slot like everything else.
+
+### What the core hands a plugin: the slots
+
+The three shapes above are a plugin handing something to the core. The other direction is a slot too, and for the
+same reason. `src/server/auth-slot.ts` is how the core asks whoever provides `auth@1` who is signed in;
+`src/server/record-slot.ts` is how a plugin asks the core to build the `RecordContext` of a request it is
+answering — the database, the storage, who is asking, the collections — which `plugins/auth.ts` needs for the
+OAuth2 and flow routes, `src/server/auth.ts` and `src/server/webauthn.ts` for the sessions that same plugin
+mounts, and `plugins/seo.ts` for the record behind a page. They all used to reach it with
+`await import("../app")` at request time: inside one package a cycle the bundler tolerates, and in a package of
+its own a plugin importing the whole application that loads it. `app.ts` fills the slot beside
+`provideAuthLookup`, and a context is built per request and never held, because a context is the request's.
+`src/server/hooks/index.ts` still imports the app for one and stays as it is: that is the application's own use of
+its own module, not a plugin reaching past its package.
 
 ### The response policy, hardening's other half
 
@@ -226,7 +277,9 @@ already running, which is what lets a bundle load inside the executable, where t
 `hooks-plugin.ts` generates `virtual:voidbase-plugins` at build time from the same verification, so a mismatch fails
 the build rather than the instance. `app.ts` then loads what ships minus what the lockfile turned off minus what an
 installed plugin shadows by name, plus the installed ones, as one graph, and `/api/plugins` says where each came
-from (`origins`) and what is turned off.
+from (`origins`) and what is turned off. That name filter is the whole swap path, and it now reaches the answer
+too: the per-plugin fields of `/api/plugins` are each loaded plugin's own `info(env)`, so a plugin installed over a
+shipped name answers for that name instead of being described by the module it replaced.
 
 Removing a shipped plugin turns it off for the project (`disabled` in the lockfile); installing one with a shipped
 plugin's name replaces it. That, and the open registry protocol, is what keeps an instance free of our marketplace
@@ -1862,6 +1915,12 @@ at a time (`WITHOUT` in `src/server/plugins/resolve.ts`): without auth the insta
 every superuser route answering 401; without observability it still loads and serves every request, unmeasured,
 with nothing sampled into Analytics Engine, `/api/observability` answering 404, and what the instance is doing
 visible only in the D1 request log and whatever the Cloudflare dashboard happens to show.
+
+Nothing else belongs on the list, and `realtime@1` is the example of why the list is not the only thing holding an
+instance up. An instance with no realtime plugin is a working instance: writes are recorded and read, and only the
+fanout is gone. So it is not core, nothing warns, and what keeps it up is the guard on the slot
+(`src/server/realtime-slot.ts`, the realtime shape above) rather than a line in `CORE`. Every slot the core reads
+per request is guarded that way: no provider means no policy, nothing sampled, and realtime off.
 
 ## What is not built
 

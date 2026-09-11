@@ -168,5 +168,6 @@ function mountRoutes(app: Hono<AppEnv>, voidbaseVersion: string, filesystem: Fil
  */
 export const installer = (voidbaseVersion: string, filesystem: FilesystemInstaller | null = platformFilesystem, graph: () => PluginFacts[] = () => []): Plugin => ({
   manifest: { name: "installer", version: "0.1.0", tier: "official", voidbase: "*" },
+  info: (env) => installerInfo(env, filesystem),
   apply(ctx: Kernel) { mountRoutes(ctx.app, voidbaseVersion, filesystem, graph); },
 });

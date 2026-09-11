@@ -48,6 +48,7 @@ export const shippingFlatInfo = (env?: object): { flat: number; freeOver: number
 /** the shipped plugin: one rate, provided as `shipping@1` */
 export const shippingFlat: Plugin & { shipping: Shipping } = {
   manifest: { name: "shipping-flat", version: "0.1.0", tier: "official", voidbase: "*", provides: ["shipping@1"] },
+  info: (env) => shippingFlatInfo(env),
   shipping,
   apply(ctx: Kernel) {
     serve<Shipping>(ctx, "shipping@1", shipping);

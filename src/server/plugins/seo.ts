@@ -22,6 +22,7 @@ import { logger } from "#platform/log";
 import type { Field } from "../collections/fields";
 import { listCollections, loadCollections, type Collection } from "../collections/model";
 import { type Kernel, runAfterRead } from "../kernel";
+import { recordContextFor } from "../record-slot";
 import { listRecords, type RecordContext } from "../records/service";
 import { loadSettings } from "../settings";
 import type { AppEnv, Bindings } from "../types";
@@ -66,7 +67,7 @@ const defaultSource: SeoSource = {
   },
   // the same listing the API does for this request's caller: the list rule is judged for the token that asks
   record: async (c, collection, filter, expand) => {
-    const { recordContextFor } = await import("../app");
+    // the request's own context, from the core's slot rather than from importing the app (../record-slot.ts)
     const r = await listRecords(await recordContextFor(c), collection, { page: 1, perPage: 1, skipTotal: true, sort: "", filter, expand, fields: "" });
     return r.items[0] ?? null;
   },

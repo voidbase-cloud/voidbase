@@ -291,6 +291,7 @@ export function translationsWith(source: Partial<TranslationsSource> = {}): Plug
   const full = { ...dbSource, ...source };
   const plugin: Plugin = {
     manifest: { name: "translations", version: "0.1.0", tier: "official", voidbase: "*", collections: [TRANSLATIONS] },
+    info: (env) => translationsInfo(env),
     apply(ctx: Kernel) {
       onBootstrap(ctx, async (env) => { await ensureCollections(plugin, env.DB, [TRANSLATIONS_COLLECTION]); });
       onAfterRead(ctx, (c, read) => afterRead(c, read, full));

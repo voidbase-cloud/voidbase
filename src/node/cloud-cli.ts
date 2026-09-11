@@ -213,7 +213,9 @@ export async function runCloud(sub: string | undefined, rest: string[], flags: R
           emit(r, () => [
             `running:      ${r.names.map((n) => (r.origins[n] && r.origins[n] !== "shipped" ? `${n} (${r.origins[n]})` : n)).join(", ") || "none"}`,
             `disabled:     ${r.disabled.length ? r.disabled.join(", ") : "none"}`,
-            `installer:    ${r.installer.mode}${r.installer.repository ? ` ${r.installer.repository}${r.installer.branch ? ` (${r.installer.branch})` : ""}` : ""}${r.installer.hint ? `  ${r.installer.hint}` : ""}`,
+            // the instance answers this one itself even with no installer plugin loaded, but the answer is the
+            // instance's and not ours: an older one, or one whose plugins are its own, may leave the field out
+            `installer:    ${r.installer ? `${r.installer.mode}${r.installer.repository ? ` ${r.installer.repository}${r.installer.branch ? ` (${r.installer.branch})` : ""}` : ""}${r.installer.hint ? `  ${r.installer.hint}` : ""}` : "not reported by this instance"}`,
           ]);
           return 0;
         }

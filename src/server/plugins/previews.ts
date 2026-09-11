@@ -132,5 +132,6 @@ function mountRoutes(app: Hono<AppEnv>) {
 
 export const previews: Plugin = {
   manifest: { name: "previews", version: "0.1.0", tier: "official", voidbase: "*" },
+  info: (env) => previewsReport(env),
   apply(ctx: Kernel) { mountRoutes(ctx.app); },
 };

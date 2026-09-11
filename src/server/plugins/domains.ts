@@ -24,4 +24,5 @@ export const domainsInfo = (env?: object): DomainsInfo => {
 
 export const domains: Plugin = {
   manifest: { name: "domains", version: "0.1.0", tier: "official", voidbase: "*" },
+  info: (env) => domainsInfo(env),
 };

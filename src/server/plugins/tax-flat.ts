@@ -53,6 +53,7 @@ export const taxFlatInfo = (env?: object): { rate: number } => ({ rate: taxRate(
 /** the shipped plugin: one percentage, provided as `tax@1` */
 export const taxFlat: Plugin & { tax: Tax } = {
   manifest: { name: "tax-flat", version: "0.1.0", tier: "official", voidbase: "*", provides: ["tax@1"] },
+  info: (env) => taxFlatInfo(env),
   tax,
   apply(ctx: Kernel) {
     serve<Tax>(ctx, "tax@1", tax);

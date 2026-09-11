@@ -12,6 +12,7 @@ import catalog from "./collections/oauth2-providers.json";
 import { randomString } from "./ids";
 import { recordAuthResponse } from "./auth-response";
 import { authCookieToken } from "./auth-cookie";
+import { recordContextFor } from "./record-slot";
 import { requestHook } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
 import type { AppEnv, AuthRecord, Row } from "./types";
@@ -109,7 +110,6 @@ export async function authWithPassword(c: Context<AppEnv>, collection: Collectio
     row = await one(c.env.DB, `SELECT * FROM ${ident(collection.name)} WHERE ${ident(name)} = ? LIMIT 1`, [identity]);
     if (row) break;
   }
-  const { recordContextFor } = await import("./app");
   const ctx = await recordContextFor(c);
   const original = row ? HookRecord.fromRow(collection, row) : null;
   return requestHook("onRecordAuthWithPasswordRequest", c, collection.name, { collection: new CollectionRef(collection), record: original, identity, password, identityField }, async (ev) => {
@@ -135,7 +135,6 @@ export async function authRefresh(c: Context<AppEnv>, collection: Collection) {
   if (!auth) throw unauthorized("The request requires valid record authorization token.");
   // RequireSameCollectionContextAuth names the token's own collection in its message
   if (auth.collection.id !== collection.id) throw forbidden(`The request requires auth record from ${auth.collection.name} collection.`);
-  const { recordContextFor } = await import("./app");
   const ctx = await recordContextFor(c);
   return requestHook("onRecordAuthRefreshRequest", c, collection.name, { collection: new CollectionRef(collection), record: HookRecord.fromRow(collection, auth.row) }, () => recordAuthResponse(c, ctx, collection, auth.row, "", {}));
 }

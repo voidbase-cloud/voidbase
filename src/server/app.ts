@@ -22,36 +22,39 @@ import { BATCH_CONTEXT_HEADER, batchContextToken, mountBatch } from "./batch";
 import { mountLogsApi, requestLogger } from "./logs";
 import { mountCronsApi } from "./crons";
 import { createKernel, load, runAfterRead, runBootstraps, using, whatLoaded } from "./kernel";
+import { provideRecordContext } from "./record-slot";
+import { realtimeOf } from "./realtime-slot";
 import { auth as authPlugin } from "./plugins/auth";
 import { backups as backupsPlugin } from "./plugins/backups";
-import { installer as installerPlugin, installerInfo } from "./plugins/installer";
+import { installer as installerPlugin } from "./plugins/installer";
 import { openapi as openapiPlugin } from "./plugins/openapi";
 import { mcp as mcpPlugin } from "./plugins/mcp";
 import { seo as seoPlugin } from "./plugins/seo";
 import { mail as mailPlugin } from "./plugins/mail";
-import { ai as aiPlugin, aiRoute } from "./plugins/ai";
+import { ai as aiPlugin } from "./plugins/ai";
 import { observability as observabilityPlugin } from "./plugins/observability";
-import { translations as translationsPlugin, translationsInfo } from "./plugins/translations";
+import { translations as translationsPlugin } from "./plugins/translations";
 import { stripe as stripePlugin } from "./plugins/stripe";
 import { polar as polarPlugin } from "./plugins/polar";
 import { lemonsqueezy as lemonsqueezyPlugin } from "./plugins/lemonsqueezy";
-import { taxFlat as taxFlatPlugin, taxFlatInfo } from "./plugins/tax-flat";
-import { shippingFlat as shippingFlatPlugin, shippingFlatInfo } from "./plugins/shipping-flat";
-import { commerce as commercePlugin, commerceInfo } from "./plugins/commerce";
-import { previews as previewsPlugin, previewsReport } from "./plugins/previews";
-import { domains as domainsPlugin, domainsInfo } from "./plugins/domains";
+import { taxFlat as taxFlatPlugin } from "./plugins/tax-flat";
+import { shippingFlat as shippingFlatPlugin } from "./plugins/shipping-flat";
+import { commerce as commercePlugin } from "./plugins/commerce";
+import { previews as previewsPlugin } from "./plugins/previews";
+import { domains as domainsPlugin } from "./plugins/domains";
 import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
 import { SHIPPED, SHIPPED_FACTS, type ShippedName } from "./plugins/shipped";
+import { pluginsReport } from "./plugins/report";
 import { disabled as disabledPlugins, installed as installedPlugins } from "#platform/plugins";
-import type { Auth, Hardening, Mail, Observability, Payments, Realtime } from "./interfaces";
+import type { Auth, Hardening, Mail, Observability, Realtime } from "./interfaces";
 import { VERSION } from "./version";
 import { mountSqlApi } from "./sql";
 import { realIPWith } from "./hardening";
 import { backupActive } from "./backups";
 import { maintenanceIfDue } from "./crons";
 import { attachJobs } from "./jobs";
-import { mailRoute, provideMailLookup, sendMail } from "./mail";
+import { provideMailLookup, sendMail } from "./mail";
 import { s3Bucket } from "./storage/s3";
 import { installServices, RequestEvent, authToHookRecord, hookStore } from "./hooks/runtime";
 import { CollectionRef, HookRecord } from "./hooks/record";
@@ -100,8 +103,10 @@ app.use("*", async (c, next) => {
   if (s3.enabled) c.env = { ...c.env, STORAGE: s3Bucket(s3) };
   attachJobs(c.env);
   // the realtime client for this request's bindings, from the plugin that provides realtime@1; the kernel below is
-  // a const declared at the end of this module, which is fine here because this runs per request, long after it
-  c.set("realtime", using<Realtime>(kernel, "realtime@1").for(c.env));
+  // a const declared at the end of this module, which is fine here because this runs per request, long after it.
+  // Guarded like the hardening and observability slots above: `using` answers undefined when nothing provides the
+  // interface, and an instance without a realtime plugin serves its requests with realtime off (realtime-slot.ts)
+  c.set("realtime", realtimeOf(using<Realtime | undefined>(kernel, "realtime@1"), c.env));
   // onBootstrap/onServe handlers may use $app (find/save records and collections) like PocketBase's, so they run inside a hook store
   if (!served) { served = true; await withHookStore(c.env.DB, c.env, async () => { await trigger("onBootstrap", { app: undefined as unknown, next: async () => undefined as unknown }, null, async () => undefined); await trigger("onServe", { app: undefined as unknown, router: app, next: async () => undefined as unknown }, null, async () => undefined); }); }
   // who is asking, from whoever provides auth@1 (the auth plugin, unless the project replaced it): nobody without one
@@ -578,12 +583,17 @@ await load(kernel, [...active, ...installedPlugins.map((p) => p.plugin)], VERSIO
 provideAuthLookup(() => using<Auth | undefined>(kernel, "auth@1"));
 // and where outbound mail goes: whoever provides mail@1 carries it when its binding is there (src/server/mail)
 provideMailLookup(() => using<Mail | undefined>(kernel, "mail@1"));
+// and how a plugin builds the record context of a request it is answering: the context the record routes build,
+// asked for per request, so that no plugin has to import this module to reach one (record-slot.ts)
+provideRecordContext(recordContextFor);
 
 // What this instance is running, which is the question a bare instance has to be able to answer about itself. For
-// the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface.
+// the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface. What a
+// plugin says about itself comes from the plugin that loaded under that name, so that a plugin installed over a
+// shipped one answers for it rather than being described by the code it replaced (plugins/report.ts).
 app.get("/api/plugins", async (c) => {
   requireSuperuser(c);
-  return c.json({ ...whatLoaded(kernel), installer: installerInfo(c.env), mail: await mailRoute(c.env), ai: await aiRoute(c.env), observability: (await observing()?.report(c.env)) ?? null, translations: translationsInfo(c.env), domains: domainsInfo(c.env), previews: await previewsReport(c.env), payments: using<Payments | undefined>(kernel, "payments@1")?.route(c.env) ?? { via: "none" }, commerce: { ...commerceInfo(c.env), tax: taxFlatInfo(c.env), shipping: shippingFlatInfo(c.env) } });
+  return c.json(await pluginsReport(kernel, c.env));
 });
 mountSqlApi(app);
 

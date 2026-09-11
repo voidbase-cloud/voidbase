@@ -140,7 +140,24 @@ accepts any upload (error 10063): open Workers & Pages once, or
 `PUT /accounts/<id>/workers/subdomain {"subdomain": "<name>"}`. `destroyInstance` in `voidbase/cloud` detaches
 custom domains before deleting the Worker, and the control plane attaches them itself for the instances it provisions.
 
-### A preview per pull request: `--preview`
+### A preview per pull request: `--preview`, `--shape`
+
+A preview takes one of two shapes, chosen per deploy with `--shape` (`VOIDBASE_PREVIEW_SHAPE`):
+
+- `--shape instance`, the default, is everything below: a Worker of its own for the branch, with its own database,
+  bucket and queue, seeded from production. Nothing about it changes with the flag's arrival.
+- `--shape flagged` deploys nothing at all. The branch writes to the production instance with
+  `X-Voidbase-Preview: <branch>` (or `?preview=<branch>`), those rows carry a mark, and every production read filters
+  them out, so a preview is a query rather than a deploy. It costs no Worker and no database, it previews data and
+  not code, and it isolates new rows only: a write to a row production already has is refused, not previewed.
+  docs/plugins.md, "The flagged shape: a preview as a query", has the mark, the filter and the limits in full.
+
+```bash
+voidbase deploy --preview feature/login --shape flagged   # nothing deployed; the pull request gets the address
+voidbase previews list --shape flagged                    # the branches with rows here, and how many
+voidbase previews remove feature/login --shape flagged    # that branch's rows, and nothing else
+voidbase previews prune --merged --shape flagged          # the same for every merged or closed pull request
+```
 
 `voidbase deploy --preview <branch>` deploys the project as a second Worker, the branch's own instance, and the
 `previews` plugin does the rest (docs/plugins.md, "A preview per pull request: previews"). `VOIDBASE_PREVIEW=<branch>`
@@ -166,7 +183,9 @@ voidbase previews prune --merged                   # every preview whose pull re
 
 A preview is disposable, so `--remove --preview` (and the prune) deletes the Worker and everything it owns, unlike a
 production `--remove`. On the production build `VOIDBASE_PREVIEW_PRUNE=1` makes every production deploy run the
-prune in its `after` hook, which is what makes a preview disappear on merge.
+prune in its `after` hook, which is what makes a preview disappear on merge. With `VOIDBASE_PREVIEW_SHAPE=flagged`
+that same prune deletes the merged branches' rows instead, through the instance rather than the account, which needs
+`VOIDBASE_SUPERUSER_EMAIL` and `VOIDBASE_SUPERUSER_PASSWORD` in the build's environment.
 
 **In CI.** A Worker takes two triggers at most, and two triggers may not watch the same branch, so a project with
 previews has exactly these: the production trigger (the production branch, as `voidbase sync` sets it up) and the

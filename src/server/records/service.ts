@@ -20,6 +20,8 @@ import { autogenerate, normalizeInput, rowToValues, toColumn, uniqueStrings, val
 import { CollectionRef, HookRecord } from "../hooks/record";
 import { hasHandlers, trigger, type RequestEvent } from "../hooks/runtime";
 import { fromColumn } from "./values";
+import { addPreviewField, hasPreviewField, markOf, PREVIEW_FIELD, previewable, previewOf, previewScope, refusal } from "./preview";
+import { loadCollections } from "../collections/model";
 
 export interface RecordContext {
   db: D1Database;
@@ -53,7 +55,13 @@ function ruleParts(ctx: RecordContext, c: Collection, rule: string | null): { sq
   return { sql: compiled.where, params: compiled.params, joins: compiled.joins };
 }
 
-function selectSQL(c: Collection, conds: { sql: string; params: unknown[] }[], joins: Join[], tail = "", count = false): { sql: string; params: unknown[] } {
+// Every read's SQL is built here: the list, its count, and fetchRecord, which is behind the view route, the write
+// path's own fetch and the realtime feed. The preview lane is therefore applied here and nowhere else for those,
+// so a filter, a sort, a page and the feed cannot disagree about which rows exist (records/expand.ts applies the
+// same condition to the two queries the expander runs, which are the only other reads of a collection's table).
+function selectSQL(ctx: RecordContext, c: Collection, conds: { sql: string; params: unknown[] }[], joins: Join[], tail = "", count = false): { sql: string; params: unknown[] } {
+  const scope = previewScope(c, previewOf(ctx.request));
+  if (scope) conds = [...conds, scope];
   const base = ident(c.name);
   const distinct = joins.some((j) => j.multi);
   const joinSql = joins.map(renderJoin).join(" ");
@@ -72,6 +80,24 @@ function mergeJoins(...lists: Join[][]): Join[] {
 function wrapFilterError(err: unknown): never {
   if (err instanceof FilterError || err instanceof FilterSyntaxError) throw badRequest();
   throw err;
+}
+
+// ---- the flagged preview lane (records/preview.ts) -------------------------------------------------------
+/** the branch this write is in, or "" when it is production's; a system collection and a view never have a lane */
+const laneOf = (ctx: RecordContext, c: Collection) => (previewable(c) ? previewOf(ctx.request) : "");
+
+/** the collection with its `_preview` column, added on the first flagged write to it and never otherwise */
+async function ensureLane(ctx: RecordContext, c: Collection): Promise<Collection> {
+  if (hasPreviewField(c)) return c;
+  await addPreviewField(ctx.db, c);
+  ctx.collections = await loadCollections(ctx.db); // the rules, the expander and the feed read the new shape too
+  return ctx.collections.get(c.name) ?? c;
+}
+
+/** a flagged write may not touch a row that is not the branch's: that row is production's, and so is the change */
+function refuseForeignRow(ctx: RecordContext, c: Collection, id: string, row: Row, op: "update" | "delete"): void {
+  const branch = laneOf(ctx, c);
+  if (branch && markOf(row) !== branch) throw badRequest(refusal(op, c.name, id, branch));
 }
 
 export async function listRecords(ctx: RecordContext, c: Collection, q: ListQuery) {
@@ -96,12 +122,12 @@ export async function listRecords(ctx: RecordContext, c: Collection, q: ListQuer
   try { orderBy = compileSort(q.sort, c, ctx.superuser) || (c.type === "view" ? `ORDER BY ${ident(c.name)}.id ASC` : `ORDER BY ${ident(c.name)}.rowid ASC`); } catch (err) { wrapFilterError(err); }
   const page = Math.max(1, q.page || 1);
   const perPage = Math.min(MAX_PER_PAGE, Math.max(1, q.perPage || DEFAULT_PER_PAGE));
-  const sel = selectSQL(c, conds, joins, `${orderBy} LIMIT ? OFFSET ?`);
+  const sel = selectSQL(ctx, c, conds, joins, `${orderBy} LIMIT ? OFFSET ?`);
   let rows: Row[];
   try { rows = await all(ctx.db, sel.sql, [...sel.params, perPage, (page - 1) * perPage]); } catch (err) { throw sqlError(err); }
   let totalItems = -1, totalPages = -1;
   if (!q.skipTotal) {
-    const cnt = selectSQL(c, conds, joins, "", true);
+    const cnt = selectSQL(ctx, c, conds, joins, "", true);
     const r = await one<{ n: number }>(ctx.db, cnt.sql, cnt.params);
     totalItems = r?.n ?? 0;
     totalPages = Math.ceil(totalItems / perPage);
@@ -115,7 +141,7 @@ export async function fetchRecord(ctx: RecordContext, c: Collection, id: string,
   let joins: Join[] = [];
   const r = ruleParts(ctx, c, rule);
   if (r) { conds.push(r); joins = r.joins; }
-  const sel = selectSQL(c, conds, joins, "LIMIT 1");
+  const sel = selectSQL(ctx, c, conds, joins, "LIMIT 1");
   try { return await one(ctx.db, sel.sql, sel.params); } catch (err) { throw sqlError(err); }
 }
 
@@ -339,8 +365,11 @@ function uniqueViolation(err: unknown): string | null {
 export async function createRecord(ctx: RecordContext, c: Collection, body: RawBody, opts: EnrichOptions) {
   if (c.type === "view") throw badRequest("Unsupported collection type.");
   if (c.createRule === null && !ctx.superuser) throw forbidden(SUPERUSER_ONLY_MSG);
+  const branch = laneOf(ctx, c);
+  if (branch) c = await ensureLane(ctx, c); // the first flagged write to a collection is what adds the column
   const fields = c.fields as Field[];
   const p = await prepareInput(c, defaults(c), body);
+  if (hasPreviewField(c)) p.values[PREVIEW_FIELD] = branch; // the request says which lane a row is in, never the body
   const now = nowString();
   for (const f of fields) {
     if (f.type === "text" && f.autogeneratePattern && !p.values[f.name]) p.values[f.name] = autogenerate(String(f.autogeneratePattern));
@@ -448,10 +477,12 @@ export async function updateRecord(ctx: RecordContext, c: Collection, id: string
   if (c.updateRule === null && !ctx.superuser) throw forbidden(SUPERUSER_ONLY_MSG);
   const row = await fetchRecord(ctx, c, id, c.updateRule);
   if (!row) throw notFound();
+  refuseForeignRow(ctx, c, id, row, "update");
   const fields = c.fields as Field[];
   const current = rowToValues(c, row);
   const p = await prepareInput(c, current, body);
   p.values.id = current.id;
+  if (hasPreviewField(c)) p.values[PREVIEW_FIELD] = markOf(row); // a row never changes lane, whatever the body says
   const now = nowString();
   for (const f of fields) if (f.type === "autodate" && f.onUpdate) p.values[f.name] = now;
   ctx.request.body = { ...p.values };
@@ -521,6 +552,7 @@ export async function deleteRecord(ctx: RecordContext, c: Collection, id: string
   if (c.deleteRule === null && !ctx.superuser) throw forbidden(SUPERUSER_ONLY_MSG);
   const row = await fetchRecord(ctx, c, id, c.deleteRule);
   if (!row) throw notFound();
+  refuseForeignRow(ctx, c, id, row, "delete");
   const rec = HookRecord.fromRow(c, row);
   const reqEv = ctx.hookEvent?.(rec, c);
   const core = async () => {

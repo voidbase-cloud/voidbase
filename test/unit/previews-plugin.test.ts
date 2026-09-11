@@ -2,12 +2,16 @@
 // bakes and refuses, the domains plugin standing down for a preview, the pull request comment (its body, and that
 // it is posted once and updated after) against a fake GitHub, the prune decision against fake pull request states,
 // and the seeding sequence against two fake instances. The account side runs in test/deploy-cf.ts against the mock.
+//
+// The flagged shape is here too, minus its records half, which is test/unit/preview-flag.test.ts: the shape knob,
+// the comment it writes, the refusal that keeps it from ever uploading a Worker, and the removal and the prune
+// against a fake instance, since the flagged shape acts on the instance over HTTP and never on the account.
 import { afterEach, describe, expect, test } from "bun:test";
 import type { DeployContext } from "../../src/node/deploy-plugin";
 import { domainsDeploy } from "../../src/node/plugins/domains";
-import { commentOnPullRequest, GH_TOKEN_KNOB, githubOf, MARKER, previewComment, previewsDeploy, pruneDecision, pruneMerged, PRUNE_KNOB, REPO_KNOB, SEED_KNOB, seedKindOf, seedPreview, upsertPreviewComment, type GitHubTarget } from "../../src/node/plugins/previews";
+import { commentOnPullRequest, flaggedAddress, flaggedPreview, GH_TOKEN_KNOB, githubOf, listFlagged, MARKER, previewComment, previewsDeploy, pruneDecision, pruneFlaggedMerged, pruneMerged, PRUNE_KNOB, removeFlaggedPreview, REPO_KNOB, SEED_KNOB, seedKindOf, seedPreview, SHAPE_KNOB, shapeOf, upsertPreviewComment, type FlaggedTarget, type GitHubTarget } from "../../src/node/plugins/previews";
 import { DOMAINS_VAR } from "../../src/server/plugins/domains";
-import { branchHash, branchSlug, PREVIEW_OF_VAR, PREVIEW_VAR, previewPrefix, previews, previewsInfo, previewWorkerName } from "../../src/server/plugins/previews";
+import { branchHash, branchSlug, PREVIEW_HEADER, PREVIEW_OF_VAR, PREVIEW_VAR, previewPrefix, previews, previewsInfo, previewWorkerName } from "../../src/server/plugins/previews";
 import { VERSION } from "../../src/server/version";
 
 const ctxOf = (env: Record<string, string>, over: Partial<DeployContext> = {}): DeployContext => ({ name: "shop", account: { id: "acc" }, api: null, env, config: {}, vars: {}, url: null, log: () => undefined, local: false, dryRun: false, ...over });
@@ -53,6 +57,14 @@ describe("the knobs", () => {
     expect(seedKindOf({ [SEED_KNOB]: "data" })).toBe("data");
     for (const v of ["0", "none", "off", "no", "false"]) expect(seedKindOf({ [SEED_KNOB]: v })).toBe("none");
     expect(() => seedKindOf({ [SEED_KNOB]: "rows" })).toThrow("VOIDBASE_PREVIEW_SEED=rows is not one of schema, data, none");
+  });
+  test("the shape: an instance of its own unless the flag or the knob says flagged; anything else refused", () => {
+    expect(shapeOf({})).toBe("instance");
+    expect(shapeOf({}, "instance")).toBe("instance");
+    expect(shapeOf({ [SHAPE_KNOB]: "flagged" })).toBe("flagged");
+    expect(shapeOf({}, " Flagged ")).toBe("flagged");
+    expect(shapeOf({ [SHAPE_KNOB]: "flagged" }, "instance")).toBe("instance"); // the flag is the last word
+    expect(() => shapeOf({}, "lane")).toThrow("--shape lane is not one of instance, flagged");
   });
   test("GitHub: the token and the repository from the environment, the API base from GITHUB_API_URL; nothing without a token", () => {
     expect(githubOf({}, "/nonexistent")).toBeNull();
@@ -214,8 +226,110 @@ describe("seeding", () => {
 
 describe("the runtime half", () => {
   test("is a shipped plugin that reports the baked vars and provides nothing else", () => {
-    expect(previews.manifest.name).toBe("previews"); expect(previews.apply).toBeUndefined();
-    expect(previewsInfo({ [PREVIEW_VAR]: "feature/x", [PREVIEW_OF_VAR]: "shop" })).toEqual({ of: "shop", branch: "feature/x" });
-    expect(previewsInfo({})).toEqual({});
+    expect(previews.manifest.name).toBe("previews"); expect(typeof previews.apply).toBe("function"); // /api/previews
+    expect(previewsInfo({ [PREVIEW_VAR]: "feature/x", [PREVIEW_OF_VAR]: "shop" })).toEqual({ shape: "instance", of: "shop", branch: "feature/x" });
+    // every other instance can serve a flagged preview, because a request carrying the header is all one takes
+    expect(previewsInfo({})).toEqual({ shape: "flagged" });
+  });
+});
+
+describe("the flagged shape", () => {
+  const at = "2026-09-11T10:00:00.000Z";
+  const gh: GitHubTarget = { token: "t", repo: "o/r", api: "https://gh.test" };
+  const target: FlaggedTarget = { url: "https://shop.sub.workers.dev", email: "admin@example.com", password: "pw" };
+
+  test("it never uploads a Worker: a deploy that would is refused before anything is composed", async () => {
+    const ctx = ctxOf({ [PREVIEW_VAR]: "feature/x", [PREVIEW_OF_VAR]: "shop", [SHAPE_KNOB]: "flagged" }, { name: previewWorkerName("shop", "feature/x") });
+    await expect(previewsDeploy.deploy!.before!(ctx)).rejects.toThrow("the flagged shape makes no Worker");
+    expect(ctx.vars).toEqual({}); expect(ctx.config).toEqual({});
+    // and with the knob but no branch it is an ordinary production deploy, untouched
+    const production = ctxOf({ [SHAPE_KNOB]: "flagged" });
+    await previewsDeploy.deploy!.before!(production);
+    expect(production.vars).toEqual({});
+  });
+
+  test("the address is production's with the branch on it, which is what the asset layer can actually carry", () => {
+    expect(flaggedAddress("https://shop.sub.workers.dev", "feature/login")).toBe("https://shop.sub.workers.dev/?preview=feature%2Flogin");
+    expect(flaggedAddress("https://shop.example.com/", "main-2")).toBe("https://shop.example.com/?preview=main-2");
+  });
+
+  test("the comment says where the preview answers, and what the shape cannot do", () => {
+    const body = previewComment({ branch: "feature/x", url: "https://shop.sub.workers.dev", of: "shop", seed: "none", seeded: false, shape: "flagged", at });
+    expect(body.startsWith(`${MARKER}\n`)).toBe(true);
+    expect(body).toContain("**voidbase preview** for `feature/x` (flagged, on `shop`): https://shop.sub.workers.dev/?preview=feature%2Fx");
+    expect(body).toContain(`${PREVIEW_HEADER}: feature/x`);
+    expect(body).toContain("no Worker, database, bucket or queue of its own");
+    expect(body).toContain("isolates new rows and cannot isolate a change to an existing one");
+    expect(body).toContain("voidbase previews prune --merged --shape flagged");
+    expect(body).not.toContain("seeded");
+    const gone = previewComment({ branch: "feature/x", url: null, of: "shop", seed: "none", seeded: false, removed: true, shape: "flagged", at });
+    expect(gone).toBe(`${MARKER}\n**voidbase preview** for \`feature/x\` (flagged, on \`shop\`): removed ${at}. The branch's rows are gone from \`shop\`; a write carrying \`${PREVIEW_HEADER}: feature/x\` makes new ones.`);
+  });
+
+  test("the deploy makes nothing and says so, and the pull request gets the address", async () => {
+    const posted: string[] = [];
+    fakeFetch(async (method, url, init) => {
+      if (url.pathname === "/repos/o/r/pulls") return Response.json([{ number: 9, state: "open", merged_at: null, html_url: "u", head: { ref: "feature/x" } }]);
+      if (url.pathname === "/repos/o/r/issues/9/comments" && method === "GET") return Response.json([]);
+      if (url.pathname === "/repos/o/r/issues/9/comments" && method === "POST") { posted.push(String((await bodyOf(init)).body)); return Response.json({ id: 1 }, { status: 201 }); }
+      return Response.json({ message: `unexpected ${method} ${url.pathname}` }, { status: 500 });
+    });
+    const lines: string[] = [];
+    await flaggedPreview({ branch: "feature/x", of: "shop", url: "https://shop.sub.workers.dev", github: gh, log: (l) => lines.push(l) });
+    expect(lines[0]).toContain("flagged preview of shop for branch feature/x: nothing is deployed");
+    expect(lines[0]).toContain("https://shop.sub.workers.dev/?preview=feature%2Fx");
+    expect(lines.at(-1)).toBe("pull request #9: preview comment posted (u)");
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("(flagged, on `shop`)");
+  });
+
+  test("remove: the branch's rows go through the instance's own route, and the comment is marked removed", async () => {
+    let deleted = "";
+    const calls = fakeFetch(async (method, url) => {
+      if (url.pathname === "/api/collections/_superusers/auth-with-password") return Response.json({ token: "tok" });
+      if (url.pathname === "/api/health") return Response.json({ code: 200, data: { canBackup: true } });
+      if (url.pathname === "/api/previews" && method === "DELETE") { deleted = url.searchParams.get("branch") ?? ""; return Response.json({ branch: deleted, rows: 3, deleted: { posts: 2, comments: 1 } }); }
+      if (url.pathname === "/repos/o/r/pulls") return Response.json([{ number: 9, state: "closed", merged_at: "2026-01-01T00:00:00Z", html_url: "u", head: { ref: "feature/x" } }]);
+      if (url.pathname === "/repos/o/r/issues/9/comments" && method === "GET") return Response.json([{ id: 5, body: `${MARKER}\nold` }]);
+      if (url.pathname === "/repos/o/r/issues/comments/5" && method === "PATCH") return Response.json({ id: 5 });
+      return Response.json({ message: `unexpected ${method} ${url.pathname}` }, { status: 500 });
+    });
+    const lines: string[] = [];
+    const out = await removeFlaggedPreview({ branch: "feature/x", of: "shop", target, github: gh, log: (l) => lines.push(l) });
+    expect(deleted).toBe("feature/x");
+    expect(out).toEqual({ branch: "feature/x", rows: 3, deleted: { posts: 2, comments: 1 } });
+    expect(lines[0]).toBe("flagged preview feature/x on shop: 3 row(s) deleted (posts: 2, comments: 1); nothing else on shop was touched");
+    expect(lines.at(-1)).toContain("preview comment updated");
+    expect(calls.some((c) => c.startsWith("DELETE /api/previews?branch=feature%2Fx"))).toBe(true);
+    // a dry run touches neither the rows nor the comment
+    globalThis.fetch = realFetch;
+    const dry: string[] = [];
+    expect(await removeFlaggedPreview({ branch: "feature/x", of: "shop", target, github: gh, dryRun: true, log: (l) => dry.push(l) })).toEqual({ branch: "feature/x", rows: 0, deleted: {} });
+    expect(dry).toEqual(["dry run: would delete the rows marked feature/x on shop and mark the preview comment as removed"]);
+  });
+
+  test("prune --merged: the branches the instance reports, judged by their pull requests", async () => {
+    const branches = [{ branch: "merged", rows: 4, collections: ["posts"] }, { branch: "open", rows: 1, collections: ["posts"] }, { branch: "none", rows: 2, collections: ["posts"] }];
+    const prs: Record<string, { state: string; merged_at: string | null }[]> = { merged: [{ state: "closed", merged_at: "2026-01-01T00:00:00Z" }], open: [{ state: "open", merged_at: null }], none: [] };
+    fakeFetch(async (method, url) => {
+      if (url.pathname === "/api/collections/_superusers/auth-with-password") return Response.json({ token: "tok" });
+      if (url.pathname === "/api/health") return Response.json({ code: 200, data: { canBackup: true } });
+      if (url.pathname === "/api/previews" && method === "GET") return Response.json({ shape: "flagged", branches });
+      if (url.pathname === "/repos/o/r/pulls") { const head = url.searchParams.get("head") ?? ""; const b = head.slice(head.indexOf(":") + 1); return Response.json((prs[b] ?? []).map((p, i) => ({ number: i + 1, html_url: "u", head: { ref: b }, ...p }))); }
+      return Response.json({ message: `unexpected ${method} ${url.pathname}` }, { status: 500 });
+    });
+    expect(await listFlagged(target)).toEqual(branches);
+    const lines: string[] = [];
+    const r = await pruneFlaggedMerged({ of: "shop", target, github: gh, dryRun: true, log: (l) => lines.push(l) });
+    expect(r.removed).toEqual(["merged"]);
+    expect(r.kept).toEqual(["none", "open"]);
+    expect(lines).toContain("dry run: would delete the 4 row(s) marked merged: pull request #1 is merged");
+    expect(lines).toContain("flagged preview open (1 row(s)): kept, pull request #1 is open");
+    expect(lines).toContain("flagged preview none (2 row(s)): kept, no pull request yet");
+    // without GitHub nothing is pruned, and the reason is said
+    const quiet: string[] = [];
+    const r2 = await pruneFlaggedMerged({ of: "shop", target, github: null, log: (l) => quiet.push(l) });
+    expect(r2.removed).toEqual([]); expect(r2.kept).toEqual(["merged", "open", "none"]);
+    expect(quiet[0]).toContain("none pruned (set VOIDBASE_GH_TOKEN");
   });
 });

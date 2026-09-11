@@ -19,6 +19,7 @@ import { nowString, randomString } from "../ids";
 import { fromToken, isSuperuser } from "../auth-slot";
 import { enrich, fetchRecord, recordMatchesRule, type RecordContext } from "../records/service";
 import { rowToValues } from "../records/values";
+import { previewOf, visibleInPreview } from "../records/preview";
 import { trigger } from "../hooks/runtime";
 import { PRESENCE_TOPIC } from "./presence";
 import type { AppEnv, Row } from "../types";
@@ -232,6 +233,9 @@ async function deliver(db: D1Database, bindings: AppEnv["Bindings"], cl: Client,
   if (ch.action === "delete") {
     if (!ch.data) return;
     row = JSON.parse(ch.data) as Row;
+    // the row is gone from the table, so the lane is judged on the event's own copy (records/preview.ts); every
+    // other action goes through fetchRecord, where the condition is already in the SQL
+    if (!visibleInPreview(collection, row, previewOf(ctx.request))) return;
     if (!ctx.superuser) {
       if (rule === null) return;
       if (rule.trim() !== "" && !(await recordMatchesRule(ctx, collection, rule, rowToValues(collection, row)))) return;

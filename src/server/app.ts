@@ -35,7 +35,7 @@ import { translations as translationsPlugin, translationsInfo } from "./plugins/
 import { stripe as stripePlugin } from "./plugins/stripe";
 import { polar as polarPlugin } from "./plugins/polar";
 import { lemonsqueezy as lemonsqueezyPlugin } from "./plugins/lemonsqueezy";
-import { previews as previewsPlugin, previewsInfo } from "./plugins/previews";
+import { previews as previewsPlugin, previewsReport } from "./plugins/previews";
 import { domains as domainsPlugin, domainsInfo } from "./plugins/domains";
 import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
@@ -580,7 +580,7 @@ provideMailLookup(() => using<Mail | undefined>(kernel, "mail@1"));
 // the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface.
 app.get("/api/plugins", async (c) => {
   requireSuperuser(c);
-  return c.json({ ...whatLoaded(kernel), installer: installerInfo(c.env), mail: await mailRoute(c.env), ai: await aiRoute(c.env), observability: (await observing()?.report(c.env)) ?? null, translations: translationsInfo(c.env), domains: domainsInfo(c.env), previews: previewsInfo(c.env), payments: using<Payments | undefined>(kernel, "payments@1")?.route(c.env) ?? { via: "none" } });
+  return c.json({ ...whatLoaded(kernel), installer: installerInfo(c.env), mail: await mailRoute(c.env), ai: await aiRoute(c.env), observability: (await observing()?.report(c.env)) ?? null, translations: translationsInfo(c.env), domains: domainsInfo(c.env), previews: await previewsReport(c.env), payments: using<Payments | undefined>(kernel, "payments@1")?.route(c.env) ?? { via: "none" } });
 });
 mountSqlApi(app);
 

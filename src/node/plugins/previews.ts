@@ -18,13 +18,15 @@
 // CI, WORKERS_CI, WORKERS_CI_BUILD_UUID, WORKERS_CI_COMMIT_SHA and WORKERS_CI_BRANCH), so `voidbase sync --previews`
 // stores the repository on the trigger.
 import { destroyInstance, workersSubdomain, type CfApi, type DestroyResult } from "../../cloud/rest";
-import { PREVIEW_OF_VAR, PREVIEW_VAR, previewPrefix, previewWorkerName, previews } from "../../server/plugins/previews";
+import { PREVIEW_OF_VAR, PREVIEW_VAR, previewPrefix, previewWorkerName, previews, type PreviewShape } from "../../server/plugins/previews";
+import { PREVIEW_HEADER, PREVIEW_PARAM } from "../../server/records/preview";
 import { VERSION } from "../../server/version";
 import type { DeployContext, DeployPlugin } from "../deploy-plugin";
 import { call, canBackup, listBackups, normalizeUrl, short, signIn } from "../migrate";
 import { repoFromGit } from "../sync";
 
 export { branchHash, branchSlug, previewPrefix, previewWorkerName } from "../../server/plugins/previews";
+export type { PreviewShape } from "../../server/plugins/previews";
 
 /** the knob: the same name as the var it bakes; `--preview <branch>` is its flag form, WORKERS_CI_BRANCH its CI source */
 export const PREVIEW_KNOB = PREVIEW_VAR;
@@ -40,9 +42,18 @@ export const GH_TOKEN_KNOB = "VOIDBASE_GH_TOKEN";
 export const REPO_KNOB = "VOIDBASE_PROJECT_REPO";
 /** the branch variable Workers Builds sets in every build */
 export const CI_BRANCH_VAR = "WORKERS_CI_BRANCH";
+/** which shape a preview takes: `instance` (the default, a Worker of its own) or `flagged` (a lane on production) */
+export const SHAPE_KNOB = "VOIDBASE_PREVIEW_SHAPE";
 /** the mark that makes the comment ours to update, never to duplicate */
 export const MARKER = "<!-- voidbase-preview -->";
 export type SeedKind = "schema" | "data" | "none";
+/** the shape the flag or the knob names; unset means an instance of its own, so nothing changes for anyone */
+export function shapeOf(env: Record<string, string | undefined>, flag?: string): PreviewShape {
+  const raw = (flag ?? env[SHAPE_KNOB] ?? "").trim().toLowerCase();
+  if (!raw || raw === "instance") return "instance";
+  if (raw === "flagged") return "flagged";
+  throw new Error(`--shape ${raw} is not one of instance, flagged (${SHAPE_KNOB})`);
+}
 const SEED_TIMEOUT_MS = 120_000;
 const REACH_TIMEOUT_MS = 60_000;
 
@@ -89,15 +100,30 @@ export function pruneDecision(prs: Pick<PullRequest, "state" | "merged">[]): "ke
   return prs.some((p) => p.state === "open") ? "keep" : "remove";
 }
 
-export interface CommentInput { branch: string; url: string | null; of: string; seed: SeedKind; seeded: boolean | string; version?: string; at?: string; removed?: boolean }
+export interface CommentInput { branch: string; url: string | null; of: string; seed: SeedKind; seeded: boolean | string; version?: string; at?: string; removed?: boolean; shape?: PreviewShape }
 /** the comment's body: the marker first, then the address, what it was seeded with, and the version */
 export function previewComment(o: CommentInput): string {
   const at = o.at ?? new Date().toISOString(); const version = o.version ?? VERSION;
+  if ((o.shape ?? "instance") === "flagged") return flaggedComment(o, at, version);
   if (o.removed) return `${MARKER}\n**voidbase preview** for \`${o.branch}\`: removed ${at}. The Worker, its database, its bucket and its queue are gone; a push to the branch makes a new one.`;
   const seed = o.seed === "none" ? "not seeded" : o.seeded === true ? `seeded from \`${o.of}\` (${o.seed})` : `seeding from \`${o.of}\` (${o.seed}) failed${typeof o.seeded === "string" ? `: ${o.seeded}` : ""}`;
   const where = o.url ? `${o.url}\n\n- REST API: ${o.url}/api/\n- Dashboard: ${o.url}/_/` : "no workers.dev address (enable the subdomain on the account)";
   return `${MARKER}\n**voidbase preview** for \`${o.branch}\`: ${where}\n- ${seed}\n- voidbase ${version}, updated ${at}\n\nThe preview goes when the pull request is merged or closed (\`voidbase previews prune --merged\`, which the production build runs with \`${PRUNE_KNOB}=1\`).`;
 }
+
+/** the flagged shape's comment: the same address as production, with the branch on it, and what the shape cannot do */
+function flaggedComment(o: CommentInput, at: string, version: string): string {
+  const head = `${MARKER}\n**voidbase preview** for \`${o.branch}\` (flagged, on \`${o.of}\`)`;
+  if (o.removed) return `${head}: removed ${at}. The branch's rows are gone from \`${o.of}\`; a write carrying \`${PREVIEW_HEADER}: ${o.branch}\` makes new ones.`;
+  const q = `${PREVIEW_PARAM}=${encodeURIComponent(o.branch)}`;
+  const where = o.url
+    ? `${flaggedAddress(o.url, o.branch)}\n\n- REST API: ${o.url}/api/ with \`?${q}\`, or the header \`${PREVIEW_HEADER}: ${o.branch}\` on any request\n- Dashboard: ${o.url}/_/ (production's rows; the branch's are behind the header)`
+    : `no address for \`${o.of}\` (set ${SOURCE_URL_KNOB})`;
+  return `${head}: ${where}\n- no Worker, database, bucket or queue of its own: the branch writes to \`${o.of}\` with a mark, and production reads filter the marked rows out\n- a write to a row \`${o.of}\` already has is refused, not previewed: this shape isolates new rows and cannot isolate a change to an existing one\n- voidbase ${version}, updated ${at}\n\nThe branch's rows go when the pull request is merged or closed (\`voidbase previews prune --merged --shape flagged\`, which the production build runs with \`${PRUNE_KNOB}=1\` and \`${SHAPE_KNOB}=flagged\`).`;
+}
+
+/** where a flagged preview answers: production's own address with the branch on it, which is all the asset layer allows */
+export const flaggedAddress = (url: string, branch: string): string => `${url.replace(/\/$/, "")}/?${PREVIEW_PARAM}=${encodeURIComponent(branch)}`;
 
 /** the one comment marked as ours on the pull request, created the first time and updated after; never a second one */
 export async function upsertPreviewComment(t: GitHubTarget, number: number, body: string): Promise<{ id: number; created: boolean }> {
@@ -233,10 +259,83 @@ export async function pruneMerged(o: { api: CfApi; account: string; production: 
   return { removed, kept };
 }
 
+// ---- the flagged shape: a lane on production, reached over HTTP ------------------------------------------------
+// Nothing is created here, because nothing is created at all: the branch's lane comes into being on its first
+// flagged write, and it goes when its rows do. What the deploy half has to do is say where the preview answers
+// (production's address with the branch on it) and keep the pull request comment true.
+export interface FlaggedTarget { url: string; email: string; password: string }
+export interface FlaggedRemoval { branch: string; rows: number; deleted: Record<string, number> }
+
+/** the branch's rows taken away through the instance's own route (the previews plugin mounts it) */
+export async function removeFlaggedRows(t: FlaggedTarget, branch: string): Promise<FlaggedRemoval> {
+  const url = normalizeUrl(t.url);
+  const token = await signIn({ url, email: t.email, password: t.password }, "production");
+  const r = await call(url, "DELETE", `/api/previews?branch=${encodeURIComponent(branch)}`, { token });
+  if (r.status !== 200) throw new Error(`DELETE ${url}/api/previews?branch=${branch}: ${short(r)}`);
+  const out = r.json as unknown as FlaggedRemoval;
+  return { branch, rows: Number(out?.rows ?? 0), deleted: out?.deleted ?? {} };
+}
+
+/** the branches that have rows on the instance right now, as GET /api/previews reports them */
+export async function listFlagged(t: FlaggedTarget): Promise<{ branch: string; rows: number; collections: string[] }[]> {
+  const url = normalizeUrl(t.url);
+  const token = await signIn({ url, email: t.email, password: t.password }, "production");
+  const r = await call(url, "GET", "/api/previews", { token });
+  if (r.status !== 200) throw new Error(`GET ${url}/api/previews: ${short(r)}`);
+  return ((r.json as unknown as { branches?: { branch: string; rows: number; collections: string[] }[] })?.branches) ?? [];
+}
+
+/** `voidbase deploy --preview <branch> --shape flagged`: no upload, no resource, the address on the pull request */
+export async function flaggedPreview(o: { branch: string; of: string; url: string | null; github: GitHubTarget | null; dryRun?: boolean; log: (l: string) => void }): Promise<void> {
+  const where = o.url ? flaggedAddress(o.url, o.branch) : `${o.of} (address unknown: set ${SOURCE_URL_KNOB})`;
+  o.log(`flagged preview of ${o.of} for branch ${o.branch}: nothing is deployed. The branch writes to ${o.of} with ${PREVIEW_HEADER}: ${o.branch}, production reads filter those rows out, and the preview answers at ${where}`);
+  if (o.dryRun) { o.log(`dry run: would ${o.github ? `post the address on the pull request for ${o.branch} in ${o.github.repo}` : `not comment on the pull request (set ${GH_TOKEN_KNOB} and ${REPO_KNOB})`}`); return; }
+  try { o.log(await commentOnPullRequest(o.github, o.branch, previewComment({ branch: o.branch, url: o.url, of: o.of, seed: "none", seeded: false, shape: "flagged" }))); }
+  catch (e) { o.log(`pull request: not commented (${e instanceof Error ? e.message : e})`); }
+}
+
+/** `voidbase previews remove <branch> --shape flagged`: the branch's rows, and only those, and the comment updated */
+export async function removeFlaggedPreview(o: { branch: string; of: string; target: FlaggedTarget; github: GitHubTarget | null; dryRun?: boolean; log: (l: string) => void }): Promise<FlaggedRemoval> {
+  if (o.dryRun) { o.log(`dry run: would delete the rows marked ${o.branch} on ${o.of} and mark the preview comment as removed`); return { branch: o.branch, rows: 0, deleted: {} }; }
+  const out = await removeFlaggedRows(o.target, o.branch);
+  const where = Object.entries(out.deleted).map(([c, n]) => `${c}: ${n}`).join(", ");
+  o.log(`flagged preview ${o.branch} on ${o.of}: ${out.rows} row(s) deleted${where ? ` (${where})` : ""}; nothing else on ${o.of} was touched`);
+  try { o.log(await commentOnPullRequest(o.github, o.branch, previewComment({ branch: o.branch, url: null, of: o.of, seed: "none", seeded: false, removed: true, shape: "flagged" }), { onlyUpdate: true })); }
+  catch (e) { o.log(`pull request: comment not updated (${e instanceof Error ? e.message : e})`); }
+  return out;
+}
+
+/** the flagged prune: every branch with rows whose pull request is merged or closed loses them */
+export async function pruneFlaggedMerged(o: { of: string; target: FlaggedTarget; github: GitHubTarget | null; dryRun?: boolean; log: (l: string) => void }): Promise<{ removed: string[]; kept: string[] }> {
+  const branches = await listFlagged(o.target);
+  const removed: string[] = [], kept: string[] = [];
+  if (!branches.length) { o.log(`flagged previews on ${o.of}: none`); return { removed, kept }; }
+  if (!o.github) { o.log(`flagged previews on ${o.of}: ${branches.length} found, none pruned (set ${GH_TOKEN_KNOB}, and ${REPO_KNOB} when the checkout has no GitHub origin, to read their pull requests)`); return { removed, kept: branches.map((b) => b.branch) }; }
+  for (const b of branches.sort((x, y) => (x.branch < y.branch ? -1 : 1))) {
+    const prs = await pullRequestsFor(o.github, b.branch); const decision = pruneDecision(prs);
+    if (decision !== "remove") { kept.push(b.branch); o.log(`flagged preview ${b.branch} (${b.rows} row(s)): kept, ${decision === "keep" ? `pull request #${prs[0]!.number} is open` : "no pull request yet"}`); continue; }
+    const pr = prs[0]!;
+    if (o.dryRun) { o.log(`dry run: would delete the ${b.rows} row(s) marked ${b.branch}: pull request #${pr.number} is ${pr.merged ? "merged" : "closed"}`); removed.push(b.branch); continue; }
+    o.log(`flagged preview ${b.branch}: pull request #${pr.number} is ${pr.merged ? "merged" : "closed"}, deleting its rows`);
+    await removeFlaggedPreview({ branch: b.branch, of: o.of, target: o.target, github: o.github, log: o.log });
+    removed.push(b.branch);
+  }
+  return { removed, kept };
+}
+
 // ---- the hooks ------------------------------------------------------------------------------------------------
 const branchOf = (ctx: DeployContext) => (ctx.env[PREVIEW_KNOB] ?? "").trim();
 const productionOf = (ctx: DeployContext) => (ctx.env[PREVIEW_OF_VAR] ?? "").trim();
 const credentialsOf = (env: Record<string, string | undefined>) => ({ email: (env.VOIDBASE_SUPERUSER_EMAIL || env.PB_SUPERUSER_EMAIL || "").trim(), password: env.VOIDBASE_SUPERUSER_PASSWORD || env.PB_SUPERUSER_PASSWORD || "" });
+
+/** where the flagged shape acts: the production instance itself, signed into as a superuser, since it has no Worker */
+export async function flaggedTarget(o: { env: Record<string, string | undefined>; api: CfApi; account: string; production: string }): Promise<FlaggedTarget> {
+  const url = (o.env[SOURCE_URL_KNOB] ?? "").trim() || (await workersSubdomain(o.api, o.account).then((sub) => (sub ? `https://${o.production}.${sub}.workers.dev` : "")));
+  if (!url) throw new Error(`the address of ${o.production} is not known: set ${SOURCE_URL_KNOB}`);
+  const { email, password } = credentialsOf(o.env);
+  if (!email || !password) throw new Error(`VOIDBASE_SUPERUSER_EMAIL and VOIDBASE_SUPERUSER_PASSWORD are needed to read and write ${o.production}'s preview rows`);
+  return { url, email, password };
+}
 
 export const previewsDeploy: DeployPlugin = {
   name: "previews",
@@ -244,6 +343,7 @@ export const previewsDeploy: DeployPlugin = {
   deploy: {
     async before(ctx) {
       const branch = branchOf(ctx); if (!branch) return;
+      if (shapeOf(ctx.env) === "flagged") throw new Error(`${PREVIEW_KNOB}=${branch} with ${SHAPE_KNOB}=flagged, but the flagged shape makes no Worker: the preview is a marked lane on production, so an upload here would put the branch's build on production itself. Run \`voidbase deploy --preview ${branch} --shape flagged\`, which uploads nothing and posts the address.`);
       const of = productionOf(ctx);
       if (!of) throw new Error(`${PREVIEW_KNOB}=${branch} but the deploy did not say which Worker it previews (${PREVIEW_OF_VAR}); use voidbase deploy --preview ${branch}`);
       const expected = previewWorkerName(of, branch);
@@ -258,6 +358,15 @@ export const previewsDeploy: DeployPlugin = {
       if (!branch) {
         // a production deploy: the previews whose pull request is over go, when the build asks for it
         if (!on(ctx.env[PRUNE_KNOB]) || ctx.local || !ctx.api) return;
+        if (shapeOf(ctx.env) === "flagged") {
+          // the flagged prune takes rows and not Workers, so it goes through the instance that was just deployed
+          const url = (ctx.env[SOURCE_URL_KNOB] ?? "").trim() || ctx.url;
+          const creds = credentialsOf(ctx.env);
+          if (!url || !creds.email || !creds.password) { ctx.log(`prune: the flagged prune needs the instance's address and VOIDBASE_SUPERUSER_EMAIL / VOIDBASE_SUPERUSER_PASSWORD; nothing pruned`); return; }
+          try { await pruneFlaggedMerged({ of: ctx.name, target: { url, email: creds.email, password: creds.password }, github: githubOf(ctx.env), dryRun: ctx.dryRun, log: ctx.log }); }
+          catch (e) { ctx.log(`prune: the flagged prune failed (${e instanceof Error ? e.message : e})`); }
+          return;
+        }
         await pruneMerged({ api: ctx.api, account: ctx.account.id, production: ctx.name, github: githubOf(ctx.env), dryRun: ctx.dryRun, log: ctx.log });
         return;
       }

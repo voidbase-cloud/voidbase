@@ -58,18 +58,27 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      go live on your Cloudflare account with VOIDBASE_DEPLOY_CF_API_KEY: creates the D1
                                      database and R2 bucket, writes cloud/ (voidbase cloud init) with wrangler.jsonc,
                                      stores the superuser as worker secrets and runs void deploy --backend cloudflare
-  deploy --preview <branch>          a preview instance for the branch (or VOIDBASE_PREVIEW, which a Workers build sets
-                                     from WORKERS_CI_BRANCH): a Worker of its own, <name>-pr-<slug>, with its own database,
+  deploy --preview <branch> [--shape instance|flagged]
+                                     --shape instance (the default, or VOIDBASE_PREVIEW, which a Workers build sets from
+                                     WORKERS_CI_BRANCH): a Worker of its own, <name>-pr-<slug>, with its own database,
                                      bucket and queue, on workers.dev, seeded from production (VOIDBASE_PREVIEW_SEED=
-                                     schema|data|none), its address posted on the branch's pull request (VOIDBASE_GH_TOKEN)
+                                     schema|data|none), its address posted on the branch's pull request (VOIDBASE_GH_TOKEN).
+                                     --shape flagged (VOIDBASE_PREVIEW_SHAPE): nothing is deployed at all. The branch
+                                     writes to production with X-Voidbase-Preview: <branch> (or ?preview=<branch>) and
+                                     those rows are kept out of every production read; the pull request gets that address
   deploy --remove [--name worker] [--yes] [--dry-run] [--preview <branch>]
                                      take the Worker down: the deploy plugins undo their part (custom domains and
                                      their redirect rules), then the Worker is deleted; the database, the bucket
                                      and the queue stay (voidbase destroy removes those). Asks first unless --yes.
                                      With --preview the branch's preview goes with everything it owns
-  previews [list] [--name worker]    the previews of this project's Worker on the account: branch, address, created
-  previews remove <branch> [--yes]   the same as deploy --remove --preview <branch>
-  previews prune --merged [--dry-run] remove every preview whose pull request is merged or closed (VOIDBASE_GH_TOKEN,
+  previews [list] [--name worker] [--shape instance|flagged]
+                                     the previews of this project's Worker on the account: branch, address, created
+                                     (--shape flagged: the branches with rows on the instance, and how many)
+  previews remove <branch> [--yes] [--shape instance|flagged]
+                                     the same as deploy --remove --preview <branch> (--shape flagged: the branch's rows
+                                     go and nothing else does; a row production already had was never the branch's)
+  previews prune --merged [--dry-run] [--shape instance|flagged]
+                                     remove every preview whose pull request is merged or closed (VOIDBASE_GH_TOKEN,
                                      VOIDBASE_PROJECT_REPO); the production build does this with VOIDBASE_PREVIEW_PRUNE=1
   deploy --void                      deploy to the Void platform instead (void auth login first)
   sync [dir] [--repo owner/name] [--branch main] [--no-build] [--ci] [--no-ci] [--dry-run] [--previews | --no-previews]
@@ -235,6 +244,18 @@ async function removeWorker(preview: string | undefined): Promise<void> {
     if (typed !== name) { console.error(`"${typed}" is not "${name}": nothing deleted`); process.exit(1); }
   }
   await removeDeployment({ name: flags.name, account: flags.account, dryRun: !!flags["dry-run"], preview });
+}
+
+// `--shape instance|flagged` (VOIDBASE_PREVIEW_SHAPE), and the environment the flagged half signs in with: the
+// shell over the project's secrets file, the way every other deploy knob is read.
+async function previewEnvironment(): Promise<Record<string, string>> {
+  const { readSecretsValues, SECRETS_DIR } = await import("../src/node/secrets");
+  return { ...(readSecretsValues(resolve(process.env.VOIDBASE_SECRETS_DIR || SECRETS_DIR)) ?? {}), ...(process.env as Record<string, string>) };
+}
+async function previewShape(): Promise<"instance" | "flagged"> {
+  const { shapeOf } = await import("../src/node/plugins/previews");
+  try { return shapeOf(await previewEnvironment(), typeof flags.shape === "string" ? flags.shape : undefined); }
+  catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 }
 
 switch (cmd) {
@@ -684,6 +705,18 @@ switch (cmd) {
   case "deploy": {
     if (flags.void) { await run("./node_modules/.bin/void", ["deploy"]); break; } // the Void platform (void auth login first)
     if (flags.remove) { await removeWorker(flags.preview); break; }
+    // the flagged shape deploys nothing: the preview is a query against production, so all there is to do is say
+    // where it answers and keep the pull request comment true (src/node/plugins/previews.ts)
+    if (flags.preview && (await previewShape()) === "flagged") {
+      const { deployTarget } = await import("../src/node/deploy-cf");
+      const { flaggedPreview, githubOf, SOURCE_URL_KNOB } = await import("../src/node/plugins/previews");
+      const { workersSubdomain } = await import("../src/cloud/rest");
+      const env = await previewEnvironment();
+      const { api, account, production } = await deployTarget({ name: flags.name, account: flags.account, log: () => undefined });
+      const url = (env[SOURCE_URL_KNOB] ?? "").trim() || (await workersSubdomain(api, account.id).then((sub) => (sub ? `https://${production}.${sub}.workers.dev` : null)));
+      await flaggedPreview({ branch: String(flags.preview), of: production, url, github: githubOf(env), dryRun: "dry-run" in flags, log: (l) => console.log(l) });
+      break;
+    }
     const { deployToCloudflare } = await import("../src/node/deploy-cf");
     await deployToCloudflare({ name: flags.name, account: flags.account, dir: flags.dir, publicDir: flags["public-dir"] ?? flags.publicDir, dryRun: !!flags["dry-run"], regenerate: !!flags.regenerate, queue: flags["no-queue"] ? false : undefined, cron: flags["no-cron"] ? false : undefined, domain: flags.domain as string | undefined, analytics: flags.analytics ? true : undefined, rateLimit: flags["rate-limit"], hub: flags["no-hub"] ? false : undefined, preview: flags.preview, database: flags.database });
     break;
@@ -691,10 +724,38 @@ switch (cmd) {
   case "previews": {
     // the previews of this project's production Worker (src/node/plugins/previews.ts): list, remove one, prune the merged
     const action = sub ?? "list";
-    if (action === "remove" || action === "rm") { if (!rest[0]) { console.error("usage: voidbase previews remove <branch> [--yes]"); process.exit(1); } await removeWorker(rest[0]); break; }
+    const shape = await previewShape();
+    if (action === "remove" || action === "rm") {
+      if (!rest[0]) { console.error(`usage: voidbase previews remove <branch> [--yes]${shape === "flagged" ? " --shape flagged" : ""}`); process.exit(1); }
+      if (shape !== "flagged") { await removeWorker(rest[0]); break; }
+    }
     const { deployTarget } = await import("../src/node/deploy-cf");
-    const { githubOf, listPreviews, pruneMerged } = await import("../src/node/plugins/previews");
+    const { flaggedTarget, githubOf, listFlagged, pruneFlaggedMerged, removeFlaggedPreview, listPreviews, pruneMerged } = await import("../src/node/plugins/previews");
     const { api, account, production } = await deployTarget({ name: flags.name, account: flags.account, log: () => undefined });
+    // the flagged shape has no Workers to look at: everything it knows is a row on the production instance
+    if (shape === "flagged") {
+      const env = await previewEnvironment();
+      const target = await flaggedTarget({ env, api, account: account.id, production });
+      if (action === "remove" || action === "rm") {
+        const out = await removeFlaggedPreview({ branch: rest[0]!, of: production, target, github: githubOf(env), dryRun: "dry-run" in flags, log: (l) => console.log(l) });
+        console.log(`${out.rows} row(s) ${"dry-run" in flags ? "would be deleted" : "deleted"}`);
+        break;
+      }
+      if (action === "list" || action === "ls") {
+        const list = await listFlagged(target);
+        if (!list.length) { console.log(`no flagged previews on ${production} (voidbase deploy --preview <branch> --shape flagged names one; its first write makes it)`); break; }
+        console.log(`${list.length} flagged preview(s) on ${production}:`);
+        for (const b of list) console.log(`  ${b.branch.padEnd(32)} ${String(b.rows).padStart(6)} row(s)  ${b.collections.join(", ")}`);
+        break;
+      }
+      if (action === "prune") {
+        if (!("merged" in flags)) { console.error("usage: voidbase previews prune --merged [--dry-run] --shape flagged"); process.exit(1); }
+        const r = await pruneFlaggedMerged({ of: production, target, github: githubOf(env), dryRun: "dry-run" in flags, log: (l) => console.log(l) });
+        console.log(`${r.removed.length} ${"dry-run" in flags ? "would be removed" : "removed"}, ${r.kept.length} kept`);
+        break;
+      }
+      console.error("usage: voidbase previews [list] | remove <branch> [--yes] | prune --merged [--dry-run], each with --shape flagged"); process.exit(1);
+    }
     if (action === "list" || action === "ls") {
       const list = await listPreviews(api, account.id, production);
       if (!list.length) { console.log(`no previews of ${production} on account ${account.name} (voidbase deploy --preview <branch> makes one)`); break; }
@@ -704,8 +765,7 @@ switch (cmd) {
     }
     if (action === "prune") {
       if (!("merged" in flags)) { console.error("usage: voidbase previews prune --merged [--dry-run]"); process.exit(1); }
-      const { readSecretsValues, SECRETS_DIR } = await import("../src/node/secrets");
-      const env = { ...(readSecretsValues(resolve(process.env.VOIDBASE_SECRETS_DIR || SECRETS_DIR)) ?? {}), ...(process.env as Record<string, string>) };
+      const env = await previewEnvironment();
       const r = await pruneMerged({ api, account: account.id, production, github: githubOf(env), dryRun: "dry-run" in flags, log: (l) => console.log(l) });
       console.log(`${r.removed.length} ${"dry-run" in flags ? "would be removed" : "removed"}, ${r.kept.length} kept`);
       break;

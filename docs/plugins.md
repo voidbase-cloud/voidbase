@@ -1158,11 +1158,29 @@ which URL to report. The control plane (`src/cloud/client.ts`) still attaches do
 ## A preview per pull request: previews
 
 `previews` is the second plugin whose work is at deploy time, and the one the roadmap's "Preview environments, as
-an official plugin" asked for in its first shape: a new instance for the branch, seeded from the production schema,
-with a working address that disappears on merge, the pull request carrying the address. The runtime half
-(`src/server/plugins/previews.ts`) provides nothing and reports `previews: { of, branch }` on `/api/plugins` from
-the two vars the deploy baked (nothing on a production instance); it also holds the naming rule, because both halves
-need it. The deploy half (`src/node/plugins/previews.ts`) does the rest.
+an official plugin" asked for. It has two shapes, and `--shape` on the deploy chooses between them per branch:
+
+| | `--shape instance` (the default) | `--shape flagged` |
+| --- | --- | --- |
+| What is made | a Worker of its own, with its own database, bucket and queue | nothing at all |
+| Where the branch's rows live | in the preview's database | in production's, marked `_preview = <branch>` |
+| The address | `https://<name>-pr-<slug>.<subdomain>.workers.dev` | production's, with `?preview=<branch>` |
+| The branch's code | deployed | not deployed: production's code answers |
+| Isolation | total | new rows only; a change to a row production has is refused |
+| What it costs | a Worker, a D1, an R2 bucket and a queue per open pull request | nothing |
+| It goes by | the Worker being deleted | its rows being deleted |
+
+Choose `instance` unless an instance is expensive or the data matters: it is the only one of the two that isolates
+everything, and it is the default so that nothing changes for anyone. Choose `flagged` when the thing being
+reviewed is content or data rather than code (a batch of records, a migration's output, a seeded catalogue), when
+the production database is the only one with the data worth looking at, or when a pull request that opens for an
+hour should not spend a Worker. The two shapes do not exclude each other: a branch may have an instance today and a
+flagged lane tomorrow, and the flagged lane exists on every instance whether or not anyone has deployed anything.
+
+The runtime half (`src/server/plugins/previews.ts`) reports `previews: { shape, of, branch }` on `/api/plugins`
+(`shape: "instance"` with the two vars the deploy baked; `shape: "flagged"` with `branches`, the branches that have
+rows here, on every other instance) and mounts the two routes the flagged shape needs; it also holds the naming
+rule, because both halves need it. The deploy half (`src/node/plugins/previews.ts`) does the rest.
 
 **The name.** `voidbase deploy --preview <branch>` (or `VOIDBASE_PREVIEW=<branch>`, which a Workers build sets from
 `WORKERS_CI_BRANCH`) targets `<name>-pr-<slug>`, where the slug is the branch lowercased, every run of characters
@@ -1205,12 +1223,69 @@ command that removes them there). `voidbase previews` lists the previews of the 
 `<name>-pr-*` on the account, with the branch read back from its vars, the address and the creation date), and
 `voidbase previews prune --merged` is the prune above from a laptop.
 
-`test/unit/previews-plugin.test.ts` measures the naming rule, the knobs, `before`, the domains plugin standing down,
-the comment's body and its post-once-update-after behaviour against a fake GitHub, the prune decision against fake
-pull request states and the seeding sequence against two fake instances; `test/deploy-cf.ts` runs a `--preview` dry
+### The flagged shape: a preview as a query
+
+`voidbase deploy --preview <branch> --shape flagged` (or `VOIDBASE_PREVIEW_SHAPE=flagged`) **deploys nothing**. It
+resolves production's address, says what a flagged preview is, and posts or updates the pull request comment. That
+is the whole deploy-time half, because the lane is not a thing that has to be created: it comes into being on the
+branch's first flagged write and it goes when those rows do. A deploy that would upload a Worker with the knob set
+is refused in `before` with the reason, rather than quietly putting the branch's build on production.
+
+**The mark.** Every collection a flagged write reaches gains a `_preview` text column, added the first time one does
+and never otherwise, through the collections service (`updateCollection`), so the `_collections` row, the table and
+the panel are one thing. It is a `system` and `hidden` field: `recordToJSON` drops it from every answer the way it
+drops any hidden field, `writableFields` leaves it out of `can-update`, a non-superuser cannot filter or sort by it,
+and the write path sets it from the request and overwrites whatever the body said, so no client can put a row in a
+lane it is not in, or take one out. A request carrying `X-Voidbase-Preview: <branch>` writes `_preview = <branch>`;
+a request without one writes `''`. System collections and views never get the column.
+
+**The filter.** `selectSQL` in `src/server/records/service.ts` is where every read's SQL is built: the list, the
+list's count, and `fetchRecord`, which is behind the view route, `can-update`, the update and delete path's own
+fetch, and the realtime feed's create and update events. The lane condition is added there, so a `filter`, a `sort`,
+a page, the total and the feed cannot disagree about which rows exist. The expander runs the only other queries
+against a collection's table (`fetchAllowed` and `fetchBackRelated` in `src/server/records/expand.ts`) and carries
+the same condition, so an expanded record and a back-relation are judged as the list is. The feed's delete event
+carries the row rather than reading it, so `deliver` judges that copy with `visibleInPreview`. The condition is
+`_preview = ''` for a request with no branch, and `_preview = '' OR _preview = <branch>` for one with a branch; it
+applies to superusers too, because a lane production's own reads can see is not a lane. A collection with no column
+gets no condition at all, which is why an instance nobody previews is answered exactly as it was before.
+
+**Where the header comes from.** The header, or `?preview=<branch>`, and the pull request comment hands out the
+second. The `<branch>--<host>` form is not what was built: on Cloudflare a hostname that arbitrary needs a wildcard
+custom hostname on a zone with an advanced certificate, and `workers.dev` gives a Worker exactly one name, so there
+is nothing for the asset layer or a `_redirects` rule to rewrite from. The query parameter needs none of that and
+reaches the Worker on every `/api/` request, which is where the records API lives, so the comment's address is
+`https://<production>/?preview=<branch>` and its REST line is the same with the parameter or the header. A value
+that is not a branch name (`^[A-Za-z0-9][\w./-]{0,99}$`) is read as no branch at all: the request is production's.
+
+**What is not reversible, said plainly.** A flagged write that changes a row production already has *is* a change to
+production; there is no copy to change instead. So flagged mode isolates **new** rows and cannot isolate an update
+to an existing one, and rather than do it silently the write path refuses: an update or a delete under a preview
+header, of a row whose mark is not that branch, is a 400 naming the row and pointing at `--shape instance`. A
+production request is refused nothing, and a branch may change and delete its own rows freely. Two more limits worth
+saying out loud: a view collection only filters if its query selects `_preview` (one that does not shows both lanes,
+because it has no column to judge by); and a flagged write can still hit a unique index, a required relation or a
+cascade that a production row is part of, because those are the table's, not the lane's.
+
+**Cleaning up.** `voidbase previews remove <branch> --shape flagged` signs into production and calls
+`DELETE /api/previews?branch=<branch>` (superuser), which deletes every row marked with that branch in every
+collection that has the column, with the files those rows owned, and nothing else; then the pull request comment
+becomes "removed". `voidbase previews prune --merged --shape flagged` does that for every branch `GET /api/previews`
+reports whose pull request is merged or closed, and a production deploy with `VOIDBASE_PREVIEW_PRUNE=1` and
+`VOIDBASE_PREVIEW_SHAPE=flagged` runs it in `after`. `voidbase previews list --shape flagged` lists the branches with
+rows and how many. The delete is straight SQL, so a connected realtime client does not get a delete event for those
+rows; its next read is correct.
+
+`test/unit/previews-plugin.test.ts` measures the naming rule, the knobs (the seed kind and the shape), `before`, the
+domains plugin standing down, the comment's body for both shapes and its post-once-update-after behaviour against a
+fake GitHub, the prune decision against fake pull request states, the seeding sequence against two fake instances,
+and the flagged remove and prune against a fake instance. `test/unit/preview-flag.test.ts` is the flagged shape's
+records half on a real database: the column added on the first flagged write and on no other write, the filter on a
+list, its count, a filter, a sort, the view route, `fetchRecord`, a forward expand, a back-relation expand and a view
+collection, the mark that no body can set, the refusal on a production row, the removal taking one branch's rows
+only, and an instance nobody previews being answered exactly as before. `test/deploy-cf.ts` runs a `--preview` dry
 run, `after`, the listing, `--remove --preview` and the prune against the mock's Workers, D1, R2, queues, pull
-requests and comments. What the roadmap's second shape describes (the same instance with the branch's writes flagged
-as preview) is not built: every preview is a whole instance.
+requests and comments.
 
 ## The two core plugins: auth and observability
 

@@ -523,7 +523,12 @@ is a whole instance for the branch (`<name>-pr-<slug>`, its own database, bucket
 from production's schema through the backups API, its address posted once on the pull request and updated after,
 gone with everything it owns when the pull request is merged or closed (`voidbase previews prune --merged`, which
 the production build runs), and `voidbase sync --previews` is the second Workers Builds trigger that deploys every
-other branch that way; (2026-09-11) the first payment provider: `stripe`, a shipped plugin providing
+other branch that way, while (2026-09-11) `--shape flagged` is the second shape and deploys nothing at all: the
+branch writes to production under `X-Voidbase-Preview: <branch>` (or `?preview=<branch>`, which is the address the
+pull request gets), every such row carries a hidden `_preview` mark added to the collection on the branch's first
+write, every read filters on it at the one seam all reads share, and `voidbase previews remove --shape flagged`
+deletes those rows instead of a Worker, with the honest limit written down that it isolates new rows and refuses a
+write to a row production already has; (2026-09-11) the first payment provider: `stripe`, a shipped plugin providing
 `payments@1` over fetch alone, owning `customers`, `subscriptions` and `payments` and its own signed webhook, and
 (2026-09-11) `polar` and `lemonsqueezy` behind the same interface: what the three share moved into
 `payments-shared.ts`, each provider file is its knobs, its calls, its signature and its events, and the three are

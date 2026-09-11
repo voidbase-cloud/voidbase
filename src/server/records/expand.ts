@@ -6,6 +6,7 @@ import { all, ident } from "../db";
 import { compileFilter, renderJoin, type RequestInfo } from "../filter/compile";
 import type { AuthRecord, Row } from "../types";
 import { recordToJSON } from "./json";
+import { previewOf, previewScope } from "./preview";
 import { fromColumn } from "./values";
 
 export interface ExpandContext {
@@ -96,6 +97,9 @@ async function fetchAllowed(ctx: ExpandContext, c: Collection, ids: string[]): P
     ruleParams = compiled.params;
     joins = compiled.joins.map(renderJoin).join(" ");
   }
+  // an expanded record is a read like any other: the preview lane applies to it exactly as it does to the list
+  const scope = previewScope(c, previewOf(ctx.request));
+  if (scope) { ruleSql += ` AND ${scope.sql}`; ruleParams = [...ruleParams, ...scope.params]; }
   for (let i = 0; i < ids.length; i += 80) {
     const chunk = ids.slice(i, i + 80);
     const rows = await all(ctx.db, `SELECT DISTINCT ${ident(c.name)}.* FROM ${ident(c.name)} ${joins} WHERE ${ident(c.name)}.id IN (${chunk.map(() => "?").join(",")})${ruleSql}`, [...chunk, ...ruleParams]);
@@ -116,6 +120,9 @@ async function fetchBackRelated(ctx: ExpandContext, c: Collection, backField: Fi
     ruleParams = compiled.params;
     joins = compiled.joins.map(renderJoin).join(" ");
   }
+  // an expanded record is a read like any other: the preview lane applies to it exactly as it does to the list
+  const scope = previewScope(c, previewOf(ctx.request));
+  if (scope) { ruleSql += ` AND ${scope.sql}`; ruleParams = [...ruleParams, ...scope.params]; }
   const out: Row[] = [];
   for (let i = 0; i < ids.length; i += 80) {
     const chunk = ids.slice(i, i + 80);

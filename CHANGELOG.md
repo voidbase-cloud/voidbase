@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.40](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.39...v0.9.0-beta.40) (2026-09-11)
+
+* fix(adapter): a guarded panel's entry is entry.html, so the guard can read it
+
 ## [0.9.0-beta.39](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.38...v0.9.0-beta.39) (2026-09-11)
 
 * feat(adapter): the admin panel under your own path, behind your own check

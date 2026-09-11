@@ -12,6 +12,13 @@ calls are asynchronous on Workers, the bundler rewrites the file so each of thos
 enclosing function becomes async; `e.next()` is awaited too. Ordinary synchronous-looking PocketBase code works
 unchanged. `require("./other.js")` resolves against the hooks directory bundle.
 
+The rewrite follows names. A call to a function the file declares is awaited once that function has become async,
+but a function handed over as a value and called through a parameter is not: in `run("seed", seedRecords)`, the
+`fn()` inside `run` gets no `await`, so its errors escape a `try` around it and the writes it started are cut off when
+the handler returns. Call such functions directly. The demo's hourly reset was written the other way for one hour on
+2026-09-11, and it saved one record, lost the rest, and reported no failure. `compileHooksDir(dir)` in
+`hooks-plugin.ts` returns the rewritten source, which is the quick way to see which calls got their `await`.
+
 ```js
 /// <reference path="../pb_data/types.d.ts" />
 routerAdd("GET", "/api/hello", (e) => {

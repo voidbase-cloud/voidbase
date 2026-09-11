@@ -12,7 +12,7 @@ mkdirSync(`${dir}/pb_secrets`); writeFileSync(`${dir}/pb_secrets/main.ts`, `impo
 mkdirSync(`${root}/shopdemo/sk/build`, { recursive: true }); writeFileSync(`${root}/shopdemo/sk/build/index.html`, "<title>app</title>"); // a frontend build next door
 writeFileSync(`${dir}/package.json`, JSON.stringify({ name: "vb", private: true, dependencies: { "@voidbase-cloud/voidbase": "link:@voidbase-cloud/voidbase" } }));
 writeFileSync(`${dir}/main.ts`, `export function register(app: { router: unknown; hooks: Record<string, (...a: unknown[]) => unknown> }) { app.hooks.routerAdd!("GET", "/api/ts-hello", (e: { json: (s: number, d: unknown) => unknown }) => e.json(200, { message: "hi" })); }\n`);
-const run = (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawnSync(["bun", BIN, ...args], { cwd: dir, env: { ...process.env, CLOUDFLARE_API_BASE: MOCK, VOIDBASE_DEPLOY_CF_API_KEY: "", CLOUDFLARE_API_TOKEN: "", VOIDBASE_SUPERUSER_EMAIL: "", VOIDBASE_SUPERUSER_PASSWORD: "", PB_SUPERUSER_EMAIL: "", PB_SUPERUSER_PASSWORD: "", VOIDBASE_HOOKS_DIR: "", VOIDBASE_MIGRATIONS_DIR: "", VOIDBASE_MAIL_DOMAIN: "", ...env } }); return { code: p.exitCode, out: new TextDecoder().decode(p.stdout) + new TextDecoder().decode(p.stderr) }; };
+const run = (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawnSync(["bun", BIN, ...args], { cwd: dir, env: { ...process.env, CLOUDFLARE_API_BASE: MOCK, VOIDBASE_DEPLOY_CF_API_KEY: "", CLOUDFLARE_API_TOKEN: "", VOIDBASE_SUPERUSER_EMAIL: "", VOIDBASE_SUPERUSER_PASSWORD: "", PB_SUPERUSER_EMAIL: "", PB_SUPERUSER_PASSWORD: "", VOIDBASE_HOOKS_DIR: "", VOIDBASE_MIGRATIONS_DIR: "", VOIDBASE_MAIL_DOMAIN: "", VOIDBASE_AI: "", ...env } }); return { code: p.exitCode, out: new TextDecoder().decode(p.stdout) + new TextDecoder().decode(p.stderr) }; };
 try {
   await fetch(`${MOCK}/__calls`, { method: "DELETE" });
   const noToken = run(["deploy", "--dry-run"]);
@@ -144,6 +144,15 @@ try {
   const bareCfg = existsSync(`${PKG}/.cloud/bare-api/wrangler.jsonc`) ? readFileSync(`${PKG}/.cloud/bare-api/wrangler.jsonc`, "utf8") : "";
   check("VOIDBASE_DEPLOY_QUEUE/ANALYTICS/RATE_LIMIT=0 leave only D1 and R2", noExtras.code === 0 && !existsSync(`${PKG}/.cloud/bare-api/queues`) && !bareCfg.includes("ratelimits") && !bareCfg.includes("analytics_engine_datasets") && !bareCfg.includes("durable_objects") && !readFileSync(`${PKG}/.cloud/bare-api/vite.config.ts`, "utf8").includes("hubEntry") && bareCfg.includes("d1_databases"), noExtras.out.slice(-200));
   check("without VOIDBASE_MAIL_DOMAIN there is no send_email binding", !bareCfg.includes("send_email") && !cfg.includes("send_email"), bareCfg.slice(0, 200));
+  check("without VOIDBASE_AI there is no ai binding and no VOIDBASE_AI var", !/"ai":/.test(bareCfg) && !/"ai":/.test(cfg) && !readFileSync(`${PKG}/.cloud/bare-api/.env`, "utf8").includes("VOIDBASE_AI"), bareCfg.slice(0, 200));
+  // Workers AI: the ai binding, the model baked as a var, the plan names it; config only, nothing created on the account
+  const aiOn = run(["deploy", "--dry-run", "--name", "ai-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_AI: "1" });
+  const aiCfg = readFileSync(`${PKG}/.cloud/ai-api/wrangler.jsonc`, "utf8"); const aiEnv = readFileSync(`${PKG}/.cloud/ai-api/.env`, "utf8");
+  check("VOIDBASE_AI=1: the ai binding AI in the config, the default model baked as VOIDBASE_AI, the plan names it", aiOn.code === 0 && /"ai": \{\s*"binding": "AI"\s*\}/.test(aiCfg) && /^VOIDBASE_AI=@cf\/meta\/llama-3\.3-70b-instruct-fp8-fast$/m.test(aiEnv) && /bindings: .*Workers AI \(AI, @cf\/meta\/llama-3\.3-70b-instruct-fp8-fast\)/.test(aiOn.out), `${aiOn.out.slice(-300)} :: ${aiEnv}`);
+  const aiNamed = run(["deploy", "--dry-run", "--name", "ai-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_AI: "@cf/qwen/qwen3-30b-a3b-fp8" });
+  check("VOIDBASE_AI=<model>: that model is the var", aiNamed.code === 0 && /^VOIDBASE_AI=@cf\/qwen\/qwen3-30b-a3b-fp8$/m.test(readFileSync(`${PKG}/.cloud/ai-api/.env`, "utf8")) && /"binding": "AI"/.test(readFileSync(`${PKG}/.cloud/ai-api/wrangler.jsonc`, "utf8")), aiNamed.out.slice(-200));
+  const aiBad = run(["deploy", "--dry-run", "--name", "ai-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_AI: "llama" });
+  check("VOIDBASE_AI that is neither 1 nor a model name is refused before anything is touched", aiBad.code === 1 && /VOIDBASE_AI=llama is neither 1 nor a Workers AI model name/.test(aiBad.out), aiBad.out.slice(-200));
   // a sending domain: the send_email binding, the domain baked as a var, and what the token could see on the account
   const mailOn = run(["deploy", "--dry-run", "--name", "mail-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_MAIL_DOMAIN: "Example.com" });
   const mailCfg = readFileSync(`${PKG}/.cloud/mail-api/wrangler.jsonc`, "utf8"); const mailEnv = readFileSync(`${PKG}/.cloud/mail-api/.env`, "utf8");
@@ -156,5 +165,5 @@ try {
   check("a domain with no zone on the account: bound anyway, and told to add the domain to Cloudflare first", mailNoZone.code === 0 && /mail: mail\.example\.org bound as SEND_EMAIL, but no zone on account acc123 covers it: add the domain to Cloudflare first, then onboard/.test(mailNoZone.out), mailNoZone.out.split("\n").filter((l) => /^mail:/.test(l)).join(" | "));
   const mailAddress = run(["deploy", "--dry-run", "--name", "mail-api"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_MAIL_DOMAIN: "noreply@example.com" });
   check("an address instead of a domain is refused before anything is touched", mailAddress.code === 1 && /VOIDBASE_MAIL_DOMAIN=noreply@example\.com is not a domain name/.test(mailAddress.out), mailAddress.out.slice(-200));
-} finally { rmSync(root, { recursive: true, force: true }); for (const d of ["my-shop-api", "noqueue-api", "bare-api", "mail-api"]) rmSync(`${PKG}/.cloud/${d}`, { recursive: true, force: true }); rmSync(PROJECT, { recursive: true, force: true }); }
+} finally { rmSync(root, { recursive: true, force: true }); for (const d of ["my-shop-api", "noqueue-api", "bare-api", "mail-api", "ai-api"]) rmSync(`${PKG}/.cloud/${d}`, { recursive: true, force: true }); rmSync(PROJECT, { recursive: true, force: true }); }
 console.log(`\n${pass} pass, ${fail} fail`); process.exit(fail ? 1 : 0);

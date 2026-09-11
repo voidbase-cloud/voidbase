@@ -25,7 +25,8 @@ import { VERSION } from "../version";
 import type { Plugin } from "./manifest";
 import { buildDocument, callerOf, type OpenApiSource } from "./openapi";
 
-const defaultSource: OpenApiSource = {
+/** the instance's own collections and settings: what the shipped mcp and ai plugins read */
+export const defaultSource: OpenApiSource = {
   collections: (env) => listCollections(env.DB),
   appName: async (env) => String((await loadSettings(env.DB)).meta.appName ?? ""),
 };
@@ -44,13 +45,13 @@ const rpcError = (id: Id, code: number, message: string, data?: unknown) => ({ j
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 // --- tools from the document -----------------------------------------------------------------------------------------
-type Schema = Record<string, unknown>;
+export type Schema = Record<string, unknown>;
 interface Parameter { name: string; in: "query" | "path"; description?: string; required?: boolean; schema?: Schema }
 interface Operation { summary?: string; description?: string; parameters?: Parameter[]; requestBody?: { content?: Record<string, { schema?: Schema }> } }
-type Document = { paths: Record<string, Record<string, Operation>>; components: { schemas: Record<string, Schema> } };
+export type Document = { paths: Record<string, Record<string, Operation>>; components: { schemas: Record<string, Schema> } };
 
 /** what a tool runs: the route, and where each argument goes */
-interface Tool {
+export interface Tool {
   name: string;
   description: string;
   inputSchema: Schema;
@@ -135,6 +136,29 @@ export function requestOf(tool: Tool, args: Record<string, unknown>, base: strin
   return { url: url.toString(), init: { method: tool.method, headers, body } };
 }
 
+/** the caller's document, from the source: the routes this request's token may call (the ai plugin asks the same) */
+export async function documentFor(source: OpenApiSource, c: Context<AppEnv>, version: string): Promise<Document> {
+  const collections = await source.collections(c.env);
+  const name = (await source.appName(c.env).catch(() => "")).trim();
+  return buildDocument({ collections, caller: callerOf(c.get("auth")), title: name || "voidbase", origin: new URL(c.req.url).origin, version }) as unknown as Document;
+}
+
+/**
+ * Run one tool the way tools/call does: voidbase_describe answers the document, everything else calls the
+ * instance's own route in process on the app the plugin is mounted on, the caller's token forwarded, so the rules
+ * judge the call the way they judge any request. The answer is the route's text and whether it was a non-2xx;
+ * a missing argument throws (an RpcError for the MCP handler, an Error for anyone else).
+ */
+export async function runTool(app: Hono<AppEnv>, c: Context<AppEnv>, doc: Document, tool: Tool, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
+  if (tool.builtin === "describe") return { text: JSON.stringify(doc), isError: false };
+  const { url, init } = requestOf(tool, args, c.req.url, c.req.header("authorization") ?? "");
+  let executionCtx: ExecutionContext | undefined;
+  try { executionCtx = c.executionCtx; } catch { executionCtx = undefined; }
+  const r = await app.request(url, init, c.env, executionCtx);
+  const answer = await r.text();
+  return { text: answer.trim() || JSON.stringify({ status: r.status }), isError: r.status < 200 || r.status >= 300 };
+}
+
 // --- the server ------------------------------------------------------------------------------------------------------
 const text = (value: unknown, isError = false) => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }], ...(isError ? { isError: true } : {}) });
 
@@ -155,11 +179,7 @@ function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource) 
     if (req.method.startsWith("notifications/")) return c.body(null, 202);
     if (isNotification) return c.json(rpcError(null, INVALID_REQUEST, "A request needs an id; only notifications/* go without one."), 400);
     const params = isObject(req.params) ? req.params : {};
-    const document = async () => {
-      const collections = await source.collections(c.env);
-      const name = (await source.appName(c.env).catch(() => "")).trim();
-      return buildDocument({ collections, caller: callerOf(c.get("auth")), title: name || "voidbase", origin: new URL(c.req.url).origin, version }) as unknown as Document;
-    };
+    const document = () => documentFor(source, c, version);
     try {
       switch (req.method) {
         case "initialize": {
@@ -179,14 +199,9 @@ function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource) 
           if (!tool) throw new RpcError(INVALID_PARAMS, `There is no tool called ${JSON.stringify(name)} for this token.`);
           if (params.arguments !== undefined && !isObject(params.arguments)) throw new RpcError(INVALID_PARAMS, "arguments must be an object.");
           const args = isObject(params.arguments) ? params.arguments : {};
-          if (tool.builtin === "describe") return c.json(rpcResult(id, text(doc)));
-          const { url, init } = requestOf(tool, args, c.req.url, c.req.header("authorization") ?? "");
           // the instance's own route, in process: the same middleware, the same rules, the caller's own token
-          let executionCtx: ExecutionContext | undefined;
-          try { executionCtx = c.executionCtx; } catch { executionCtx = undefined; }
-          const r = await app.request(url, init, c.env, executionCtx);
-          const answer = await r.text();
-          return c.json(rpcResult(id, text(answer.trim() || JSON.stringify({ status: r.status }), r.status < 200 || r.status >= 300)));
+          const ran = await runTool(app, c, doc, tool, args);
+          return c.json(rpcResult(id, text(ran.text, ran.isError)));
         }
         default: throw new RpcError(METHOD_NOT_FOUND, `${req.method} is not a method this server has: initialize, ping, tools/list, tools/call.`);
       }

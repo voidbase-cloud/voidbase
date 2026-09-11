@@ -333,6 +333,60 @@ untouched. `GET /api/plugins` says where this instance's own mail (the settings'
 the host, or `via: "log"` with `refused` carrying the reason when the sender is off the domain and nothing else can
 take it. `test/unit/mail-plugin.test.ts` measures the MIME, the domain rule, the fake binding and the fallback.
 
+## A chat over the instance: ai
+
+`ai` is a shipped plugin (tier `official`, `src/server/plugins/ai.ts`): a chat over the instance on Workers AI,
+scoped to whoever is asking. It is the first piece of the roadmap's "Workers AI and Think, as official plugins":
+the chat, without the Durable Object memory Think would add. `POST /api/ai/chat` takes
+`{ messages: [{ role, content }], model?, tools?: boolean, maxSteps?: number }` from any caller (anonymous, a user,
+a superuser) and answers `{ message: { role: "assistant", content }, steps: [{ tool, arguments, result }], model }`,
+where each step is one tool call the model made, with the first 500 characters of what the tool answered.
+
+**The knob.** `VOIDBASE_AI=1` (or a model name: `VOIDBASE_AI=@cf/meta/llama-3.3-70b-instruct-fp8-fast`, which is
+also what `1` means and the model the route uses when a request names none; from the environment or
+`pb_secrets/secrets.json`). With it, `voidbase deploy` adds the Workers AI binding to `workerConfig` as
+`ai: { binding: "AI" }` and bakes the model as a var of the knob's name; the binding is configuration only, nothing
+on the account to create, and Workers AI is metered per neuron on every plan (a free allowance daily, then paid).
+Without the knob nothing changes: no binding, `POST /api/ai/chat` answers 503
+`{ message: "Workers AI is not bound; deploy with VOIDBASE_AI=1" }`, and `GET /api/plugins` reports
+`ai: { via: "none" }` (with the binding: `{ via: "workers-ai", model }`). A request may name another `model`; the
+binding's model is the default.
+
+**The scoping, which is the MCP server's.** The plugin writes no tool list. The tools the model may call are what
+`mcp` derives for the same token (`toolsOf` over the caller's OpenAPI document, "An agent's view of the instance"
+above), handed to Workers AI in its OpenAI-style `tools` shape, `{ type: "function", function: { name, description,
+parameters } }`, with each tool's `inputSchema` as the parameters: anonymous sees the public API, a user what that
+user may call, a superuser everything, and a locked collection is not a tool the model can name. A call the model
+makes runs exactly as `tools/call` runs it (`runTool`, exported from `mcp.ts`): the instance's own route in
+process, with the caller's token forwarded, so the rules judge it and nothing in the plugin decides access. The
+system prompt names the instance (the settings' app name), says what the caller is (anonymous, a record of which
+collection, or a superuser) and tells the model to use the tools for facts and never to invent an id or a value.
+`tools: false` sends none.
+
+**The loop.** Workers AI's traditional function calling (developers.cloudflare.com/workers-ai/features/function-calling/traditional,
+and Cloudflare's own `@cloudflare/ai-utils` `runWithTools`, which this follows; the types in
+`@cloudflare/workers-types` 4.20260702.1, `AiTextGenerationInput` and `AiTextGenerationOutput`): `env.AI.run(model,
+{ messages, tools })` answers `response` and, when it wants a tool, `tool_calls: [{ name, arguments }]`; the
+OpenAI-style `{ id, type: "function", function: { name, arguments: "<json>" } }` the types also declare is read
+the same way. Each call goes back as an assistant message carrying the call and a `{ role: "tool", name, content }`
+message carrying the route's answer (a refusal, a 404 or a missing argument is a result the model sees, not an
+error), and the model is asked again, until it answers without a call or `maxSteps` (default 6, at most 20) tool
+steps have run, after which the answer says it stopped. No streaming: Workers AI streams a call's text, but a call
+that streams cannot also hand back `tool_calls` to act on, and Cloudflare's helper streams only one extra final
+call made without tools; `stream: true` is refused with that reason.
+
+**The cap.** 30 requests per minute per caller (the signed-in record, else the client IP), counted in memory, so per
+isolate: the hardening plugin's rate limits are the settings' rules keyed by path, which a superuser can add one for
+(`POST /api/ai/chat`), and the deploy's `RATE_LIMITER` ceiling applies on top; this cap is the floor that is there
+without any settings, because every call is metered. `test/unit/ai.test.ts` scripts a fake `AI` binding per test:
+the tool list per caller, the loop feeding a result back, the runaway stopped, the 503, the plugins field, the cap.
+
+**What Think would add, later.** Think is Cloudflare's chat harness over a Durable Object's SQLite with Workers AI
+behind it: the conversation persists, an agent can be driven as a sub-agent over RPC, and the panel or a preview
+environment can mount it. This plugin is the stateless half, one request in and one answer out, and it is what the
+Think plugins would call, because the scoping question they all have is answered here once: the MCP server's tool
+list is the instance as the caller may see it, and a Think agent needs nothing more than that list and a token.
+
 ## Auth is the core plugin
 
 Auth left the core on 2026-09-09 (plan.md, decision 0.3): `src/server/plugins/auth.ts` is a plugin of tier `core`

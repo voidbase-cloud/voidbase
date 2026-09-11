@@ -51,6 +51,7 @@
     "./plugins/mcp": "./src/server/plugins/mcp.ts",
     "./plugins/seo": "./src/server/plugins/seo.ts",
     "./plugins/mail": "./src/server/plugins/mail.ts",
+    "./plugins/ai": "./src/server/plugins/ai.ts",
     "./plugins/collections": "./src/server/plugins/collections.ts",
     "./registry": "./src/node/registry.ts",
     "./secrets": "./src/env/define.ts"

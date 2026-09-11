@@ -517,7 +517,10 @@ the small half of the roadmap's SEO entry (2026-09-11): `seo` is a shipped plugi
 file winning over each; JSON-LD, OpenGraph, canonical URLs and share images are still the other half (docs/plugins.md). And
 (2026-09-11) mail from the instance's own domain: `mail` is a shipped plugin providing `mail@1` over Cloudflare's
 `send_email` binding, which `voidbase deploy` adds with `VOIDBASE_MAIL_DOMAIN`, the From held to that domain and SMTP
-staying the fallback for every other sender (docs/plugins.md).
+staying the fallback for every other sender (docs/plugins.md). And (2026-09-11) the chat over the instance: `ai`
+is a shipped plugin whose `POST /api/ai/chat` runs a tool-calling loop on Workers AI (`VOIDBASE_AI=1` adds the
+binding) with the MCP server's tool list for the caller as the tools, so the model reaches exactly what the token
+may call and Think, when it comes, sits on top of this rather than beside it (docs/plugins.md).
 
 ## What to correct on the site when this lands
 

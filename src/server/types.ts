@@ -19,6 +19,9 @@ export interface Bindings {
   // Cloudflare Email Service: the send_email binding the deploy adds with VOIDBASE_MAIL_DOMAIN (plugins/mail.ts)
   SEND_EMAIL?: { send(message: EmailMessage): Promise<unknown> }; // EmailMessage: the global from @cloudflare/workers-types
   VOIDBASE_MAIL_DOMAIN?: string;
+  // Workers AI: the `ai` binding the deploy adds with VOIDBASE_AI (plugins/ai.ts); typed to what the plugin calls
+  AI?: { run(model: string, input: unknown): Promise<unknown> };
+  VOIDBASE_AI?: string;
   // a project instance: the repository it deploys from and a token that commits there (plugins/installer.ts)
   VOIDBASE_PROJECT_REPO?: string;
   VOIDBASE_PROJECT_BRANCH?: string;

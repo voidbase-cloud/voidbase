@@ -13,6 +13,7 @@ import { deleteWorkerSecrets, loadSecrets, putStoreSecrets, readSecretsValues, S
 import { CfApi, attachCustomDomain, ensureD1, ensureQueue, ensureR2, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
 import { ensureFlags, ensureFlagshipApp, FLAGS_BINDING, FLAGS_VAR } from "./flagship";
 import { MAIL_BINDING, MAIL_DOMAIN_VAR } from "../server/plugins/mail-binding";
+import { AI_BINDING, AI_VAR, aiModelOf } from "../server/plugins/ai-binding";
 
 const API = (process.env.CLOUDFLARE_API_BASE ?? "https://api.cloudflare.com/client/v4").replace(/\/$/, "");
 export const TOKEN_ENV = "VOIDBASE_DEPLOY_CF_API_KEY";
@@ -76,7 +77,7 @@ function projectName(): string {
 const randomPassword = () => { const a = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const b = crypto.getRandomValues(new Uint8Array(20)); return Array.from(b, (x) => a[x % a.length]).join(""); };
 
 // Bun only loads the .env of the working directory; the starter keeps its PB_* and deploy variables one level up.
-const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", MAIL_DOMAIN_VAR, "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
+const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", MAIL_DOMAIN_VAR, AI_VAR, "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
 export function loadEnvFiles(files = [".env", ".env.local", "../.env", "../.env.local"]): string[] {
   const loaded: string[] = [];
   for (const f of files) {
@@ -171,6 +172,10 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   // Worker gets the send_email binding and the domain as a var; the mail plugin holds the From to it (docs/deploy.md)
   const mailDomain = String(process.env[MAIL_DOMAIN_VAR] || readSecretsValues(secretsDir)?.[MAIL_DOMAIN_VAR] || "").trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase();
   if (mailDomain && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(mailDomain)) throw new Error(`${MAIL_DOMAIN_VAR}=${mailDomain} is not a domain name (a domain, not an address)`);
+  // Workers AI for the ai plugin (VOIDBASE_AI=1 or a model name, from the environment or secrets.json): the Worker
+  // gets the `ai` binding as AI and the model as a var; the binding is config only, nothing on the account to create
+  const aiModel = aiModelOf(process.env[AI_VAR] || readSecretsValues(secretsDir)?.[AI_VAR]);
+  if (aiModel && !/^@[a-z0-9-]+\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(aiModel)) throw new Error(`${AI_VAR}=${aiModel} is neither 1 nor a Workers AI model name (@cf/meta/llama-3.3-70b-instruct-fp8-fast, for example)`);
   if (publicDir && !existsSync(resolve(publicDir, "index.html"))) throw new Error(`public dir ${resolve(publicDir)} has no index.html (build the site first)`);
   // <public dir>/_redirects, Netlify/Pages syntax. Path-only lines go to the assets as Cloudflare's own _redirects (it
   // only accepts relative sources); host-scoped lines (`https://api.example.com/ /_/ 302`) become zone Redirect Rules
@@ -231,6 +236,8 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     // Cloudflare Email Service: the binding sends from any domain onboarded on the account (the plugin holds the
     // From to VOIDBASE_MAIL_DOMAIN) to any recipient once the domain is onboarded, else to verified addresses only
     ...(mailDomain ? { send_email: [{ name: MAIL_BINDING }] } : {}),
+    // Workers AI: the ai plugin's chat runs the model this binding serves (docs/plugins.md, "A chat over the instance")
+    ...(aiModel ? { ai: { binding: AI_BINDING } } : {}),
   };
   const configHeader = api ? `// written by voidbase deploy; ids are real resources on account ${account.id}` : "// written by voidbase serve --workers; local ids for Cloudflare's local runtime, nothing here exists on an account";
   const writeWorkerConfig = () => writeFileSync(`${cloud}/wrangler.jsonc`, `${configHeader}\n${JSON.stringify(workerConfig, null, 2)}\n`);
@@ -242,6 +249,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   const baked: Record<string, string> = { VOIDBASE_WORKER_NAME: name, ...(api ? { VOIDBASE_ACCOUNT_ID: account.id } : {}) };
   for (const k of ["AUDITLOG", ...extraVars]) if (process.env[k]) baked[k] = process.env[k]!;
   if (mailDomain) baked[MAIL_DOMAIN_VAR] = mailDomain;
+  if (aiModel) baked[AI_VAR] = aiModel;
   // the declared server and public values, parsed (defaults filled in): a var is the code's to set on every deploy
   const definition = pbSecrets.state.definition;
   const plainKeys = definition ? definition.of("server", "public", "flag") : [];
@@ -348,7 +356,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   if (domain && local) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")}: nothing to attach on this machine`);
   else if (domain) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")} (workers.dev off): attached through the Workers Custom Domains API after the upload (Cloudflare adds the DNS record and certificate)`);
   if (workflows.length) log(`workflows: ${workflows.map((w) => `${w.stem} (${w.className}) bound as ${w.binding}`).join(", ")}`);
-  log(`bindings: D1, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${mailDomain ? `, Email Sending (${MAIL_BINDING})` : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
+  log(`bindings: D1, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${mailDomain ? `, Email Sending (${MAIL_BINDING})` : ""}${aiModel ? `, Workers AI (${AI_BINDING}, ${aiModel})` : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
   if (opts.dryRun) { log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put ${secrets.length} secrets (${secrets.map(([k]) => k).join(", ")}) and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud }; }
 
   // the toolchain comes with the voidbase package (void, and wrangler through void)

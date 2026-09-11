@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.44](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.43...v0.9.0-beta.44) (2026-09-11)
+
+* fix(plugin): the shop's buyer is an auth record id, not a relation to users
+
 ## [0.9.0-beta.43](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.42...v0.9.0-beta.43) (2026-09-11)
 
 * fix(plugin): the shop's rules name its own order, and a refused create no longer stops an instance

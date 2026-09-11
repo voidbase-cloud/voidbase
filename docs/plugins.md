@@ -13,7 +13,7 @@ working plan. What is here is what a contributor needs to touch it.
 | `src/server/plugins/manifest.ts` | the manifest format (`name`, `version`, `tier`, `voidbase` range, `provides`, `requires`, `collections`, `extends`) and `checkManifest()`. Data only. |
 | `src/server/plugins/resolve.ts` | the whole graph checked before a single plugin is applied: unknown interface names, version ranges, two providers of one interface, collection ownership, missing requirements, cycles. Everything wrong is reported at once. |
 | `src/server/interfaces/index.ts` | the interfaces a plugin may provide or require, versioned in the name (`auth@1`, `payments@1`, `realtime@1`, `hardening@1`, `mail@1`) and the closed `KNOWN` list. |
-| `src/server/plugins/*.ts` | the plugins voidbase ships with today: `auth`, `realtime`, `hardening`, `backups`, `installer`, `openapi`, `mcp`. |
+| `src/server/plugins/*.ts` | the plugins voidbase ships with today: `auth`, `realtime`, `hardening`, `backups`, `installer`, `openapi`, `mcp`, `seo`. |
 | `GET /api/plugins` | what this instance loaded: names, providers, tiers, and any core interface nobody provides. Superuser only. |
 
 ## The entry points a plugin package uses
@@ -22,7 +22,7 @@ The package exposes the plugin API and the plugins it ships, so a plugin can liv
 against this voidbase: `@voidbase-cloud/voidbase/kernel` (`createKernel`, `load`, `serve`, `using`, `whatLoaded`,
 `Kernel`), `@voidbase-cloud/voidbase/plugins` (`Plugin`, `PluginManifest`, `checkManifest`),
 `@voidbase-cloud/voidbase/interfaces` (the interface types and `KNOWN`), and `@voidbase-cloud/voidbase/plugins/backups`,
-`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening`, `/plugins/openapi`, `/plugins/mcp` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
+`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening`, `/plugins/openapi`, `/plugins/mcp`, `/plugins/seo` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
 the map honest. The official plugin packages (`@voidbase-cloud/plugin-*`, one repository each) re-export the shipped
 objects through these entry points: the code lives here once, and the package is the plugin's name, manifest and
 version as the marketplace lists it.
@@ -246,6 +246,42 @@ To point an MCP client at an instance, give it the URL and the token as a header
 A token from `auth-with-password` on `_superusers` sees every collection and every write; a user's token sees what
 that user may call; no header at all sees the public API. The plugin takes the same injectable source as openapi
 (`mcpWith({ collections, appName }, version)`, `test/unit/mcp.test.ts`).
+
+## The crawlers' view of the instance: seo
+
+`seo` is a shipped plugin (tier `official`, `src/server/plugins/seo.ts`) that answers the small half of the
+roadmap's "SEO, as official plugins": the files every site that serves pages has to answer crawlers with, generated
+from what the instance has rather than kept in step by hand. Three routes, three knobs:
+
+- `GET /robots.txt` allows everything by default, keeps crawlers out of the panel and the API (`Disallow: /_/`,
+  `Disallow: /api/`), adds one `Disallow:` per path in `VOIDBASE_ROBOTS_DISALLOW` (comma-separated, a leading `/`
+  added when missing) and names the sitemap with an absolute URL.
+- `GET /sitemap.xml` lists the site root, then one `<url>` per record of each entry `VOIDBASE_SITEMAP` declares:
+  comma-separated `collection:/path/{field}` entries, for example `posts:/blog/{slug},pages:/{slug}`, with an
+  optional PocketBase filter in brackets, `posts[status="live"]:/blog/{slug}`. Each `{field}` is the record's value,
+  URL-encoded; a record whose value is empty makes no `<url>`; `<lastmod>` is the record's `updated` when it has one.
+  A collection is read only when it is publicly listable (its list rule is `""`), through the same listing an
+  anonymous request gets, so the filter can do nothing a public caller could not; a collection that is locked, gated,
+  missing, or whose filter fails is skipped with a warning in the log, never a 500. Capped at 50000 entries, the
+  sitemap limit. Without `VOIDBASE_SITEMAP` the sitemap lists only `/`.
+- `GET /llms.txt` is a plain-text description for the crawlers that are not search engines: the instance's name
+  (settings `meta.appName`, else `voidbase`), the site URL, the public collections with their fields (names and
+  types, hidden fields left out), the machine-readable endpoints `/api/openapi.json`, `/api/docs` and `/api/mcp`,
+  and one line saying what each token scope sees. `VOIDBASE_LLMS_NOTE` appends a free-text paragraph under `## Notes`.
+
+The site URL in all three is `VOIDBASE_SITE_URL` when set (trailing slash dropped), else the request's origin. Each
+answer is served with `Cache-Control: public, max-age=300`. A file in the static files (`pb_public`) wins over the
+generated answer: the route asks the static layer (`env.ASSETS`) for its own path first and answers only when there
+is no real file there (an HTML shell answering a miss does not count). That check is what makes the file win on Bun,
+where the app runs before the static fallback (`src/node/serve.ts`); on Cloudflare the asset layer answers before
+the Worker for any path outside `/api`, so a file wins there without the plugin being asked. One limit on
+Cloudflare today: the Worker Void generates for voidbase forwards `/api/*` to the Hono app and nothing else
+(`routes/api/[...path].ts`), so a deployed Worker only reaches these routes once the deploy routes them; a Void
+route outside `/api` is not added here because Void then puts the Worker in front of every asset
+(`run_worker_first: /**`, docs/platform.md item 1). The knobs are read from the request's env first, then the
+runtime's, like hardening's. The plugin takes an injectable source for tests, `seoWith({ collections, appName,
+records })` (`test/unit/seo.test.ts`). Not here, and said so on purpose: JSON-LD, OpenGraph and Twitter tags,
+canonical URLs, share images rendered on request, and deployment skew, which are the roadmap entry's other half.
 
 ## Auth is the core plugin
 

@@ -43,6 +43,17 @@ export interface DeployOptions { cron?: boolean; domain?: string; name?: string;
   observability?: boolean;
   rateLimit?: string;   // exact per-location ceiling per IP as "<requests>/<10|60>", default "300/10" (PocketBase's /api/ rule); "0" disables
   hub?: boolean;        // realtime hub Durable Object in this Worker (default on; VOIDBASE_DEPLOY_HUB=0 keeps the D1 poll)
+  /** `voidbase serve --workers`: generate the same project for Cloudflare's local runtime and stop there. No token,
+   *  no account, no resource is created and nothing is uploaded; the ids in wrangler.jsonc are local ones. */
+  local?: boolean;
+}
+
+export interface DeployResult {
+  name: string; account: string; url: string | null; wranglerConfig: string; project: string;
+  /** the superuser the project was generated with (a local run seeds it through the project's .env) */
+  superuser?: { email: string; password: string; file: string; source: "env" | "file" | "generated" };
+  /** the keys written to the project's .env: a local run keeps them out of the dev server's shell (Void strips a key the shell also exports) */
+  vars?: string[];
 }
 
 // the Cloudflare calls live in src/cloud/rest.ts (shared with control planes); this module adds the deploy's own wording
@@ -79,9 +90,8 @@ export function loadEnvFiles(files = [".env", ".env.local", "../.env", "../.env.
   return loaded;
 }
 
-/** The environment, the token, the account and the worker name a deploy (or `voidbase secrets`) targets. */
-export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" | "log"> = {}): Promise<{ api: CfApi; token: string; account: { id: string; name: string }; name: string; secretsDir: string; secrets: LoadedSecrets }> {
-  const log = opts.log ?? ((l: string) => console.log(l));
+/** The project's own environment: pb_secrets/ and the .env files, before anything about Cloudflare is known. */
+async function loadProjectEnv(log: (line: string) => void): Promise<{ secretsDir: string; secrets: LoadedSecrets }> {
   // pb_secrets/ first: the declared names, and on a dev machine their values, which count as environment from here
   // on. The shell outranks secrets.json, and secrets.json outranks the .env files, so a dev placeholder in .env
   // (VOIDBASE_SUPERUSER_PASSWORD=changeme123) never shadows the real value kept beside the declaration.
@@ -90,8 +100,11 @@ export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" 
   if (secrets.invalid.length) throw new Error(`${secretsDir}: ${secrets.invalid.map((i) => `${i.name}: ${i.message}`).join(", ")}`);
   loadEnv(); const fromFiles = loadEnvFiles(); if (fromFiles.length) log(`from .env: ${fromFiles.join(", ")}`);
   if (secrets.state.definition) { const d = secrets.state.definition; log(`${secretsDir}: ${d.names.length} declared (${d.of("secret").length} secret, ${d.of("server").length} server, ${d.of("public").length} public${d.of("flag").length ? `, ${d.of("flag").length} flag` : ""}${d.of("local").length ? `, ${d.of("local").length} local` : ""}), ${secrets.state.provided.length} valued here${secrets.undeclared.length ? `; in secrets.json but not declared (not deployed): ${secrets.undeclared.join(", ")}` : ""}`); }
-  const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || ""; // empty means unset
-  if (!token) { log(`${TOKEN_ENV} is not set.\n\n${tokenHelp()}`); throw new Error(`${TOKEN_ENV} missing`); }
+  return { secretsDir, secrets };
+}
+
+/** The worker name: --name, VOIDBASE_DEPLOY_NAME or the project's, checked against what pb_secrets/main.ts declares. */
+function resolveWorkerName(opts: Pick<DeployOptions, "name">, secrets: LoadedSecrets, secretsDir: string): string {
   const name = slug(opts.name || process.env.VOIDBASE_DEPLOY_NAME || projectName());
   // A project that declares its own deploy target may not be deployed onto another one by an ambient environment:
   // a build that already carries VOIDBASE_DEPLOY_NAME (a repository whose CI deploys more than one instance) would
@@ -102,17 +115,41 @@ export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" 
     const declaredDomain = declaredTarget("VOIDBASE_DEPLOY_DOMAIN");
     throw new Error(`this project declares VOIDBASE_DEPLOY_NAME=${slug(declaredName)}${declaredDomain ? ` (${declaredDomain})` : ""} in ${secretsDir}/main.ts, but the environment says ${name}. Deploying would put it on that Worker, over whatever is there. Unset VOIDBASE_DEPLOY_NAME${declaredDomain ? " and VOIDBASE_DEPLOY_DOMAIN" : ""} for this deploy, or pass --name ${name} to mean it.`);
   }
+  return name;
+}
+
+/** The environment, the token, the account and the worker name a deploy (or `voidbase secrets`) targets. */
+export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" | "log"> = {}): Promise<{ api: CfApi; token: string; account: { id: string; name: string }; name: string; secretsDir: string; secrets: LoadedSecrets }> {
+  const log = opts.log ?? ((l: string) => console.log(l));
+  const { secretsDir, secrets } = await loadProjectEnv(log);
+  const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || ""; // empty means unset
+  if (!token) { log(`${TOKEN_ENV} is not set.\n\n${tokenHelp()}`); throw new Error(`${TOKEN_ENV} missing`); }
+  const name = resolveWorkerName(opts, secrets, secretsDir);
   const api = new CfApi(token, API);
   const account = await resolveAccount(api, opts.account || process.env.VOIDBASE_DEPLOY_CF_ACCOUNT_ID || undefined).catch((e: Error) => { throw new Error(`${e.message} (is it ${TOKEN_ENV} with Account Settings read?)`); });
   return { api, token, account, name, secretsDir, secrets };
 }
 
-export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ name: string; account: string; url: string | null; wranglerConfig: string; project: string }> {
+/** The same, for a run on this machine (`voidbase serve --workers`): no token, no account, the API never called. */
+async function localTarget(opts: Pick<DeployOptions, "name" | "log"> = {}): Promise<{ api: null; token: ""; account: { id: string; name: string }; name: string; secretsDir: string; secrets: LoadedSecrets }> {
   const log = opts.log ?? ((l: string) => console.log(l));
-  const { api, token, account, name, secretsDir, secrets: pbSecrets } = await deployTarget(opts);
-  log(`account ${account.name} (${account.id}), worker "${name}"`);
-  const db = await ensureD1(api, account.id, `${name}-db`); log(`D1 ${name}-db ${db.created ? "created" : "exists"} (${db.uuid})`);
-  const bucket = await ensureR2(api, account.id, `${name}-storage`); log(`R2 ${name}-storage ${bucket.created ? "created" : "exists"}`);
+  const { secretsDir, secrets } = await loadProjectEnv(log);
+  return { api: null, token: "", account: { id: "", name: "this machine" }, name: resolveWorkerName(opts, secrets, secretsDir), secretsDir, secrets };
+}
+
+export async function deployToCloudflare(opts: DeployOptions = {}): Promise<DeployResult> {
+  const log = opts.log ?? ((l: string) => console.log(l));
+  // local: the same project, generated for Cloudflare's local runtime (`voidbase serve --workers`, src/node/serve-workers.ts).
+  // `api` is null there, and every step that would reach Cloudflare is answered locally instead.
+  const local = !!opts.local;
+  const { api, token, account, name, secretsDir, secrets: pbSecrets } = local ? await localTarget(opts) : await deployTarget(opts);
+  if (api) log(`account ${account.name} (${account.id}), worker "${name}"`);
+  else log(`worker "${name}" on Cloudflare's local runtime (this machine): no token, no account, nothing reaches Cloudflare`);
+  // the local ids: "local" is what Void's dev server names its Miniflare D1, and where it applies db/migrations
+  const db = api ? await ensureD1(api, account.id, `${name}-db`) : { uuid: "local", created: false };
+  const bucket = api ? await ensureR2(api, account.id, `${name}-storage`) : { created: false };
+  if (api) { log(`D1 ${name}-db ${db.created ? "created" : "exists"} (${db.uuid})`); log(`R2 ${name}-storage ${bucket.created ? "created" : "exists"}`); }
+  else log(`D1 ${name}-db and R2 ${name}-storage: Miniflare's, kept under the project's .void/`);
   const off = (v: string | undefined) => v !== undefined && ["0", "false", "off", "no"].includes(v.trim().toLowerCase());
   const wantQueue = opts.queue ?? !off(process.env.VOIDBASE_DEPLOY_QUEUE);
   const on = (v: string | undefined) => v !== undefined && ["1", "true", "on", "yes"].includes(v.trim().toLowerCase());
@@ -137,7 +174,8 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   const hostRedirects = redirects.filter((r) => r.host), pathRedirects = redirects.filter((r) => !r.host);
   if (redirects.length) log(`redirects (${resolve(publicDir!, "_redirects")}): ${redirects.map((r) => `${r.source} -> ${r.to} (${r.status})`).join(", ")}${hostRedirects.length ? `; the ${hostRedirects.length} host-scoped rule(s) become zone Redirect Rules after the upload` : ""}`);
   let queue: string | false = false;
-  if (wantQueue) {
+  if (wantQueue && !api) { queue = `${name}-jobs`; log(`Queue ${name}-jobs: Miniflare's (mail and automatic backups run from it with retries)`); }
+  else if (wantQueue && api) {
     const q = await ensureQueue(api, account.id, `${name}-jobs`);
     queue = q.id ? `${name}-jobs` : false;
     if (queue) log(`Queue ${name}-jobs ${q.created ? "created" : "exists"} (mail and automatic backups run from it with retries)`);
@@ -173,7 +211,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   // The rate-limit binding is an exact per-location ceiling per IP on top of the settings' rules (which count per
   // isolate); the Analytics Engine dataset takes one data point per request at any log level.
   const workerConfig: Record<string, unknown> = {
-    name, account_id: account.id, placement: { mode: "smart" },
+    name, ...(api ? { account_id: account.id } : {}), placement: { mode: "smart" },
     ...(domain ? { workers_dev: false } : {}), // the custom domain is attached through the API after the upload (see below)
     d1_databases: [{ binding: "DB", database_name: `${name}-db`, database_id: db.uuid, migrations_dir: "./db/migrations" }],
     r2_buckets: [{ binding: "STORAGE", bucket_name: `${name}-storage` }],
@@ -186,13 +224,14 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     ...(hub ? { durable_objects: { bindings: [{ name: "HUB", class_name: "VoidbaseHub" }] }, migrations: [{ tag: "voidbase-hub-v1", new_sqlite_classes: ["VoidbaseHub"] }] } : {}),
     ...(workflows.length ? { workflows: workflows.map((w) => ({ name: w.workflowName, binding: w.binding, class_name: w.className })) } : {}),
   };
-  const writeWorkerConfig = () => writeFileSync(`${cloud}/wrangler.jsonc`, `// written by voidbase deploy; ids are real resources on account ${account.id}\n${JSON.stringify(workerConfig, null, 2)}\n`);
+  const configHeader = api ? `// written by voidbase deploy; ids are real resources on account ${account.id}` : "// written by voidbase serve --workers; local ids for Cloudflare's local runtime, nothing here exists on an account";
+  const writeWorkerConfig = () => writeFileSync(`${cloud}/wrangler.jsonc`, `${configHeader}\n${JSON.stringify(workerConfig, null, 2)}\n`);
   writeWorkerConfig();
   // non-secret worker vars: the instance's own name and account (a control plane needs them to find itself), the
   // hooks' AUDITLOG, plus VOIDBASE_DEPLOY_VARS=A,B from the environment; secrets (VOIDBASE_DEPLOY_SECRETS=X,Y) never go here
   const listed = (key: string) => (process.env[key] ?? "").split(",").map((k) => k.trim()).filter(Boolean);
   const extraVars = listed("VOIDBASE_DEPLOY_VARS"), extraSecrets = listed("VOIDBASE_DEPLOY_SECRETS");
-  const baked: Record<string, string> = { VOIDBASE_WORKER_NAME: name, VOIDBASE_ACCOUNT_ID: account.id };
+  const baked: Record<string, string> = { VOIDBASE_WORKER_NAME: name, ...(api ? { VOIDBASE_ACCOUNT_ID: account.id } : {}) };
   for (const k of ["AUDITLOG", ...extraVars]) if (process.env[k]) baked[k] = process.env[k]!;
   // the declared server and public values, parsed (defaults filled in): a var is the code's to set on every deploy
   const definition = pbSecrets.state.definition;
@@ -211,7 +250,8 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     const infos = await definition!.info();
     const flagDefs = flagKeys.map((k) => { const i = infos.find((x) => x.name === k); return { key: k, description: i?.description, fallback: (baked[k] ?? i?.fallback ?? "false") === "true" }; });
     baked[FLAGS_VAR] = JSON.stringify(Object.fromEntries(flagDefs.map((f) => [f.key, f.fallback])));
-    try {
+    if (!api) log(`flags: ${flagKeys.join(", ")} keep their defaults here (Flagship is not reachable from this machine), baked as ${FLAGS_VAR}`);
+    else try {
       const app = await ensureFlagshipApp(api, account.id, name, opts.dryRun);
       const created = await ensureFlags(api, account.id, app.id, flagDefs, opts.dryRun);
       if (app.id) workerConfig.flagship = [{ binding: FLAGS_BINDING, app_id: app.id }];
@@ -229,22 +269,25 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   let email = opts.superuserEmail || process.env.VOIDBASE_SUPERUSER_EMAIL || process.env.PB_SUPERUSER_EMAIL || "";
   let password = opts.superuserPassword || process.env.VOIDBASE_SUPERUSER_PASSWORD || process.env.PB_SUPERUSER_PASSWORD || "";
   const saved = existsSync(credFile) ? (JSON.parse(readFileSync(credFile, "utf8")) as { email: string; password: string }) : null;
-  const placeholder = !password || password === "changeme123"; // the local dev default never goes live
-  if (placeholder && saved && (!email || email === saved.email)) { email = saved.email; password = saved.password; }
+  // the local dev default never goes live; on this machine it is what `voidbase serve` would use, so it stands
+  const isPlaceholder = (p: string) => !p || (!local && p === "changeme123");
+  const placeholder = isPlaceholder(password);
+  let superuserSource: NonNullable<DeployResult["superuser"]>["source"] = "env";
+  if (placeholder && saved && (!email || email === saved.email)) { email = saved.email; password = saved.password; superuserSource = "file"; }
   // what the Worker already holds: a checkout with no credentials of its own (CI) must not replace the superuser
   // the Worker has with a generated one that only this checkout would know
-  const onWorker = await workerSecretNames(api, account.id, name);
+  const onWorker = api ? await workerSecretNames(api, account.id, name) : [];
   // the account's Secrets Store, when the deploy is told which one (src/node/secrets.ts): a secret held there counts
-  // the way one on the Worker does
-  const store = process.env[STORE_KNOB] || readSecretsValues(secretsDir)?.[STORE_KNOB] || "";
-  const inStore = store ? await storeSecrets(api, account.id, store) : new Map<string, string>();
+  // the way one on the Worker does; a local run has no store and keeps every value in the project's .env
+  const store = api ? process.env[STORE_KNOB] || readSecretsValues(secretsDir)?.[STORE_KNOB] || "" : "";
+  const inStore = store && api ? await storeSecrets(api, account.id, store) : new Map<string, string>();
   const heldInStore = (k: string) => inStore.has(storeSecretName(name, k));
   const held = (k: string) => onWorker.includes(k) || heldInStore(k);
   const keepSuperuser = placeholder && !saved && held("VOIDBASE_SUPERUSER_EMAIL") && held("VOIDBASE_SUPERUSER_PASSWORD");
   if (keepSuperuser) log("superuser: no credentials in this checkout, the Worker keeps the ones it has");
   else {
     if (!email) email = "admin@example.com";
-    if (!password || password === "changeme123") { password = randomPassword(); log(`generated a superuser password for ${email} (saved in ${credFile}; change it after the first login)`); }
+    if (isPlaceholder(password)) { password = randomPassword(); superuserSource = "generated"; log(`generated a superuser password for ${email} (saved in ${credFile}; change it after the first login)`); }
     writeFileSync(credFile, JSON.stringify({ email, password }, null, 2) + "\n", { mode: 0o600 });
   }
 
@@ -266,16 +309,22 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   // a secret declared optional may have no value anywhere: the app reads undefined, as declared, and the deploy goes on
   const optionalSecrets = new Set(definition ? (await definition.info()).filter((k) => k.optional).map((k) => k.name) : []);
   const missingSecrets = declared.filter((k) => !secretMap.has(k) && !held(k) && !optionalSecrets.has(k));
-  if (missingSecrets.length) {
+  if (missingSecrets.length && local) log(`secrets: ${missingSecrets.length} declared secret(s) have no value in ${secretsDir}/secrets.json or the shell: ${missingSecrets.join(", ")} (the app reads them as unset here)`);
+  else if (missingSecrets.length) {
     const msg = `${missingSecrets.length} declared secret(s) have no value in ${secretsDir}/secrets.json and are not on the Worker "${name}" yet: ${missingSecrets.join(", ")}. Push them once from a machine that has them: voidbase secrets push --name ${name}`;
     if (opts.dryRun) log(`secrets: ${msg}`); else throw new Error(msg);
-  } else if (declared.length) log(`secrets: ${declared.length} declared; ${declared.filter((k) => secretMap.has(k)).length} stored from here, ${kept.length} kept as the Worker has them (voidbase secrets push replaces)`);
+  } else if (declared.length && local) log(`secrets: ${declared.length} declared, ${declared.filter((k) => secretMap.has(k)).length} valued here`);
+  else if (declared.length) log(`secrets: ${declared.length} declared; ${declared.filter((k) => secretMap.has(k)).length} stored from here, ${kept.length} kept as the Worker has them (voidbase secrets push replaces)`);
   const secrets = [...secretMap.entries()];
   // with a store: every secret the Worker uses is bound from the store by name, and the Worker's own of those names
   // are retired, because a binding name is one thing or the other
   const storeKeys = store ? [...new Set([...secretMap.keys(), ...declared.filter(heldInStore), ...extraSecrets.filter(heldInStore)])] : [];
   const retire = storeKeys.filter((k) => onWorker.includes(k));
-  if (!store) writeFileSync(`${cloud}/.env`, Object.entries(baked).map(([k, v]) => `${k}=${v}\n`).join(""));
+  // the vars file Void bakes into the Worker. A local run has no Worker secrets to put anything in, so the superuser
+  // and the declared secrets go in as plain vars too: the file is git-ignored, and a deploy rewrites it without them.
+  const envFile = () => [...Object.entries(baked), ...(local ? secrets : [])].map(([k, v]) => `${k}=${v}\n`).join("");
+  if (!store) writeFileSync(`${cloud}/.env`, envFile());
+  if (local && secrets.length) log(`vars: ${secrets.map(([k]) => k).join(", ")} written to ${cloud}/.env as the Worker's vars (a deploy stores them as secrets instead)`);
   if (store) {
     workerConfig.secrets_store_secrets = storeBindings(store, name, storeKeys); writeWorkerConfig();
     // the names, as a var: a Workflow step sees the same bindings as RPC stubs whose shape says nothing (src/server/secrets-store.ts)
@@ -285,8 +334,9 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
     log(`secrets store ${store}: ${secrets.length ? `${opts.dryRun ? "would store" : "storing"} ${secrets.map(([k]) => k).join(", ")}` : "nothing to store"}; bound by name: ${storeKeys.join(", ") || "none"}${retire.length ? `; ${opts.dryRun ? "would retire" : "retiring"} ${retire.join(", ")} from the Worker's own secrets` : ""}`);
   }
 
-  const url = domain ? `https://${domain}` : await workersSubdomain(api, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null));
-  if (domain) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")} (workers.dev off): attached through the Workers Custom Domains API after the upload (Cloudflare adds the DNS record and certificate)`);
+  const url = !api ? null : domain ? `https://${domain}` : await workersSubdomain(api, account.id).then((s) => (s ? `https://${name}.${s}.workers.dev` : null));
+  if (domain && local) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")}: nothing to attach on this machine`);
+  else if (domain) log(`custom domain${domains.length > 1 ? "s" : ""} ${domains.join(", ")} (workers.dev off): attached through the Workers Custom Domains API after the upload (Cloudflare adds the DNS record and certificate)`);
   if (workflows.length) log(`workflows: ${workflows.map((w) => `${w.stem} (${w.className}) bound as ${w.binding}`).join(", ")}`);
   log(`bindings: D1, R2${hub ? ", realtime hub (Durable Object)" : ""}${queue ? ", Queue" : ""}${rateLimit ? `, rate limit ceiling ${rateLimit.limit}/${rateLimit.period}s per IP` : ""}${analytics ? ", Analytics Engine (needs Analytics Engine enabled once for the account: https://dash.cloudflare.com/" + account.id + "/workers/analytics-engine)" : ""}`);
   if (opts.dryRun) { log(`dry run: would sync the panel${publicDir ? ` and ${publicDir}` : ""} into ${cloud}/public, put ${secrets.length} secrets (${secrets.map(([k]) => k).join(", ")}) and run void deploy --backend cloudflare (${url ?? "url unknown"})`); return { name, account: account.id, url, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud }; }
@@ -304,11 +354,15 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<{ na
   for (const k of Object.keys(baked)) delete env[k];
   const sh = async (cmd: string[], input?: string) => { const p = Bun.spawn(cmd, { cwd: cloud, env: env as Record<string, string>, stdin: input === undefined ? "inherit" : new TextEncoder().encode(input), stdout: "inherit", stderr: "inherit" }); const code = await p.exited; if (code !== 0) throw new Error(`${cmd.join(" ")} exited with ${code}`); };
   mkdirSync(`${cloud}/public`, { recursive: true });
-  await sh(["bun", resolve(PKG, "scripts/sync-panel.ts"), "--dest", `${cloud}/public/_`]);
+  // the panel comes from a cache or a one-time download; a machine without network still gets its API
+  try { await sh(["bun", resolve(PKG, "scripts/sync-panel.ts"), "--dest", `${cloud}/public/_`]); }
+  catch (err) { if (!local) throw err; log(`panel: not synced (${err instanceof Error ? err.message : err}); /_/ answers 404 until a run with network access, or set POCKETBASE_UI_DIST`); }
   if (publicDir) {
     env.VOIDBASE_APP_DIR = resolve(publicDir); await sh(["bun", resolve(PKG, "scripts/sync-app.ts"), "--dest", `${cloud}/public`], undefined); log(`static site ${resolve(publicDir)} served at / (the panel stays at /_/)`);
     if (pathRedirects.length) writeFileSync(`${cloud}/public/_redirects`, pathRedirects.map((r) => `${r.path} ${r.to} ${r.status}`).join("\n") + "\n");
   }
+  // a local run stops here: the project is complete, and src/node/serve-workers.ts starts Void's dev server in it
+  if (!api) return { name, account: "", url: null, wranglerConfig: JSON.stringify(workerConfig, null, 2) + "\n", project: cloud, superuser: { email, password, file: credFile, source: superuserSource }, vars: [...Object.keys(baked), ...secrets.map(([k]) => k)] };
   if (secrets.length && !store) log(`secrets: storing ${secrets.map(([k]) => k).join(", ")} on the Worker`);
   // Through the Workers API when the Worker exists, which is every deploy but the first: `wrangler secret put` reads
   // the value from stdin and, on Cloudflare's build machines, sometimes never sees the end of it and waits forever

@@ -335,6 +335,30 @@ with `VOIDBASE_ENCRYPTION_KEY` (`sealSecret` / `openSecret` from `voidbase/cloud
 4. Settings > Backups: set a cron to write zips to R2 (`__backups__/`).
 5. Point your app at the Worker URL. The `pocketbase` JS SDK needs no other change.
 
+## The instance on Cloudflare's local runtime: `voidbase serve --workers`
+
+```bash
+voidbase serve --workers                    # --http 127.0.0.1:8090, --name, --no-queue, --no-hub as for deploy; also: voidbase dev --workers
+```
+
+`voidbase serve` runs the instance on Bun. `--workers` runs it on workerd, Cloudflare's runtime, so what you exercise
+on your machine is the Workers code, with the same bindings the deploy wires up. It generates the very project
+`voidbase deploy` would upload (`.cloud/<name>/`, through the deploy's own generation with a `local` option that stops
+before anything reaches Cloudflare: no token, no account, no resource created, no upload; `wrangler.jsonc` carries
+local ids) and runs it with Void's dev server (`vp dev`), which is what the generated project supports and what needs
+no login: it bundles the Worker on the fly, reads the generated `wrangler.jsonc` for the hub binding, and runs D1, R2,
+the jobs queue (batches delivered natively) and the realtime hub Durable Object in Miniflare, persisted under
+`.cloud/<name>/.void/`, which the banner names. Void applies `db/migrations` to that D1 when the server starts, with the
+same runner its deploy uses, and the superuser is seeded on the first request from `VOIDBASE_SUPERUSER_EMAIL` /
+`VOIDBASE_SUPERUSER_PASSWORD` (or `pb_data/.superuser-credentials`, written when nothing is set), carried by the
+project's git-ignored `.env` instead of Worker secrets; declared `pb_secrets/` values ride the same way, and a deploy
+rewrites that file without them. The first workerd start takes half a minute or so. Cron triggers do not tick locally
+(maintenance runs lazily in requests; Void prints the `curl` that fires a trigger by hand), Flagship and the
+Secrets Store are out of reach (declared flags keep their baked defaults), and without network the panel is skipped
+with a message while the API still runs. `test/workers-local.ts` boots a temporary project this way and checks the
+API, with a dead Cloudflare API base to prove nothing was called. `vp preview` below stays the rehearsal of the
+production build itself.
+
 ## Local preview of the production build
 
 ```bash

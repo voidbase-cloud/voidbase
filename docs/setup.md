@@ -177,6 +177,8 @@ voidbase serve         # http://127.0.0.1:8090, panel at /_/
 ```
 
 A local instance and a project are the same shape, so moving between them is moving a directory.
+`voidbase serve --workers` runs the same project on Cloudflare's local runtime instead of Bun, with local D1, R2,
+queue and hub and nothing touching Cloudflare ([deploy.md](deploy.md#the-instance-on-cloudflares-local-runtime-voidbase-serve---workers)).
 
 `voidbase init` leaves a working hook in `pb_hooks/main.pb.js` so `GET /api/hello` answers, and a commented
 declaration in `pb_secrets/main.ts` to fill in. Make a superuser the same way as above, with

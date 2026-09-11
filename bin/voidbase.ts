@@ -28,6 +28,11 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      https://<words>.trycloudflare.com address, with cloudflared from VOIDBASE_CLOUDFLARED,
                                      PATH or a download into ~/.cache/voidbase; --entry runs your own main.ts, the
                                      counterpart of a custom PocketBase build)
+  serve --workers [--name worker] [--no-queue] [--no-hub]
+                                     the same instance on Cloudflare's local runtime (workerd): generates the project
+                                     "voidbase deploy" would upload, under .cloud/<name>, and runs it with Void's dev
+                                     server; D1, R2, the queue and the hub are Miniflare's, kept in .cloud/<name>/.void.
+                                     Nothing reaches Cloudflare: no token, no account (also: voidbase dev --workers)
   superuser upsert <email> <password>  create or update a superuser: on the local data directory (--dir) or on a running
                                      instance (--url, --admin email:pass)
 
@@ -122,6 +127,16 @@ async function login(): Promise<string> {
   return String(r.json.token);
 }
 
+// `voidbase serve --workers` / `voidbase dev --workers`: the project `voidbase deploy` would generate, run on Cloudflare's
+// local runtime by Void's dev server; the process lives as long as that server does
+async function serveOnWorkers(): Promise<never> {
+  if (isExecutable()) { console.error(`"${cmd} --workers" needs the Cloudflare toolchain, which comes with the npm package, not the prebuilt executable:\n  bunx @voidbase-cloud/voidbase ${argv.join(" ")}`); process.exit(1); }
+  const { serveWorkers } = await import("../src/node/serve-workers");
+  const s = await serveWorkers({ ...serveOpts(), name: flags.name, queue: flags["no-queue"] ? false : undefined, hub: flags["no-hub"] ? false : undefined });
+  const bye = () => { void s.stop().then(() => process.exit(0)); };
+  process.on("SIGINT", bye); process.on("SIGTERM", bye);
+  process.exit(await s.exited);
+}
 if (cmd && TOOLCHAIN.has(cmd) && isExecutable()) { console.error(`"${cmd}" needs the Cloudflare toolchain, which comes with the npm package, not the prebuilt executable:\n  bunx @voidbase-cloud/voidbase ${argv.join(" ")}`); process.exit(1); }
 switch (cmd) {
   case undefined: case "help": case "--help": console.log(HELP); break;
@@ -428,6 +443,8 @@ switch (cmd) {
     break;
   }
   case "serve": {
+    // --workers: the instance on Cloudflare's local runtime (src/node/serve-workers.ts); the toolchain comes with the npm package
+    if (flags.workers) { await serveOnWorkers(); break; }
     // --entry main.ts: the project's own composition (pb's "custom" build), otherwise the stock server
     if (!flags.dev) { if (flags.entry) { await run("bun", [resolve(flags.entry), ...process.argv.slice(3).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry")]); break; } const { serve } = await import("../src/node/serve"); await serve(serveOpts()); break; }
     // --dev: run the server as a child and restart it when pb_hooks / pb_migrations change (like modd for PocketBase)
@@ -485,7 +502,7 @@ switch (cmd) {
     break;
   }
 
-  case "dev": await run("./node_modules/.bin/vp", ["dev", "--port", flags.port ?? "5180", "--host", flags.host ?? "127.0.0.1"]); break;
+  case "dev": if (flags.workers) { await serveOnWorkers(); break; } await run("./node_modules/.bin/vp", ["dev", "--port", flags.port ?? "5180", "--host", flags.host ?? "127.0.0.1"]); break;
   case "build": await run("./node_modules/.bin/vp", ["build"]); break;
   case "preview": await run("./node_modules/.bin/vp", ["preview", "--port", flags.port ?? "5181", "--host", flags.host ?? "127.0.0.1"]); break;
   case "sync": {

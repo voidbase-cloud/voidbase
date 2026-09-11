@@ -54,6 +54,7 @@ const COLLECTION_ROUTES: { re: RegExp; method: string; tags: string[]; pattern: 
   { re: /^\/api\/files\/([^/]+)\/[^/]+\/[^/]+$/, method: "GET", tags: ["file"], pattern: "GET /api/files/{collection}/{recordId}/{filename}" },
   { re: /^\/api\/collections\/([^/]+)\/auth-methods$/, method: "GET", tags: ["listAuthMethods"], pattern: "GET /api/collections/{collection}/auth-methods" },
   { re: /^\/api\/collections\/([^/]+)\/auth-refresh$/, method: "POST", tags: ["authRefresh"], pattern: "POST /api/collections/{collection}/auth-refresh" },
+  { re: /^\/api\/collections\/([^/]+)\/auth-clear$/, method: "POST", tags: ["authClear"], pattern: "POST /api/collections/{collection}/auth-clear" },
   { re: /^\/api\/collections\/([^/]+)\/auth-with-password$/, method: "POST", tags: ["authWithPassword", "auth"], pattern: "POST /api/collections/{collection}/auth-with-password" },
   { re: /^\/api\/collections\/([^/]+)\/auth-with-oauth2$/, method: "POST", tags: ["authWithOAuth2", "auth"], pattern: "POST /api/collections/{collection}/auth-with-oauth2" },
   { re: /^\/api\/collections\/([^/]+)\/request-otp$/, method: "POST", tags: ["requestOTP"], pattern: "POST /api/collections/{collection}/request-otp" },

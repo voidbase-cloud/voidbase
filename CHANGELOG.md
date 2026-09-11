@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.46](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.45...v0.9.0-beta.46) (2026-09-11)
+
+* fix(server): imports keep runtime system fields; installs need a trusted marketplace
+
 ## [0.9.0-beta.45](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.44...v0.9.0-beta.45) (2026-09-11)
 
 * fix(plugin): /api/plugins answers no ai conversations without a database, not from another's cache

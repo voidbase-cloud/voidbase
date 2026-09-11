@@ -488,7 +488,10 @@ voidbase stack semantics into voidbase project semantics, so a stack app is host
 like any project, and (2026-09-11) its `pwa` option makes a stack app installable: the manifest, the icon set and
 a service worker written from what the app declares, with the client half in `@voidbase-cloud/sdk/pwa`. What
 exists: the executable, the package on Bun, Cloudflare all three ways, both modes in shape,
-`voidbase sync`, the adapter, (2026-09-11) the first payment provider: `stripe`, a shipped plugin providing
+`voidbase sync`, the adapter, (2026-09-11) the ai plugin's memory as records: `ai_conversations` and `ai_messages`,
+created once the Workers AI binding is there, written through the records service so realtime sees each reply land,
+with a streamed final answer, while Cloudflare's Think (`@cloudflare/think`, a Durable Object chat harness) stays
+what a later panel or preview chat would build on; (2026-09-11) the first payment provider: `stripe`, a shipped plugin providing
 `payments@1` over fetch alone, owning `customers`, `subscriptions` and `payments` and its own signed webhook, and
 (2026-09-11) `polar` and `lemonsqueezy` behind the same interface: what the three share moved into
 `payments-shared.ts`, each provider file is its knobs, its calls, its signature and its events, and the three are

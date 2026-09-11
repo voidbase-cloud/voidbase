@@ -76,13 +76,13 @@ describe("without the binding", () => {
     expect(r.status).toBe(503);
     expect(r.json).toEqual({ message: NOT_BOUND });
     expect(NOT_BOUND).toContain("VOIDBASE_AI=1");
-    expect(aiRoute(env)).toEqual({ via: "none" });
+    expect(await aiRoute(env)).toEqual({ via: "none" });
   });
 
-  test("with the binding /api/plugins names the model: the default, or the knob's", async () => {
-    expect(aiRoute({ AI: fakeAI([]) } as unknown as Bindings)).toEqual({ via: "workers-ai", model: DEFAULT_MODEL });
-    expect(aiRoute({ AI: fakeAI([]), VOIDBASE_AI: "1" } as unknown as Bindings)).toEqual({ via: "workers-ai", model: DEFAULT_MODEL });
-    expect(aiRoute({ AI: fakeAI([]), VOIDBASE_AI: "@cf/qwen/qwen3-30b-a3b-fp8" } as unknown as Bindings)).toEqual({ via: "workers-ai", model: "@cf/qwen/qwen3-30b-a3b-fp8" });
+  test("with the binding /api/plugins names the model: the default, or the knob's; conversations false until the collections exist", async () => {
+    expect(await aiRoute({ AI: fakeAI([]) } as unknown as Bindings)).toEqual({ via: "workers-ai", model: DEFAULT_MODEL, conversations: false });
+    expect(await aiRoute({ AI: fakeAI([]), VOIDBASE_AI: "1" } as unknown as Bindings)).toEqual({ via: "workers-ai", model: DEFAULT_MODEL, conversations: false });
+    expect(await aiRoute({ AI: fakeAI([]), VOIDBASE_AI: "@cf/qwen/qwen3-30b-a3b-fp8" } as unknown as Bindings)).toEqual({ via: "workers-ai", model: "@cf/qwen/qwen3-30b-a3b-fp8", conversations: false });
   });
 });
 

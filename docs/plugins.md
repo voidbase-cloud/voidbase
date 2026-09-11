@@ -466,8 +466,8 @@ take it. `test/unit/mail-plugin.test.ts` measures the MIME, the domain rule, the
 ## A chat over the instance: ai
 
 `ai` is a shipped plugin (tier `official`, `src/server/plugins/ai.ts`): a chat over the instance on Workers AI,
-scoped to whoever is asking. It is the first piece of the roadmap's "Workers AI and Think, as official plugins":
-the chat, without the Durable Object memory Think would add. `POST /api/ai/chat` takes
+scoped to whoever is asking. It is the roadmap's "Workers AI and Think, as official plugins" in voidbase's own
+terms: the chat, and its memory as records rather than as a Durable Object. `POST /api/ai/chat` takes
 `{ messages: [{ role, content }], model?, tools?: boolean, maxSteps?: number }` from any caller (anonymous, a user,
 a superuser) and answers `{ message: { role: "assistant", content }, steps: [{ tool, arguments, result }], model }`,
 where each step is one tool call the model made, with the first 500 characters of what the tool answered.
@@ -501,9 +501,10 @@ OpenAI-style `{ id, type: "function", function: { name, arguments: "<json>" } }`
 the same way. Each call goes back as an assistant message carrying the call and a `{ role: "tool", name, content }`
 message carrying the route's answer (a refusal, a 404 or a missing argument is a result the model sees, not an
 error), and the model is asked again, until it answers without a call or `maxSteps` (default 6, at most 20) tool
-steps have run, after which the answer says it stopped. No streaming: Workers AI streams a call's text, but a call
-that streams cannot also hand back `tool_calls` to act on, and Cloudflare's helper streams only one extra final
-call made without tools; `stream: true` is refused with that reason.
+steps have run, after which the answer says it stopped. This route does not stream: Workers AI streams a call's
+text, but a call that streams cannot also hand back `tool_calls` to act on, so `stream: true` is refused here with
+that reason and points at the conversation route below, which streams the final answer the way Cloudflare's helper
+does.
 
 **The cap.** 30 requests per minute per caller (the signed-in record, else the client IP), counted in memory, so per
 isolate: the hardening plugin's rate limits are the settings' rules keyed by path, which a superuser can add one for
@@ -511,11 +512,60 @@ isolate: the hardening plugin's rate limits are the settings' rules keyed by pat
 without any settings, because every call is metered. `test/unit/ai.test.ts` scripts a fake `AI` binding per test:
 the tool list per caller, the loop feeding a result back, the runaway stopped, the 503, the plugins field, the cap.
 
-**What Think would add, later.** Think is Cloudflare's chat harness over a Durable Object's SQLite with Workers AI
-behind it: the conversation persists, an agent can be driven as a sub-agent over RPC, and the panel or a preview
-environment can mount it. This plugin is the stateless half, one request in and one answer out, and it is what the
-Think plugins would call, because the scoping question they all have is answered here once: the MCP server's tool
-list is the instance as the caller may see it, and a Think agent needs nothing more than that list and a token.
+**A conversation is a record.** The plugin owns two collections, created at bootstrap on the first request that
+carries the binding (the way the payment plugins create theirs), so an instance without the knob never sees them:
+`ai_conversations` (`user` relation to `users`, optional, `title`, `model`, `system` text, `tools` bool,
+`lastMessageAt` date) and `ai_messages` (`conversation` relation, required, cascade, `role` select user, assistant,
+tool or system, `content` text, `steps` json, `tokens` number). Their rules are the owner's: a signed-in user lists,
+views and deletes their own conversations (`user = @request.auth.id`) and their messages
+(`conversation.user = @request.auth.id`) through the records API like any collection, in the panel included; create
+and update rules are superuser-only, so the routes below are the way in. Anonymous callers keep `POST /api/ai/chat`
+and get no persistence. Every write goes through the records service as a superuser, so hooks fire and realtime
+publishes: a client subscribed to `ai_messages` (or to one conversation's messages by filter) sees the user message
+land, then the reply, without polling, which is what the SDK's conversation helper should do instead of asking
+again. `GET /api/plugins` says `ai: { via: "workers-ai", model, conversations: true }` once the collections exist.
+
+**The routes**, all for a signed-in caller (anonymous is 401):
+
+- `POST /api/ai/conversations` `{ title?, model?, system?, tools? }` answers the conversation record; `tools`
+  defaults to true, `model` to the binding's, the title is cut to 60 characters and may be left empty.
+- `GET /api/ai/conversations` lists the caller's, newest first by last message, paginated like records
+  (`?page=&perPage=`, answering `{ page, perPage, totalItems, totalPages, items }`).
+- `GET /api/ai/conversations/:id` answers the conversation with its `messages`, oldest first. Somebody else's is a
+  404, not a 403.
+- `POST /api/ai/conversations/:id/messages` `{ content, maxSteps?, stream? }` stores the user message, runs the
+  same loop as `/api/ai/chat` over the conversation's history (the system prompt, the conversation's own `system`,
+  then its last 40 stored messages, the new one included, with the conversation's `model` and `tools`), stores the
+  assistant reply with its `steps` and, when the model reports usage, its `tokens`, sets `lastMessageAt` and, when
+  the title is empty, the title from the first user message, and answers `{ message, steps, model, conversation }`
+  where `message` and `conversation` are the records as stored.
+- `DELETE /api/ai/conversations/:id` removes it and its messages (204).
+
+The cap is the chat's, 30 a minute per caller across both routes. `test/unit/ai-conversations.test.ts` runs the
+routes over in-memory rows and one instance on bun:sqlite, where the bootstrap creates the two collections, a turn
+is two rows through the records service and a delete takes the messages with the conversation.
+
+**Streaming.** `stream: true` on the messages route answers `text/event-stream`. The loop runs the tool steps first,
+each call answered whole, then one last call is made with `stream: true` and no tools, which is what Cloudflare's
+`runWithTools` does with `streamFinalResponse` (the overload `@cloudflare/workers-types` declares as answering a
+`ReadableStream`; without tools that one call is the only one). Workers AI's chunks (`data: {"response": "..."}`,
+then `data: [DONE]`, read the way Cloudflare's `workers-ai-provider` reads them) are forwarded as
+`data: {"delta": "..."}` events, and when the stream ends the full text is stored as the assistant message (the
+store is also handed to `waitUntil` on Workers, so a client that leaves early does not lose it), followed by one
+`data: {"done": true, "message", "steps", "model", "conversation"}` event. A failure mid-way is a
+`data: {"error": "..."}` event and nothing is stored.
+
+**What Think is today (checked 2026-09-11).** Cloudflare ships Think as part of the Agents SDK: the docs live at
+https://developers.cloudflare.com/agents/harnesses/think/ ("Opinionated chat agent framework with built-in tools,
+persistent memory, lifecycle hooks, streaming, messengers, scheduled tasks, Workflows, and sub-agent RPC"), the
+package is `@cloudflare/think` on npm (0.17.0 at the time of writing, from github.com/cloudflare/agents, with
+`npm create think` to scaffold one). A Think agent is a Durable Object class that extends `Agent`, keeps its messages
+in the object's SQLite, speaks the `cf_agent_chat_*` WebSocket protocol to `useAgentChat`, runs the model through the
+AI SDK (Workers AI via `workers-ai-provider`, or any provider), and can be driven as a sub-agent over RPC. That is a
+different persistence from this plugin's, by design: a conversation here is a record, gated by the rules, expanded,
+filtered, subscribed to and backed up like any other, and the tool list is the MCP server's for the caller's token.
+A Think-based plugin (the panel chat, the preview chat, the app-mounted one the roadmap names) would sit on the same
+loop and the same tool list; it is not built, and the Durable Object it needs is not part of this package.
 
 ## Content in the reader's language: translations
 

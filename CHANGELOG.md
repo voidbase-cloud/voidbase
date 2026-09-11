@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.34](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.33...v0.9.0-beta.34) (2026-09-11)
+
+* fix(plugin): owned collections are reconciled forward when a newer plugin declares more
+
 ## [0.9.0-beta.33](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.32...v0.9.0-beta.33) (2026-09-11)
 
 * fix(plugin): ai conversations belong to any auth record, superusers included

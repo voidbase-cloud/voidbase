@@ -29,6 +29,7 @@ import { mcp as mcpPlugin } from "./plugins/mcp";
 import { seo as seoPlugin } from "./plugins/seo";
 import { mail as mailPlugin } from "./plugins/mail";
 import { ai as aiPlugin, aiRoute } from "./plugins/ai";
+import { observability as observabilityPlugin } from "./plugins/observability";
 import { translations as translationsPlugin, translationsInfo } from "./plugins/translations";
 import { stripe as stripePlugin } from "./plugins/stripe";
 import { polar as polarPlugin } from "./plugins/polar";
@@ -39,7 +40,7 @@ import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
 import { SHIPPED, SHIPPED_FACTS, type ShippedName } from "./plugins/shipped";
 import { disabled as disabledPlugins, installed as installedPlugins } from "#platform/plugins";
-import type { Auth, Hardening, Mail, Payments, Realtime } from "./interfaces";
+import type { Auth, Hardening, Mail, Observability, Payments, Realtime } from "./interfaces";
 import { VERSION } from "./version";
 import { mountSqlApi } from "./sql";
 import { realIPWith } from "./hardening";
@@ -77,6 +78,10 @@ let served = false; // onBootstrap / onServe fire once per isolate, on the first
 // fine here because this runs per request). No provider, no policy, and no CORS. The limits below share the slot.
 const hardened = () => using<Hardening | undefined>(kernel, "hardening@1");
 app.use("*", (c, next) => hardened()?.responsePolicy(c, next) ?? next());
+// What the instance can see about itself, from whoever provides observability@1, through a slot of the same kind:
+// its sampler wraps the request path and records one data point per request (plugins/observability.ts). No
+// provider, nothing measured, and the instance says on /api/plugins which core interface it is missing.
+const observing = () => using<Observability | undefined>(kernel, "observability@1");
 
 app.use("*", async (c, next) => {
   // the database first: DB is the D1 binding, or the instance's own Durable Object behind the same interface (durable-d1.ts)
@@ -108,6 +113,7 @@ app.use("*", async (c, next) => {
   await next();
 });
 app.use("*", requestLogger());
+app.use("*", (c, next) => observing()?.sample(c, next) ?? next());
 // The limits, from the same provider: this is their place in the chain. No provider, no limits.
 app.use("*", (c, next) => hardened()?.bodyLimit(c, next) ?? next());
 app.use("*", (c, next) => hardened()?.rateLimit(c, next) ?? next());
@@ -531,7 +537,7 @@ mountCronsApi(app);
 export const kernel = createKernel(app);
 // What ships, minus what the project turned off, minus what an installed plugin shadows by name; then what the
 // project installed (pb_plugins, verified against voidbase.lock by the platform module). One graph, resolved once.
-const shipped = [authPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION, undefined, () => whatLoaded(kernel).plugins), openapiPlugin, mcpPlugin, seoPlugin, mailPlugin, aiPlugin, translationsPlugin, stripePlugin, polarPlugin, lemonsqueezyPlugin, previewsPlugin, domainsPlugin];
+const shipped = [authPlugin, observabilityPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION, undefined, () => whatLoaded(kernel).plugins), openapiPlugin, mcpPlugin, seoPlugin, mailPlugin, aiPlugin, translationsPlugin, stripePlugin, polarPlugin, lemonsqueezyPlugin, previewsPlugin, domainsPlugin];
 if (shipped.map((p) => p.manifest.name).join() !== SHIPPED.join()) throw new Error("voidbase: src/server/plugins/shipped.ts disagrees with the plugins app.ts loads");
 // and the facts the CLI reads out of that file without importing any of this: tier, provides, requires
 const factsOf = (f: { tier: string; provides?: readonly string[]; requires?: readonly string[] }) => JSON.stringify([f.tier, f.provides ?? [], f.requires ?? []]);
@@ -555,7 +561,7 @@ provideMailLookup(() => using<Mail | undefined>(kernel, "mail@1"));
 // the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface.
 app.get("/api/plugins", async (c) => {
   requireSuperuser(c);
-  return c.json({ ...whatLoaded(kernel), installer: installerInfo(c.env), mail: await mailRoute(c.env), ai: await aiRoute(c.env), translations: translationsInfo(c.env), domains: domainsInfo(c.env), previews: previewsInfo(c.env), payments: using<Payments | undefined>(kernel, "payments@1")?.route(c.env) ?? { via: "none" } });
+  return c.json({ ...whatLoaded(kernel), installer: installerInfo(c.env), mail: await mailRoute(c.env), ai: await aiRoute(c.env), observability: (await observing()?.report(c.env)) ?? null, translations: translationsInfo(c.env), domains: domainsInfo(c.env), previews: previewsInfo(c.env), payments: using<Payments | undefined>(kernel, "payments@1")?.route(c.env) ?? { via: "none" } });
 });
 mountSqlApi(app);
 

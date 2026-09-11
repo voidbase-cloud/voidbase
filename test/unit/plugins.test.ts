@@ -192,9 +192,9 @@ describe("the tier that is not optional", () => {
     expect(missingCore).toEqual([]);
   });
 
-  test("auth is core, since it left the core: an instance without a provider says so with the default list", () => {
-    expect(CORE).toEqual(["auth@1"]);
-    expect(resolve([plugin({ name: "backups" })], "0.9.0").missingCore).toEqual(["auth@1"]);
+  test("auth and observability are core, since both left it: an instance without a provider says so with the default list", () => {
+    expect(CORE).toEqual(["auth@1", "observability@1"]);
+    expect(resolve([plugin({ name: "backups" })], "0.9.0").missingCore).toEqual(["auth@1", "observability@1"]);
   });
 
   test("removing a core plugin is possible, which is the entire point of moving auth out", () => {
@@ -202,7 +202,7 @@ describe("the tier that is not optional", () => {
     const { problems, order, missingCore } = resolve([plugin({ name: "backups" })], "0.9.0");
     expect(problems).toEqual([]);
     expect(order.map((p) => p.manifest.name)).toEqual(["backups"]);
-    expect(missingCore).toEqual(["auth@1"]);
+    expect(missingCore).toEqual(["auth@1", "observability@1"]);
   });
 
   test("what this instance loaded says the tier and the core flag of each plugin, not only the names", async () => {

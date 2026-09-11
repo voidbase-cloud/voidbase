@@ -2,7 +2,7 @@
 // importing what a shipped plugin does. app.ts loads the objects and checks its list is this one.
 import type { InterfaceName, Tier } from "./manifest";
 import type { PluginFacts } from "./resolve";
-export const SHIPPED = ["auth", "realtime", "hardening", "backups", "installer", "openapi", "mcp", "seo", "mail", "ai", "translations", "stripe", "polar", "lemonsqueezy", "previews", "domains"] as const;
+export const SHIPPED = ["auth", "observability", "realtime", "hardening", "backups", "installer", "openapi", "mcp", "seo", "mail", "ai", "translations", "stripe", "polar", "lemonsqueezy", "previews", "domains"] as const;
 export type ShippedName = (typeof SHIPPED)[number];
 
 /**
@@ -16,6 +16,7 @@ export type ShippedName = (typeof SHIPPED)[number];
  */
 export const SHIPPED_FACTS: Record<ShippedName, { tier: Tier; provides?: InterfaceName[]; requires?: InterfaceName[] }> = {
   auth: { tier: "core", provides: ["auth@1"] },
+  observability: { tier: "core", provides: ["observability@1"] },
   realtime: { tier: "official", provides: ["realtime@1"] },
   hardening: { tier: "official", provides: ["hardening@1"] },
   backups: { tier: "official" },

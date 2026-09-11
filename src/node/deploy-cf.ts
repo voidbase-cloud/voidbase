@@ -17,6 +17,7 @@ import { PREVIEW_OF_VAR, PREVIEW_VAR, previewWorkerName } from "../server/plugin
 import { ensureFlags, ensureFlagshipApp, FLAGS_BINDING, FLAGS_VAR } from "./flagship";
 import { MAIL_BINDING, MAIL_DOMAIN_VAR } from "../server/plugins/mail-binding";
 import { AI_BINDING, AI_VAR, aiModelOf } from "../server/plugins/ai-binding";
+import { ACCOUNT_VAR as OBSERVABILITY_ACCOUNT_VAR, OBSERVABILITY_VAR, observabilityOn, SAMPLE_VAR as OBSERVABILITY_SAMPLE_VAR, sampleRateOf, TOKEN_VAR as OBSERVABILITY_TOKEN_VAR, workerObservability } from "../server/plugins/observability-binding";
 import { SEO_PNG_VAR, seoPngOn } from "../server/plugins/seo-paths";
 import { DATABASE_VAR, DB_OBJECT_BINDING, DB_OBJECT_CLASS, DB_OBJECT_MIGRATION_TAG, databaseKind, type DatabaseKind } from "../server/durable-d1";
 import { discoverDeployPlugins, runDeployHooks } from "./deploy-plugins";
@@ -48,7 +49,9 @@ export interface DeployOptions { cron?: boolean; domain?: string; name?: string;
   publicDir?: string; dryRun?: boolean; regenerate?: boolean; superuserEmail?: string; superuserPassword?: string; log?: (line: string) => void;
   queue?: boolean;      // jobs queue for mail and automatic backups (default on; skipped when the token cannot create queues)
   analytics?: boolean;  // Analytics Engine dataset with one data point per request (opt-in: --analytics or VOIDBASE_DEPLOY_ANALYTICS=1; the account must have Analytics Engine enabled)
-  /** Workers Observability: invocation logs kept for the dashboard. On unless VOIDBASE_DEPLOY_OBSERVABILITY=0. */
+  /** Workers Observability: the Worker's logs and invocation logs retained. On unless VOIDBASE_OBSERVABILITY=0
+   *  (VOIDBASE_DEPLOY_OBSERVABILITY is the older spelling and still works); the same knob the observability
+   *  plugin reads, so turning it off turns the sampling off too (src/server/plugins/observability.ts). */
   observability?: boolean;
   rateLimit?: string;   // exact per-location ceiling per IP as "<requests>/<10|60>", default "300/10" (PocketBase's /api/ rule); "0" disables
   hub?: boolean;        // realtime hub Durable Object in this Worker (default on; VOIDBASE_DEPLOY_HUB=0 keeps the D1 poll)
@@ -95,7 +98,7 @@ function projectName(): string {
 const randomPassword = () => { const a = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const b = crypto.getRandomValues(new Uint8Array(20)); return Array.from(b, (x) => a[x % a.length]).join(""); };
 
 // Bun only loads the .env of the working directory; the starter keeps its PB_* and deploy variables one level up.
-const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DOMAINS", "VOIDBASE_PREVIEW_SEED", "VOIDBASE_PREVIEW_SOURCE_URL", "VOIDBASE_GH_TOKEN", "VOIDBASE_PROJECT_REPO", "VOIDBASE_DEPLOY_DOMAIN", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", MAIL_DOMAIN_VAR, AI_VAR, SEO_PNG_VAR, DATABASE_VAR, "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
+const ENV_KEYS = [TOKEN_ENV, "VOIDBASE_DEPLOY_CF_ACCOUNT_ID", "VOIDBASE_DEPLOY_NAME", "VOIDBASE_DOMAINS", "VOIDBASE_PREVIEW_SEED", "VOIDBASE_PREVIEW_SOURCE_URL", "VOIDBASE_GH_TOKEN", "VOIDBASE_PROJECT_REPO", "VOIDBASE_DEPLOY_DOMAIN", "VOIDBASE_DEPLOY_QUEUE", "VOIDBASE_DEPLOY_HUB", "VOIDBASE_DEPLOY_ANALYTICS", "VOIDBASE_DEPLOY_RATE_LIMIT", MAIL_DOMAIN_VAR, AI_VAR, OBSERVABILITY_VAR, OBSERVABILITY_SAMPLE_VAR, OBSERVABILITY_ACCOUNT_VAR, SEO_PNG_VAR, DATABASE_VAR, "VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD", "PB_SUPERUSER_EMAIL", "PB_SUPERUSER_PASSWORD", "AUDITLOG"];
 export function loadEnvFiles(files = [".env", ".env.local", "../.env", "../.env.local"]): string[] {
   const loaded: string[] = [];
   for (const f of files) {
@@ -197,7 +200,14 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   const hub = opts.hub ?? !off(process.env.VOIDBASE_DEPLOY_HUB);
   // Workers Free allows 5 cron triggers per account; without the trigger PocketBase's maintenance runs lazily in requests
   const cron = opts.cron ?? !off(process.env.VOIDBASE_DEPLOY_CRON);
-  const observability = opts.observability ?? !off(process.env.VOIDBASE_DEPLOY_OBSERVABILITY);
+  // Workers Observability and the observability plugin's sampling share one knob and one rate, read from the
+  // environment or pb_secrets/secrets.json; VOIDBASE_DEPLOY_OBSERVABILITY is the older name for the same thing
+  const observabilityKnob = String(process.env[OBSERVABILITY_VAR] ?? readSecretsValues(secretsDir)?.[OBSERVABILITY_VAR] ?? process.env.VOIDBASE_DEPLOY_OBSERVABILITY ?? "").trim();
+  const observability = opts.observability ?? observabilityOn(observabilityKnob);
+  const observabilitySampleKnob = String(process.env[OBSERVABILITY_SAMPLE_VAR] ?? readSecretsValues(secretsDir)?.[OBSERVABILITY_SAMPLE_VAR] ?? "").trim();
+  if (observabilitySampleKnob && !(Number.isFinite(Number(observabilitySampleKnob)) && Number(observabilitySampleKnob) >= 0 && Number(observabilitySampleKnob) <= 1)) throw new Error(`${OBSERVABILITY_SAMPLE_VAR}=${observabilitySampleKnob} is not a number between 0 and 1`);
+  const observabilitySample = sampleRateOf(observabilitySampleKnob);
+  const observabilityAccount = String(process.env[OBSERVABILITY_ACCOUNT_VAR] ?? readSecretsValues(secretsDir)?.[OBSERVABILITY_ACCOUNT_VAR] ?? "").trim();
   // custom domains are the domains plugin's (src/node/plugins/domains.ts, from VOIDBASE_DOMAINS / --domain): its
   // `before` turns workers.dev off and claims the URL, its `after` attaches them; the deploy only reports the URL
   // the static site next to the API: --public-dir, VOIDBASE_DEPLOY_PUBLIC_DIR, or ./pb_public when it exists (PocketBase's default)
@@ -263,7 +273,9 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   log(seoPng ? `${SEO_PNG_VAR}=1: seo share cards are rasterised to PNG (resvg, about 1 MB gzipped in the Worker)` : `share cards are SVG (${SEO_PNG_VAR}=1 bundles resvg and serves them as PNG, about 1 MB gzipped more)`);
   if (!queue) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/queues`, { recursive: true, force: true }); }
   if (!cron) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/crons`, { recursive: true, force: true }); log("cron trigger disabled (VOIDBASE_DEPLOY_CRON=0 / --no-cron): maintenance runs lazily in requests"); }
-    log(observability ? "observability: invocation logs kept for the dashboard" : "observability off (VOIDBASE_DEPLOY_OBSERVABILITY=0)");
+  log(observability
+    ? `observability: the Worker's logs and invocation logs are kept (head_sampling_rate ${observabilitySample}); the observability plugin samples the request path at the same rate${analytics ? " into the Analytics Engine dataset" : ", where LOGS_ANALYTICS is bound (--analytics)"}, and GET /api/observability/summary reads Analytics Engine once ${OBSERVABILITY_TOKEN_VAR} is a secret on the Worker, the D1 request log until then`
+    : `observability off (${OBSERVABILITY_VAR}=0): the Worker's logs are not kept, nothing is sampled, and GET /api/observability/summary answers from the D1 request log`);
   // Smart Placement runs the Worker next to its D1 database: PocketBase-shaped requests are several dependent queries.
   // The rate-limit binding is an exact per-location ceiling per IP on top of the settings' rules (which count per
   // isolate); the Analytics Engine dataset takes one data point per request at any log level.
@@ -277,9 +289,12 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     r2_buckets: [{ binding: "STORAGE", bucket_name: `${name}-storage` }],
     ...(rateLimit ? { ratelimits: [{ name: "RATE_LIMITER", namespace_id: rateLimitNamespace(name), simple: { limit: rateLimit.limit, period: rateLimit.period } }] } : {}),
     ...(analytics ? { analytics_engine_datasets: [{ binding: "LOGS_ANALYTICS", dataset: `${name.replace(/-/g, "_")}_requests` }] } : {}),
-      // Workers Observability: the platform keeps invocation logs for the dashboard without the code doing anything.
-      // Traces stay off, because they are the expensive half and nothing here reads them yet.
-      ...(observability ? { observability: { logs: { enabled: true, invocation_logs: true } } } : {}),
+    // Workers Observability, in the shape Cloudflare's configuration documents today (checked 2026-09-11,
+    // https://developers.cloudflare.com/workers/wrangler/configuration/): `enabled` persists this Worker's logs
+    // and `head_sampling_rate` is a number between 0 and 1. Invocation logs, which carry the request and the
+    // response of every invocation, are on by default and only need turning off, so nothing is written for them
+    // (https://developers.cloudflare.com/workers/observability/logs/workers-logs/).
+    ...(observability ? { observability: workerObservability(observabilitySample) } : {}),
     ...(doClasses.length ? { durable_objects: { bindings: doClasses.map((d) => ({ name: d.binding, class_name: d.className })) }, migrations: doClasses.map((d) => ({ tag: d.tag, new_sqlite_classes: [d.className] })) } : {}),
     ...(workflows.length ? { workflows: workflows.map((w) => ({ name: w.workflowName, binding: w.binding, class_name: w.className })) } : {}),
     // Cloudflare Email Service: the binding sends from any domain onboarded on the account (the plugin holds the
@@ -300,6 +315,11 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   if (mailDomain) baked[MAIL_DOMAIN_VAR] = mailDomain;
   if (aiModel) baked[AI_VAR] = aiModel;
   if (seoPng) baked[SEO_PNG_VAR] = "1";
+  // the observability plugin's knobs, baked so the Worker reads the same numbers the config was written from. The
+  // token is not among them: it is a secret, declared in pb_secrets or pushed with VOIDBASE_DEPLOY_SECRETS.
+  if (!observability) baked[OBSERVABILITY_VAR] = "0";
+  if (observabilitySampleKnob) baked[OBSERVABILITY_SAMPLE_VAR] = String(observabilitySample);
+  if (observabilityAccount) baked[OBSERVABILITY_ACCOUNT_VAR] = observabilityAccount;
   // the declared server and public values, parsed (defaults filled in): a var is the code's to set on every deploy
   const definition = pbSecrets.state.definition;
   const plainKeys = definition ? definition.of("server", "public", "flag") : [];

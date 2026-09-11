@@ -504,7 +504,12 @@ other branch that way; (2026-09-11) the first payment provider: `stripe`, a ship
 (2026-09-11) `polar` and `lemonsqueezy` behind the same interface: what the three share moved into
 `payments-shared.ts`, each provider file is its knobs, its calls, its signature and its events, and the three are
 one provider of `payments@1` to the loader (stripe claims it, the others join its family), so changing provider is
-changing which key is set; and (2026-09-11) removing a core plugin is a deliberate act: `voidbase plugins remove`
+changing which key is set; and (2026-09-11) `observability`, the second core plugin: `VOIDBASE_OBSERVABILITY` turns
+the Worker's own logs on at deploy, the plugin samples every request into Analytics Engine as one data point keyed
+by the matched route rather than the path, and three superuser routes (`/api/observability/summary`, `/errors`,
+`/logs`) answer the instance's own numbers from the SQL API when a token is set and from the D1 request log when it
+is not, saying which, while hook CPU is left unmeasured because the clock is frozen between I/O inside a Worker and
+any number for it would be invented; and (2026-09-11) removing a core plugin is a deliberate act: `voidbase plugins remove`
 refuses a core-tier plugin, or one whose interface another installed plugin requires, without `--yes`, and
 `POST /api/plugins/remove` answers 409 with the same text unless the body carries `force: true`, both of them
 printing what stops working rather than finding out afterwards; and (2026-09-10) the installer: an instance changes its own plugins (`installer`, a

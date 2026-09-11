@@ -93,7 +93,26 @@ rows actually written", and 5 and 6 are the two latency wins visible to users.
 | 9 rate limits | done: the rate-limit binding as a per-location ceiling per IP while rate limits are enabled (`--rate-limit`); eventually consistent by Cloudflare's design | `src/server/hardening.ts`, `src/node/deploy-cf.ts` |
 | 10 Durable Object hub | done: one SQLite-backed `VoidbaseHub` per instance, exported from the instance's own Worker (the plugin appends it to Void's generated entry; wrangler.jsonc declares the binding and the `new_sqlite_classes` migration, which Void's Cloudflare backend accepts). Each SSE connection holds one hibernatable socket to it, writes publish after their D1 batch commits, subscription changes are relayed through it, and the object sweeps sockets that stopped pinging. Without the binding (Bun, `--no-hub`) the D1 poll stays. Local fan-out to 100 clients: p50 346 ms (poll: 587 ms), one client: about 50 ms. Void itself neither promises custom Durable Objects nor offers a cheaper primitive: `void/live` keeps one active object per open stream and caps a topic at 256 subscribers | `src/server/hub.ts`, `src/server/realtime/`, `hooks-plugin.ts` `hubEntry` |
 | 11 Durable Object database | done (2026-09-11), behind `VOIDBASE_DATABASE=durable`: the instance's data in its own SQLite-backed `VoidbaseDatabase` through the same D1 interface, `batch` a real transaction; the 100-column and 100-parameter ceilings stay (measured on workerd). Section below | `src/server/durable-db.ts`, `src/server/durable-d1.ts`, `test/workers-durable.ts` |
+| 12 observability | done (2026-09-11): the second core plugin. Workers Observability on at deploy, one Analytics Engine data point per request keyed by the matched route, and the instance's own numbers behind the superuser. Section below | `src/server/plugins/observability.ts`, `src/node/deploy-cf.ts` |
 
+
+## What observability costs on the user's account (2026-09-11)
+
+The `observability` plugin is core and on by default, so what it costs has to be small enough to be a default.
+Prices are Cloudflare's, Workers Paid plan, checked 2026-09-11.
+
+| Piece | What it costs | On by default |
+| --- | --- | --- |
+| Workers Logs (`observability: { enabled: true, head_sampling_rate }`) | Workers Paid: 20 million events included a month, then $0.60 per additional million, retained 7 days. Free: 200,000 a day, after which a 1% head-based sample is applied for the rest of the day, retained 3 days. One invocation log per request is the default, and `head_sampling_rate` is the lever: `VOIDBASE_OBSERVABILITY_SAMPLE=0.1` makes 10 million requests 1 million events | yes |
+| Analytics Engine (`LOGS_ANALYTICS`) | Workers Paid: 10 million data points written and 1 million read queries included a month, then $0.25 per additional million written and $1.00 per additional million read. Free: 100,000 written and 10,000 read a day. Cloudflare's pricing page says the numbers are published in advance and use is not billed yet. One point per request, so 10 million requests a month is 10 million points. The account has to enable Analytics Engine once | no: `--analytics` / `VOIDBASE_DEPLOY_ANALYTICS=1` |
+| The D1 request log (`_logs`) | unchanged, and already paid for: $1 per million rows written, which is why the Workers default is to write a row only from level 4 up (item 2 above) | yes, as before |
+| The SQL API | three read queries per `GET /api/observability/summary`, against the million read queries a month the plan includes; a panel refreshing every ten seconds all month is about 260,000 of them | only when the token is set |
+
+So the default instance costs nothing new: Workers Logs is included, the Analytics Engine binding is opt-in, and
+the summary falls back to a log that was already being written. The instance that turns `--analytics` on writes a
+point per request for the route-level percentiles the request log cannot answer, and stays inside the included 10
+million until it is a busy instance. An instance at a scale where 20 million log events a month matters lowers one
+number, `VOIDBASE_OBSERVABILITY_SAMPLE`, and both halves follow it.
 
 ### The Worker bundle, and the wasm in it (2026-09-11)
 

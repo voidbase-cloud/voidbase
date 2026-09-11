@@ -26,14 +26,14 @@ describe("auth is the core plugin", () => {
     expect(auth.manifest.provides).toEqual(["auth@1"]);
     expect(auth.manifest.collections).toEqual(["_superusers", "_externalAuths", "_authOrigins", "_otps", "_mfas"]);
     expect(SHIPPED[0]).toBe("auth");
-    expect(CORE).toEqual(["auth@1"]);
+    expect(CORE).toContain("auth@1");
   });
 
   test("an instance without it loads, and says it is missing auth@1", async () => {
     const kernel = createKernel(new Hono() as never);
     const loaded = await load(kernel, [], "0.9.0");
-    expect(loaded.missingCore).toEqual(["auth@1"]);
-    expect(resolve([auth], "0.9.0").missingCore).toEqual([]);
+    expect(loaded.missingCore).toContain("auth@1");
+    expect(resolve([auth], "0.9.0").missingCore).not.toContain("auth@1");
   });
 
   test("with it, the kernel serves the whole contract and the routes are mounted on the app", async () => {

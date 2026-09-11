@@ -625,6 +625,99 @@ filtered, subscribed to and backed up like any other, and the tool list is the M
 A Think-based plugin (the panel chat, the preview chat, the app-mounted one the roadmap names) would sit on the same
 loop and the same tool list; it is not built, and the Durable Object it needs is not part of this package.
 
+## Seeing what the instance is doing: observability
+
+`observability` is a shipped plugin (tier `core`, `src/server/plugins/observability.ts`) and the second core plugin
+after auth. Core for the roadmap's reason: an instance you cannot see into is one you cannot operate. A plugin for
+the other half of that reason: somebody who would rather send all of this somewhere else removes ours and provides
+`observability@1` from theirs, rather than forking the server.
+
+It is three things, and they stay three.
+
+**The Worker's own logs, turned on at deploy.** `VOIDBASE_OBSERVABILITY=1` is the default (unset means on; `0`,
+`false`, `off` and `no` mean off), so `voidbase deploy` writes `observability: { enabled: true,
+head_sampling_rate: <VOIDBASE_OBSERVABILITY_SAMPLE, default 1> }` into the generated `wrangler.jsonc`. Those are
+the two fields Cloudflare's configuration documents today (checked 2026-09-11,
+https://developers.cloudflare.com/workers/wrangler/configuration/): `enabled` persists this Worker's logs, and
+`head_sampling_rate` is a number between 0 and 1. Invocation logs, which carry the request and the response of
+every invocation, are on by default and only need `observability.logs.invocation_logs: false` to turn off
+(https://developers.cloudflare.com/workers/observability/logs/workers-logs/), so nothing is written for them. The
+names both halves agree on live in `src/server/plugins/observability-binding.ts`, the way the ai plugin's do, so
+the deploy imports no kernel to write the field.
+
+**The request path, sampled.** The plugin provides `observability@1`, whose `sample` is middleware `app.ts` holds a
+place for: the kernel loads after the routes are mounted, so a plugin cannot `use("*")` for itself (the same slot
+hardening's three handlers go through). When `LOGS_ANALYTICS` is bound (`voidbase deploy --analytics`) it writes one
+Analytics Engine data point per request:
+
+| | |
+| --- | --- |
+| `blobs` | the matched route (`/api/collections/:collection/records/:id`, taken from Hono's matched routes, so a million record ids are one row rather than a million), the method, the status class (`2xx`, `4xx`, `5xx`), and the collection when the route names one |
+| `doubles` | the duration in milliseconds, and the response size in bytes when the answer declares a `Content-Length` (0 when it does not: nothing is cloned or buffered to find out) |
+| `indexes` | the route, which is Analytics Engine's sampling key and the one index it accepts |
+
+A path that matched no route, and a `pb_hooks` route (they are all dispatched from one `all("*")`), is recorded as
+the request path with its ids collapsed: `/orders/8f14e45fceea167` becomes `/orders/:id`. `VOIDBASE_OBSERVABILITY_SAMPLE=0.1`
+records a tenth of requests, and the same number is the Worker's `head_sampling_rate`, so one knob lowers both.
+Writing a data point can never fail a request: a binding that throws is caught, logged once per isolate, and the
+request answers as if nothing happened.
+
+The duration is elapsed time as the Worker can observe it, and Cloudflare freezes the clock inside one: "the value
+returned by `Date.now()` is locked in place while code is executing... `Date.now()` returns the time of the last
+I/O" (https://developers.cloudflare.com/workers/reference/security-model/). So it measures a slow endpoint, which
+is I/O, and does not measure CPU.
+
+**The numbers, behind the superuser.** Three routes, all superuser-only (401 for anonymous, 403 for a signed-in
+record):
+
+- `GET /api/observability/summary?window=hour|day` answers `{ source, window, requests, errors, rate, p50, p95,
+  p99, slowest: [{ route, p95, count }], statuses: { "2xx": n, ... } }`, where `rate` is the share of requests that
+  answered 5xx and `slowest` is the five routes with the highest p95.
+- `GET /api/observability/errors?since=<ISO date>&window=hour|day` answers `{ source, since, items, totalItems }`:
+  the request log filtered to 5xx answers and to the exceptions the instance recorded, newest first, up to 200.
+- `GET /api/observability/logs?since=<ISO date>&level=<-4|0|4|8>&window=hour|day` answers `{ source, since, level,
+  items, totalItems }`: the same log, filtered by level, `data` parsed the way `/api/logs` parses it.
+
+**The two sources, and why the answer says which one it used.** The summary queries Analytics Engine's SQL API,
+`POST https://api.cloudflare.com/client/v4/accounts/<account_id>/analytics_engine/sql` with the SQL as the request
+body and `Authorization: Bearer <token>` (https://developers.cloudflare.com/analytics/analytics-engine/sql-api/,
+checked 2026-09-11), when both `VOIDBASE_OBSERVABILITY_ACCOUNT_ID` (or the `VOIDBASE_ACCOUNT_ID` the deploy already
+bakes) and `VOIDBASE_OBSERVABILITY_TOKEN` are set. The token needs Account Analytics | Read, and it is a secret:
+declare it in `pb_secrets` or push it with `VOIDBASE_DEPLOY_SECRETS`, never as a var. Counts are
+`SUM(_sample_interval)` and percentiles are `quantileWeighted(q, double1, _sample_interval)`, which is how that page
+and the aggregate functions page say to read a downsampled dataset; our own sampling is a second factor the dataset
+knows nothing about, so counts are scaled by `1/rate` here, exactly right while the rate has not changed inside the
+window. Then `source: "analytics-engine"`.
+
+Without those two, or when the SQL API refuses, the summary answers from the D1 request log voidbase already keeps
+(`_logs`, `src/server/logs.ts`) and says `source: "request-log"`. That is the honest half of the design: the
+fallback is always there, and it is not the same population. `_logs` keeps a row per request only at or above
+`max(settings.logs.minLevel, VOIDBASE_LOG_MIN_LEVEL)`, and the Workers default is 4, which is warnings and errors.
+So on an instance deployed without `--analytics` the summary is about what went wrong rather than about everything
+that happened, and `source` is how a caller knows. The `/errors` and `/logs` routes read only that log.
+
+Workers Logs does have a public read API, and it is not one a Worker can use on itself: the account-scoped `POST
+/accounts/{account_id}/workers/observability/telemetry/query`
+(https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/telemetry/methods/query/),
+which needs the same kind of account id and token the summary treats as optional. It is the natural second source
+for `/logs` and it is not wired up: the request body was not pinned from the docs, and a guessed query shape would
+be worse than not having one.
+
+**Hook CPU is not measured, and that is a decision.** The roadmap's fourth number is "which hooks are costing the
+CPU". The hooks run in the same isolate and `src/server/hooks/runtime.ts` `trigger` is the single place every
+`pb_hooks` handler is dispatched from, so timing around it is reachable. The number would be a lie: the clock is
+frozen between I/O (the link above) and there is no CPU-time API inside a Worker, so any in-isolate timing around a
+hook measures how long it waited rather than what it cost. So `hooks` stays an optional field of the summary that
+nothing fills, rather than a number that looks like an answer. Cloudflare's own dashboard has per-invocation CPU
+time; attributing it to a hook needs something the runtime does not expose today.
+
+**Without anything bound** the plugin still loads, because it is core and an instance must not fail to start over
+it: nothing is sampled, the summary answers from the request log, and `GET /api/plugins` reports
+`observability: { via: "analytics-engine" | "request-log", sampling: <0..1>, logs: <whether the request log is
+being written at all> }`. `test/unit/observability.test.ts` runs the sampler through the same slot `app.ts` holds,
+with a `writeDataPoint` spy, a stubbed SQL API and the bun:sqlite request log; `test/deploy-cf.ts` checks the
+generated config with the knob, with a lowered rate and with the knob off.
+
 ## Content in the reader's language: translations
 
 `translations` is a shipped plugin (tier `official`, `src/server/plugins/translations.ts`) that answers the content
@@ -1045,7 +1138,7 @@ run, `after`, the listing, `--remove --preview` and the prune against the mock's
 requests and comments. What the roadmap's second shape describes (the same instance with the branch's writes flagged
 as preview) is not built: every preview is a whole instance.
 
-## Auth is the core plugin
+## The two core plugins: auth and observability
 
 Auth left the core on 2026-09-09 (plan.md, decision 0.3): `src/server/plugins/auth.ts` is a plugin of tier `core`
 that provides `auth@1`, owns `_superusers`, `_externalAuths`, `_authOrigins`, `_otps` and `_mfas`, and mounts every
@@ -1060,6 +1153,17 @@ with nobody signed in and every superuser route answering 401, and says what it 
 `/api/plugins`. `voidbase plugins remove auth --yes` is that instance, and the `--yes` is the point: without it the
 command prints what stops working and does nothing. Still in the core: the bootstrap creates the auth
 collections; the manifest owns them, and handing their creation over is next.
+
+Observability joined it on 2026-09-11, and the list should stay about that short: one because nothing works without
+it, the other because an instance you cannot see into is one you cannot operate. `src/server/plugins/observability.ts`
+is a plugin of tier `core` that provides `observability@1` (the section above). `CORE` is now `["auth@1",
+"observability@1"]`, so `GET /api/plugins` and the boot log name either of them when nothing provides it, and
+`voidbase plugins remove observability` prints what stops working and refuses without `--yes` exactly as auth's
+does. What an instance does without a provider differs per interface, which is why the loader says it one interface
+at a time (`WITHOUT` in `src/server/plugins/resolve.ts`): without auth the instance runs with nobody signed in and
+every superuser route answering 401; without observability it still loads and serves every request, unmeasured,
+with nothing sampled into Analytics Engine, `/api/observability` answering 404, and what the instance is doing
+visible only in the D1 request log and whatever the Cloudflare dashboard happens to show.
 
 ## What is not built
 

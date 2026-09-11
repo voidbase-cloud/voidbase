@@ -24,9 +24,10 @@ import { checkManifest } from "./manifest";
  * An interface joins this list in the same commit that removes its built-in implementation, and not before:
  * listing `auth@1` while auth was still built in would have made every instance warn that it was running without
  * auth while auth was running fine. Auth left the core on 2026-09-09 (plugins/auth.ts provides it), so an instance
- * without a provider is one that says so.
+ * without a provider is one that says so. Observability joined it on 2026-09-11 (plugins/observability.ts), for
+ * the reason the roadmap gives: an instance you cannot see into is one you cannot operate.
  */
-export const CORE: InterfaceName[] = ["auth@1"];
+export const CORE: InterfaceName[] = ["auth@1", "observability@1"];
 
 export interface Resolution {
   /** load order: everything a plugin requires comes before it */
@@ -239,6 +240,7 @@ export interface RemovalCost {
  */
 const WITHOUT: Record<string, string> = {
   "auth@1": "the instance still loads and runs with nobody signed in: no request is authenticated and every superuser route answers 401",
+  "observability@1": "the instance still loads and serves every request, unmeasured: nothing is sampled into Analytics Engine, /api/observability answers 404, and what the instance is doing is only what the D1 request log and the Cloudflare dashboard happen to show",
 };
 
 /** what removing `name` from this set costs, or null when nothing worth stopping for stops working */

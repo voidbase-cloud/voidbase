@@ -8,6 +8,7 @@ import type { Collection } from "../../src/server/collections/model";
 import { ApiError } from "../../src/server/errors";
 import { createKernel, load } from "../../src/server/kernel";
 import { auth, provider } from "../../src/server/plugins/auth";
+import { observability } from "../../src/server/plugins/observability";
 import { buildMeta, etagOf, excerpt, locOf, matchPath, notModified, parseSeo, parseSitemap, seo, seoPngOn, SEO_PNG_VAR, seoRedirectLines, seoWith, shareCard, splitLocale, wrap, type MetaAnswer, type SeoSource } from "../../src/server/plugins/seo";
 import { CARD_FONT_FAMILY } from "../../src/server/plugins/seo-meta";
 import type { AppEnv, Bindings } from "../../src/server/types";
@@ -62,7 +63,7 @@ async function appWith(env: Record<string, unknown> = {}, plugin = seoWith(spySo
   app.use("*", async (c, next) => { c.set("auth", null); await next(); });
   app.onError((err, c) => (err instanceof ApiError ? c.json({ message: err.message }, err.status as 400) : c.json({ message: String(err) }, 500)));
   const kernel = createKernel(app);
-  await load(kernel, [auth, plugin], "0.9.0");
+  await load(kernel, [auth, observability, plugin], "0.9.0"); // both core plugins: an instance missing one warns at load
   provideAuthLookup(() => provider);
   const ask = (path: string, headers: Record<string, string> = {}) => app.request(`http://shop.example${path}`, { headers }, env as unknown as Bindings);
   const get = async (path: string, headers: Record<string, string> = {}) => { const r = await ask(path, headers); return { r, text: await r.text() }; };

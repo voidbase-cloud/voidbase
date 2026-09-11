@@ -137,6 +137,27 @@ export interface Mail {
   send(env: Bindings, m: MailMessage, text: string): Promise<void>;
 }
 
+/**
+ * Seeing what the instance is doing. The second core interface (2026-09-11), because an instance you cannot see
+ * into is one you cannot operate.
+ *
+ * Two halves, and the split is the same one hardening's is. `sample` is middleware, and middleware is the one
+ * thing a plugin cannot mount for itself: the kernel loads after the routes are mounted, so app.ts holds its
+ * place in the chain and asks the provider at request time. `report` is what `/api/plugins` says about it, which
+ * an instance has to be able to answer about itself: where its numbers come from, how much of the path is
+ * sampled, and whether the request log it falls back to is being written at all.
+ *
+ * Reading the numbers is not in the contract. The routes are the provider's own, the way a payment provider's
+ * webhook route is, because what they answer from (Analytics Engine, the request log, somebody else's service)
+ * is exactly what a replacement is replacing.
+ */
+export interface Observability {
+  /** measures every request and records it; never fails one, whatever the recording does */
+  sample: MiddlewareHandler<AppEnv>;
+  /** what `/api/plugins` reports, per env: bindings and knobs arrive with the request, not at module scope */
+  report(env: Bindings): Promise<{ via: "analytics-engine" | "request-log"; sampling: number; logs: boolean }>;
+}
+
 /** every interface this voidbase defines, and the type behind each */
 export interface Interfaces {
   "auth@1": Auth;
@@ -144,9 +165,10 @@ export interface Interfaces {
   "realtime@1": Realtime;
   "hardening@1": Hardening;
   "mail@1": Mail;
+  "observability@1": Observability;
 }
 
 export type Known = keyof Interfaces;
 
 /** the list, for the loader to check a manifest against something rather than accepting any string */
-export const KNOWN: Known[] = ["auth@1", "payments@1", "realtime@1", "hardening@1", "mail@1"];
+export const KNOWN: Known[] = ["auth@1", "payments@1", "realtime@1", "hardening@1", "mail@1", "observability@1"];

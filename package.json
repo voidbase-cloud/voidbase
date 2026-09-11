@@ -54,6 +54,7 @@
     "./plugins/seo": "./src/server/plugins/seo.ts",
     "./plugins/mail": "./src/server/plugins/mail.ts",
     "./plugins/ai": "./src/server/plugins/ai.ts",
+    "./plugins/observability": "./src/server/plugins/observability.ts",
     "./plugins/translations": "./src/server/plugins/translations.ts",
     "./plugins/stripe": "./src/server/plugins/stripe.ts",
     "./plugins/polar": "./src/server/plugins/polar.ts",

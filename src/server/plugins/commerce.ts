@@ -162,7 +162,6 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
  * its token through the routes and not through the records API, because a rule cannot hold a secret.
  */
 export async function collectionDefinitions(db: D1Database): Promise<Record<string, unknown>[]> {
-  const users = (await findCollection(db, "users"))?.id ?? collectionId("auth", "users");
   // the payments plugin's two, by the id its own definitions give them, so the relation lands whether its
   // collections exist yet or not (they are created on the first request that carries a provider's key)
   const customers = (await findCollection(db, "customers"))?.id ?? collectionId("base", "customers");
@@ -174,6 +173,9 @@ export async function collectionDefinitions(db: D1Database): Promise<Record<stri
   // The rules name the order's own `user`, not the payments plugin's `customers.user`: a rule that traverses a
   // collection another plugin creates only when its key is set is invalid on an instance without one, and an
   // invalid rule fails the create, which used to take every request down with it (seen on the demo, 2026-09-11).
+  // It is the auth record's id as text rather than a relation to `users`, because the buyer may be a record of any
+  // auth collection, a superuser included, and a relation to one collection refuses every other (the same reason
+  // `ai_conversations` carries an owner id).
   const ownOrder = "order.user = @request.auth.id";
   return [
     {
@@ -219,7 +221,7 @@ export async function collectionDefinitions(db: D1Database): Promise<Record<stri
     {
       name: "carts", type: "base", listRule: "user = @request.auth.id", viewRule: "user = @request.auth.id", ...noWrites,
       fields: [
-        { name: "user", type: "relation", collectionId: users, maxSelect: 1, cascadeDelete: true },
+        { name: "user", type: "text" },
         { name: "token", type: "text" },
         { name: "currency", type: "text" },
         { name: "status", type: "select", maxSelect: 1, values: [...CART_STATUSES] },
@@ -247,7 +249,7 @@ export async function collectionDefinitions(db: D1Database): Promise<Record<stri
       fields: [
         { name: "number", type: "text", required: true, presentable: true },
         { name: "customer", type: "relation", collectionId: customers, maxSelect: 1, cascadeDelete: false },
-        { name: "user", type: "relation", collectionId: users, maxSelect: 1, cascadeDelete: false },
+        { name: "user", type: "text", required: true },
         { name: "email", type: "text" },
         { name: "status", type: "select", maxSelect: 1, values: [...ORDER_STATUSES] },
         { name: "currency", type: "text" },

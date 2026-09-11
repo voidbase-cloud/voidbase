@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.39](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.38...v0.9.0-beta.39) (2026-09-11)
+
+* feat(adapter): the admin panel under your own path, behind your own check
+
 ## [0.9.0-beta.38](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.37...v0.9.0-beta.38) (2026-09-11)
 
 * feat(records): ask whether a record may be edited without writing to it

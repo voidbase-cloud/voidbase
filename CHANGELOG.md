@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.29](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.28...v0.9.0-beta.29) (2026-09-11)
+
+* feat(mail): send from the instance's domain through Cloudflare Email Service, as a plugin
+
 ## [0.9.0-beta.28](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.27...v0.9.0-beta.28) (2026-09-11)
 
 * feat(hardening): the plugin owns the response policy, with env knobs and a CSRF rule

@@ -72,6 +72,14 @@
         "hono": "^4.11.9",
       },
     },
+    "packages/plugin-translations": {
+      "name": "@voidbase-cloud/plugin-translations",
+      "version": "0.9.0-beta.55",
+      "peerDependencies": {
+        "@voidbase-cloud/voidbase": "workspace:*",
+        "hono": "^4.11.9",
+      },
+    },
     "packages/release-fixture": {
       "name": "@voidbase-cloud/release-fixture",
       "version": "0.9.0-beta.55",
@@ -97,6 +105,7 @@
         "@voidbase-cloud/plugin-realtime": "workspace:*",
         "@voidbase-cloud/plugin-shipping-flat": "workspace:*",
         "@voidbase-cloud/plugin-tax-flat": "workspace:*",
+        "@voidbase-cloud/plugin-translations": "workspace:*",
         "bcryptjs": "^3.0.2",
         "cordis": "4.0.0-rc.9",
         "fflate": "^0.8.3",
@@ -567,6 +576,8 @@
     "@voidbase-cloud/plugin-shipping-flat": ["@voidbase-cloud/plugin-shipping-flat@workspace:packages/plugin-shipping-flat"],
 
     "@voidbase-cloud/plugin-tax-flat": ["@voidbase-cloud/plugin-tax-flat@workspace:packages/plugin-tax-flat"],
+
+    "@voidbase-cloud/plugin-translations": ["@voidbase-cloud/plugin-translations@workspace:packages/plugin-translations"],
 
     "@voidbase-cloud/release-fixture": ["@voidbase-cloud/release-fixture@workspace:packages/release-fixture"],
 

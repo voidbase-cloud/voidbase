@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-realtime",
-  "version": "0.9.0-beta.55",
+  "version": "0.9.0-beta.56",
   "description": "The realtime plugin of voidbase: provides realtime@1, the hub client for a request's bindings",
   "license": "MIT",
   "repository": {

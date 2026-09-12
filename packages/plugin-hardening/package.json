@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-hardening",
-  "version": "0.9.0-beta.55",
+  "version": "0.9.0-beta.56",
   "description": "The hardening plugin of voidbase: provides hardening@1, the body limit, the rate limit, the response policy and GET /api/csrf",
   "license": "MIT",
   "repository": {

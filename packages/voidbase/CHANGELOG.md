@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.56](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.55...v0.9.0-beta.56) (2026-09-12)
+
+* fix(ci): publish the workspace in waves, so a release with nine new names fits in the build
+
 ## [0.9.0-beta.55](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.54...v0.9.0-beta.55) (2026-09-12)
 
 * fix(realtime): a bare collection topic subscribes to the collection, as it does in PocketBase

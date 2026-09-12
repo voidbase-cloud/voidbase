@@ -47,7 +47,7 @@ the plugin does. `@voidbase-cloud/plugin-realtime` is the first one across (belo
 | `/records-preview`, `/records-files` | the preview flag, the two ways a request asks for a branch, `flaggedCollections`, and `deleteAllRecordFiles`: what the previews plugin calls, not the records service behind it |
 | `/project-sync` | the lockfile and the one commit that changes a project's plugins, for the installer |
 | `/registry` | the marketplace index client: `fetchIndex`, `download`, `integrityOf`, `problemsWithIndex` |
-| `/plugins/<name>` | twenty-one entries: the nineteen shipped plugin objects — `/plugins/realtime` is a re-export of the `@voidbase-cloud/plugin-realtime` package the core depends on, and the other eighteen are still files of this package until 7.6 to 7.10 move them the same way, entry unchanged — plus `/plugins/payments-shared` (what the three payment plugins are built from, not a plugin) and `/plugins/collections` (`ensureCollections`, how a plugin declares its own collections, also not a plugin). The twentieth shipped plugin, the installer, has no entry point — below |
+| `/plugins/<name>` | twenty-one entries: the nineteen shipped plugin objects — two of them (`/plugins/realtime`, `/plugins/domains`) are one-line re-exports of the `@voidbase-cloud/plugin-*` packages the core depends on, and the rest are still files of this package until 7.6 to 7.10 move them the same way, entry unchanged — plus `/plugins/payments-shared` (what the three payment plugins are built from, not a plugin) and `/plugins/collections` (`ensureCollections`, how a plugin declares its own collections, also not a plugin, and the entry an extracted plugin that owns collections imports). The twentieth shipped plugin, the installer, has no entry point — below |
 
 The rule for `/sdk` against a narrow entry: `/sdk` is what more than one shipped plugin imports, plus the siblings
 of such a name in the same small, general-purpose module — splitting one of four prepared-statement helpers into an
@@ -190,6 +190,16 @@ so that its shape is the template for the nine extractions after it. What it set
   declared here because this manifest is the template and the packages 7.6 to 7.10 add will. The rule the test
   enforces is the general one, not a blessed list: every specifier a plugin package's source imports has to be a
   package that package's own manifest declares (`test/unit/plugin-extraction.test.ts`).
+
+#### The leaf plugins (7.6)
+
+The nine plugins nothing else in the graph depends on, each its own package and its own commit, in the order they
+were taken — cheapest first, so that every commit is the template again and what is new in it is the one thing this
+column names.
+
+| Package | What was special about it |
+| --- | --- |
+| `@voidbase-cloud/plugin-domains` | Nothing, which is why it went first: the only shipped plugin whose whole reach into the core is `Plugin` and the runtime env, so it needed no entry point that did not already exist. Its deploy-time half is not in the package — a deploy plugin runs inside `voidbase deploy` against the Cloudflare API, so `src/node/plugins/domains.ts` stays in the core and reads the two var names back through `/plugins/domains`. |
 
 ## What a plugin is
 

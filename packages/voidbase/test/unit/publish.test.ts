@@ -63,34 +63,41 @@ const pkg = (name: string, version: string, deps: Record<string, string> = {}, e
 
 describe("the workspace the release packs", () => {
   const workspace = readWorkspace(ROOT);
+  /** every extracted plugin package, in the order a release publishes them: one at 7.5, ten by the end of 7.6 */
+  const PLUGINS = workspace.map((p) => p.name).filter((n) => n.startsWith("@voidbase-cloud/plugin-")).sort();
 
-  test("holds the two published packages and the fixture that keeps the private path exercised", () => {
-    expect(workspace.map((p) => p.name).sort()).toEqual([PLUGIN, FIXTURE, PACKAGE].sort());
+  test("holds the core, a package per extracted plugin, and the fixture that keeps the private path exercised", () => {
+    expect(workspace.map((p) => p.name).sort()).toEqual([...PLUGINS, FIXTURE, PACKAGE].sort());
+    expect(PLUGINS).toContain(PLUGIN);
     expect(workspace.find((p) => p.name === FIXTURE)!.private).toBe(true);
     expect(workspace.find((p) => p.name === PACKAGE)!.private).toBe(false);
-    expect(workspace.find((p) => p.name === PLUGIN)!.private).toBe(false);
     expect(workspace.find((p) => p.name === FIXTURE)!.manifest.dependencies).toEqual({ [PACKAGE]: "workspace:*" });
-    // 7.5's pair, in the real workspace: the core depends on the plugin, the plugin peer-depends back on the core
-    expect(workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies![PLUGIN]).toBe("workspace:*");
-    // hono beside the core: a plugin with routes adds them to the core's own Hono app, so the two have to be the
-    // same hono and the range is the core's (test/unit/plugin-extraction.test.ts holds the rule)
-    expect(workspace.find((p) => p.name === PLUGIN)!.manifest.peerDependencies).toEqual({ [PACKAGE]: "workspace:*", hono: workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies!.hono! });
-    expect(workspace.find((p) => p.name === PLUGIN)!.manifest.dependencies).toBeUndefined();
+    for (const name of PLUGINS) {
+      const plugin = workspace.find((p) => p.name === name)!;
+      expect(plugin.private, name).toBe(false);
+      // 7.5's pair, in the real workspace: the core depends on the plugin, the plugin peer-depends back on the core
+      expect(workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies![name]).toBe("workspace:*");
+      // hono beside the core: a plugin with routes adds them to the core's own Hono app, so the two have to be the
+      // same hono and the range is the core's (test/unit/plugin-extraction.test.ts holds the rule)
+      expect(plugin.manifest.peerDependencies, name).toEqual({ [PACKAGE]: "workspace:*", hono: workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies!.hono! });
+      expect(plugin.manifest.dependencies, name).toBeUndefined();
+    }
   });
 
   test("publishes only what is not private", () => {
-    expect(publishable(workspace).map((p) => p.name).sort()).toEqual([PLUGIN, PACKAGE].sort());
+    expect(publishable(workspace).map((p) => p.name).sort()).toEqual([...PLUGINS, PACKAGE].sort());
     expect(publishable(workspace).map((p) => p.name)).not.toContain(FIXTURE);
   });
 
   test("visits the dependent after what it depends on, whatever order it is handed", () => {
-    // The plugin package first, because the core depends on it; the fixture last, because it depends on the core.
-    // Path order gets neither right on its own -- packages/plugin-realtime < packages/release-fixture <
+    // The plugin packages first, because the core depends on each; the fixture last, because it depends on the core.
+    // Path order gets neither end right on its own -- packages/plugin-* < packages/release-fixture <
     // packages/voidbase -- so the topological sort has to do the work in both directions.
-    expect(publishOrder(workspace).map((p) => p.name)).toEqual([PLUGIN, PACKAGE, FIXTURE]);
-    expect(publishOrder([...workspace].reverse()).map((p) => p.name)).toEqual([PLUGIN, PACKAGE, FIXTURE]);
+    const order = [...PLUGINS, PACKAGE, FIXTURE];
+    expect(publishOrder(workspace).map((p) => p.name)).toEqual(order);
+    expect(publishOrder([...workspace].reverse()).map((p) => p.name)).toEqual(order);
     // and what a release actually publishes, in the order it publishes it
-    expect(publishable(publishOrder(workspace)).map((p) => p.name)).toEqual([PLUGIN, PACKAGE]);
+    expect(publishable(publishOrder(workspace)).map((p) => p.name)).toEqual([...PLUGINS, PACKAGE]);
   });
 
   test("orders a chain, ignores devDependency edges, and refuses a real cycle", () => {
@@ -109,8 +116,9 @@ describe("the workspace the release packs", () => {
     // first real plugin package. npm does not resolve peers when it publishes, so the edge is not there to read.
     // Kept as a constructed pair as well, so the rule is pinned by something other than the workspace of the day.
     const real = readWorkspace(ROOT);
-    expect(dependsOn(real.find((p) => p.name === PACKAGE)!, new Set(real.map((p) => p.name)))).toEqual([PLUGIN]);
-    expect(dependsOn(real.find((p) => p.name === PLUGIN)!, new Set(real.map((p) => p.name)))).toEqual([]);
+    const names = new Set(real.map((p) => p.name));
+    expect(dependsOn(real.find((p) => p.name === PACKAGE)!, names)).toEqual(PLUGINS);
+    for (const name of PLUGINS) expect(dependsOn(real.find((p) => p.name === name)!, names), name).toEqual([]);
     const core = pkg("@voidbase-cloud/voidbase", "0.9.0-beta.52", { "@voidbase-cloud/plugin-auth": "workspace:*" }, { path: "packages/voidbase" });
     const plugin = pkg("@voidbase-cloud/plugin-auth", "0.9.0-beta.52", {}, { path: "packages/plugin-auth" });
     plugin.manifest.peerDependencies = { "@voidbase-cloud/voidbase": ">=0.9.0-beta.14" };
@@ -301,7 +309,8 @@ describe("the workspace protocol, on the way into a tarball", () => {
 describe("the hot release bump, in lockstep", () => {
   test("moves every workspace package to one version", () => {
     const { from, to, packages } = lockstep(readWorkspace(ROOT));
-    expect(packages.map((p) => p.name).sort()).toEqual([PLUGIN, FIXTURE, PACKAGE].sort());
+    const plugins = readWorkspace(ROOT).map((p) => p.name).filter((n) => n.startsWith("@voidbase-cloud/plugin-"));
+    expect(packages.map((p) => p.name).sort()).toEqual([...plugins, FIXTURE, PACKAGE].sort());
     expect(to).not.toBe(from);
     expect(`${from.split(".").slice(0, -1).join(".")}.${Number(from.split(".").pop()) + 1}`).toBe(to);
   });

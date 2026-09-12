@@ -1,28 +1,14 @@
-// Where an instance answers: the hostnames a deploy attached to the Worker, and which of them is the real one.
+// `@voidbase-cloud/voidbase/plugins/domains`, which since 7.6 is a re-export of `@voidbase-cloud/plugin-domains`.
 //
-// None of that is a property of the server. DNS, certificates and which name is canonical are account-level facts,
-// decided around a deploy, and the core holds no opinion about any of it. So the work lives in the plugin's
-// deploy-time half (src/node/plugins/domains.ts): it attaches the hostnames, waits for the certificate, redirects
-// the rest to the canonical one, and detaches on --remove. What it leaves the Worker is two vars, and all this
-// runtime half does is report them on /api/plugins, so an instance can say where it answers.
-import { env as voidEnv } from "#platform/env";
-import type { Plugin } from "./manifest";
-
-/** the hostnames attached, comma separated, the first canonical: baked by the deploy plugin (and the deploy knob's name) */
-export const DOMAINS_VAR = "VOIDBASE_DOMAINS";
-/** the canonical hostname, the one every other attached hostname redirects to and the URL the deploy reports */
-export const CANONICAL_DOMAIN_VAR = "VOIDBASE_CANONICAL_DOMAIN";
-
-export interface DomainsInfo { hostnames: string[]; canonical: string | null }
-
-/** what GET /api/plugins says in its `domains` field: the vars the deploy baked, or nothing when it attached no hostname */
-export const domainsInfo = (env?: object): DomainsInfo => {
-  const read = (k: string) => String((env as Record<string, unknown> | undefined)?.[k] ?? (voidEnv as Record<string, unknown>)[k] ?? "").trim().toLowerCase();
-  const hostnames = read(DOMAINS_VAR).split(",").map((h) => h.trim()).filter(Boolean);
-  return { hostnames, canonical: read(CANONICAL_DOMAIN_VAR) || hostnames[0] || null };
-};
-
-export const domains: Plugin = {
-  manifest: { name: "domains", version: "0.1.0", tier: "official", voidbase: "*" },
-  info: (env) => domainsInfo(env),
-};
+// The plugin itself moved out of the core; this entry stays where it was, published under the same name, forever. A
+// marketplace bundle is audited, bundled and hashed against the names it imports and is then immutable, so a bundle
+// that imports this name goes on importing it for as long as the bundle exists.
+//
+// app.ts loads the plugin through this file rather than reaching past it to the package, which is the point: the
+// path a marketplace bundle takes is the path every instance takes. It is a re-export and not an alias, so the
+// `domains` a bundle imports here is the same object the core loaded -- one plugin, one entry in /api/plugins.
+//
+// `export *` rather than a list of names: src/node/plugins/domains.ts, the deploy-time half that stays in the core,
+// reads `DOMAINS_VAR` and `CANONICAL_DOMAIN_VAR` through this file, and a list would have to be kept in step with
+// the package's surface by hand.
+export * from "@voidbase-cloud/plugin-domains";

@@ -176,8 +176,14 @@ describe("the workspace's extracted plugin packages", () => {
       // the same object, not a copy with the same shape: one plugin, one `realtime@1` registration
       expect(Object.keys(viaCore).sort()).toEqual(Object.keys(viaPackage).sort());
       for (const k of Object.keys(viaPackage)) expect(viaCore[k], k).toBe(viaPackage[k]);
-      const plugin = Object.values(viaPackage)[0] as { manifest: { name: string } };
-      expect(plugin.manifest.name).toBe(shipped);
+      // exactly one of the package's exports is the plugin, and its manifest carries the name the entry promises.
+      // realtime exported nothing else, so the first export was the plugin; a package with knobs, an `info()` or a
+      // `<name>With()` beside it exports several, and an ES namespace orders its keys alphabetically, so "the first
+      // one" would have been whichever constant sorts first.
+      const isPlugin = (v: unknown): v is { manifest: { name: string } } =>
+        typeof v === "object" && v !== null && typeof (v as { manifest?: { name?: unknown } }).manifest?.name === "string";
+      const plugins = Object.values(viaPackage).filter(isPlugin);
+      expect(plugins.map((p) => p.manifest.name)).toEqual([shipped]);
       expect(SHIPPED).toContain(shipped);
     });
 

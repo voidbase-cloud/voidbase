@@ -195,6 +195,7 @@
     "@voidbase-cloud/plugin-hardening": "workspace:*",
     "@voidbase-cloud/plugin-realtime": "workspace:*",
     "@voidbase-cloud/plugin-shipping-flat": "workspace:*",
+    "@voidbase-cloud/plugin-tax-flat": "workspace:*",
     "bcryptjs": "^3.0.2",
     "cordis": "4.0.0-rc.9",
     "fflate": "^0.8.3",

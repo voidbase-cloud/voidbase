@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-shipping-flat",
-  "version": "0.9.0-beta.57",
+  "version": "0.9.0-beta.58",
   "description": "The flat-rate shipping plugin of voidbase: provides shipping@1, one rate from two knobs, free over a threshold",
   "license": "MIT",
   "repository": {

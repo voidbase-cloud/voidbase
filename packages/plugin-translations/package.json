@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-translations",
-  "version": "0.9.0-beta.57",
+  "version": "0.9.0-beta.58",
   "description": "The translations plugin of voidbase: a field is declared translatable once, and the records API answers in the reader's locale",
   "license": "MIT",
   "repository": {

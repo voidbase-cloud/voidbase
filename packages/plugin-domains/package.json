@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-domains",
-  "version": "0.9.0-beta.57",
+  "version": "0.9.0-beta.58",
   "description": "The domains plugin of voidbase: the hostnames a deploy attached to the Worker, and which of them is canonical",
   "license": "MIT",
   "repository": {

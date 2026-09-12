@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-observability",
-  "version": "0.9.0-beta.57",
+  "version": "0.9.0-beta.58",
   "description": "The observability plugin of voidbase: provides observability@1, the sampled request path and the summary behind the superuser",
   "license": "MIT",
   "repository": {

@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-previews",
-  "version": "0.9.0-beta.57",
+  "version": "0.9.0-beta.58",
   "description": "The previews plugin of voidbase: a preview per pull request, as its own instance or as a marked lane on this one",
   "license": "MIT",
   "repository": {

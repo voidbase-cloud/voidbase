@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-openapi",
-  "version": "0.9.0-beta.57",
+  "version": "0.9.0-beta.58",
   "description": "The openapi plugin of voidbase: the instance's own OpenAPI document and the reference that renders it",
   "license": "MIT",
   "repository": {

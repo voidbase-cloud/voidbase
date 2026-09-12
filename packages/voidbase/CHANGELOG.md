@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.53](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.52...v0.9.0-beta.53) (2026-09-12)
+
+* fix(ci): the release commit does not run the repository's pre-commit hook
+
 ## [0.9.0-beta.52](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.51...v0.9.0-beta.52) (2026-09-12)
 
 * refactor(ci): release the workspace, not the package, and prove it at two while there is one

@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.50](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.49...v0.9.0-beta.50) (2026-09-12)
+
+* fix(plugins): the refusal list is its own module, so each flavour keeps its own graph
+
 ## [0.9.0-beta.49](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.48...v0.9.0-beta.49) (2026-09-12)
 
 * fix(plugins): hold every call into a plugin, and answer for the installer without importing it

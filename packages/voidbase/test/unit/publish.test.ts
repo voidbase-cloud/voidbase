@@ -123,7 +123,13 @@ describe("the workspace the release packs", () => {
       expect(peers[PACKAGE], name).toBe("workspace:*");
       expect(Object.keys(peers).filter((n) => n !== PACKAGE && n !== "hono"), name).toEqual([]);
       if ("hono" in peers) expect(peers.hono, name).toBe(workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies!.hono!);
-      expect(plugin.manifest.dependencies, name).toBeUndefined();
+      // Dependencies: none at all for a leaf, and for the chain 7.7 extracts, the sibling package it is written
+      // from -- mcp from openapi's document, ai from mcp's tools. Never the core, which is the peer above: a
+      // plugin that depended on the core would pin a second copy of it into every install.
+      for (const dep of Object.keys(plugin.manifest.dependencies ?? {})) {
+        expect(PLUGINS, `${name} depends on ${dep}`).toContain(dep);
+      }
+      expect(plugin.manifest.dependencies?.[PACKAGE], name).toBeUndefined();
     }
   });
 
@@ -136,11 +142,26 @@ describe("the workspace the release packs", () => {
     // The plugin packages first, because the core depends on each; the fixture last, because it depends on the core.
     // Path order gets neither end right on its own -- packages/plugin-* < packages/release-fixture <
     // packages/voidbase -- so the topological sort has to do the work in both directions.
-    const order = [...PLUGINS, PACKAGE, FIXTURE];
-    expect(publishOrder(workspace).map((p) => p.name)).toEqual(order);
-    expect(publishOrder([...workspace].reverse()).map((p) => p.name)).toEqual(order);
-    // and what a release actually publishes, in the order it publishes it
-    expect(publishable(publishOrder(workspace)).map((p) => p.name)).toEqual([...PLUGINS, PACKAGE]);
+    // The property, not a list: since 7.7 the plugin packages are no longer all leaves -- mcp is written from
+    // openapi's document -- so the order is only fixed up to the edges, and the edges are what has to hold.
+    const after = (order: string[]) => {
+      const at = new Map(order.map((n, i) => [n, i]));
+      const names = new Set(order);
+      for (const p of workspace) {
+        if (!at.has(p.name)) continue;
+        for (const dep of dependsOn(p, names)) {
+          expect(at.get(dep)!, `${p.name} is published before ${dep}, which it depends on`).toBeLessThan(at.get(p.name)!);
+        }
+      }
+    };
+    after(publishOrder(workspace).map((p) => p.name));
+    after(publishOrder([...workspace].reverse()).map((p) => p.name));
+    // the same list either way round: a sort that depended on the order it was handed would be a sort by luck
+    expect(publishOrder(workspace).map((p) => p.name)).toEqual(publishOrder([...workspace].reverse()).map((p) => p.name));
+    // the core last of what ships, and the private fixture behind it
+    const shipped = publishable(publishOrder(workspace)).map((p) => p.name);
+    expect(shipped.sort()).toEqual([...PLUGINS, PACKAGE].sort());
+    expect(publishable(publishOrder(workspace)).at(-1)!.name).toBe(PACKAGE);
   });
 
   test("orders a chain, ignores devDependency edges, and refuses a real cycle", () => {
@@ -161,7 +182,14 @@ describe("the workspace the release packs", () => {
     const real = readWorkspace(ROOT);
     const names = new Set(real.map((p) => p.name));
     expect(dependsOn(real.find((p) => p.name === PACKAGE)!, names)).toEqual(PLUGINS);
-    for (const name of PLUGINS) expect(dependsOn(real.find((p) => p.name === name)!, names), name).toEqual([]);
+    // every plugin package depends on siblings only, and on none through the core: the leaves on nothing, the
+    // chain on the package it is written from
+    for (const name of PLUGINS) {
+      for (const dep of dependsOn(real.find((p) => p.name === name)!, names)) {
+        expect(PLUGINS, `${name} depends on ${dep}`).toContain(dep);
+        expect(dep, `${name} depends on the core`).not.toBe(PACKAGE);
+      }
+    }
     const core = pkg("@voidbase-cloud/voidbase", "0.9.0-beta.52", { "@voidbase-cloud/plugin-auth": "workspace:*" }, { path: "packages/voidbase" });
     const plugin = pkg("@voidbase-cloud/plugin-auth", "0.9.0-beta.52", {}, { path: "packages/plugin-auth" });
     plugin.manifest.peerDependencies = { "@voidbase-cloud/voidbase": ">=0.9.0-beta.14" };
@@ -671,12 +699,18 @@ describe("a package a later one depends on has to be resolvable, not merely acce
 // whole level before it asks about any of it, so the waits a level owes the next one overlap and the release pays
 // about one of them. The ordering guarantee is unchanged: a level does not start until the previous one answers.
 describe("the resolvable waits overlap, because a release with nine first publishes cannot afford them one at a time", () => {
-  test("the waves are the levels of the dependency graph, and this workspace has two of them", () => {
+  test("the waves are the levels of the dependency graph, and the core is alone in the last one", () => {
     const real = publishable(readWorkspace(ROOT));
     const waves = publishWaves(real);
-    expect(waves.length).toBe(2);
-    expect(waves[0]!.map((p) => p.name).sort()).toEqual(real.map((p) => p.name).filter((n) => n.startsWith("@voidbase-cloud/plugin-")).sort());
-    expect(waves[1]!.map((p) => p.name)).toEqual([PACKAGE]);
+    const names = new Set(real.map((p) => p.name));
+    // every package sits strictly after every sibling it depends on, which is the whole guarantee: a wave is
+    // published together, so nothing in one may need anything else in it
+    const waveOf = new Map(waves.flatMap((w, i) => w.map((p) => [p.name, i] as const)));
+    for (const p of real) for (const dep of dependsOn(p, names)) {
+      expect(waveOf.get(dep)!, `${p.name} shares a wave with ${dep}, which it depends on`).toBeLessThan(waveOf.get(p.name)!);
+    }
+    expect(waves.at(-1)!.map((p) => p.name)).toEqual([PACKAGE]);   // the core depends on all of them, so it is last
+    expect(waves[0]!.length).toBeGreaterThan(1);                   // and the leaves go out together, not one by one
     // a chain cannot be overlapped and is not: each link is its own wave, which is the serial shape and correct
     const chain = [pkg("@x/c", "1.0.0", { "@x/b": "workspace:*" }), pkg("@x/a", "1.0.0"), pkg("@x/b", "1.0.0", { "@x/a": "workspace:*" })];
     expect(publishWaves(chain).map((w) => w.map((p) => p.name))).toEqual([["@x/a"], ["@x/b"], ["@x/c"]]);

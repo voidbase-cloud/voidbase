@@ -63,6 +63,7 @@ describe("the workspace's extracted plugin packages", () => {
     // imported by name by nearly all of them, and a package that happens to need nothing of it still has to say
     // which instances it loads into.
     test(`${pkg.name} reaches the core only through entries an instance provides, and declares what else it imports`, () => {
+      const names = new Set(packages.map((q) => q.name));
       const files = filesOf(join(pkg.dir, "src"));
       expect(files.length).toBeGreaterThan(0);
       const declared = { ...pkg.manifest.dependencies, ...pkg.manifest.peerDependencies, ...pkg.manifest.optionalDependencies };
@@ -78,6 +79,16 @@ describe("the workspace's extracted plugin packages", () => {
           }
           if (spec === "hono" || spec.startsWith("hono/")) {   // the one other specifier a plugin may have
             expect(declared["hono"], `${f} imports ${spec}, which ${pkg.path}/package.json declares no source for`).toBeDefined();
+            continue;
+          }
+          // A sibling plugin package, which the chain 7.7 extracts needs: mcp is written from openapi's document
+          // and ai answers with mcp's tools. It names the package it uses rather than the core's re-export of it,
+          // because the re-export would put a module of the core in its closure to reach a package beside it. The
+          // sibling has to be declared as a dependency, and the release publishes it first: `publishOrder` reads
+          // exactly these edges, so openapi is on the registry and resolvable before mcp, and mcp before ai.
+          if (/^@voidbase-cloud\/plugin-[^/]+$/.test(spec)) {
+            expect(names.has(spec), `${f} imports ${spec}, which is not a package of this workspace`).toBe(true);
+            expect(declared[spec], `${f} imports ${spec}, which ${pkg.path}/package.json declares no source for`).toBeDefined();
             continue;
           }
           outside.push(`${f} imports ${spec}`);

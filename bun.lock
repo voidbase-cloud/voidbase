@@ -44,6 +44,17 @@
         "@voidbase-cloud/voidbase": "workspace:*",
       },
     },
+    "packages/plugin-mcp": {
+      "name": "@voidbase-cloud/plugin-mcp",
+      "version": "0.9.0-beta.56",
+      "dependencies": {
+        "@voidbase-cloud/plugin-openapi": "workspace:*",
+      },
+      "peerDependencies": {
+        "@voidbase-cloud/voidbase": "workspace:*",
+        "hono": "^4.11.9",
+      },
+    },
     "packages/plugin-observability": {
       "name": "@voidbase-cloud/plugin-observability",
       "version": "0.9.0-beta.56",
@@ -119,6 +130,7 @@
         "@voidbase-cloud/plugin-domains": "workspace:*",
         "@voidbase-cloud/plugin-hardening": "workspace:*",
         "@voidbase-cloud/plugin-mail": "workspace:*",
+        "@voidbase-cloud/plugin-mcp": "workspace:*",
         "@voidbase-cloud/plugin-observability": "workspace:*",
         "@voidbase-cloud/plugin-openapi": "workspace:*",
         "@voidbase-cloud/plugin-previews": "workspace:*",
@@ -590,6 +602,8 @@
     "@voidbase-cloud/plugin-hardening": ["@voidbase-cloud/plugin-hardening@workspace:packages/plugin-hardening"],
 
     "@voidbase-cloud/plugin-mail": ["@voidbase-cloud/plugin-mail@workspace:packages/plugin-mail"],
+
+    "@voidbase-cloud/plugin-mcp": ["@voidbase-cloud/plugin-mcp@workspace:packages/plugin-mcp"],
 
     "@voidbase-cloud/plugin-observability": ["@voidbase-cloud/plugin-observability@workspace:packages/plugin-observability"],
 

@@ -196,6 +196,7 @@
     "@voidbase-cloud/plugin-domains": "workspace:*",
     "@voidbase-cloud/plugin-hardening": "workspace:*",
     "@voidbase-cloud/plugin-mail": "workspace:*",
+    "@voidbase-cloud/plugin-mcp": "workspace:*",
     "@voidbase-cloud/plugin-observability": "workspace:*",
     "@voidbase-cloud/plugin-openapi": "workspace:*",
     "@voidbase-cloud/plugin-previews": "workspace:*",

@@ -18,7 +18,7 @@
     },
     "packages/plugin-realtime": {
       "name": "@voidbase-cloud/plugin-realtime",
-      "version": "0.9.0-beta.54",
+      "version": "0.9.0-beta.55",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
         "hono": "^4.11.9",
@@ -26,14 +26,14 @@
     },
     "packages/release-fixture": {
       "name": "@voidbase-cloud/release-fixture",
-      "version": "0.9.0-beta.54",
+      "version": "0.9.0-beta.55",
       "dependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
       },
     },
     "packages/voidbase": {
       "name": "@voidbase-cloud/voidbase",
-      "version": "0.9.0-beta.54",
+      "version": "0.9.0-beta.55",
       "bin": {
         "voidbase": "bin/voidbase.ts",
       },

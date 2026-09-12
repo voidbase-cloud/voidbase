@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.0-beta.55](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.54...v0.9.0-beta.55) (2026-09-12)
+
+* fix(realtime): a bare collection topic subscribes to the collection, as it does in PocketBase
+
 ## [0.9.0-beta.54](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.53...v0.9.0-beta.54) (2026-09-12)
 
 * fix(ci): wait for a published package to be resolvable before publishing what names it

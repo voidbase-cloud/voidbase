@@ -197,6 +197,7 @@
     "@voidbase-cloud/plugin-hardening": "workspace:*",
     "@voidbase-cloud/plugin-mail": "workspace:*",
     "@voidbase-cloud/plugin-observability": "workspace:*",
+    "@voidbase-cloud/plugin-openapi": "workspace:*",
     "@voidbase-cloud/plugin-previews": "workspace:*",
     "@voidbase-cloud/plugin-realtime": "workspace:*",
     "@voidbase-cloud/plugin-shipping-flat": "workspace:*",

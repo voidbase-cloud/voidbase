@@ -114,7 +114,10 @@ scripts, so a project set up from the CLI and one set up by hand in the dashboar
 voidbase is in beta) that build is the release: `scripts/hot-release.ts` moves the prerelease number, writes the
 changelog, commits `chore(master): release <version> [CI Skip]` (so its own push starts no build), tags, pushes,
 creates the GitHub release, and `scripts/release.sh --hot` publishes the version to npm, unchecked. No typecheck,
-no tests, no release pull request: a push is on npm in about two minutes. With hot mode off, the build is the full
+no tests, no release pull request: a push is on npm in about two minutes. That release commit is made with
+`--no-verify`, or the repository's pre-commit hook would run the whole check and suite inside it and hot mode would
+be none of the things this paragraph says: the gate for a hot release is `bun run check && bun test` before the push
+that starts it. With hot mode off, the build is the full
 suite, release-please keeps the release pull request, and the merge of that pull request publishes and builds the
 executables. voidbase-site, voidbase-demo and voidbase-marketplace are their own projects: nothing here moves them;
 `bun scripts/testbeds.ts <version>` pins and pushes all three by hand, and their own builds deploy them.

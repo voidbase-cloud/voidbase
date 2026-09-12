@@ -12,7 +12,8 @@ import { PRESENCE_TOPIC, presenceEnabled, presenceMax, presenceTtlMs } from "./r
 import { logger } from "#platform/log";
 import { env as voidEnv } from "#platform/env";
 import type { Settings } from "./settings";
-import { applyPendingMigrations, withHookStore } from "./hooks/migrations";
+import { applyPendingMigrations } from "./hooks/migrations";
+import { withHookStore } from "./hooks/store";
 import { RangeNotSatisfiable, resolveServedFile } from "./records/thumbs";
 import { deletePrefix } from "./records/files";
 import { PANEL_API, panelEntry, panelEntryPaths, panelGuardFromEnv, panelPathFromEnv } from "./panel-guard";

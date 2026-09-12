@@ -2,31 +2,21 @@
 // tracked in _pbMigrations (file, applied). The `app` handed to `up` is $app plus importCollections, so the
 // starter's snapshot migration creates its schema on a fresh database and later migrations can use
 // findCollectionByNameOrId / save / delete like they do in PocketBase.
+//
+// `withHookStore` is ./store.ts's, and is re-exported here because it lived here first. Importing it from there
+// rather than from this module is what keeps `#platform/migrations` -- which on Bun compiles pb_migrations at import,
+// through the Vite build plugin -- out of a caller that only wants a hook store.
 import { migrations } from "#platform/migrations";
 import { invalidateCollections, loadCollections } from "../collections/model";
 import { importCollections } from "../collections/service";
 import { all, run, stmt } from "../db";
-import { loadSettings } from "../settings";
-import type { RecordContext } from "../records/service";
 import type { AppEnv } from "../types";
 import { hookStore } from "./runtime";
-import { realtimeFor } from "../realtime/hub-client";
+import { withHookStore } from "./store";
+
+export { withHookStore };
 
 export type MigrationFn = (app: Record<string, unknown>) => unknown;
-
-// Runs fn inside a superuser hook store outside any request (migrations, cron jobs), so $app works as in a request.
-export async function withHookStore<T>(db: D1Database, bindings: AppEnv["Bindings"] | undefined, fn: () => Promise<T> | T): Promise<T> {
-  const collections = await loadCollections(db);
-  const ctx = async (): Promise<RecordContext> => ({
-    db, storage: bindings?.STORAGE as R2Bucket, auth: null, superuser: true,
-    request: { auth: null, method: "GET", query: {}, headers: {}, body: {}, context: "default" },
-    collections: await loadCollections(db),
-    // outside a request there may be no bindings at all (the Bun runtime); then there is no hub and the feed is used
-    realtime: realtimeFor((bindings ?? {}) as AppEnv["Bindings"]),
-  });
-  const store = { c: undefined as never, ctx, collections, settings: await loadSettings(db), env: (bindings ?? {}) as Record<string, unknown> };
-  return hookStore.run(store, () => fn());
-}
 
 export async function applyPendingMigrations(db: D1Database, globals: Record<string, unknown> = {}, bindings?: AppEnv["Bindings"]): Promise<string[]> {
   if (!migrations.length) return [];

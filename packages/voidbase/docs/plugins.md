@@ -47,7 +47,7 @@ the plugin does. `@voidbase-cloud/plugin-realtime` is the first one across (belo
 | `/records-preview`, `/records-files` | the preview flag, the two ways a request asks for a branch, `flaggedCollections`, and `deleteAllRecordFiles`: what the previews plugin calls, not the records service behind it |
 | `/project-sync` | the lockfile and the one commit that changes a project's plugins, for the installer |
 | `/registry` | the marketplace index client: `fetchIndex`, `download`, `integrityOf`, `problemsWithIndex` |
-| `/plugins/<name>` | twenty-one entries: the nineteen shipped plugin objects — two of them (`/plugins/realtime`, `/plugins/domains`) are one-line re-exports of the `@voidbase-cloud/plugin-*` packages the core depends on, and the rest are still files of this package until 7.6 to 7.10 move them the same way, entry unchanged — plus `/plugins/payments-shared` (what the three payment plugins are built from, not a plugin) and `/plugins/collections` (`ensureCollections`, how a plugin declares its own collections, also not a plugin, and the entry an extracted plugin that owns collections imports). The twentieth shipped plugin, the installer, has no entry point — below |
+| `/plugins/<name>` | twenty-one entries: the nineteen shipped plugin objects — three of them (`/plugins/realtime`, `/plugins/domains`, `/plugins/backups`) are one-line re-exports of the `@voidbase-cloud/plugin-*` packages the core depends on, and the rest are still files of this package until 7.6 to 7.10 move them the same way, entry unchanged — plus `/plugins/payments-shared` (what the three payment plugins are built from, not a plugin) and `/plugins/collections` (`ensureCollections`, how a plugin declares its own collections, also not a plugin, and the entry an extracted plugin that owns collections imports). The twentieth shipped plugin, the installer, has no entry point — below |
 
 The rule for `/sdk` against a narrow entry: `/sdk` is what more than one shipped plugin imports, plus the siblings
 of such a name in the same small, general-purpose module — splitting one of four prepared-statement helpers into an
@@ -200,6 +200,7 @@ column names.
 | Package | What was special about it |
 | --- | --- |
 | `@voidbase-cloud/plugin-domains` | Nothing, which is why it went first: the only shipped plugin whose whole reach into the core is `Plugin` and the runtime env, so it needed no entry point that did not already exist. Its deploy-time half is not in the package — a deploy plugin runs inside `voidbase deploy` against the Cloudflare API, so `src/node/plugins/domains.ts` stays in the core and reads the two var names back through `/plugins/domains`. |
+| `@voidbase-cloud/plugin-backups` | Also nothing new: its one import of the core beyond `Plugin` and `Kernel` is `mountBackupsApi`, which `/backups-api` has published since 7.2. The feature stayed behind — writing, verifying, pruning and restoring an archive is the core's, read by the scheduled job and the CLI as well — so what moved is the manifest and the `apply()` that mounts the routes. |
 
 ## What a plugin is
 

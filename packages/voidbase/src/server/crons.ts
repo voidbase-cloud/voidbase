@@ -7,7 +7,7 @@ import { requireSuperuser } from "./auth-slot";
 import { run } from "./db";
 import { notFound } from "./errors";
 import { crons as hookCrons } from "./hooks/runtime";
-import { withHookStore } from "./hooks/migrations";
+import { withHookStore } from "./hooks/store";
 import { nowString } from "./ids";
 import { deleteOldLogs } from "./logs";
 import { autoBackup } from "./backups";

@@ -10,7 +10,7 @@
 // A Workflow step can run in an isolate where the fetch handler never imported it, so the import is made here.
 import "./app";
 import { loadHooks } from "./hooks";
-import { withHookStore } from "./hooks/migrations";
+import { withHookStore } from "./hooks/store";
 import { resolveSecretBindings } from "./secrets-store";
 import { bindDatabase } from "./durable-d1";
 import type { AppEnv } from "./types";

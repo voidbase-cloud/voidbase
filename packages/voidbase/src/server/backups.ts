@@ -35,7 +35,7 @@ import { createViewSQL } from "./collections/ddl";
 import { all, ident, one, run, stmt } from "./db";
 import { ApiError, badRequest, forbidden } from "./errors";
 import { trigger } from "./hooks/runtime";
-import { withHookStore } from "./hooks/migrations";
+import { withHookStore } from "./hooks/store";
 import { nowString } from "./ids";
 import { dispatch, registerJobHandler } from "./jobs";
 import { loadSettings, mergeSettings, publicSettings, saveSettings } from "./settings";

@@ -501,6 +501,21 @@ function withNpmrc<T>(registry: string, token: string, scope: string | undefined
 
 export type IsPublished = (name: string, version: string, registry: string, npmrc?: string) => Promise<boolean>;
 
+/** how long a first publish may take to become resolvable; the one measured gap was 210s */
+export const RESOLVABLE_TIMEOUT_MS = 600_000;
+
+/** polls until `ready()` answers true, reporting every few attempts; false once `ms` has passed without one */
+export async function until(ready: () => Promise<boolean>, ms: number, report: (seconds: number) => void, everyMs = 5_000): Promise<boolean> {
+  const started = Date.now();
+  for (let attempt = 0; ; attempt++) {
+    if (await ready()) return true;
+    const left = ms - (Date.now() - started);
+    if (left <= 0) return false;                      // never sleep past the deadline the caller gave
+    if (attempt && attempt % 3 === 0) report(Math.round((Date.now() - started) / 1000));
+    await Bun.sleep(Math.min(everyMs, left));
+  }
+}
+
 export const npmView: IsPublished = async (name, version, registry, npmrc) => {
   const r = await runCommand(["npm", "view", `${name}@${version}`, "version", "--registry", registry], { env: npmrc ? { NPM_CONFIG_USERCONFIG: npmrc } : {} });
   return r.code === 0 && r.stdout.trim() !== "";
@@ -608,6 +623,18 @@ export async function publishWorkspace(opts: PublishOptions = {}): Promise<Publi
         if (t.code !== 0) log(`  dist-tag beta failed for ${p.pkg.name} (${tag} is the tag of record; continuing)`);
       }
       acc.push({ name: p.pkg.name, version: p.pkg.version, tarball: p.tarball, action: opts.dryRun ? "dry-run" : "published" });
+      // A version the registry has taken is not yet a version an install can resolve. npm writes the version
+      // document before the packument that installers read, and on a package's FIRST publish that gap was 210
+      // seconds -- measured on @voidbase-cloud/plugin-realtime@0.9.0-beta.53, where
+      // registry.npmjs.org/@voidbase-cloud/plugin-realtime/0.9.0-beta.53 answered 200 while the packument beside it
+      // answered 404, so `bun add @voidbase-cloud/voidbase@0.9.0-beta.53` failed on the sibling the core names
+      // exactly. Publishing the dependent into that window ships a release nobody can install, so wait for the
+      // registry to answer for a package something later in this loop depends on. Failing here is safe: the next
+      // run skips what is already published and carries on from the one that is missing.
+      if (!opts.dryRun && packed.slice(acc.length).some((q) => dependsOn(q.pkg, new Set([p.pkg.name])).length)) {
+        const waited = await until(() => isPublished(p.pkg.name, p.pkg.version, registry, npmrc), RESOLVABLE_TIMEOUT_MS, (s) => log(`  waiting for ${p.pkg.name}@${p.pkg.version} to be resolvable: ${s}s`));
+        if (waited === false) throw new Error(`${p.pkg.name}@${p.pkg.version} was published but the registry still does not answer for it after ${RESOLVABLE_TIMEOUT_MS / 1000}s, and ${packed.slice(acc.length).map((q) => q.pkg.name).join(", ")} name it. Re-run the release: what is published is skipped.`);
+      }
     }
     return acc;
   });

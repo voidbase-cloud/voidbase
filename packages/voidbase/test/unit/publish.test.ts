@@ -17,6 +17,7 @@ import { join, resolve } from "node:path";
 import {
   NEVER_MIRROR,
   NEVER_PUBLISH,
+  RESOLVABLE_TIMEOUT_MS,
   ROOT,
   assertLockstep,
   assertNoPrivateSiblings,
@@ -39,6 +40,7 @@ import {
   specBase,
   subpathEntries,
   syncLockfile,
+  until,
   workspaceSpecs,
   type Manifest,
   type Pkg,
@@ -585,4 +587,27 @@ describe("the GitHub Packages mirror, over a workspace shaped like this one", ()
     await publishWorkspace({ root, out: join(root, "out3"), version: "1.2.3", registry, githubPackages: false, smoke: false, log: (l) => log.push(l) });
     expect(log.some((l) => l.includes("GitHub Packages"))).toBe(false);
   }, 300_000);
+});
+
+// A first publish is accepted by the registry before an install can resolve it: npm writes the version document
+// first and the packument installers read a little later. Measured at 210 seconds on
+// @voidbase-cloud/plugin-realtime@0.9.0-beta.53, during which `bun add @voidbase-cloud/voidbase@0.9.0-beta.53`
+// failed on the sibling the core names exactly. So the loop waits, and gives up rather than shipping a dependent
+// into that window.
+describe("a package a later one depends on has to be resolvable, not merely accepted", () => {
+  test("the loop waits for the registry to answer before publishing the dependent", async () => {
+    let resolvable = false;
+    const order: string[] = [];
+    const seen: string[] = [];
+    const ready = await until(async () => { seen.push("ask"); return resolvable; }, 120, () => {}, 20);
+    expect(ready).toBe(false);                       // it gives up rather than answering true
+    expect(seen.length).toBeGreaterThan(1);          // and it asked more than once
+    resolvable = true;
+    expect(await until(async () => resolvable, 1_000, () => {}, 20)).toBe(true);
+    expect(order).toEqual([]);
+  });
+
+  test("RESOLVABLE_TIMEOUT_MS is longer than the gap that was measured", () => {
+    expect(RESOLVABLE_TIMEOUT_MS).toBeGreaterThan(210_000);
+  });
 });

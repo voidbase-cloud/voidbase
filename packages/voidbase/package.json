@@ -182,7 +182,7 @@
     "app:sync": "bun scripts/sync-app.ts",
     "test": "bun test",
     "check": "void prepare && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
-    "pack:check": "npm pack --dry-run",
+    "pack:check": "bun pm pack --dry-run",
     "prepublishOnly": "bun run check && bun test"
   },
   "dependencies": {

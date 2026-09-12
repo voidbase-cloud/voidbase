@@ -2,5 +2,5 @@
   // the CI and release tooling (scripts/) of the workspace root, typechecked by `bun run check` next to the app and
   // the node code; it extends the package's node config because the tooling runs on the same runtime
   "extends": "./packages/voidbase/tsconfig.node.json",
-  "include": ["scripts/pipeline.ts", "scripts/environment.ts", "scripts/cf-builds.ts", "scripts/gh-release.ts", "scripts/ci-status.ts", "scripts/ci-plan.ts"]
+  "include": ["scripts/pipeline.ts", "scripts/environment.ts", "scripts/cf-builds.ts", "scripts/gh-release.ts", "scripts/ci-status.ts", "scripts/ci-plan.ts", "scripts/publish.ts", "scripts/hot-release.ts"]
 }

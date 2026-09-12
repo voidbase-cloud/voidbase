@@ -29,7 +29,7 @@ build deploys.
 | suites-bun | the same suites against `voidbase serve` on 8093 (Bun, SQLite, local files), without the browser suites |
 | deploy-cf, adapter, fresh-db, mail-http, exe-smoke | the deploy dry run against the API mock, a Void app converted and run through the adapter, the fresh-database boot and the HTTP mail transport of the production build, the prebuilt executable and its update flow |
 | starter | the unmodified starter frontend against voidbase |
-| release | on master, with `GH_TOKEN`: the release flow (docs/releasing.md) when a releasable commit was pushed, the release PR was merged, a `Release: dry-run` trailer asks for a rehearsal, or a release still needs npm or its executables |
+| release | on master, with `GH_TOKEN`: the release flow (docs/releasing.md) when a releasable commit was pushed, the release PR was merged, a `Release: dry-run` trailer asks for a rehearsal, or a release still needs npm (any publishable package missing at that version) or its executables |
 
 The script stops at the first failed step, prints the relevant logs, renders the status page and stops the servers
 it started; a dev machine's `.env` is put back. Steps the plan does not select are recorded as skipped with the reason. Ports, oracles and Chrome come from the environment, so a dev machine
@@ -233,9 +233,10 @@ shapes of Cloudflare's API reference; the live API is exercised the first time t
   checksums only.
 - GitHub Packages only with `GH_PACKAGES_TOKEN`.
 - Logs live in the dashboard and in `cf-builds.ts logs`; the deployed page is the last build that ran to the end.
-- A release cut by hand (`gh release create vX.Y.Z` after bumping `packages/voidbase/package.json` on master, the
-  only manifest with a version) is published by the next
-  build of master, which finds a release that is not on npm; nothing listens for GitHub's `release` event.
+- A release cut by hand (`gh release create vX.Y.Z` after bumping every `packages/*/package.json` on master to the
+  same version -- the workspace root is private and has none -- and committing the `bun install` that follows) is
+  published by the next build of master, which finds a release that is not on npm; nothing listens for GitHub's
+  `release` event.
 
 ## The status page
 

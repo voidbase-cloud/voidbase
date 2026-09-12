@@ -174,8 +174,10 @@ export function keyFiles(t: Tree): Record<string, Set<string>> {
   const CLI = t.closure([p("bin/voidbase.ts")], "bun");
   const common = union(deps, harness);
   const out: Record<string, Set<string>> = {};
-  out["step:typecheck"] = union(t.under(p("src"), p("routes"), p("bin"), p("crons"), p("queues"), p("db"), p("types")).filter((f) => /\.tsx?$/.test(f)), [p("env.ts"), p("hooks-plugin.ts"), p("vite.config.ts"), "scripts/cf-builds.ts", "scripts/gh-release.ts", "scripts/ci-status.ts", "scripts/ci-plan.ts", "scripts/pipeline.ts", "scripts/environment.ts"], config, deps);
-  out["step:unit"] = union(t.closure(t.under(p("test/unit")), "bun"), common);
+  out["step:typecheck"] = union(t.under(p("src"), p("routes"), p("bin"), p("crons"), p("queues"), p("db"), p("types")).filter((f) => /\.tsx?$/.test(f)), [p("env.ts"), p("hooks-plugin.ts"), p("vite.config.ts"), "scripts/cf-builds.ts", "scripts/gh-release.ts", "scripts/ci-status.ts", "scripts/ci-plan.ts", "scripts/pipeline.ts", "scripts/environment.ts", "scripts/publish.ts", "scripts/hot-release.ts"], config, deps);
+  // the release fixture is a whole package the unit suite reads off disk (test/unit/publish.test.ts packs it and
+  // asserts what keeps it off npm), so every file in it counts -- no import reaches it and the closure cannot see it
+  out["step:unit"] = union(t.closure(t.under(p("test/unit")), "bun"), t.under("packages/release-fixture"), common);
   out["step:deploy-cf"] = union(t.closure([p("test/deploy-cf.ts")], "bun"), CLI, SERVER, mocks, common, harnessSuites);
   out["step:fresh-db"] = union(t.closure([p("test/fresh-db.ts")], "bun"), SERVER, t.under(p("test/fixtures")), common);
   out["step:mail-http"] = union(t.closure([p("test/mail-http.ts")], "bun"), SERVER, common);

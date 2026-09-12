@@ -2,9 +2,10 @@
 # The release flow (docs/releasing.md) as one script, run by Cloudflare Workers Builds (or any machine):
 #   release-pr       keeps the "chore(master): release X.Y.Z" pull request up to date (every push to master)
 #   github-release   tags vX.Y.Z and creates the GitHub release with the compiled notes once that PR is merged
-#   publish          when release v<package.json version> exists and npm lacks that version: check, unit and cloud-rest
-#                    tests, pack, smoke install, npm publish (provenance only where GitHub Actions' OIDC token exists),
-#                    GitHub Packages, the tarball on the release
+#   publish          when release v<package.json version> exists and npm lacks it: check, unit and cloud-rest tests,
+#                    then scripts/publish.ts -- every publishable package in the workspace packed with `bun pm pack`,
+#                    proved free of `workspace:` specs, smoke-installed together and published in dependency order
+#                    (provenance only where GitHub Actions' OIDC token exists), GitHub Packages, tarballs on the release
 #   executables      when that release lacks checksums.txt: every platform, the exe smoke, the archives and checksums on
 #                    the release, the notes opened with the `./voidbase update` hint
 # Idempotent: a re-run after a partial failure does only what is still missing. Steps are recorded for the status page
@@ -25,7 +26,7 @@ while [ $# -gt 0 ]; do case "$1" in --dry-run) DRY=1 ;; --tag) TAG="$2"; shift ;
 BACKEND=$(ci_backend); export CI_BACKEND_NAME="$BACKEND"
 REPO="${GITHUB_REPOSITORY:-voidbase-cloud/voidbase}"; export GITHUB_REPOSITORY="$REPO"
 BRANCH="${WORKERS_CI_BRANCH:-${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null)}}"
-VERSION=$(node -p "require('./packages/voidbase/package.json').version"); PKG="@voidbase-cloud/voidbase"
+VERSION=$(node -p "require('./packages/voidbase/package.json').version"); PACKS="$ROOT/dist/packs"
 RP=(bunx release-please@17.11.2); RP_ARGS=(--repo-url "$REPO" --token "${GH_TOKEN:-}" --target-branch master --config-file release-please-config.json --manifest-file .release-please-manifest.json)
 CI_CACHE_DIR="$(ci_cache_dir)"; export CI_CACHE_DIR; mkdir -p "$CI_CACHE_DIR"
 outputs() { if [ -n "${GITHUB_OUTPUT:-}" ]; then printf '%s\n' "$@" >> "$GITHUB_OUTPUT"; fi; }
@@ -53,39 +54,28 @@ if [ -z "$release_json" ] && [ -z "$DRY" ]; then echo; echo "no release $TAG: no
 echo "release $TAG: ${release_json:-none (dry run continues)}"
 has_asset() { printf '%s' "$release_json" | grep -qF "\"$1\""; }
 
-on_npm=0; npm view "$PKG@$VERSION" version >/dev/null 2>&1 && on_npm=1
+# what npm is missing at this version, across every publishable package in the workspace (scripts/publish.ts). A
+# failed check counts as "missing", never as "published": the publish step is idempotent and would skip what is
+# already there, so erring towards running it is the safe direction.
+PENDING=$(bun scripts/publish.ts --pending | tr '\n' ' ') || PENDING="unknown (the pending check failed)"; PENDING="${PENDING% }"
 publish_npm() {
   # hot mode publishes what master is, unchecked: the point of hot mode is that nothing stands between a push and npm
   if [ -z "$HOT" ]; then bun run check && bun test && (cd "$PKG_DIR" && bun test/cloud-rest.ts) || return 1; fi
-  # the published package is packages/voidbase; the workspace root is private and is never packed
-  rm -f "$PKG_DIR"/voidbase-cloud-voidbase-*.tgz; (cd "$PKG_DIR" && npm pack) || return 1
-  local tarball; tarball="$PKG_DIR/$(cd "$PKG_DIR" && ls voidbase-cloud-voidbase-*.tgz)"; ls -la "$tarball"
-  local smoke; smoke=$(mktemp -d)
-  (cd "$smoke" && bun init -y >/dev/null && bun add "$tarball" && bunx voidbase help | head -n 5 && node -e "const p=require('$PKG/package.json'); if (p.version !== '$VERSION') throw new Error('version mismatch: ' + p.version)") || return 1
   [ -n "${NPM_TOKEN:-}" ] || { echo "NPM_TOKEN is not set"; return 1; }
-  # a dry run of a version that is already on npm: npm refuses to "publish over" it even without publishing, so the
-  # rehearsal ends here (the real flow skips publishing altogether for a published version)
-  if [ -n "$DRY" ] && [ "$on_npm" = 1 ]; then echo "npm publish: $PKG@$VERSION is already published, the dry run skips the publish commands"; return 0; fi
-  local npmrc; npmrc=$(mktemp); printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$npmrc"
-  local provenance=""; [ "$BACKEND" = github ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && provenance="--provenance"
-  # npm refuses to publish a prerelease unless --tag is explicit, because the default would quietly move `latest`
-  # onto it. Here that is exactly the intent: while voidbase is in public beta the beta is what we are asking people
-  # to run, so a fresh install and `voidbase update` both land on it. The channel tag is added afterwards, so
-  # `@beta` also works for anyone who would rather pin to the channel than to the newest thing.
-  echo "npm publish: tag latest, provenance ${provenance:-off (only GitHub Actions can mint the OIDC token)}, dry run ${DRY:-no}"
-  NPM_CONFIG_USERCONFIG="$npmrc" npm publish "$tarball" --access public --tag latest $provenance ${DRY:+--dry-run} || { rm -f "$npmrc"; return 1; }
-  case "$VERSION" in
-    *-*) if [ -z "$DRY" ]; then NPM_CONFIG_USERCONFIG="$npmrc" npm dist-tag add "$PKG@$VERSION" beta || echo "dist-tag beta failed (latest is the tag of record; continuing)"; fi ;;
-  esac
-  rm -f "$npmrc"
-  if [ -n "${GH_PACKAGES_TOKEN:-}" ]; then
-    npmrc=$(mktemp); printf '@voidbase-cloud:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$GH_PACKAGES_TOKEN" > "$npmrc"
-    NPM_CONFIG_USERCONFIG="$npmrc" npm publish "$tarball" --registry=https://npm.pkg.github.com --tag latest ${DRY:+--dry-run} || echo "GitHub Packages publish failed (npm is the registry of record; continuing)"
-    rm -f "$npmrc"
-  else echo "GitHub Packages: skipped (no GH_PACKAGES_TOKEN)"; fi
-  if [ -z "$DRY" ]; then bun scripts/gh-release.ts upload "$TAG" "$tarball" || return 1; fi
+  # scripts/publish.ts is the whole of it: `bun pm pack` over every publishable package (never `npm pack`, which
+  # copies a `workspace:*` dependency into the manifest verbatim), the refusal of any packed manifest that still
+  # carries `workspace:`, the refusal of one that names a sibling this release never publishes, one smoke install
+  # of all the tarballs together, then npm in dependency order with each package skipped when the registry already
+  # has it -- so a retried or half-finished release finishes, and a dry run of a published version no longer has to
+  # duck npm's refusal to "publish over" it. It empties dist/packs of tarballs itself, so the upload below is this
+  # release's tarballs and nothing else.
+  local args=(--version "$VERSION" --out dist/packs)
+  [ -n "$DRY" ] && args+=(--dry-run)
+  if [ "$BACKEND" = github ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then args+=(--provenance); else echo "provenance: off (only GitHub Actions can mint the OIDC token)"; fi
+  bun scripts/publish.ts "${args[@]}" || return 1
+  if [ -z "$DRY" ]; then bun scripts/gh-release.ts upload "$TAG" "$PACKS"/*.tgz || return 1; fi
 }
-if [ "$on_npm" = 1 ] && [ -z "$DRY" ]; then skip_step publish; echo "$PKG@$VERSION is already on npm"
+if [ -z "$PENDING" ] && [ -z "$DRY" ]; then skip_step publish; echo "every publishable package is already on npm at $VERSION"
 elif [ -z "${GH_TOKEN:-}" ]; then echo "release $TAG needs publishing but GH_TOKEN is not set"; exit 1
 else step publish publish_npm || exit 1; [ -z "$DRY" ] && outputs "published=true"; fi
 

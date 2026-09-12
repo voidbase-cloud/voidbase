@@ -158,13 +158,16 @@ release_work() {  # release-please, npm and the executables in this build (docs/
   if [ -z "${GH_TOKEN:-}" ]; then skip_step release "no GH_TOKEN"; return 0; fi
   local why=""; plan_flag release-merge && why="the release PR was merged"; plan_flag release-pr && why="${why:-releasable commits, refreshing the release PR}"; plan_flag release-dry-run && why="${why:-dry run requested by a commit}"
   if [ -z "$why" ]; then  # a release that still needs publishing or its executables: cut by hand, or left by hot mode
-    local v rel; v=$(node -p "require('./packages/voidbase/package.json').version"); rel=$(bun scripts/gh-release.ts view "v$v" 2>/dev/null) || rel=""
+    # the whole workspace, not the one package: a release is published when every publishable package is on npm at
+    # its version, so a half-finished one (a sibling that never made it) is still work this build has to do
+    local v rel pending; v=$(node -p "require('./packages/voidbase/package.json').version"); rel=$(bun scripts/gh-release.ts view "v$v" 2>/dev/null) || rel=""
+    pending=$(bun scripts/publish.ts --pending | tr '\n' ' ') || pending="unknown (the pending check failed)"; pending="${pending% }"
     if [ -n "$rel" ]; then
-      if ! npm view "@voidbase-cloud/voidbase@$v" version >/dev/null 2>&1; then why="release v$v is not on npm yet"
+      if [ -n "$pending" ]; then why="release v$v is not on npm yet ($pending)"
       elif ! printf '%s' "$rel" | grep -q checksums.txt && [ "${CI_HOT:-0}" != 1 ]; then why="release v$v has no executables yet"; fi
     # package.json only ever names a version release-please merged: one with no GitHub release and no npm version
     # is a merged release PR whose own build did not get this far, and release-please creates its release from it
-    elif ! npm view "@voidbase-cloud/voidbase@$v" version >/dev/null 2>&1; then why="v$v is neither a GitHub release nor on npm: a merged release PR whose build did not finish"; fi
+    elif [ -n "$pending" ]; then why="v$v is neither a GitHub release nor on npm: a merged release PR whose build did not finish"; fi
   fi
   if [ -z "$why" ]; then skip_step release "nothing to release"; return 0; fi
   echo; echo "=== release: $why"

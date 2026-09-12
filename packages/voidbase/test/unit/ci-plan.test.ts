@@ -114,4 +114,9 @@ describe("ci plan: the import graph of this repository", () => {
   test("a suite's own file reaches that suite only", () => {
     expect(keysWith(p("test/conformance/thumbs.ts")).sort()).toEqual(["bun:thumbs", "suite:thumbs"]);
   });
+  test("the release fixture reaches the unit step, which is the suite that asserts what keeps it off npm", () => {
+    // no import reaches packages/release-fixture, so the closure cannot see it and it has to be named: without
+    // this, a change that broke the unit suite would leave step:unit marked verified by the previous run
+    for (const f of ["packages/release-fixture/package.json", "packages/release-fixture/index.ts"]) expect(keysWith(f)).toContain("step:unit");
+  });
 });

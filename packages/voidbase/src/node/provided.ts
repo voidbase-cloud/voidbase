@@ -67,6 +67,7 @@ const MODULES: Record<string, () => Promise<object>> = {
   "./src/server/plugins/hardening.ts": () => import("../server/plugins/hardening"),
   "./src/server/plugins/lemonsqueezy.ts": () => import("../server/plugins/lemonsqueezy"),
   "./src/server/plugins/mail.ts": () => import("../server/plugins/mail"),
+  "./src/server/plugins/mail-binding.ts": () => import("../server/plugins/mail-binding"),
   "./src/server/plugins/mcp.ts": () => import("../server/plugins/mcp"),
   "./src/server/plugins/observability.ts": () => import("../server/plugins/observability"),
   "./src/server/plugins/openapi.ts": () => import("../server/plugins/openapi"),

@@ -36,6 +36,10 @@ const expected: Record<string, string[]> = {
   "./plugins/mcp": ["mcp", "mcpWith", "toolsOf"],
   "./plugins/seo": ["seo", "seoWith", "parseSitemap"],
   "./plugins/mail": ["mail", "cloudflareMail"],
+  // not a plugin: the two names the mail plugin and `voidbase deploy` have to agree on, so that src/node/deploy-cf.ts
+  // can write the binding without importing what the plugin does. Published in 7.6, when the plugin left the core
+  // and the sibling import that carried the agreement stopped resolving.
+  "./plugins/mail-binding": ["MAIL_BINDING", "MAIL_DOMAIN_VAR"],
   "./plugins/ai": ["ai", "aiWith", "aiRoute"],
   "./plugins/observability": ["observability", "observabilityWith", "observabilityReport", "sampler"],
   "./plugins/translations": ["translations", "translationsWith", "parseTranslatable", "parseLocales", "negotiateLocale"],

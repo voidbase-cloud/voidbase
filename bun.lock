@@ -40,6 +40,14 @@
         "hono": "^4.11.9",
       },
     },
+    "packages/plugin-mail": {
+      "name": "@voidbase-cloud/plugin-mail",
+      "version": "0.9.0-beta.55",
+      "peerDependencies": {
+        "@voidbase-cloud/voidbase": "workspace:*",
+        "hono": "^4.11.9",
+      },
+    },
     "packages/plugin-previews": {
       "name": "@voidbase-cloud/plugin-previews",
       "version": "0.9.0-beta.55",
@@ -101,6 +109,7 @@
         "@voidbase-cloud/plugin-backups": "workspace:*",
         "@voidbase-cloud/plugin-domains": "workspace:*",
         "@voidbase-cloud/plugin-hardening": "workspace:*",
+        "@voidbase-cloud/plugin-mail": "workspace:*",
         "@voidbase-cloud/plugin-previews": "workspace:*",
         "@voidbase-cloud/plugin-realtime": "workspace:*",
         "@voidbase-cloud/plugin-shipping-flat": "workspace:*",
@@ -568,6 +577,8 @@
     "@voidbase-cloud/plugin-domains": ["@voidbase-cloud/plugin-domains@workspace:packages/plugin-domains"],
 
     "@voidbase-cloud/plugin-hardening": ["@voidbase-cloud/plugin-hardening@workspace:packages/plugin-hardening"],
+
+    "@voidbase-cloud/plugin-mail": ["@voidbase-cloud/plugin-mail@workspace:packages/plugin-mail"],
 
     "@voidbase-cloud/plugin-previews": ["@voidbase-cloud/plugin-previews@workspace:packages/plugin-previews"],
 

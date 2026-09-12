@@ -71,7 +71,9 @@ may change, a version record and its bundle never do once published (a change is
 
 One ES module. Its default export is the plugin: `{ manifest, apply(ctx) }` as `Plugin` in
 `@voidbase-cloud/voidbase/plugins` defines it. It may import from `@voidbase-cloud/voidbase/*` (the entry points an
-instance provides) and from `hono`, because the instance has both; everything else it needs is inside the file. It
+instance provides — not every name in `exports`: the application and the build-time tooling are refused by name,
+with the reason, both at load on Bun and when a Worker is built, `NOT_PROVIDED` in `src/node/provided.ts`) and from
+`hono`, because the instance has both; everything else it needs is inside the file. It
 never imports Node built-ins, because an instance may be a Worker. A bundle is evaluated inside the instance the way
 `pb_hooks` is; a marketplace builds and audits it and never runs it.
 

@@ -69,6 +69,28 @@
     "./plugins/previews": "./src/server/plugins/previews.ts",
     "./plugins/collections": "./src/server/plugins/collections.ts",
     "./registry": "./src/node/registry.ts",
+    "./sdk": "./src/server/entries/sdk.ts",
+    "./types": "./src/server/types.ts",
+    "./platform": {
+      "workerd": "./src/platform/workers/index.ts",
+      "default": "./src/platform/node/index.ts"
+    },
+    "./platform/email": {
+      "workerd": "./src/platform/workers/email.ts",
+      "default": "./src/platform/node/email.ts"
+    },
+    "./platform/raster": {
+      "workerd": "./src/platform/workers/raster.ts",
+      "default": "./src/platform/node/raster.ts"
+    },
+    "./auth-routes": "./src/server/entries/auth-routes.ts",
+    "./backups-api": "./src/server/entries/backups-api.ts",
+    "./hardening-middleware": "./src/server/entries/hardening-middleware.ts",
+    "./realtime-client": "./src/server/entries/realtime-client.ts",
+    "./mail": "./src/server/entries/mail.ts",
+    "./records-preview": "./src/server/entries/records-preview.ts",
+    "./records-files": "./src/server/entries/records-files.ts",
+    "./project-sync": "./src/server/entries/project-sync.ts",
     "./secrets": "./src/env/define.ts"
   },
   "imports": {

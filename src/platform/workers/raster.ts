@@ -2,6 +2,10 @@
 // it once, the way @cf-wasm/photon does for the thumbnails. The import lives in this file alone, and the file is
 // only reached through a dynamic `import("#platform/raster")` on the first .png card, so the ~2.4 MB module is not
 // part of any other request's startup.
+/// <reference path="./wasm.d.ts" />
+// the ambient declaration of the .wasm module below, referenced so that a package outside this one — a plugin
+// typed against the workerd condition, which is what `@voidbase-cloud/voidbase/platform/raster` resolves to there —
+// picks it up too, and not only this package's own tsconfig `include`.
 import wasm from "@resvg/resvg-wasm/index_bg.wasm";
 import { makeRasterize } from "../../server/plugins/og-raster";
 

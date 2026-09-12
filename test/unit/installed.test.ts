@@ -6,7 +6,10 @@ import { Hono } from "hono";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pbHooksPlugin } from "../../hooks-plugin";
 import { addPlugin, enablePlugin, listPlugins, locate, outsideRange, pluginFacts, pluginsModuleSource, providedImport, readLock, removalCostFor, removePlugin, updatePlugins, verifyInstalled } from "../../src/node/installed";
+import { refusalFor } from "../../src/node/provided";
+import pkgJson from "../../package.json" with { type: "json" };
 import { integrityOf } from "../../src/node/registry";
 import { loadInstalled } from "../../src/platform/node/plugins";
 import { createKernel, load, whatLoaded } from "../../src/server/kernel";
@@ -117,6 +120,34 @@ describe("what an instance checks before it loads anything", () => {
     expect(await (await app.request("/api/uses-kernel")).text()).toBe("function function");
   });
 
+  // The other half of the same thing, and the bug 7.2 fixes: through 0.9.0-beta.49 the Bun loader's list of what it
+  // provides was written by hand and about twenty names shorter than package.json's `exports`, so a bundle could
+  // import an entry that type-checked (`/plugins/openapi`, every shipped plugin but five) and then fail at load
+  // with "is not something an instance provides to a plugin". The list is generated from `exports` now, so every
+  // published entry a bundle can be typed against is a module it can also load, the new ones included.
+  test("a bundle can import any published entry, not only the ones the loader used to name", async () => {
+    const dir = join(root, "pb_plugins/uses-entries"); mkdirSync(dir, { recursive: true });
+    const code = `import { badRequest, VERSION } from "@voidbase-cloud/voidbase/sdk";\nimport { logger } from "@voidbase-cloud/voidbase/platform";\nimport { openapi } from "@voidbase-cloud/voidbase/plugins/openapi";\nimport { mountBackupsApi } from "@voidbase-cloud/voidbase/backups-api";\nexport default { manifest: { name: "uses-entries", version: "1.0.0", tier: "community", voidbase: "*" }, apply(ctx) { ctx.app.get("/api/uses-entries", (c) => c.text([typeof badRequest, VERSION, typeof logger.info, openapi.manifest.name, typeof mountBackupsApi].join(" "))); } };\n`;
+    writeFileSync(join(dir, "bundle.js"), code);
+    writeFileSync(join(root, "voidbase.lock"), JSON.stringify({ lockfileVersion: 1, marketplaces: [], plugins: { "uses-entries": { version: "1.0.0", integrity: await integrityOf(new TextEncoder().encode(code)), marketplace: "http://x", source: { repository: "x/y", commit: "0123456" }, installedOn: "2026-09-09" } }, disabled: [] }));
+    const { installed } = await loadInstalled(join(root, "pb_plugins"));
+    const app = new Hono();
+    await load(createKernel(app as never), installed.map((p) => p.plugin), "0.9.0");
+    const { VERSION } = await import("../../src/server/version");
+    expect(await (await app.request("/api/uses-entries")).text()).toBe(`function ${VERSION} function openapi function`);
+  });
+
+  // The other side of the same list: a name this package publishes and an instance still refuses. The Bun loader
+  // says so before it imports the bundle, with the reason src/node/provided.ts records — the same reason the Worker
+  // build fails with, because it is the same string from the same table.
+  test("a bundle that imports a refused entry is refused at load, by name and reason", async () => {
+    const dir = join(root, "pb_plugins/imports-app"); mkdirSync(dir, { recursive: true });
+    const code = `import { app } from "@voidbase-cloud/voidbase/app";\nexport default { manifest: { name: "imports-app", version: "1.0.0", tier: "community", voidbase: "*" }, apply(ctx) { ctx.app.route("/x", app); } };\n`;
+    writeFileSync(join(dir, "bundle.js"), code);
+    writeFileSync(join(root, "voidbase.lock"), JSON.stringify({ lockfileVersion: 1, marketplaces: [], plugins: { "imports-app": { version: "1.0.0", integrity: await integrityOf(new TextEncoder().encode(code)), marketplace: "http://x", source: { repository: "x/y", commit: "0123456" }, installedOn: "2026-09-09" } }, disabled: [] }));
+    await expect(loadInstalled(join(root, "pb_plugins"))).rejects.toThrow("the application a plugin is loaded into");
+  });
+
   test("a bundle that says it is something else than the lockfile is refused", async () => {
     await addPlugin(root, "echo", opts(url(one)));
     const lock = readLock(root); lock.plugins.echo!.version = "0.9.9";
@@ -211,10 +242,41 @@ describe("remove, enable, update", () => {
 
 describe("what an installed bundle's bare imports mean when the Worker is built", () => {
   const exportsMap = { ".": "./src/node/index.ts", "./kernel": "./src/server/kernel.ts", "./plugins/collections": "./src/server/plugins/collections.ts" };
-  test("voidbase's own name and subpaths map to its files through the package's exports map", () => {
+  const real = pkgJson.exports as Record<string, string | Record<string, string>>;
+  test("voidbase's own subpaths map to its files through the package's exports map", () => {
     expect(providedImport("@voidbase-cloud/voidbase/kernel", "/pkg", exportsMap)).toEqual({ file: "/pkg/src/server/kernel.ts" });
-    expect(providedImport("@voidbase-cloud/voidbase", "/pkg", exportsMap)).toEqual({ file: "/pkg/src/node/index.ts" });
     expect(providedImport("@voidbase-cloud/voidbase/plugins/collections", "/pkg", exportsMap)).toEqual({ file: "/pkg/src/server/plugins/collections.ts" });
+  });
+
+  // The refusal is one list and both halves of an instance read it. Through 0.9.0-beta.49 only the Bun loader did:
+  // this half answered with the file for every name `NOT_PROVIDED` refuses, so a bundle importing
+  // `@voidbase-cloud/voidbase/app` had the whole application built into its Worker, and heard about it only on the
+  // other runtime, at load. Refused here it is a build failure, with the reason src/node/provided.ts records.
+  test("an entry an instance refuses a plugin is refused here too, with the same reason", () => {
+    for (const name of ["app", "workflows", "bundle", "secrets", "api", "hub", "adapter"]) {
+      const spec = `@voidbase-cloud/voidbase/${name}`;
+      expect(refusalFor(spec), spec).toBeTruthy();
+      expect(() => providedImport(spec, "/pkg", real), spec).toThrow(refusalFor(spec)!);
+    }
+    // the package itself is the CLI, and a bundle importing it is the same mistake without a subpath
+    expect(() => providedImport("@voidbase-cloud/voidbase", "/pkg", real)).toThrow("the CLI");
+  });
+
+  // The other importer a Worker build resolves these names for is the project's own workflows/ module, which is not
+  // a plugin: `@voidbase-cloud/voidbase/workflows` is the name it is written against (docs/adapter.md).
+  test("a project's own module is owed the entries a plugin is refused", () => {
+    expect(providedImport("@voidbase-cloud/voidbase/workflows", "/pkg", real, "project")).toEqual({ file: "/pkg/src/server/workflows.ts" });
+    expect(providedImport("@voidbase-cloud/voidbase", "/pkg", exportsMap, "project")).toEqual({ file: "/pkg/src/node/index.ts" });
+  });
+
+  // and through the build plugin itself, which is where the resolution actually happens: `resolveId` decides from
+  // the importer's path which of the two is asking.
+  test("the build plugin refuses a bundle's refused import and resolves a workflow's", async () => {
+    const hook = pbHooksPlugin().resolveId as unknown as (this: { resolve: () => Promise<null> }, id: string, importer?: string) => Promise<string | null>;
+    const ctx = { resolve: async () => null };
+    expect(hook.call(ctx, "@voidbase-cloud/voidbase/app", "/proj/pb_plugins/echo/bundle.js")).rejects.toThrow("the application a plugin is loaded into");
+    expect(await hook.call(ctx, "@voidbase-cloud/voidbase/kernel", "/proj/pb_plugins/echo/bundle.js")).toContain("src/server/kernel.ts");
+    expect(await hook.call(ctx, "@voidbase-cloud/voidbase/workflows", "/proj/workflows/report.ts")).toContain("src/server/workflows.ts");
   });
   test("a subpath the map does not export is nothing, and so is anything that is not voidbase or hono", () => {
     expect(providedImport("@voidbase-cloud/voidbase/secret", "/pkg", exportsMap)).toBeNull();
@@ -224,5 +286,17 @@ describe("what an installed bundle's bare imports mean when the Worker is built"
   test("hono resolves from the package's own copy", () => {
     expect(providedImport("hono", "/pkg", exportsMap)).toEqual({ from: "/pkg/package.json" });
     expect(providedImport("hono/cors", "/pkg", exportsMap)).toEqual({ from: "/pkg/package.json" });
+  });
+  // The platform picks are the one kind of entry with a file per runtime. This builds a Worker, so the answer is
+  // the workerd half; the plugin aliases the same names ahead of this so `raster-off` still wins with cards off.
+  test("a platform entry answers with its workerd half", () => {
+    const withPlatform = { ...exportsMap, "./platform": { workerd: "./src/platform/workers/index.ts", default: "./src/platform/node/index.ts" } };
+    expect(providedImport("@voidbase-cloud/voidbase/platform", "/pkg", withPlatform)).toEqual({ file: "/pkg/src/platform/workers/index.ts" });
+  });
+  test("every conditional entry this package publishes has a workerd half, or a Worker build would have nothing to take", async () => {
+    const pkg = (await import("../../package.json")).default as { exports: Record<string, string | Record<string, string>> };
+    const conditional = Object.entries(pkg.exports).filter(([, t]) => typeof t !== "string");
+    expect(conditional.length).toBeGreaterThan(0);
+    for (const [entry, target] of conditional) expect((target as Record<string, string>).workerd, entry).toBeTruthy();
   });
 });

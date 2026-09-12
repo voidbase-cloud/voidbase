@@ -10,6 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { refusal, removalCost, satisfies, type PluginFacts, type RemovalCost } from "../server/plugins/resolve";
 import { SHIPPED, SHIPPED_FACTS } from "../server/plugins/shipped";
 import { compareVersions, download, fetchIndex, integrityOf, pick, type PluginVersion, type RegistryIndex } from "./registry";
+import { refusalFor } from "./provided";
 
 export const DEFAULT_MARKETPLACES = ["https://marketplace.voidbase.cloud"];
 export const LOCKFILE = "voidbase.lock";
@@ -258,11 +259,25 @@ export function outsideRange(root: string, target: string): { name: string; rang
  * is not in its own node_modules and a bare self-import has nothing to resolve to. So the plugin maps them itself,
  * the same way the Bun loader provides them (platform/node/plugins.ts), and both shapes see the same modules.
  * Returns the file for a voidbase specifier, "hono" for hono's (the caller resolves it from the package), or null.
+ * An entry whose target is a set of conditions is a platform pick (`./platform`, `./platform/email`,
+ * `./platform/raster`): this builds a Worker, so the `workerd` half is the answer, the way the resolver would pick
+ * it. hooks-plugin.ts aliases the same three names ahead of this, which is how `raster-off` still wins when share
+ * cards are off; without the alias this would land on the real rasteriser and its 2.4 MB of wasm.
+ *
+ * `from` is who is importing, because the two are not owed the same answer. A plugin bundle is refused every entry
+ * ./provided.ts's `NOT_PROVIDED` names — the application, the Worker entry points, the build-time tooling — and
+ * refused here, while the Worker is built, rather than only on Bun at load: through 0.9.0-beta.49 this half
+ * answered with the file for all of them, so a bundle importing `@voidbase-cloud/voidbase/app` built the whole
+ * application into the Worker and was refused only by the other runtime. A project's own `workflows/` module is
+ * not a plugin and is owed the opposite: `@voidbase-cloud/voidbase/workflows` is the name it is written against
+ * (docs/adapter.md), so nothing is refused it.
  */
-export function providedImport(id: string, packageDir: string, exportsMap: Record<string, string>): { file: string } | { from: string } | null {
+export function providedImport(id: string, packageDir: string, exportsMap: Record<string, string | Record<string, string>>, from: "plugin-bundle" | "project" = "plugin-bundle"): { file: string } | { from: string } | null {
   const m = /^@voidbase-cloud\/voidbase(\/.*)?$/.exec(id);
   if (m) {
-    const target = exportsMap[m[1] ? `.${m[1]}` : "."];
+    if (from === "plugin-bundle") { const why = refusalFor(id); if (why) throw new Error(why); }
+    const entry = exportsMap[m[1] ? `.${m[1]}` : "."];
+    const target = typeof entry === "string" ? entry : (entry?.workerd ?? entry?.default);
     return target ? { file: join(packageDir, target) } : null;
   }
   if (id === "hono" || id.startsWith("hono/")) return { from: join(packageDir, "package.json") };

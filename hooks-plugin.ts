@@ -236,8 +236,20 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; p
   let clientOut = "";
   return {
     name: "voidbase-pb-hooks",
-    // the Workers build takes the workers flavour of every #platform module (package.json "imports" covers Bun/Node)
-    config() { return { resolve: { alias: PLATFORM_MODULES.map((n) => ({ find: `#platform/${n}`, replacement: resolve(here, "src/platform/workers", `${n === "raster" && !seoPng ? "raster-off" : n}.ts`) })) } }; },
+    // the Workers build takes the workers flavour of every #platform module (package.json "imports" covers Bun/Node).
+    // The public names a plugin *package* imports (`@voidbase-cloud/voidbase/platform*`, whose `exports` entries
+    // carry the same two conditions) are aliased to the same files, so a plugin outside this package lands on the
+    // workerd half and on `raster-off` when share cards are off, rather than on whatever the resolver picks. The
+    // longer names come first, because a string alias matches the beginning of a specifier.
+    config() {
+      const workersFile = (n: string) => resolve(here, "src/platform/workers", `${n === "raster" && !seoPng ? "raster-off" : n}.ts`);
+      return { resolve: { alias: [
+        { find: "@voidbase-cloud/voidbase/platform/email", replacement: workersFile("email") },
+        { find: "@voidbase-cloud/voidbase/platform/raster", replacement: workersFile("raster") },
+        { find: "@voidbase-cloud/voidbase/platform", replacement: resolve(here, "src/platform/workers", "index.ts") },
+        ...PLATFORM_MODULES.map((n) => ({ find: `#platform/${n}`, replacement: workersFile(n) })),
+      ] } };
+    },
     configResolved(config) { clientOut = resolve(config.root, config.environments?.client?.build?.outDir ?? config.build.outDir); },
     // Asset-first on Cloudflare: the asset layer answers every request outside /api, so the Worker is never invoked
     // for static files. PocketBase's index fallback for deep links is expressed as Cloudflare's `not_found_handling:
@@ -261,9 +273,13 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; p
       if (id === VIRTUAL) return RESOLVED;
       if (id === VIRTUAL_MIGRATIONS) return RESOLVED_MIGRATIONS;
       if (id === VIRTUAL_PLUGINS) return RESOLVED_PLUGINS;
-      // an installed bundle's, or a bundled workflow's, bare imports mean this package's own modules (src/node/installed.ts providedImport)
-      if (importer && /\/(pb_plugins|workflows)\//.test(importer.replace(/\\/g, "/"))) {
-        const provided = providedImport(id, here, pkg.exports as Record<string, string>);
+      // an installed bundle's, or a bundled workflow's, bare imports mean this package's own modules (src/node/installed.ts
+      // providedImport). Which of the two is asking decides what it may have: a plugin bundle is refused the entries
+      // src/node/provided.ts records a reason for, here, where the Worker is built, and the build fails with that reason;
+      // a project's own workflows/ module is the project's code and imports `@voidbase-cloud/voidbase/workflows` by design.
+      const from = importer?.replace(/\\/g, "/") ?? "";
+      if (/\/(pb_plugins|workflows)\//.test(from)) {
+        const provided = providedImport(id, here, pkg.exports as Record<string, string | Record<string, string>>, /\/pb_plugins\//.test(from) ? "plugin-bundle" : "project");
         if (provided && "file" in provided) return provided.file;
         if (provided && "from" in provided) return (await this.resolve(id, provided.from, { skipSelf: true }))?.id ?? null;
       }

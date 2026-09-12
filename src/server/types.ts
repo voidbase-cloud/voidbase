@@ -65,3 +65,27 @@ export interface Variables {
 }
 
 export type AppEnv = { Bindings: Bindings; Variables: Variables };
+
+// ---- `@voidbase-cloud/voidbase/types`: what a plugin package is typed against ----------------------------------
+//
+// This file is the entry, rather than an aggregate beside it, for one reason: `Bindings` is declared here, and a
+// TypeScript interface merges only into the module that declares it. A plugin package adds its own knobs to the
+// request env by augmenting this module —
+//
+//   declare module "@voidbase-cloud/voidbase/types" {
+//     interface Bindings { ECHO_API_KEY?: string; ECHO_ENDPOINT?: string }
+//   }
+//
+// — and `c.env.ECHO_API_KEY` is then typed everywhere, including inside voidbase's own routes. Through an aggregate
+// that re-exported `Bindings` the same declaration would create a second interface of that name instead of merging.
+// The knobs above are the shipped plugins' own, declared here while the plugins are in this package; each moves
+// into its plugin's package as an augmentation when the plugin does, and nothing else about the type changes.
+//
+// The rest is the types the values in `@voidbase-cloud/voidbase/sdk` take and return, re-exported so that a plugin
+// needs one type entry rather than one per core module. Every one of these is erased at build time, so nothing
+// here puts a module in a plugin's runtime graph.
+export type { Collection, CollectionField, CollectionType } from "./collections/model";
+export type { Field, FieldType } from "./collections/fields";
+export type { EnrichOptions, ListQuery, RecordContext, UpdateOptions } from "./records/service";
+export type { FieldErrors } from "./errors";
+export type { Settings } from "./settings";

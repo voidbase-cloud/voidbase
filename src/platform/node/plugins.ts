@@ -9,40 +9,18 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import * as hono from "hono";
 import { lockPath, rootOfPluginsDir, verifyInstalled } from "../../node/installed";
-import * as authSlot from "../../server/auth-slot";
-import * as interfaces from "../../server/interfaces";
-import * as kernel from "../../server/kernel";
-import * as realtimeSlot from "../../server/realtime-slot";
-import * as recordSlot from "../../server/record-slot";
-import * as backups from "../../server/plugins/backups";
-import * as hardening from "../../server/plugins/hardening";
-import * as auth from "../../server/plugins/auth";
-import * as collections from "../../server/plugins/collections";
-import * as manifest from "../../server/plugins/manifest";
-import * as realtime from "../../server/plugins/realtime";
+import { PROVIDED, PROVIDED_RE, refusalFor } from "../../node/provided";
 import type { Plugin } from "../../server/plugins/manifest";
 
 export interface InstalledPlugin { plugin: Plugin; name: string; version: string; marketplace: string }
 
-/** the entry points a bundle may import, as the modules this process runs (package.json exports names the same set) */
-const PROVIDED: Record<string, object> = {
-  "@voidbase-cloud/voidbase/kernel": kernel,
-  "@voidbase-cloud/voidbase/plugins": manifest,
-  "@voidbase-cloud/voidbase/interfaces": interfaces,
-  // the three slots the core and a plugin hand each other things through. A bundle that mounts a route needing the
-  // request's record context imports ./record-slot, which package.json's exports names for the type checker; without
-  // the specifier here the same import would resolve nowhere at load and the instance would refuse the bundle.
-  "@voidbase-cloud/voidbase/auth-slot": authSlot,
-  "@voidbase-cloud/voidbase/record-slot": recordSlot,
-  "@voidbase-cloud/voidbase/realtime-slot": realtimeSlot,
-  "@voidbase-cloud/voidbase/plugins/backups": backups,
-  "@voidbase-cloud/voidbase/plugins/realtime": realtime,
-  "@voidbase-cloud/voidbase/plugins/hardening": hardening,
-  "@voidbase-cloud/voidbase/plugins/auth": auth,
-  "@voidbase-cloud/voidbase/plugins/collections": collections,
-  hono,
-};
-const PROVIDED_RE = /^(@voidbase-cloud\/voidbase|hono)(\/|$)/;
+/**
+ * What a bundle may import, and the module each name is: package.json's `exports` and the files behind it, built in
+ * ../../node/provided.ts so the two lists cannot drift apart, and read from there by the Workers build too. hono is
+ * the one specifier that is not this package's, and the instance's own copy is what a plugin gets, so it is held
+ * here rather than loaded a second time.
+ */
+const modules: Record<string, () => Promise<object>> = { ...PROVIDED, hono: () => Promise.resolve(hono) };
 
 /**
  * Bare imports a bundle makes resolve to what this process runs. Bun's runtime plugins define virtual modules by
@@ -60,8 +38,9 @@ function provide(specifiers: string[]): void {
     setup(b) {
       for (const spec of fresh) {
         b.module(spec, async () => {
-          const m = PROVIDED[spec] ?? (spec.startsWith("hono/") ? ((await import(spec)) as object) : null);
-          if (!m) throw new Error(`${spec} is not something an instance provides to a plugin`);
+          const load = modules[spec];
+          const m = load ? await load() : spec.startsWith("hono/") ? ((await import(spec)) as object) : null;
+          if (!m) throw new Error(refusalFor(spec) ?? `${spec} is not something an instance provides to a plugin`);
           return { exports: { ...m }, loader: "object" };
         });
       }
@@ -77,9 +56,14 @@ export async function loadInstalled(dir: string): Promise<{ installed: Installed
   if (!existsSync(lockPath(root))) return { installed: [], disabled: [] };
   const { installed, disabled } = await verifyInstalled(root);
   for (const p of installed) {
-    const foreign = importsOf(p.file).filter((i) => !PROVIDED_RE.test(i));
+    const specifiers = importsOf(p.file);
+    const foreign = specifiers.filter((i) => !PROVIDED_RE.test(i));
     if (foreign.length) throw new Error(`pb_plugins/${p.name}/bundle.js imports ${foreign.join(", ")}, which an instance does not provide`);
-    provide(importsOf(p.file));
+    // a name this package publishes and an instance still refuses a plugin: said here, before anything is imported,
+    // with the reason ../../node/provided.ts records, which is the same reason the Workers build fails on
+    const refused = specifiers.map((i) => refusalFor(i)).filter((r): r is string => !!r);
+    if (refused.length) throw new Error(`pb_plugins/${p.name}/bundle.js: ${refused.join("; ")}`);
+    provide(specifiers);
   }
   const out: InstalledPlugin[] = [];
   for (const p of installed) {

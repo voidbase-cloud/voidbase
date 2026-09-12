@@ -20,28 +20,115 @@ working plan. What is here is what a contributor needs to touch it.
 | `src/server/realtime-slot.ts` | the guard on the `realtime@1` slot: the client for this request's bindings, or one that says realtime is off when nothing provides the interface. |
 | `GET /api/plugins` | what this instance loaded: names, providers, tiers, `plugins` (each with its tier, a `core` flag and its `provides`/`requires`), any core interface nobody provides, then a field per loaded plugin that declares `info(env)`, under that plugin's own name. `installer`, `mail`, `payments` and `observability` are always answered; the rest are there only while a plugin answers for them, which is a change from what every instance through 0.9.0-beta.48 reported (below). Superuser only. |
 
-## The entry points a plugin package uses
+## What a plugin package may import, and from where
 
-The package exposes the plugin API and the plugins it ships, so a plugin can live in its own package and be typed
-against this voidbase: `@voidbase-cloud/voidbase/kernel` (`createKernel`, `load`, `serve`, `using`, `whatLoaded`,
-`Kernel`), `@voidbase-cloud/voidbase/plugins` (`Plugin`, `PluginManifest`, `checkManifest`),
-`@voidbase-cloud/voidbase/interfaces` (the interface types and `KNOWN`), the three slots
-(`@voidbase-cloud/voidbase/auth-slot`, `/record-slot`, `/realtime-slot`, below), and `@voidbase-cloud/voidbase/plugins/backups`,
-`/plugins/auth`, `/plugins/realtime`, `/plugins/hardening`, `/plugins/openapi`, `/plugins/mcp`, `/plugins/seo`, `/plugins/mail`, `/plugins/translations`, `/plugins/commerce`, `/plugins/tax-flat`, `/plugins/shipping-flat` (the shipped plugin objects). `test/unit/plugin-entry-points.test.ts` keeps
-the map honest: every name in it reaches a module that really exports what a package imports from it.
+Everything a plugin needs from voidbase has a name in `package.json`'s `exports`, and nothing else does. This is the
+one list: a plugin file inside this package still reaches the core by relative import (`../errors`, `../db`) and by
+the package-private `#platform/*` picks, and neither of those travels — a relative path leaves the package, and
+`#platform/*` resolves only inside it. The entries below are what the same file imports once it lives in a package
+of its own, so they are the seam the later phases move plugins across, one plugin at a time, with no change to what
+the plugin does.
 
-There is a second list, and today it is the shorter one. A bundle installed from a marketplace imports these names
-at runtime too, where `src/platform/node/plugins.ts` resolves them to the modules this process is already running
-rather than through `node_modules`; `PROVIDED` there names the kernel, the manifest, the interfaces, the three
-slots, five shipped plugins (`auth`, `backups`, `realtime`, `hardening`, `collections`) and hono. The other sixteen
-plugin entry points are in `exports` and not in it, so a bundle importing one of those type-checks and then fails
-to load. The entry-point test pins both facts rather than the wish: the three slots have to be in both lists,
-because a plugin package cannot work without them, and the sixteen are counted, so the gap cannot widen unnoticed.
-Closing it is 7.2's. `./passkeys` was an entry point and is not
-one any more: `mountWebAuthn` needs the record context slot that only the application fills, so it cannot stand on
-a consumer's own router; voidbase's own app mounts the four passkey routes, which is how an instance has them. The official plugin packages (`@voidbase-cloud/plugin-*`, one repository each) re-export the shipped
-objects through these entry points: the code lives here once, and the package is the plugin's name, manifest and
-version as the marketplace lists it.
+| Import | What it is |
+| --- | --- |
+| `@voidbase-cloud/voidbase/kernel` | `createKernel`, `load`, `serve`, `using`, `whatLoaded`, `onBootstrap`, `runBootstraps`, `Kernel` |
+| `/plugins` | the manifest: `Plugin`, `PluginManifest`, `checkManifest` |
+| `/interfaces` | the interface types and the closed `KNOWN` list |
+| `/auth-slot`, `/record-slot`, `/realtime-slot` | the three slots the core and a plugin hand each other things through (below) |
+| `/sdk` | the core helpers more than one shipped plugin uses: `isSuperuser`/`requireAuth`/`requireSuperuser` (the slot's, below); `ApiError`/`badRequest`/`forbidden`/`notFound`; `all`/`ident`/`one`/`stmt`/`bufferedTransaction`; `findCollection`/`listCollections`/`loadCollections`/`isAuth`/`isView`/`collectionToJSON`/`SUPERUSERS`; `collectionId`/`createCollection`/`updateCollection`; `isMultiple`; `createRecord`/`updateRecord`/`deleteRecord`/`listRecords`/`PreconditionFailed`; `rowToValues`; `loadSettings`; `VERSION`; `nowString` |
+| `/types` | `AppEnv`, `Bindings`, `AuthRecord`, `Row`, `Variables`, and the types those values take and return (`Collection`, `Field`, `RecordContext`, `ListQuery`, `EnrichOptions`, `UpdateOptions`, `Settings`, `FieldErrors`) |
+| `/platform` | `env` and `logger`: the two platform picks nearly every plugin makes, with both runtime conditions |
+| `/platform/email`, `/platform/raster` | `EmailMessage` and `rasterize`, one entry each because of what they cost to load |
+| `/auth-routes` | the handlers the auth plugin mounts, that plugin's alone: the password and OAuth2 and passkey routes (`mountWebAuthn`), the refresh and the cookie, and `isSuperuserRecord` (below) |
+| `/backups-api` | `mountBackupsApi`, for the backups plugin |
+| `/hardening-middleware` | the body limit, the rate limit, the response policy and `GET /api/csrf`, for the hardening plugin |
+| `/realtime-client` | `realtimeFor`, the hub client for this request's bindings, for the realtime plugin |
+| `/mail` | `buildMime` and `mailRoute`, for the mail plugin |
+| `/records-preview`, `/records-files` | the preview flag, the two ways a request asks for a branch, `flaggedCollections`, and `deleteAllRecordFiles`: what the previews plugin calls, not the records service behind it |
+| `/project-sync` | the lockfile and the one commit that changes a project's plugins, for the installer |
+| `/registry` | the marketplace index client: `fetchIndex`, `download`, `integrityOf`, `problemsWithIndex` |
+| `/plugins/<name>` | twenty-one entries: the nineteen shipped plugin objects the official `@voidbase-cloud/plugin-*` packages re-export, `/plugins/payments-shared` (what the three payment plugins are built from, not a plugin) and `/plugins/collections` (`ensureCollections`, how a plugin declares its own collections, also not a plugin). The twentieth shipped plugin, the installer, has no entry point — below |
+
+The rule for `/sdk` against a narrow entry: `/sdk` is what more than one shipped plugin imports, plus the siblings
+of such a name in the same small, general-purpose module — splitting one of four prepared-statement helpers into an
+entry of its own would be a worse surface, not a smaller one. What one plugin alone uses and is that plugin's own
+machinery gets a narrow entry named after what it is, so `/backups-api` is the backups routes and not "the backups
+plugin's imports".
+
+What that rule does *not* say is that nothing unused is published. Most of these entries are a core module itself —
+`/kernel`, `/interfaces`, `/plugins`, the three slots, `/types`, `/registry` and every `/plugins/*` — and an entry
+that is a module publishes that module's whole surface, whatever a plugin asks for. The four that were worst about
+it are aggregators as of this step: `/records-files` published `deletePrefix`, which empties everything under a
+prefix — and the bucket itself if the prefix is empty — to a plugin that deletes one record's files;
+`/records-preview` published the records service's own query building; `/realtime-client` published the wire
+protocol the hub speaks; `/project-sync` published the lockfile parsing and printing the core runs on both sides of
+that commit. The rest are
+modules whose whole surface *is* the seam, and adding a name to one of those is adding it to what plugins may
+import — which is the point at which to ask whether it belongs behind an aggregator instead.
+
+Two functions are called `isSuperuser`, and a plugin package can import either. `/sdk`'s asks whichever plugin
+provides `auth@1`, through the slot, so it is still right on an instance whose auth is somebody else's plugin —
+that is the one a plugin wants, and importing it from `/sdk` is the whole of what a plugin has to know.
+`/auth-routes` publishes the shipped auth plugin's own answer, `isSuperuserRecord`, which is "the record's
+collection is `_superusers`" and is what that plugin hands the slot. The two agree exactly while the shipped plugin
+is the provider, which is the assumption a plugin package cannot make; they were both called `isSuperuser` in the
+first cut of these entries, and the name is the only thing that told them apart.
+
+Its own knobs. `Bindings` is declared in `src/server/types.ts`, which is what `/types` maps to rather than an
+aggregate beside it, because a TypeScript interface merges only into the module that declares it. So a plugin
+package adds its knobs by augmenting that module:
+
+```ts
+declare module "@voidbase-cloud/voidbase/types" {
+  interface Bindings { ECHO_API_KEY?: string; ECHO_ENDPOINT?: string }
+}
+```
+
+and `c.env.ECHO_API_KEY` is typed everywhere afterwards, voidbase's own routes included. The knobs of the shipped
+plugins are still declared in `Bindings` itself, because those plugins are still in this package; each becomes an
+augmentation in its own package when the plugin moves, and nothing else about the type changes. At runtime a knob
+is read the way `plugins/payments-shared.ts` reads one: the request env first, `@voidbase-cloud/voidbase/platform`'s
+`env` second.
+
+Two lists, and they are now generated from one. A bundle installed from a marketplace imports these same names at
+*runtime*, where they do not go through `node_modules`: on Bun `src/node/provided.ts` builds the map from
+`package.json`'s `exports` and hands a bundle the module this process is already running, and on Workers
+`providedImport` in `src/node/installed.ts` reads the same `exports` at build time. Through 0.9.0-beta.49 the Bun
+map was hand-written and twenty-odd names shorter than `exports`, so a bundle could import a name that type-checked
+and then failed to load; it is generated now, and `NOT_PROVIDED` beside it is the entries an instance deliberately
+refuses — the application (`/app`, `/api`, `/workflows`, the Worker entry points) and the build-time tooling
+(`/bundle`, `/adapter`, `/plugin`, `/secrets`, `/deploy-plugin`), each with its reason. Both halves read that one
+table: the Bun loader says the reason before it imports a bundle, and the Workers build says the same reason while
+it resolves the bundle's imports, so a bundle importing `/app` fails the build rather than building the whole
+application into the Worker and hearing about it on the other runtime. `test/unit/plugin-entry-points.test.ts` pins
+the agreement: every entry is provided or refused and never both, every provided name is an entry that test checks,
+and every one of them loads the module its `exports` target points at.
+
+`/types` is handed over rather than refused, and it is worth saying why, because the reasoning that refused it is
+the one a plugin author would reach for too. It declares no value, so what a bundle gets is an empty namespace.
+`import type { Bindings } from "@voidbase-cloud/voidbase/types"` never reaches an instance — every bundler erases
+it. `import { type Bindings } from` under `verbatimModuleSyntax`, which is how a TypeScript package is written now,
+compiles to `import {} from "@voidbase-cloud/voidbase/types"`, and esbuild and `bun build` both keep that
+side-effect import of an external module. Refusing the name refused the whole plugin, at load, over a module with
+nothing in it. Write `import type` for anything from `/types`; either spelling works now.
+
+A plugin bundle may import `@voidbase-cloud/voidbase/*` and `hono`, and nothing else. That is enforced in the two
+places a bundle is read, not where it is built: `src/platform/node/plugins.ts` checks every specifier in the bundle
+before it imports one (`PROVIDED_RE` in `src/node/provided.ts`), and `hooks-plugin.ts`'s `resolveId` answers only
+for those two when a Worker is built, so anything else goes back to Vite with nothing behind it and fails the
+build. `docs/registry.md` states it as the rule a marketplace bundle is written against.
+
+`./passkeys` was an entry point and is not one any more: `mountWebAuthn` needs the record context slot that only the
+application fills, so it cannot stand on a consumer's own router. It is published under `/auth-routes` instead,
+which is what it is — one of the routes the auth plugin mounts, not a feature a consumer bolts on.
+
+Three things the installer still needs are published nowhere, which is why it is the one shipped plugin without an
+entry point of its own. `#platform/plugins` on Bun *is* the loader that imports plugin bundles, and a bundle cannot
+import the module that is importing it; `src/server/installer-info.ts` imports it, so handing either to a bundle
+would deadlock on that module's top-level await. The third is `src/server/plugins/resolve.ts`, the removal check
+(`refusal`, `removalCost`, `PluginFacts`), which is the core's own answer about the plugin graph and is read by
+`src/node/installed.ts` and the CLI as well — publishing it to plugins is a decision of its own, not a side effect
+of moving the installer. Lifting the installer out needs the loader dependency broken first, and this one named.
 
 ## What a plugin is
 

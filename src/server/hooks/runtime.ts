@@ -1,5 +1,9 @@
 // The JSVM-compatible global API for pb_hooks files, plus the registries their calls populate.
 // Per-request state ($app's database, the request) is carried by AsyncLocalStorage.
+/// <reference path="./node-async-hooks.d.ts" />
+// the ambient declaration of node:async_hooks on workerd, referenced for the same reason the platform picks
+// reference theirs: a package outside this one reaches this file through `@voidbase-cloud/voidbase/kernel` and has
+// no reason to include this repository's .d.ts files.
 import { AsyncLocalStorage } from "node:async_hooks";
 // A generated pb_hooks bundle (src/adapter) cannot import anything: the hook sandbox resolves only its sibling
 // files. Void's runtime needs AsyncLocalStorage, so the bundle reads it here, from the one place both runtimes

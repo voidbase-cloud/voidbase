@@ -41,6 +41,6 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@voidbase-cloud/voidbase": "workspace:*"
+    "@voidbase-cloud/voidbase": "workspace:^"
   }
 }

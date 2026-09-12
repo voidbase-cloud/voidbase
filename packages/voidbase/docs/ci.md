@@ -111,7 +111,7 @@ would deploy with). `voidbase sync` writes these three into the triggers it crea
 scripts, so a project set up from the CLI and one set up by hand in the dashboard end up saying the same thing.
 
 **One change, one build.** Cloudflare builds every push to master. In hot mode (`CI_HOT=1`, the setting while
-voidbase is in beta) that build is the release: `scripts/hot-release.ts` moves the prerelease number, writes the
+voidbase is in beta) that build is the release: `scripts/hot-release.ts` moves the prerelease number of the core, of whatever changed, and of whatever depends on those (`releaseSet`; the rest keep the version they have), writes the
 changelog, commits `chore(master): release <version> [CI Skip]` (so its own push starts no build), tags, pushes,
 creates the GitHub release, and `scripts/release.sh --hot` publishes the version to npm, unchecked. No typecheck,
 no tests, no release pull request: a push is on npm in about two minutes. That release commit is made with

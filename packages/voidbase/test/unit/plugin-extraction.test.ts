@@ -145,9 +145,17 @@ describe("the workspace's extracted plugin packages", () => {
       // version through `dependencies`, so an install that has the core has exactly one plugin version available
       // to satisfy the peer anyway, and a range would only widen the set of pairs the manifest *claims* work
       // beyond the one pair that was ever built or tested.
-      expect(pkg.manifest.peerDependencies?.[CORE]).toBe("workspace:*");
+      // `workspace:^`, not `workspace:*`: it packs as a caret on the core's version, and a release no longer moves
+      // every package, so an unchanged plugin has to go on admitting the cores that come after it. An exact pin
+      // would make a plugin uninstallable beside the next core, which is how it was until the release stopped
+      // republishing what had not changed.
+      expect(pkg.manifest.peerDependencies?.[CORE]).toBe("workspace:^");
       expect(pkg.manifest.dependencies?.[CORE]).toBeUndefined();
-      expect(pkg.version).toBe(core.version);
+      // the package is at the core's version or behind it, never ahead: it was last released with some core, and
+      // the core has released since without it
+      expect(Bun.semver.order(pkg.version, core.version)).toBeLessThanOrEqual(0);
+      // and whatever it is on, the core it ships beside satisfies the range it declares
+      expect(Bun.semver.satisfies(core.version, `^${pkg.version}`), `${pkg.name}@${pkg.version} does not admit the core at ${core.version}`).toBe(true);
       expect(pkg.private).toBe(false);
     });
 

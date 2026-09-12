@@ -15,11 +15,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  CORE,
   NEVER_MIRROR,
   NEVER_PUBLISH,
   RESOLVABLE_TIMEOUT_MS,
   ROOT,
-  assertLockstep,
+  releaseVersion,
   assertNoPrivateSiblings,
   assertNoWorkspaceSpecs,
   assertResolvedSiblings,
@@ -50,7 +51,7 @@ import {
   type Pkg,
   type Run,
 } from "../../../../scripts/publish";
-import { bumpVersion, lockstep, prependNotes } from "../../../../scripts/hot-release";
+import { bumpVersion, lockstep, prependNotes, releaseSet } from "../../../../scripts/hot-release";
 
 const PACKAGE = "@voidbase-cloud/voidbase";
 const PLUGIN = "@voidbase-cloud/plugin-realtime";
@@ -120,7 +121,7 @@ describe("the workspace the release packs", () => {
       // app and the two have to be holding one copy. `test/unit/plugin-extraction.test.ts` holds both halves per
       // specifier -- every name a file imports is declared, and every peer beside the core is a name it imports.
       const peers = plugin.manifest.peerDependencies ?? {};
-      expect(peers[PACKAGE], name).toBe("workspace:*");
+      expect(peers[PACKAGE], name).toBe("workspace:^");
       expect(Object.keys(peers).filter((n) => n !== PACKAGE && n !== "hono"), name).toEqual([]);
       if ("hono" in peers) expect(peers.hono, name).toBe(workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies!.hono!);
       // Dependencies: none at all for a leaf, and for the chain 7.7 extracts, the sibling package it is written
@@ -208,9 +209,11 @@ describe("the workspace the release packs", () => {
 
   test("every publishable package on one version, and on the one the release is for", () => {
     const one = publishable(workspace);
-    expect(assertLockstep(one, one[0]!.version)).toBe(one[0]!.version);
-    expect(() => assertLockstep([pkg("@x/a", "1.0.0"), pkg("@x/b", "1.0.1")])).toThrow(/not in lockstep/);
-    expect(() => assertLockstep([pkg("@x/a", "1.0.0")], "1.0.1")).toThrow(/the release is for 1.0.1/);
+    expect(releaseVersion(one, one[0]!.version)).toBe(one[0]!.version);
+    // versions may now differ across the workspace -- a package nobody touched keeps the one it has -- so what is
+    // refused is a package ahead of the release, which is a version no tag names
+    expect(releaseVersion([pkg("@x/a", "1.0.0"), pkg("@x/b", "1.0.1")], "1.0.1")).toBe("1.0.1");
+    expect(() => releaseVersion([pkg("@x/a", "1.0.2")], "1.0.1")).toThrow(/ahead of it/);
   });
 
   test("bin names: the map's keys, or the package's own unscoped name", () => {
@@ -385,14 +388,59 @@ describe("the hot release bump, in lockstep", () => {
     expect(to).not.toBe(from);
     expect(`${from.split(".").slice(0, -1).join(".")}.${Number(from.split(".").pop()) + 1}`).toBe(to);
   });
-  test("refuses a workspace whose publishable packages have drifted apart", () => {
-    expect(() => lockstep([pkg("@x/a", "0.9.0-beta.1"), pkg("@x/b", "0.9.0-beta.2")])).toThrow(/not in lockstep/);
+  test("the version a release is for is the core's, whatever the rest are on", () => {
+    // Packages drift apart now: one nobody touched keeps the version it has while the core moves on. The release
+    // is named after the core, because `@voidbase-cloud/voidbase` is what the repository is.
+    const { from, to, packages } = lockstep([
+      pkg(CORE, "0.9.0-beta.10", {}, { path: "packages/voidbase" }),
+      pkg("@voidbase-cloud/plugin-x", "0.9.0-beta.3", {}, { path: "packages/plugin-x" }),
+    ]);
+    expect(from).toBe("0.9.0-beta.10");
+    expect(to).toBe("0.9.0-beta.11");
+    expect(packages.length).toBe(2);
     expect(() => lockstep([pkg("@x/a", "0.9.0-beta.1", {}, { private: true })])).toThrow(/no publishable package/);
+    expect(() => lockstep([pkg("@x/a", "0.9.0-beta.1")])).toThrow(/no @voidbase-cloud\/voidbase/);
   });
-  test("a private package is carried along from wherever it was", () => {
-    const { to, packages } = lockstep([pkg("@x/a", "0.9.0-beta.1"), pkg("@x/fixture", "0.0.0", {}, { private: true })]);
-    expect(to).toBe("0.9.0-beta.2");
-    expect(packages.map((p) => p.name)).toEqual(["@x/a", "@x/fixture"]);
+
+  // What a release moves, now that it does not move everything. Each case is a reason a package has to be
+  // republished even though the release is not about it.
+  describe("the release set", () => {
+    const core = () => pkg(CORE, "0.9.0-beta.10", { "@voidbase-cloud/plugin-a": "workspace:*", "@voidbase-cloud/plugin-b": "workspace:*" }, { path: "packages/voidbase" });
+    const a = () => pkg("@voidbase-cloud/plugin-a", "0.9.0-beta.10", {}, { path: "packages/plugin-a" });
+    const b = () => pkg("@voidbase-cloud/plugin-b", "0.9.0-beta.10", { "@voidbase-cloud/plugin-a": "workspace:*" }, { path: "packages/plugin-b" });
+
+    test("nothing changed: the core alone, and the plugins keep the versions they have", () => {
+      const set = releaseSet([core(), a(), b()], ["packages/voidbase/src/server/app.ts"], "0.9.0-beta.11");
+      expect([...set]).toEqual([CORE]);
+    });
+
+    test("a package with a changed file is in it", () => {
+      const set = releaseSet([core(), a(), b()], ["packages/plugin-a/src/index.ts"], "0.9.0-beta.11");
+      expect([...set].sort()).toEqual([CORE, "@voidbase-cloud/plugin-a", "@voidbase-cloud/plugin-b"].sort());
+    });
+
+    test("and so is whatever depends on it, transitively, or the install would hold two copies of it", () => {
+      // b names a exactly (`workspace:*` packs as a version). Bump a and leave b behind and the core names the new
+      // a while b names the old one, which is two copies of a package that provides a service.
+      const set = releaseSet([core(), a(), b()], ["packages/plugin-a/README.md"], "0.9.0-beta.11");
+      expect(set.has("@voidbase-cloud/plugin-b")).toBe(true);
+      // the other way round is not true: a does not depend on b, so touching b leaves a where it is
+      const other = releaseSet([core(), a(), b()], ["packages/plugin-b/src/index.ts"], "0.9.0-beta.11");
+      expect(other.has("@voidbase-cloud/plugin-a")).toBe(false);
+    });
+
+    test("a package whose peer range would no longer admit the core is in it, however untouched", () => {
+      // the peer packs as `^<the core it was packed beside>`, which is the plugin's own version. Measured, not
+      // assumed: `^0.9.0-beta.10` admits every later 0.9 -- the prereleases after it, 0.9.0 itself, and 0.9.9 --
+      // and stops at 0.10.0. So a plugin rides out prereleases and patches untouched, and a minor pulls all of
+      // them back in, which is the release that has to rebuild every package whether or not anything changed.
+      for (const stays of ["0.9.0-beta.11", "0.9.1", "0.9.9"]) {
+        expect([...releaseSet([core(), a()], [], stays)], stays).toEqual([CORE]);
+      }
+      for (const moves of ["0.10.0", "1.0.0"]) {
+        expect([...releaseSet([core(), a()], [], moves)].sort(), moves).toEqual([CORE, "@voidbase-cloud/plugin-a"].sort());
+      }
+    });
   });
   test("the version field is rewritten in place, whatever it was", () => {
     const text = '{\n  "name": "@x/a",\n  "version": "0.0.0",\n  "dependencies": { "b": "1" }\n}\n';

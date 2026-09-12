@@ -361,12 +361,21 @@ export function assertNoPrivateSiblings(m: Manifest, unpublished: Set<string>, w
   throw new Error(`${where}: ${m.name}@${m.version} depends on ${found.length === 1 ? "a workspace package this release never publishes" : "workspace packages this release never publishes"}: ${found.join(", ")}. Publish the sibling (drop its \`"private": true\`) or stop depending on it: the registry does not have that name, and if someone else does, installing this package takes theirs.`);
 }
 
-/** every publishable package on one version, and on the one the release says it is for */
-export function assertLockstep(pkgs: Pkg[], version?: string): string {
-  const versions = [...new Set(pkgs.map((p) => p.version))];
-  if (versions.length > 1) throw new Error(`the publishable packages are not in lockstep: ${pkgs.map((p) => `${p.name}@${p.version}`).join(", ")}`);
-  const found = versions[0] ?? version ?? "";
-  if (version && found !== version) throw new Error(`the release is for ${version} but the workspace packs ${pkgs.map((p) => `${p.name}@${p.version}`).join(", ") || "nothing"}`);
+/**
+ * The version a release is for, which is the core's.
+ *
+ * It used to be every package's: one version across the workspace, and a release that moved it moved all of them.
+ * That made a plugin nobody had touched collect a byte-identical version on npm on every push to master, so a
+ * release now moves the core, what changed, and what depends on those (scripts/hot-release.ts, `releaseSet`), and
+ * leaves the rest on the version they already have. What is still true, and is what this checks, is that nothing
+ * packs a version *ahead* of the release: a package at a version the release is not for was bumped by something
+ * other than the release, and publishing it would put a version on the registry that no tag names.
+ */
+export function releaseVersion(pkgs: Pkg[], version?: string): string {
+  const core = pkgs.find((p) => p.name === CORE);
+  const found = version ?? core?.version ?? pkgs[0]?.version ?? "";
+  const ahead = pkgs.filter((p) => found && Bun.semver.order(p.version, found) > 0);
+  if (ahead.length) throw new Error(`the release is for ${found}, and ${ahead.map((p) => `${p.name}@${p.version}`).join(", ")} ${ahead.length === 1 ? "is" : "are"} ahead of it: a package the release did not bump carries a version the release does not name`);
   return found;
 }
 
@@ -430,7 +439,7 @@ export async function packedManifest(tarball: string, run: Run = runCommand): Pr
 
 /** pack every publishable package and refuse anything the registry could not install */
 export async function packWorkspace(pkgs: Pkg[], outDir: string, version?: string, run: Run = runCommand, siblings: Map<string, string> = new Map(pkgs.map((p) => [p.name, p.version])), unpublished: Set<string> = new Set()): Promise<Packed[]> {
-  assertLockstep(pkgs, version);
+  releaseVersion(pkgs, version);
   const packed: Packed[] = [];
   for (const pkg of pkgs) {
     const tarball = await pack(pkg, outDir, run);
@@ -699,7 +708,7 @@ export async function publishWorkspace(opts: PublishOptions = {}): Promise<Publi
   const all = readWorkspace(root);
   const pkgs = publishable(publishOrder(all));
   if (pkgs.length === 0) throw new Error(`${root} has no publishable package: every workspace package is private`);
-  const version = assertLockstep(pkgs, opts.version);
+  const version = releaseVersion(pkgs, opts.version);
   log(`publish ${version} to ${registry}: ${pkgs.length} package(s) in dependency order: ${pkgs.map((p) => p.name).join(", ")}${opts.dryRun ? " (dry run)" : ""}`);
 
   // the lockfile first: bun packs the sibling version it records, and a bump leaves it behind (syncLockfile). A

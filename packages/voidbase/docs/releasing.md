@@ -120,20 +120,38 @@ touches only `scripts/` still cuts a release and still reaches npm, exactly like
 modes disagree here on purpose -- hot mode releases pushes, release-please releases changes to the package -- and
 the first normal run after `hot off` is the one that goes back to the narrow rule.
 
-### N packages, one version
+### N packages, and only the ones that moved
 
-The repository publishes **eleven** packages: `@voidbase-cloud/voidbase` and the ten `@voidbase-cloud/plugin-*`
-packages the core depends on -- `-realtime` since 7.5, and `-domains`, `-backups`, `-hardening`, `-shipping-flat`,
-`-tax-flat`, `-previews`, `-translations`, `-mail` and `-observability` since 7.6. 7.7 to 7.10 extract the rest, so
-the flow is written for N of them and not for eleven. `scripts/publish.ts` is all of the packing and publishing.
+The repository publishes **fifteen** packages: `@voidbase-cloud/voidbase` and the fourteen `@voidbase-cloud/plugin-*`
+packages the core depends on -- `-realtime` since 7.5, nine more since 7.6, and `-openapi`, `-mcp`, `-ai` and `-seo`
+since 7.7. 7.8 to 7.10 extract the rest, so the flow is written for N of them and not for fifteen.
+
+**A release moves the core, what changed, and what depends on those -- not everything.** It used to move all of
+them: one version across the workspace, so a plugin nobody had touched was republished on every push to master, and
+under hot mode that is several a day. `plugin-tax-flat` would have collected a byte-identical version each time,
+which is noise on a package other people are meant to depend on. `releaseSet` in `scripts/hot-release.ts` decides
+what moves:
+
+| what | why |
+| --- | --- |
+| the core, always | the repository's version *is* the core's, and the release is named after it |
+| any package with a changed file since the last tag | the obvious one |
+| anything that depends on those, transitively | `workspace:*` packs as the sibling's exact version, so a dependent left behind would name the old one while the core names the new one, and the install would hold two copies of a package that provides a service |
+| every package, when the core's **minor** turns | a plugin declares its peer as `workspace:^`, which packs as a caret on the core it was built beside; `^0.9.0-beta.56` admits every later 0.9 and stops at 0.10.0 |
+
+Everything else keeps the version it has and is skipped by the publish loop, which asks the registry before it
+publishes anything. So the versions drift apart on purpose: `@voidbase-cloud/voidbase@0.9.0-beta.80` may well
+depend on `@voidbase-cloud/plugin-tax-flat@0.9.0-beta.57`, and that pair is the one that was built and tested
+together. What is still checked is that nothing is *ahead* of the release (`releaseVersion`), because a package at
+a version no tag names was bumped by something other than a release. `scripts/publish.ts` is all of the packing and publishing.
 `packages/release-fixture` -- a private, never-published twelfth workspace package that depends on
 `@voidbase-cloud/voidbase` through `workspace:*` -- is what keeps the *private* paths honest (the third gate,
 `NEVER_PUBLISH`, and what `publishable()` drops), and `test/unit/publish.test.ts` drives the whole loop over a
 throwaway two-package workspace against a stubbed registry on localhost. Delete the fixture once a real private
 package exists to exercise those paths; deleting it before that takes them with it.
 
-A release therefore packs the ten plugin packages first and the core last, because the core depends on every one of
-them. The rehearsal below is `bun scripts/publish.ts --dry-run --registry http://127.0.0.1:48171` against a stub
+A release packs whatever it is moving, the packages that depend on nothing first and the core last, because the
+core depends on every one of them. The rehearsal below is `bun scripts/publish.ts --dry-run --registry http://127.0.0.1:48171` against a stub
 registry on localhost that holds nothing, so every package reads as missing and every step runs; `...` marks a line
 repeated once per package and nothing else:
 
@@ -290,7 +308,7 @@ strategies in a group by `strategy.getComponent()`, and `BaseStrategy.getCompone
 `include-component-in-tag` is false (`build/src/strategies/base.js`, release-please 17.11.2); `LinkedVersions.preconfigure`
 skips every strategy with no component. This repository tags `vX.Y.Z` with no component in it, so the plugin would
 find zero group members and quietly do nothing, and turning the component on would rename every tag the executables'
-update path and `scripts/release.sh --tag` depend on. The glob gets the same lockstep with the tag scheme intact.
+update path and `scripts/release.sh --tag` depend on. The glob moves the versions it needs to with the tag scheme intact.
 
 ## The public beta
 
@@ -320,9 +338,10 @@ release:
   `bun run release -- --dry-run` (needs `GH_TOKEN` with read access and `NPM_TOKEN`). A dry run changes no tracked
   file: where a real release would write the lockfile's workspace versions it prints what it would have written and
   packs against `bun.lock` as committed, so a machine that rehearses a release is not left with a modified one.
-- A release cut by hand also publishes: `gh release create vX.Y.Z --notes-file notes.md` after bumping **every**
-  `packages/*/package.json` to X.Y.Z on `master` and committing the `bun install` that follows (the versions are
-  lockstep, so bumping one of them dies in `assertLockstep`, and a lockfile left behind fails the unit suite). The
+- A release cut by hand also publishes: `gh release create vX.Y.Z --notes-file notes.md` after bumping
+  `packages/voidbase/package.json` to X.Y.Z on `master`, along with any package that changed and anything that
+  depends on one of those (`releaseSet` is the rule, and `bun scripts/hot-release.ts --dry-run` prints the set it
+  would move), and committing the `bun install` that follows -- a lockfile left behind fails the unit suite. The
   next build of master finds a release that is not on npm and publishes it, or `bun run release` does from a
   machine at that commit.
 - Publishing from a machine: `bun run check && bun test` at the repository root, then

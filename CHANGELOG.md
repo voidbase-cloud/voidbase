@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.49](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.48...v0.9.0-beta.49) (2026-09-12)
+
+* fix(plugins): hold every call into a plugin, and answer for the installer without importing it
+
 ## [0.9.0-beta.48](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.47...v0.9.0-beta.48) (2026-09-11)
 
 * test(commerce): the claim over the real database adapter, with the hooks it has to run

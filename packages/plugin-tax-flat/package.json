@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-tax-flat",
-  "version": "0.9.0-beta.56",
+  "version": "0.9.0-beta.57",
   "description": "The flat-rate tax plugin of voidbase: provides tax@1, one percentage on the order's subtotal",
   "license": "MIT",
   "repository": {

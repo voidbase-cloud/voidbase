@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/release-fixture",
-  "version": "0.9.0-beta.56",
+  "version": "0.9.0-beta.57",
   "private": true,
   "description": "Second workspace package: the release flow's N>1 fixture, never published",
   "license": "MIT",

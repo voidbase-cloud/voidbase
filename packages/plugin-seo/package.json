@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-seo",
-  "version": "0.9.0-beta.56",
+  "version": "0.9.0-beta.57",
   "description": "The seo plugin of voidbase: meta tags, sitemaps and share cards written from the records themselves",
   "license": "MIT",
   "repository": {

@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-backups",
-  "version": "0.9.0-beta.56",
+  "version": "0.9.0-beta.57",
   "description": "The backups plugin of voidbase: the archive routes, two archive kinds, verified after the write and restorable",
   "license": "MIT",
   "repository": {

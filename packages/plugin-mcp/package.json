@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-mcp",
-  "version": "0.9.0-beta.56",
+  "version": "0.9.0-beta.57",
   "description": "The mcp plugin of voidbase: the instance as an MCP server, its tools written from its own OpenAPI document",
   "license": "MIT",
   "repository": {

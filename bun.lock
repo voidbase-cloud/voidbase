@@ -18,7 +18,7 @@
     },
     "packages/plugin-ai": {
       "name": "@voidbase-cloud/plugin-ai",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "dependencies": {
         "@voidbase-cloud/plugin-mcp": "workspace:*",
         "@voidbase-cloud/plugin-openapi": "workspace:*",
@@ -30,35 +30,35 @@
     },
     "packages/plugin-backups": {
       "name": "@voidbase-cloud/plugin-backups",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
       },
     },
     "packages/plugin-domains": {
       "name": "@voidbase-cloud/plugin-domains",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
       },
     },
     "packages/plugin-hardening": {
       "name": "@voidbase-cloud/plugin-hardening",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
       },
     },
     "packages/plugin-mail": {
       "name": "@voidbase-cloud/plugin-mail",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
       },
     },
     "packages/plugin-mcp": {
       "name": "@voidbase-cloud/plugin-mcp",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "dependencies": {
         "@voidbase-cloud/plugin-openapi": "workspace:*",
       },
@@ -69,7 +69,7 @@
     },
     "packages/plugin-observability": {
       "name": "@voidbase-cloud/plugin-observability",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
         "hono": "^4.11.9",
@@ -77,7 +77,7 @@
     },
     "packages/plugin-openapi": {
       "name": "@voidbase-cloud/plugin-openapi",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
         "hono": "^4.11.9",
@@ -85,7 +85,7 @@
     },
     "packages/plugin-previews": {
       "name": "@voidbase-cloud/plugin-previews",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
         "hono": "^4.11.9",
@@ -93,14 +93,14 @@
     },
     "packages/plugin-realtime": {
       "name": "@voidbase-cloud/plugin-realtime",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
       },
     },
     "packages/plugin-seo": {
       "name": "@voidbase-cloud/plugin-seo",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
         "hono": "^4.11.9",
@@ -108,21 +108,21 @@
     },
     "packages/plugin-shipping-flat": {
       "name": "@voidbase-cloud/plugin-shipping-flat",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
       },
     },
     "packages/plugin-tax-flat": {
       "name": "@voidbase-cloud/plugin-tax-flat",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
       },
     },
     "packages/plugin-translations": {
       "name": "@voidbase-cloud/plugin-translations",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
         "hono": "^4.11.9",
@@ -130,14 +130,14 @@
     },
     "packages/release-fixture": {
       "name": "@voidbase-cloud/release-fixture",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "dependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
       },
     },
     "packages/voidbase": {
       "name": "@voidbase-cloud/voidbase",
-      "version": "0.9.0-beta.56",
+      "version": "0.9.0-beta.57",
       "bin": {
         "voidbase": "bin/voidbase.ts",
       },

@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-mail",
-  "version": "0.9.0-beta.56",
+  "version": "0.9.0-beta.57",
   "description": "The mail plugin of voidbase: provides mail@1, the instance's own domain through Cloudflare Email Service",
   "license": "MIT",
   "repository": {

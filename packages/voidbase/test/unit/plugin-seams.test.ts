@@ -121,10 +121,20 @@ describe("a plugin asks the core for the request's record context", () => {
   test("nothing the auth plugin mounts imports the app to get one, which a package cannot do to the package that loads it", () => {
     // plugins/auth.ts mounts three modules: its own routes, the core's auth routes (auth.ts) and the passkey ones
     // (webauthn.ts). hooks/index.ts is left as it is, being the application's own use of its own module.
-    for (const file of ["plugins/auth.ts", "plugins/seo.ts", "auth.ts", "webauthn.ts"]) {
-      expect(source(file)).not.toContain('import("./app")');
-      expect(source(file)).not.toContain('import("../app")');
-      expect(source(file)).toContain('record-slot"');
+    //
+    // seo is no longer one of them: since 7.7 it is @voidbase-cloud/plugin-seo, and a package has no `../app` to
+    // import even if it wanted one. The property is the same and is read where the code now is -- the slot is how a
+    // plugin gets the request's record context -- which is why the file moved in this list rather than out of it.
+    const files: [string, string][] = [
+      ["plugins/auth.ts", source("plugins/auth.ts")],
+      ["auth.ts", source("auth.ts")],
+      ["webauthn.ts", source("webauthn.ts")],
+      ["@voidbase-cloud/plugin-seo", readFileSync(resolvePath(import.meta.dir, "../../../plugin-seo/src/index.ts"), "utf8")],
+    ];
+    for (const [name, text] of files) {
+      expect(text, name).not.toContain('import("./app")');
+      expect(text, name).not.toContain('import("../app")');
+      expect(text, name).toContain('record-slot"');
     }
   });
 

@@ -11,11 +11,10 @@
 //   VOIDBASE_SEO_THEME=#1f2430          the share card's background colour (a hex colour or a CSS colour name)
 //   VOIDBASE_SEO_PNG=1                  render the card as PNG (resvg); off, it is SVG and og:image names the .svg
 //   VOIDBASE_SEO_LOCALE_PATH=prefix     locale alternates as /<code>/path rather than ?locale=<code> (VOIDBASE_LOCALES)
-import { logger } from "#platform/log";
-import type { Field } from "../collections/fields";
-import type { Collection } from "../collections/model";
-import { alternatesOf, localizedUrl, type LocaleSetup } from "./seo-locales";
-import type { SitemapEntry } from "./seo";
+import { logger } from "@voidbase-cloud/voidbase/platform";
+import type { Collection, Field } from "@voidbase-cloud/voidbase/types";
+import { alternatesOf, localizedUrl, type LocaleSetup } from "@voidbase-cloud/voidbase/plugins/seo-locales";
+import type { SitemapEntry } from "./index";
 
 // --- the mapping grammar ------------------------------------------------------------------------------------------------
 /** one VOIDBASE_SEO entry: the schema.org type of a collection's pages and which fields feed which key */
@@ -89,7 +88,7 @@ export const lookupFilter = (entry: SitemapEntry, values: Record<string, string>
 // --- locales ------------------------------------------------------------------------------------------------------------
 // in seo-locales.ts, which imports nothing: the Void adapter writes the same alternates into the prerendered pages
 // at build time (src/adapter/locales.ts) and must not pull the server in to do it
-export { alternatesOf, localesOf, localizedUrl, splitLocale, type LocaleSetup } from "./seo-locales";
+export { alternatesOf, localesOf, localizedUrl, splitLocale, type LocaleSetup } from "@voidbase-cloud/voidbase/plugins/seo-locales";
 
 // --- the page's metadata ------------------------------------------------------------------------------------------------
 export interface MetaAnswer {

@@ -78,6 +78,8 @@ const MODULES: Record<string, () => Promise<object>> = {
   "./src/server/plugins/previews.ts": () => import("../server/plugins/previews"),
   "./src/server/plugins/realtime.ts": () => import("../server/plugins/realtime"),
   "./src/server/plugins/seo.ts": () => import("../server/plugins/seo"),
+  "./src/server/plugins/seo-paths.ts": () => import("../server/plugins/seo-paths"),
+  "./src/server/plugins/seo-locales.ts": () => import("../server/plugins/seo-locales"),
   "./src/server/plugins/shipping-flat.ts": () => import("../server/plugins/shipping-flat"),
   "./src/server/plugins/stripe.ts": () => import("../server/plugins/stripe"),
   "./src/server/plugins/tax-flat.ts": () => import("../server/plugins/tax-flat"),

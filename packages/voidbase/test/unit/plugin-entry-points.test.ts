@@ -42,6 +42,11 @@ const expected: Record<string, string[]> = {
   // Same shape again, for the same reason, published in 7.7 when the ai plugin left the core: src/node/deploy-cf.ts
   // writes the AI binding and has to name it, and the plugin package cannot be what tells it the name.
   "./plugins/ai-binding": ["AI_BINDING", "AI_VAR", "DEFAULT_MODEL", "aiModelOf"],
+  // seo's two halves that are not the plugin: the knob names and redirect lines the deploy, the bundle, the adapter
+  // and hooks-plugin.ts all read (seo-paths), and the locale maths the adapter shares with the share card
+  // (seo-locales). Both stay in the core and are published for the package, in 7.7.
+  "./plugins/seo-paths": ["SEO_API", "SEO_FILES", "SEO_PNG_VAR", "seoPngOn", "seoRedirectLines"],
+  "./plugins/seo-locales": ["alternatesOf", "localizedUrl"],
   "./plugins/mail-binding": ["MAIL_BINDING", "MAIL_DOMAIN_VAR"],
   "./plugins/ai": ["ai", "aiWith", "aiRoute"],
   "./plugins/observability": ["observability", "observabilityWith", "observabilityReport", "sampler"],

@@ -1,7 +1,8 @@
 # CI and release: one flow, Cloudflare runs it
 
-The repository is a Bun workspace: this package (`packages/voidbase`) is everything that ships and the Void app
-the suites run against, and the workspace root holds the CI and release tooling (`scripts/`), the status Worker
+The repository is a Bun workspace: this package (`packages/voidbase`) is the core and the Void app the suites run
+against, `packages/plugin-<name>` is a shipped plugin extracted into a package of its own that the core depends on
+and loads, and the workspace root holds the CI and release tooling (`scripts/`), the status Worker
 (`ci/`) and the surface map. Every path below is written from the root, which is where the flow runs and what
 the Workers Builds trigger's root directory `/` means; the steps that need the app (`void prepare`, `void db
 migrate`, the dev server, every suite and the test entry points) run inside `packages/voidbase`.
@@ -40,7 +41,10 @@ runs the same flow with `bun run ci`.
 A full run takes about nine minutes on the build image, most of it the two suite passes, so a run only repeats the
 checks its changes reach. Every check has a set of files: the import closure of its test entry point plus the runtime
 it exercises, resolved through the same import graph (`#platform/*` follows the `workerd` condition for the Workers
-server and the default one for the Bun runtime), so `src/node/deploy-cf.ts` reaches the deploy dry run, the
+server and the default one for the Bun runtime, and a bare import of a *workspace* package — the core importing
+`@voidbase-cloud/plugin-realtime` — is followed through that package's `exports` rather than stopped at, or a
+check's own runtime would sit outside its file set and change under it while it still counted as verified), so
+`src/node/deploy-cf.ts` reaches the deploy dry run, the
 executable smoke, typecheck and the unit tests and nothing else, while a file of the server reaches every suite on
 both runtimes. File hashes come from git blob ids, so they are exact and cost nothing; the combined hash of a check's
 files is compared with the one the last green run recorded, and the check runs only when they differ. The record is
@@ -231,7 +235,8 @@ shapes of Cloudflare's API reference; the live API is exercised the first time t
 
 - No provenance and no attestations (OIDC): `npm publish` runs without `--provenance`, the release archives carry
   checksums only.
-- GitHub Packages only with `GH_PACKAGES_TOKEN`.
+- GitHub Packages only with `GH_PACKAGES_TOKEN`, and only the core: `@voidbase-cloud/plugin-*` is another
+  repository's package on that registry until 7.11 (`NEVER_MIRROR`, docs/releasing.md).
 - Logs live in the dashboard and in `cf-builds.ts logs`; the deployed page is the last build that ran to the end.
 - A release cut by hand (`gh release create vX.Y.Z` after bumping every `packages/*/package.json` on master to the
   same version -- the workspace root is private and has none -- and committing the `bun install` that follows) is

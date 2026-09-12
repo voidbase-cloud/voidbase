@@ -48,7 +48,8 @@ there is a newer version and 2 when it could not find out, which is what a pipel
 mentions a new release once a day; `VOIDBASE_NO_UPDATE_CHECK=1` turns that off.
 
 Commits follow Conventional Commits (enforced by husky and CI); release-please turns them into a release PR,
-and merging it publishes to npm and GitHub Packages and attaches the executables, with the compiled notes; see
+and merging it publishes to npm (and mirrors the core to GitHub Packages) and attaches the executables, with the
+compiled notes; see
 [docs/releasing.md](docs/releasing.md).
 
 ## Run it like PocketBase

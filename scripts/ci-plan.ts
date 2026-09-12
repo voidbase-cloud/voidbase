@@ -22,6 +22,16 @@ const ROOT = resolve(import.meta.dir, "..");
 // application and its suites live in the published package; only the CI and release tooling is at the root.
 const PKG = "packages/voidbase";
 const p = (f: string) => `${PKG}/${f}`;
+/**
+ * The extracted plugin packages: `packages/plugin-<name>`, read off the tracked tree rather than listed, so the next
+ * extraction adds a directory and nothing here. Each is a whole small package -- source, manifest, tsconfig -- and
+ * every file of one is an input to the typecheck, which runs each package's own tsc through the same glob
+ * (`scripts/ci.sh`). Their *runtime* reach is deliberately not listed: the core imports a plugin package by name and
+ * `Tree.resolveSpec` follows that import, so every check whose closure reaches the loading module has the plugin's
+ * files in its set already.
+ */
+const pluginPackages = (t: Tree): string[] =>
+  [...new Set(t.under("packages").flatMap((f) => { const m = /^(packages\/plugin-[^/]+)\/package\.json$/.exec(f); return m ? [m[1]!] : []; }))].sort();
 export const CONFORMANCE = ["auth-flows", "backups", "batch", "cascade", "filter-corpus", "filters-extra", "hardening", "logs-crons", "manage-rule", "oauth2", "otp-mfa", "protected-files", "providers", "rules", "s3", "security", "settings", "sql", "thumbs", "views", "compare", "records", "realtime", "collections"];
 export const BROWSER = ["panel-smoke", "panel-collections", "panel-records", "panel-admin", "panel-login"];
 export const isBrowserKey = (key: string) => key.startsWith("suite:") && BROWSER.includes(key.slice(6));
@@ -124,13 +134,22 @@ export const selected = (d: Decisions, prefix: string) => Object.keys(d).filter(
 // ---- files: the tracked tree, the import graph, the file set of every check
 const git = (a: string[]) => { const r = Bun.spawnSync(["git", ...a], { cwd: ROOT, stdout: "pipe", stderr: "ignore" }); return r.exitCode === 0 ? r.stdout.toString() : ""; };
 const short = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 16);
+type ExportTarget = string | { workerd?: string; default?: string };
 export class Tree {
   blobs = new Map<string, string>(); dirty = new Set<string>(); imports: Record<string, { workerd?: string; default?: string }> = {};
+  /** the workspace packages by name, with the `exports` map each publishes: a bare import of one is a file in here */
+  packages: Record<string, { dir: string; exports: Record<string, ExportTarget> }> = {};
   private parsed = new Map<string, string[]>();
   constructor() {
     for (const line of git(["ls-files", "-s"]).split("\n")) { const m = line.match(/^\d+ ([0-9a-f]{40}) \d\t(.+)$/); if (m) this.blobs.set(m[2]!, m[1]!); }
     for (const line of git(["status", "--porcelain", "--untracked-files=all"]).split("\n")) { const p = line.slice(3).trim(); if (p) this.dirty.add(p.includes(" -> ") ? p.split(" -> ")[1]! : p); }
     try { const pkg = JSON.parse(readFileSync(resolve(ROOT, `${PKG}/package.json`), "utf8")) as { imports?: Record<string, { workerd?: string; default?: string }> }; for (const [k, v] of Object.entries(pkg.imports ?? {})) this.imports[k] = { workerd: v.workerd && p(v.workerd.replace(/^\.\//, "")), default: v.default && p(v.default.replace(/^\.\//, "")) }; } catch { /* no aliases */ }
+    // and the workspace's own packages, read from the root manifest's globs rather than named here, so that the
+    // package 7.6 adds is followed without an edit
+    const patterns = (() => { try { return (JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8")) as { workspaces?: string[] }).workspaces ?? []; } catch { return []; } })();
+    for (const dir of new Set([...this.blobs.keys()].flatMap((f) => { const m = /^(.+)\/package\.json$/.exec(f); return m && patterns.some((q) => q.replace(/\/\*$/, "") === posix.dirname(m[1]!)) ? [m[1]!] : []; }))) {
+      try { const m = JSON.parse(readFileSync(resolve(ROOT, dir, "package.json"), "utf8")) as { name?: string; exports?: Record<string, ExportTarget> | string }; if (m.name && m.exports && typeof m.exports === "object") this.packages[m.name] = { dir, exports: m.exports }; } catch { /* not a package this reads */ }
+    }
   }
   has(f: string) { return this.blobs.has(f); }
   under(...prefixes: string[]): string[] { return [...this.blobs.keys()].filter((f) => prefixes.some((p) => f === p || f.startsWith(p.endsWith("/") ? p : p + "/"))); }
@@ -142,9 +161,26 @@ export class Tree {
     for (let m = re.exec(text); m; m = re.exec(text)) out.push(m[1] ?? m[2] ?? m[3]!);
     this.parsed.set(file, out); return out;
   }
+  /**
+   * A bare import of a workspace package -- `@voidbase-cloud/plugin-realtime`, or this package's own name from
+   * another package of the workspace -- is a file in this tree and not a dependency to stop at. Since 7.5 the core
+   * imports an extracted plugin by name, so a closure that stopped here would put a check's own runtime outside its
+   * file set: the plugin could change under it and the check would still count as verified. Resolved through the
+   * package's published `exports`, taking the same condition the flavour would.
+   */
+  workspaceFile(spec: string, flavour: "workerd" | "bun"): string | null {
+    const name = Object.keys(this.packages).find((n) => spec === n || spec.startsWith(`${n}/`));
+    if (!name) return null;
+    const pkg = this.packages[name]!;
+    const target = pkg.exports[spec === name ? "." : `.${spec.slice(name.length)}`];
+    const file = typeof target === "string" ? target : ((flavour === "workerd" ? target?.workerd : target?.default) ?? target?.default);
+    if (!file) return null;
+    const f = posix.join(pkg.dir, file.replace(/^\.\//, ""));
+    return this.has(f) ? f : null;
+  }
   resolveSpec(from: string, spec: string, flavour: "workerd" | "bun"): string | null {
     if (spec.startsWith("#")) { const t = this.imports[spec]; const f = (flavour === "workerd" ? t?.workerd : t?.default) ?? t?.default; return f && this.has(f) ? f : null; }
-    if (!spec.startsWith(".")) return null;  // packages, void/*, node:*
+    if (!spec.startsWith(".")) return this.workspaceFile(spec, flavour);  // other packages, void/*, node:* resolve to nothing
     const base = posix.normalize(posix.join(posix.dirname(from), spec));
     for (const c of [base, `${base}.ts`, `${base}.tsx`, base.replace(/\.js$/, ".ts"), posix.join(base, "index.ts")]) if (this.has(c)) return c;
     return null;
@@ -163,7 +199,8 @@ export class Tree {
 /** the file sets of every check */
 export function keyFiles(t: Tree): Record<string, Set<string>> {
   const union = (...sets: Iterable<string>[]) => { const s = new Set<string>(); for (const x of sets) for (const f of x) s.add(f); return s; };
-  const deps = ["package.json", "bun.lock", "bunfig.toml", p("package.json")];
+  const plugins = pluginPackages(t);
+  const deps = ["package.json", "bun.lock", "bunfig.toml", p("package.json"), ...plugins.map((d) => `${d}/package.json`)];
   const harness = ["scripts/ci.sh", "scripts/ci-lib.sh", "scripts/ci-plan.ts", "scripts/ci-status.ts", "scripts/ci-oracles.sh"];
   const harnessSuites = ["scripts/ci-suites.sh", "scripts/dev.sh", "scripts/seed-reference.sh", "scripts/starter.sh", p("scripts/seed-app-user.sh"), p("scripts/sync-panel.ts"), p("scripts/sync-app.ts")];
   const harnessBrowser = ["scripts/ci-browser.sh"];
@@ -174,7 +211,9 @@ export function keyFiles(t: Tree): Record<string, Set<string>> {
   const CLI = t.closure([p("bin/voidbase.ts")], "bun");
   const common = union(deps, harness);
   const out: Record<string, Set<string>> = {};
-  out["step:typecheck"] = union(t.under(p("src"), p("routes"), p("bin"), p("crons"), p("queues"), p("db"), p("types")).filter((f) => /\.tsx?$/.test(f)), [p("env.ts"), p("hooks-plugin.ts"), p("vite.config.ts"), "scripts/cf-builds.ts", "scripts/gh-release.ts", "scripts/ci-status.ts", "scripts/ci-plan.ts", "scripts/pipeline.ts", "scripts/environment.ts", "scripts/publish.ts", "scripts/hot-release.ts"], config, deps);
+  // `bun run check` runs each plugin package's own tsc as well as the core's two, so every file of one is an input
+  // here -- its tsconfig included, which no closure reaches
+  out["step:typecheck"] = union(t.under(p("src"), p("routes"), p("bin"), p("crons"), p("queues"), p("db"), p("types")).filter((f) => /\.tsx?$/.test(f)), t.under(...plugins), [p("env.ts"), p("hooks-plugin.ts"), p("vite.config.ts"), "scripts/cf-builds.ts", "scripts/gh-release.ts", "scripts/ci-status.ts", "scripts/ci-plan.ts", "scripts/pipeline.ts", "scripts/environment.ts", "scripts/publish.ts", "scripts/hot-release.ts"], config, deps);
   // the release fixture is a whole package the unit suite reads off disk (test/unit/publish.test.ts packs it and
   // asserts what keeps it off npm), so every file in it counts -- no import reaches it and the closure cannot see it
   out["step:unit"] = union(t.closure(t.under(p("test/unit")), "bun"), t.under("packages/release-fixture"), common);

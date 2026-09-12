@@ -40,10 +40,13 @@ bun run check        # codegen + three typecheck passes
 bun test             # the unit tests, about a second
 ```
 
-The repository is a Bun workspace and publishes one package. Everything that ships, and the Void app this
-repository runs to test it, is in `packages/voidbase`; the root holds this repository's own CI and release
-tooling (`scripts/`), the status Worker (`ci/`) and the surface map (`surface/`). The commands above are run
-from the root and reach into the package themselves.
+The repository is a Bun workspace. The core package, and the Void app this repository runs to test it, is
+`packages/voidbase`; a shipped plugin extracted into a package of its own is `packages/plugin-<name>`, and the core
+depends on each one and loads it, so nothing about an instance changes when a plugin moves out. The root holds this
+repository's own CI and release tooling (`scripts/`), the status Worker (`ci/`) and the surface map (`surface/`).
+The commands above are run from the root and reach into the packages themselves. Every published package carries
+one version: `bun run check` type-checks each of them, and a release packs, gates and publishes all of them
+together ([docs/releasing.md](packages/voidbase/docs/releasing.md), "N packages, one version").
 
 The app's environment file moved with the app: it is `packages/voidbase/.env`, copied from
 `packages/voidbase/.env.example`. A `.env` left at the repository root from before the move is read by nothing

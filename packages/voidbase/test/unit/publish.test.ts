@@ -1,20 +1,21 @@
-// The release flow at N packages, proved while N is 1 (docs/releasing.md, scripts/publish.ts).
+// The release flow at N packages (docs/releasing.md, scripts/publish.ts).
 //
-// Two halves. The first runs against this repository, whose workspace holds the published package and
-// packages/release-fixture -- a private, never-published second package that depends on the first through
-// `workspace:*`, and exists so that packing, ordering and the workspace-protocol gate are never only exercised
-// against a workspace of one. The second builds a throwaway two-package workspace and drives the whole loop --
-// pack, prove, smoke install, publish, publish again -- against a stubbed registry on localhost, so the ordering
-// and the per-package idempotence are measured rather than reasoned about. Nothing here reaches npm.
+// Two halves. The first runs against this repository, whose workspace holds two published packages --
+// @voidbase-cloud/voidbase and, since 7.5, @voidbase-cloud/plugin-realtime, which the core depends on and which
+// peer-depends back on the core -- and packages/release-fixture, a private, never-published third package that
+// depends on the core through `workspace:*`. The second builds a throwaway two-package workspace and drives the
+// whole loop -- pack, prove, smoke install, publish, publish again -- against a stubbed registry on localhost, so
+// the ordering and the per-package idempotence are measured rather than reasoned about. Nothing here reaches npm.
 //
-// The shapes that are not this repository's yet are written out as the packages that will have them: the ordering
-// of a core that depends on an extracted plugin while the plugin peer-depends back on the core, a published
-// package that names a sibling nobody publishes, and an `--out` that resolves to the workspace root.
+// The shapes that are not this repository's are still written out as the packages that would have them: a chain of
+// three, a devDependency cycle, a published package that names a sibling nobody publishes, and an `--out` that
+// resolves to the workspace root.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  NEVER_MIRROR,
   NEVER_PUBLISH,
   ROOT,
   assertLockstep,
@@ -23,7 +24,9 @@ import {
   assertResolvedSiblings,
   binNames,
   clearPacks,
+  dependsOn,
   lockfileDrift,
+  mirrorable,
   pack,
   packDir,
   packedManifest,
@@ -34,6 +37,7 @@ import {
   runCommand,
   smokeProject,
   specBase,
+  subpathEntries,
   syncLockfile,
   workspaceSpecs,
   type Manifest,
@@ -42,6 +46,7 @@ import {
 import { bumpVersion, lockstep, prependNotes } from "../../../../scripts/hot-release";
 
 const PACKAGE = "@voidbase-cloud/voidbase";
+const PLUGIN = "@voidbase-cloud/plugin-realtime";
 const FIXTURE = "@voidbase-cloud/release-fixture";
 const pkg = (name: string, version: string, deps: Record<string, string> = {}, extra: Partial<Pkg> = {}): Pkg => ({
   path: `packages/${name.replace(/^@[^/]+\//, "")}`,
@@ -57,22 +62,33 @@ const pkg = (name: string, version: string, deps: Record<string, string> = {}, e
 describe("the workspace the release packs", () => {
   const workspace = readWorkspace(ROOT);
 
-  test("holds the published package and the fixture that makes it N > 1", () => {
-    expect(workspace.map((p) => p.name).sort()).toEqual([FIXTURE, PACKAGE]);
+  test("holds the two published packages and the fixture that keeps the private path exercised", () => {
+    expect(workspace.map((p) => p.name).sort()).toEqual([PLUGIN, FIXTURE, PACKAGE].sort());
     expect(workspace.find((p) => p.name === FIXTURE)!.private).toBe(true);
     expect(workspace.find((p) => p.name === PACKAGE)!.private).toBe(false);
+    expect(workspace.find((p) => p.name === PLUGIN)!.private).toBe(false);
     expect(workspace.find((p) => p.name === FIXTURE)!.manifest.dependencies).toEqual({ [PACKAGE]: "workspace:*" });
+    // 7.5's pair, in the real workspace: the core depends on the plugin, the plugin peer-depends back on the core
+    expect(workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies![PLUGIN]).toBe("workspace:*");
+    // hono beside the core: a plugin with routes adds them to the core's own Hono app, so the two have to be the
+    // same hono and the range is the core's (test/unit/plugin-extraction.test.ts holds the rule)
+    expect(workspace.find((p) => p.name === PLUGIN)!.manifest.peerDependencies).toEqual({ [PACKAGE]: "workspace:*", hono: workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies!.hono! });
+    expect(workspace.find((p) => p.name === PLUGIN)!.manifest.dependencies).toBeUndefined();
   });
 
   test("publishes only what is not private", () => {
-    expect(publishable(workspace).map((p) => p.name)).toEqual([PACKAGE]);
+    expect(publishable(workspace).map((p) => p.name).sort()).toEqual([PLUGIN, PACKAGE].sort());
+    expect(publishable(workspace).map((p) => p.name)).not.toContain(FIXTURE);
   });
 
   test("visits the dependent after what it depends on, whatever order it is handed", () => {
-    // the fixture sorts first by path (packages/release-fixture < packages/voidbase), so alphabetical order is the
-    // wrong answer here and the topological sort has to do the work
-    expect(publishOrder(workspace).map((p) => p.name)).toEqual([PACKAGE, FIXTURE]);
-    expect(publishOrder([...workspace].reverse()).map((p) => p.name)).toEqual([PACKAGE, FIXTURE]);
+    // The plugin package first, because the core depends on it; the fixture last, because it depends on the core.
+    // Path order gets neither right on its own -- packages/plugin-realtime < packages/release-fixture <
+    // packages/voidbase -- so the topological sort has to do the work in both directions.
+    expect(publishOrder(workspace).map((p) => p.name)).toEqual([PLUGIN, PACKAGE, FIXTURE]);
+    expect(publishOrder([...workspace].reverse()).map((p) => p.name)).toEqual([PLUGIN, PACKAGE, FIXTURE]);
+    // and what a release actually publishes, in the order it publishes it
+    expect(publishable(publishOrder(workspace)).map((p) => p.name)).toEqual([PLUGIN, PACKAGE]);
   });
 
   test("orders a chain, ignores devDependency edges, and refuses a real cycle", () => {
@@ -86,11 +102,13 @@ describe("the workspace the release packs", () => {
   });
 
   test("the shape the first extracted plugin package has: a peer edge back to the core is not an ordering edge", () => {
-    // Not a hypothetical: every shipped @voidbase-cloud/plugin-* package declares
-    // `"peerDependencies": { "@voidbase-cloud/voidbase": ">=0.9.0-beta.x" }` today, and the next step of this work
-    // is the core depending on one of them through `dependencies`. Read a peer edge as "this has to be on the
-    // registry first" and that pair is a cycle, and every release stops on the first real plugin package. npm does
-    // not resolve peers when it publishes, so the edge is not there to read.
+    // The workspace above is now exactly this, and it is what 7.4 fixed the ordering for: read a peer edge as
+    // "this has to be on the registry first" and the core/plugin pair is a cycle, and every release stops on the
+    // first real plugin package. npm does not resolve peers when it publishes, so the edge is not there to read.
+    // Kept as a constructed pair as well, so the rule is pinned by something other than the workspace of the day.
+    const real = readWorkspace(ROOT);
+    expect(dependsOn(real.find((p) => p.name === PACKAGE)!, new Set(real.map((p) => p.name)))).toEqual([PLUGIN]);
+    expect(dependsOn(real.find((p) => p.name === PLUGIN)!, new Set(real.map((p) => p.name)))).toEqual([]);
     const core = pkg("@voidbase-cloud/voidbase", "0.9.0-beta.52", { "@voidbase-cloud/plugin-auth": "workspace:*" }, { path: "packages/voidbase" });
     const plugin = pkg("@voidbase-cloud/plugin-auth", "0.9.0-beta.52", {}, { path: "packages/plugin-auth" });
     plugin.manifest.peerDependencies = { "@voidbase-cloud/voidbase": ">=0.9.0-beta.14" };
@@ -180,6 +198,29 @@ describe("the workspace protocol, on the way into a tarball", () => {
     expect(publishable([asIfTheFlagWereDropped, pkg(PACKAGE, "1.0.0")]).map((p) => p.name)).toEqual([PACKAGE]);
   });
 
+  test("an extracted plugin is published to npm and kept off the GitHub Packages mirror, which is not ours", () => {
+    // Not a private path: these packages *are* published, to npmjs, where the names are free and this repository
+    // owns them. On GitHub Packages the same names belong to the four standalone `voidbase-cloud/voidbase-plugin-*`
+    // repositories, each publishing its own `@voidbase-cloud/plugin-<name>` there at its own version and export
+    // shape, and the marketplace lists those until 7.11 moves the listings and archives the repositories. A release
+    // that mirrored ours over them would leave npm's version rules to pick between two unrelated packages.
+    const packed = (name: string) => ({ pkg: pkg(name, "1.0.0"), tarball: `/tmp/${name}.tgz`, manifest: { name, version: "1.0.0" } });
+    expect(mirrorable([packed(PLUGIN), packed(PACKAGE), packed("@voidbase-cloud/plugin-auth")]).map((p) => p.pkg.name)).toEqual([PACKAGE]);
+    // by prefix and not by a list of four, because 7.6 to 7.10 add six more and a list would have to be remembered
+    expect(NEVER_MIRROR.some((re) => re.test("@voidbase-cloud/plugin-anything-at-all"))).toBe(true);
+    expect(NEVER_MIRROR.some((re) => re.test(PACKAGE) || re.test(FIXTURE))).toBe(false);
+  });
+
+  test("the smoke imports the entry an extraction exists to preserve, and only when the core is in the release", () => {
+    // `@voidbase-cloud/voidbase/plugins/<name>` is what marketplace bundles import, and bundles are immutable. The
+    // smoke otherwise only imports each package's root entry, so a broken re-export would pass every gate.
+    const packed = (name: string) => ({ pkg: pkg(name, "1.0.0"), tarball: `/tmp/${name}.tgz`, manifest: { name, version: "1.0.0" } });
+    expect(subpathEntries([packed(PLUGIN), packed(PACKAGE)])).toEqual([{ entry: `${PACKAGE}/plugins/realtime`, pkg: PLUGIN }]);
+    // the subpath lives in the core's tarball: with no core in the release there is nothing to import it out of
+    expect(subpathEntries([packed(PLUGIN)])).toEqual([]);
+    expect(subpathEntries([packed(PACKAGE)])).toEqual([]);
+  });
+
   test("the resolved sibling has to be the sibling that is actually there", () => {
     const dependent = pkg("@x/b", "1.2.4", { "@x/a": "workspace:*" });
     const right = { pkg: dependent, tarball: "/tmp/b.tgz", manifest: { name: "@x/b", version: "1.2.4", dependencies: { "@x/a": "1.2.4" } } };
@@ -258,7 +299,7 @@ describe("the workspace protocol, on the way into a tarball", () => {
 describe("the hot release bump, in lockstep", () => {
   test("moves every workspace package to one version", () => {
     const { from, to, packages } = lockstep(readWorkspace(ROOT));
-    expect(packages.map((p) => p.name).sort()).toEqual([FIXTURE, PACKAGE]);
+    expect(packages.map((p) => p.name).sort()).toEqual([PLUGIN, FIXTURE, PACKAGE].sort());
     expect(to).not.toBe(from);
     expect(`${from.split(".").slice(0, -1).join(".")}.${Number(from.split(".").pop()) + 1}`).toBe(to);
   });
@@ -452,5 +493,96 @@ describe("the publish loop, over a workspace of two, against a stubbed registry"
     } finally {
       files.forEach((f, i) => writeFileSync(join(root, f), originals[i]!));
     }
+  }, 300_000);
+});
+
+describe("the GitHub Packages mirror, over a workspace shaped like this one", () => {
+  // The mirror is where the release is not the only publisher of these names, so it is the one loop that has to
+  // leave a package out. Two stub registries on localhost, so which package reached which one is a measurement and
+  // not an argument: the npm stub is the registry of record and takes both packages, the mirror stub takes the core
+  // and never sees the plugin. Nothing here can reach npmjs or npm.pkg.github.com -- every command is given an
+  // origin, and `githubPackagesRegistry` is the only reason that option exists.
+  const stub = (puts: string[]) => {
+    const published = new Map<string, Set<string>>();
+    return Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        const name = decodeURIComponent(url.pathname.replace(/^\//, ""));
+        if (req.method === "PUT" && name.startsWith("-/package/")) return new Response(null, { status: 204 });
+        if (req.method === "PUT") {
+          const body = (await req.json()) as { name: string; versions: Record<string, unknown> };
+          published.set(body.name, new Set(Object.keys(body.versions)));
+          puts.push(`${body.name}@${Object.keys(body.versions).join(",")}`);
+          return Response.json({ ok: true }, { status: 201 });
+        }
+        const have = published.get(name);
+        if (!have) return Response.json({ error: "Not found" }, { status: 404 });
+        const versions: Record<string, unknown> = {};
+        for (const v of have) versions[v] = { name, version: v, dist: { tarball: `${url.origin}/${name}/-/x.tgz`, shasum: "0".repeat(40) } };
+        return Response.json({ name, "dist-tags": { latest: [...have].at(-1) }, versions });
+      },
+    });
+  };
+  const npmPuts: string[] = [];
+  const mirrorPuts: string[] = [];
+  const npmStub = stub(npmPuts);
+  const mirrorStub = stub(mirrorPuts);
+  const registry = `http://127.0.0.1:${npmStub.port}`;
+  const mirror = `http://127.0.0.1:${mirrorStub.port}`;
+  const root = mkdtempSync(join(tmpdir(), "voidbase-mirror-"));
+  const PLUGIN_STUB = "@voidbase-cloud/plugin-stub";
+  let npmToken: string | undefined;
+  let ghToken: string | undefined;
+
+  beforeAll(async () => {
+    npmToken = process.env.NPM_TOKEN; ghToken = process.env.GH_PACKAGES_TOKEN;
+    process.env.NPM_TOKEN = "stub-registry-token"; process.env.GH_PACKAGES_TOKEN = "stub-mirror-token";
+    const write = (p: string, body: unknown) => writeFileSync(join(root, p), typeof body === "string" ? body : `${JSON.stringify(body, null, 2)}\n`);
+    mkdirSync(join(root, "packages/voidbase"), { recursive: true });
+    mkdirSync(join(root, "packages/plugin-stub"), { recursive: true });
+    write("package.json", { name: "mirror-workspace", private: true, workspaces: ["packages/*"] });
+    // the real shape: the core depends on the plugin, the plugin peer-depends back on the core
+    write("packages/voidbase/package.json", { name: PACKAGE, version: "1.2.3", type: "module", exports: { ".": "./index.js" }, files: ["index.js"], dependencies: { [PLUGIN_STUB]: "workspace:*" } });
+    write("packages/voidbase/index.js", 'export { plugin } from "@voidbase-cloud/plugin-stub";\n');
+    write("packages/plugin-stub/package.json", { name: PLUGIN_STUB, version: "1.2.3", type: "module", exports: { ".": "./index.js" }, files: ["index.js"], peerDependencies: { [PACKAGE]: "workspace:*" } });
+    write("packages/plugin-stub/index.js", 'export const plugin = { manifest: { name: "stub" } };\n');
+    const install = await runCommand(["bun", "install"], { cwd: root });
+    expect(install.code).toBe(0);
+  }, 120_000);
+
+  afterAll(() => {
+    npmStub.stop(true); mirrorStub.stop(true);
+    rmSync(root, { recursive: true, force: true });
+    if (npmToken === undefined) delete process.env.NPM_TOKEN; else process.env.NPM_TOKEN = npmToken;
+    if (ghToken === undefined) delete process.env.GH_PACKAGES_TOKEN; else process.env.GH_PACKAGES_TOKEN = ghToken;
+  });
+
+  test("publishes both to npm, mirrors the core, and says by name what it left off the mirror", async () => {
+    const log: string[] = [];
+    const results = await publishWorkspace({ root, out: join(root, "out"), version: "1.2.3", registry, githubPackagesRegistry: mirror, smoke: false, log: (l) => log.push(l) });
+    // npm is the registry of record and takes the whole workspace, plugin first because the core depends on it
+    expect(results.map((r) => `${r.name} ${r.action}`)).toEqual([`${PLUGIN_STUB} published`, `${PACKAGE} published`]);
+    expect(npmPuts).toEqual([`${PLUGIN_STUB}@1.2.3`, `${PACKAGE}@1.2.3`]);
+    // the mirror takes the core and nothing else
+    expect(mirrorPuts).toEqual([`${PACKAGE}@1.2.3`]);
+    expect(log).toContain(`  GitHub Packages: ${PLUGIN_STUB} is not mirrored (NEVER_MIRROR: that name is another repository's there)`);
+    expect(log).toContain(`  GitHub Packages: ${PACKAGE}@1.2.3`);
+  }, 300_000);
+
+  test("a second run mirrors nothing again: the mirror loop is idempotent like the publish loop", async () => {
+    const log: string[] = [];
+    await publishWorkspace({ root, out: join(root, "out2"), version: "1.2.3", registry, githubPackagesRegistry: mirror, smoke: false, log: (l) => log.push(l) });
+    expect(mirrorPuts).toEqual([`${PACKAGE}@1.2.3`]);
+    expect(log).toContain(`  GitHub Packages: ${PACKAGE}@1.2.3 is already there`);
+    expect(log).toContain(`  GitHub Packages: ${PLUGIN_STUB} is not mirrored (NEVER_MIRROR: that name is another repository's there)`);
+  }, 300_000);
+
+  test("--no-github-packages still leaves the npm publish alone, and the refusal is not a publish gate", async () => {
+    // the plugin is off the mirror and on npm; nothing about `NEVER_MIRROR` belongs in `publishable()`
+    expect(publishable(readWorkspace(root)).map((p) => p.name)).toEqual([PLUGIN_STUB, PACKAGE]);
+    const log: string[] = [];
+    await publishWorkspace({ root, out: join(root, "out3"), version: "1.2.3", registry, githubPackages: false, smoke: false, log: (l) => log.push(l) });
+    expect(log.some((l) => l.includes("GitHub Packages"))).toBe(false);
   }, 300_000);
 });

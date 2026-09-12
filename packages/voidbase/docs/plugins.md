@@ -23,11 +23,11 @@ working plan. What is here is what a contributor needs to touch it.
 ## What a plugin package may import, and from where
 
 Everything a plugin needs from voidbase has a name in `package.json`'s `exports`, and nothing else does. This is the
-one list: a plugin file inside this package still reaches the core by relative import (`../errors`, `../db`) and by
+one list: a plugin file still inside this package reaches the core by relative import (`../errors`, `../db`) and by
 the package-private `#platform/*` picks, and neither of those travels — a relative path leaves the package, and
 `#platform/*` resolves only inside it. The entries below are what the same file imports once it lives in a package
 of its own, so they are the seam the later phases move plugins across, one plugin at a time, with no change to what
-the plugin does.
+the plugin does. `@voidbase-cloud/plugin-realtime` is the first one across (below).
 
 | Import | What it is |
 | --- | --- |
@@ -47,7 +47,7 @@ the plugin does.
 | `/records-preview`, `/records-files` | the preview flag, the two ways a request asks for a branch, `flaggedCollections`, and `deleteAllRecordFiles`: what the previews plugin calls, not the records service behind it |
 | `/project-sync` | the lockfile and the one commit that changes a project's plugins, for the installer |
 | `/registry` | the marketplace index client: `fetchIndex`, `download`, `integrityOf`, `problemsWithIndex` |
-| `/plugins/<name>` | twenty-one entries: the nineteen shipped plugin objects the official `@voidbase-cloud/plugin-*` packages re-export, `/plugins/payments-shared` (what the three payment plugins are built from, not a plugin) and `/plugins/collections` (`ensureCollections`, how a plugin declares its own collections, also not a plugin). The twentieth shipped plugin, the installer, has no entry point — below |
+| `/plugins/<name>` | twenty-one entries: the nineteen shipped plugin objects — `/plugins/realtime` is a re-export of the `@voidbase-cloud/plugin-realtime` package the core depends on, and the other eighteen are still files of this package until 7.6 to 7.10 move them the same way, entry unchanged — plus `/plugins/payments-shared` (what the three payment plugins are built from, not a plugin) and `/plugins/collections` (`ensureCollections`, how a plugin declares its own collections, also not a plugin). The twentieth shipped plugin, the installer, has no entry point — below |
 
 The rule for `/sdk` against a narrow entry: `/sdk` is what more than one shipped plugin imports, plus the siblings
 of such a name in the same small, general-purpose module — splitting one of four prepared-statement helpers into an
@@ -129,6 +129,67 @@ would deadlock on that module's top-level await. The third is `src/server/plugin
 (`refusal`, `removalCost`, `PluginFacts`), which is the core's own answer about the plugin graph and is read by
 `src/node/installed.ts` and the CLI as well — publishing it to plugins is a decision of its own, not a side effect
 of moving the installer. Lifting the installer out needs the loader dependency broken first, and this one named.
+
+### A shipped plugin as a package of its own
+
+`@voidbase-cloud/plugin-realtime` is the first shipped plugin that lives outside this package
+(`packages/plugin-realtime`, 7.5). Twenty-three lines, one interface, no routes — chosen because it is the smallest,
+so that its shape is the template for the nine extractions after it. What it settles:
+
+- **The file moves; its imports become names.** `../realtime/hub-client`, `../interfaces`, `../kernel` and
+  `./manifest` become `@voidbase-cloud/voidbase/realtime-client`, `/interfaces`, `/kernel` and `/plugins`. Nothing
+  else about the plugin changes. `test/unit/plugin-extraction.test.ts` refuses a plugin package that imports
+  anything else: not a relative path out of the package, not a `#platform/*` pick, and not a published name an
+  instance would refuse a bundle.
+- **The core depends on the package and loads it**, so the plugin still ships, still loads by default, and still
+  answers for `realtime@1`. `src/server/app.ts` is unchanged: it goes on importing `./plugins/realtime`, which is the
+  entry below. An instance is bit-for-bit the same instance.
+- **`@voidbase-cloud/voidbase/plugins/realtime` stays, forever**, as a one-line re-export of the package. A
+  marketplace bundle is audited, bundled and hashed against the names it imports and is then immutable, so the
+  entry a bundle imports can never be withdrawn — dropping it would break those installs at load on Bun and at
+  build on Workers, over a module that is one line. The core loads the plugin *through* it rather than reaching
+  past it, so the path a bundle takes is the path every instance takes and a mistake in it stops a boot instead of
+  waiting for somebody's bundle to find it. And it is a re-export rather than an alias, so the plugin a bundle
+  imports through that name is the same object the core loaded, not a second copy serving a second `realtime@1`.
+- **The package peer-depends on the core; the core depends on the package.** Both are `workspace:*` here, so a
+  release resolves each to the other's exact version. It is not a cycle where it would matter: npm does not resolve
+  peers at publish time, so the release publishes the plugin first and the core second (docs/releasing.md).
+- **The published peer range is an exact version, not a range**, and that is the decision rather than an accident
+  of the protocol. The four standalone plugin repositories use a range (`>=0.9.0-beta.5`) because they are released
+  on their own clock and have to say which cores they work with. These are not: every published package in this
+  workspace carries one version, and the core names the plugin in `dependencies` at that same exact version — so an
+  install that has the core has exactly one version of the plugin available to satisfy the peer, and a range would
+  only widen the set of pairs the manifest *claims* work beyond the one pair that was built and tested together.
+  If a plugin package ever ships on its own clock, that is when the range becomes the honest shape.
+- **What it gives you: nothing about swapping a plugin changed**, and that is the point. The swap path is the
+  loader's name filter, not the package graph (below, "voidbase plugins"). Turn `realtime` off for a project —
+  `disabled` in `voidbase.lock`, which is what `voidbase plugins remove realtime` writes — and nothing serves
+  `realtime@1`. Install a plugin named `realtime` from any marketplace (`voidbase plugins add realtime
+  --marketplace <url>`) and it shadows the shipped one by name, at load and in `/api/plugins`. Neither reaches for
+  the npm package: the core loads the plugin it depends on, and an installed bundle replaces the *name*, whatever
+  module was behind it. What extraction adds is the third path — an app that builds its own plugin graph can depend
+  on `@voidbase-cloud/plugin-realtime` and hand the object to `load()` itself, instead of taking voidbase's default
+  graph and subtracting from it.
+- **One name, two registries, and the marketplace serves neither.** `@voidbase-cloud/plugin-realtime` on npmjs is
+  this package, released with the core and in lockstep with it. `@voidbase-cloud/plugin-realtime` on GitHub
+  Packages is a *different* package: the standalone `voidbase-cloud/voidbase-plugin-realtime` repository's, at its
+  own version and its own export shape. The same holds for `-auth`, `-backups` and `-hardening`. What the
+  marketplace lists and installs is neither of the two — it is the bundle it built and hashed from that
+  repository's source (docs/registry.md), which is why the npm names are free to mean what they mean here. The
+  release therefore does not mirror `@voidbase-cloud/plugin-*` to GitHub Packages (`NEVER_MIRROR`,
+  docs/releasing.md); 7.11 is where the listings move to this repository and the four standalone ones are archived.
+- **Its `tsconfig.json` is the template too.** The core's published sources are TypeScript, so they join a plugin
+  package's own program: `"customConditions": ["workerd"]` picks the half a Worker build would, and `"types"` has to
+  name what those sources are written against (`@cloudflare/workers-types`, and `node` for the `process.env`
+  fallback in `response-policy.ts`). It is in `files`, because `scripts.check` names it and a published manifest
+  may not name a file its own tarball does not hold.
+- **`hono` is a peerDependency at the core's own range.** It is the one name besides `@voidbase-cloud/voidbase/*`
+  that a plugin may import, and ten of the shipped plugin files do. A plugin with routes registers them on the
+  core's Hono app, so the plugin and the core have to be holding the *same* hono — which is what a peer edge says
+  and what a `dependencies` edge would quietly stop being true. realtime has no routes and does not import it; it is
+  declared here because this manifest is the template and the packages 7.6 to 7.10 add will. The rule the test
+  enforces is the general one, not a blessed list: every specifier a plugin package's source imports has to be a
+  package that package's own manifest declares (`test/unit/plugin-extraction.test.ts`).
 
 ## What a plugin is
 

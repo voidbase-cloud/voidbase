@@ -35,6 +35,10 @@
 //   publish  a loop in dependency order, each package skipped when the registry already has that name@version. A
 //            retried or half-finished release finishes instead of dying on npm's 403, and a package that depends on
 //            a sibling is never published before the sibling it needs.
+//   mirror   a second loop over GitHub Packages, which is a copy and not the registry of record -- and which takes
+//            only `mirrorable()` packages: `NEVER_MIRROR` names what a *different* repository already publishes
+//            there under this scope (the standalone `voidbase-plugin-*` repos, until 7.11), and publishing over
+//            those would hand a consumer whichever of two unrelated packages npm's version rules picked.
 //
 // Versions are lockstep: every publishable package carries the same one (scripts/hot-release.ts bumps them together,
 // release-please's extra-files glob does it on the normal path). --version states the version the release is for and
@@ -49,6 +53,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 export const ROOT = resolve(import.meta.dir, "..");
 export const NPM_REGISTRY = "https://registry.npmjs.org";
 export const GITHUB_PACKAGES = "https://npm.pkg.github.com";
+/** the core package: the one that publishes the `./plugins/<name>` entry an extracted plugin keeps */
+export const CORE = "@voidbase-cloud/voidbase";
 /** the four dependency maps npm publishes; `workspace:` is unusable in every one of them */
 export const DEP_MAPS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] as const;
 export type DepMap = (typeof DEP_MAPS)[number];
@@ -172,6 +178,30 @@ export const NEVER_PUBLISH = ["@voidbase-cloud/release-fixture"];
 /** what a release is allowed to put on the registry: not private, and not named above */
 export function publishable(pkgs: Pkg[]): Pkg[] {
   return pkgs.filter((p) => !p.private && !NEVER_PUBLISH.includes(p.name));
+}
+
+/**
+ * Names this repository publishes to npm and **does not** copy to GitHub Packages, because on that registry the
+ * name is somebody else's -- ours, but another repository's.
+ *
+ * `@voidbase-cloud/plugin-auth`, `-backups`, `-hardening` and `-realtime` are four standalone repositories
+ * (`voidbase-cloud/voidbase-plugin-*`), each with `publishConfig.registry = https://npm.pkg.github.com`, each
+ * publishing its own `@voidbase-cloud/plugin-<name>` there at its own version and its own export shape, and the
+ * marketplace lists those. They go on doing exactly that until 7.11 moves the listings and archives them. So a
+ * monorepo release that mirrored `@voidbase-cloud/plugin-realtime` to GitHub Packages would publish over another
+ * repository's package on the registry it is the only copy on -- npm's version rules would decide which of two
+ * unrelated packages a consumer gets, and the marketplace's own source of truth would be the loser. npmjs is a
+ * different matter: the names are free there and the monorepo owns them.
+ *
+ * The refusal is by name pattern rather than by a list of four, because 7.6 to 7.10 add six more packages under
+ * the same prefix and a list would have to be remembered. It is not `publishable()`: these packages *are*
+ * published, to npm, which is the registry of record.
+ */
+export const NEVER_MIRROR = [/^@voidbase-cloud\/plugin-/];
+
+/** the packed packages a release copies to GitHub Packages: everything `NEVER_MIRROR` does not name */
+export function mirrorable<T extends { pkg: Pkg }>(packed: T[]): T[] {
+  return packed.filter((p) => !NEVER_MIRROR.some((re) => re.test(p.pkg.name)));
 }
 
 /**
@@ -389,6 +419,25 @@ export function smokeProject(packed: Packed[]): { name: string; version: string;
   return { name: "voidbase-release-smoke", version: "0.0.0", private: true, type: "module", dependencies: { ...map }, overrides: { ...map } };
 }
 
+/**
+ * The core subpath an extracted plugin package keeps, paired with the package it re-exports.
+ *
+ * `@voidbase-cloud/voidbase/plugins/<name>` is the name every marketplace bundle imports, and bundles are audited,
+ * hashed and immutable, so that entry is the one thing an extraction may never break. Nothing else in the release
+ * looks at it: `smokeInstall` imports each package's *root* entry, so a release that packed a re-export naming a
+ * file it no longer ships, or a second copy of the plugin, would pass every gate and the smoke and break at a
+ * consumer's boot. So the smoke imports the subpath too, and asserts it is the same object -- one plugin, one
+ * `realtime@1` registration -- rather than a lookalike.
+ *
+ * Empty unless the core is in this release: the subpath lives in the core's tarball, and there is nothing to
+ * import it out of otherwise.
+ */
+export function subpathEntries(packed: Packed[]): { entry: string; pkg: string }[] {
+  const scope = "@voidbase-cloud/plugin-";
+  if (!packed.some((p) => p.pkg.name === CORE)) return [];
+  return packed.filter((p) => p.pkg.name.startsWith(scope)).map((p) => ({ entry: `${CORE}/plugins/${p.pkg.name.slice(scope.length)}`, pkg: p.pkg.name }));
+}
+
 /** install the tarballs and use each package by name: the import goes through its exports, the bins actually run */
 export async function smokeInstall(packed: Packed[], log: (line: string) => void, run: Run = runCommand): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), "voidbase-smoke-"));
@@ -398,7 +447,7 @@ export async function smokeInstall(packed: Packed[], log: (line: string) => void
     if (install.code !== 0) throw new Error(`the smoke install failed: ${(install.stderr || install.stdout).trim()}`);
     const expected = packed.map((p) => ({ name: p.pkg.name, version: p.pkg.version, entry: !!(p.manifest.exports ?? p.manifest.main) }));
     writeFileSync(join(dir, "smoke.ts"), SMOKE);
-    const used = await run(["bun", "smoke.ts", JSON.stringify(expected)], { cwd: dir });
+    const used = await run(["bun", "smoke.ts", JSON.stringify(expected), JSON.stringify(subpathEntries(packed))], { cwd: dir });
     if (used.code !== 0) throw new Error(`the smoke install resolved but the packages do not work: ${(used.stderr || used.stdout).trim()}`);
     for (const line of used.stdout.split("\n").filter(Boolean)) log(`  ${line}`);
     for (const p of packed) {
@@ -422,6 +471,17 @@ for (const want of JSON.parse(process.argv[2]) as { name: string; version: strin
   if (!want.entry) { console.log(\`\${want.name}@\${got.version}: installed (no entry point to import)\`); continue; }
   const mod = await import(want.name) as Record<string, unknown>;
   console.log(\`\${want.name}@\${got.version}: import("\${want.name}") -> \${Object.keys(mod).length} export(s)\`);
+}
+// the entry an extracted plugin keeps in the core: marketplace bundles import this name and are immutable, so it
+// has to resolve out of the installed core and hand back the *same* object the plugin package's own entry does
+for (const want of JSON.parse(process.argv[3] ?? "[]") as { entry: string; pkg: string }[]) {
+  const viaCore = await import(want.entry) as Record<string, unknown>;
+  const viaPkg = await import(want.pkg) as Record<string, unknown>;
+  const keys = Object.keys(viaPkg);
+  if (keys.length === 0) throw new Error(\`\${want.pkg} exports nothing, so \${want.entry} re-exports nothing\`);
+  if (Object.keys(viaCore).sort().join() !== keys.slice().sort().join()) throw new Error(\`\${want.entry} exports \${Object.keys(viaCore).sort().join()}, \${want.pkg} exports \${keys.slice().sort().join()}\`);
+  for (const k of keys) if (viaCore[k] !== viaPkg[k]) throw new Error(\`\${want.entry} and \${want.pkg} disagree about \${k}: the entry is a second copy of the plugin, not a re-export of it\`);
+  console.log(\`\${want.entry}: the same \${keys.length} export(s) as \${want.pkg}, object for object\`);
 }
 `;
 
@@ -456,6 +516,8 @@ export interface PublishOptions {
   provenance?: boolean;
   smoke?: boolean;
   githubPackages?: boolean;
+  /** where the mirror is; only a test moves it, to drive the loop without reaching GitHub Packages */
+  githubPackagesRegistry?: string;
   /** write the lockfile's workspace versions before packing; only a test turns this off, to watch the gate fire */
   syncLockfile?: boolean;
   log?: (line: string) => void;
@@ -550,18 +612,30 @@ export async function publishWorkspace(opts: PublishOptions = {}): Promise<Publi
     return acc;
   });
 
-  // GitHub Packages is a mirror, never the registry of record: a failure there is reported and the release goes on
+  // GitHub Packages is a mirror, never the registry of record -- and it does not take every package. `NEVER_MIRROR`
+  // holds the names another repository already publishes there (the four standalone `voidbase-plugin-*` repos, whose
+  // GitHub Packages copies the marketplace lists until 7.11); mirroring one of those would publish over somebody
+  // else's package, so the loop walks `mirrorable(packed)` and says by name what it left out.
+  //
+  // A failure here is logged with its reason and the release goes on, deliberately. By the time this runs npm has
+  // the version and a published version cannot be taken back, so throwing would report a release that happened as
+  // one that failed; the loop is idempotent (it skips what the mirror already has), so the next run finishes it.
+  // What was wrong before was not the continuing but the silence: npm's own message is the only thing that says
+  // whether the mirror is down, the token expired, or a name is refused, so it is printed rather than dropped.
   if (opts.githubPackages ?? true) {
     const ghToken = process.env.GH_PACKAGES_TOKEN ?? "";
+    const mirror = opts.githubPackagesRegistry ?? GITHUB_PACKAGES;
+    const copy = mirrorable(packed);
+    for (const p of packed) if (!copy.includes(p)) log(`  GitHub Packages: ${p.pkg.name} is not mirrored (NEVER_MIRROR: that name is another repository's there)`);
     if (!ghToken) log("GitHub Packages: skipped (no GH_PACKAGES_TOKEN)");
     else
-      await withNpmrc(GITHUB_PACKAGES, ghToken, "@voidbase-cloud", async (npmrc) => {
-        for (const p of packed) {
-          if (await isPublished(p.pkg.name, p.pkg.version, GITHUB_PACKAGES, npmrc)) { log(`  GitHub Packages: ${p.pkg.name}@${p.pkg.version} is already there`); continue; }
-          const cmd = ["npm", "publish", p.tarball, "--registry", GITHUB_PACKAGES, "--tag", tag];
+      await withNpmrc(mirror, ghToken, "@voidbase-cloud", async (npmrc) => {
+        for (const p of copy) {
+          if (await isPublished(p.pkg.name, p.pkg.version, mirror, npmrc)) { log(`  GitHub Packages: ${p.pkg.name}@${p.pkg.version} is already there`); continue; }
+          const cmd = ["npm", "publish", p.tarball, "--registry", mirror, "--tag", tag];
           if (opts.dryRun) cmd.push("--dry-run");
           const r = await run(cmd, { env: { NPM_CONFIG_USERCONFIG: npmrc } });
-          log(r.code === 0 ? `  GitHub Packages: ${p.pkg.name}@${p.pkg.version}` : `  GitHub Packages: ${p.pkg.name} failed (npm is the registry of record; continuing)`);
+          log(r.code === 0 ? `  GitHub Packages: ${p.pkg.name}@${p.pkg.version}` : `  GitHub Packages: ${p.pkg.name} failed, npm is the registry of record and the release goes on: ${(r.stderr || r.stdout).trim().split("\n").filter(Boolean).slice(0, 2).join(" ").slice(0, 300)}`);
         }
       });
   }

@@ -1,23 +1,13 @@
-// Realtime, as the plugin that provides `realtime@1`.
+// `@voidbase-cloud/voidbase/plugins/realtime`, which since 7.5 is a re-export of `@voidbase-cloud/plugin-realtime`.
 //
-// One plugin, not two. The plan first had hub fanout and the D1 change feed as two providers chosen by composition,
-// and building it showed why that is the wrong shape here: nobody installs a hub. It is a deployment detail, so the
-// choice belongs to the binding, and the binding arrives with the request. What this provides is therefore a
-// factory: `for(env)` returns the client for this request, and callers ask it `active()` before choosing the feed.
-import { realtimeFor } from "../realtime/hub-client";
-import type { Realtime } from "../interfaces";
-import { serve, type Kernel } from "../kernel";
-import type { Plugin } from "./manifest";
-
-export const realtime: Plugin = {
-  manifest: {
-    name: "realtime",
-    version: "0.1.0",
-    tier: "official",
-    voidbase: "*",
-    provides: ["realtime@1"],
-  },
-  apply(ctx: Kernel) {
-    serve<Realtime>(ctx, "realtime@1", { for: realtimeFor });
-  },
-};
+// The plugin itself moved out of the core; this entry stays where it was, published under the same name, forever. A
+// marketplace bundle is audited, bundled and hashed against the names it imports and is then immutable, so a bundle
+// that imports this name goes on importing it for as long as the bundle exists. Withdrawing the entry would break
+// those installs at load on Bun and at build on Workers, over a module that is one line.
+//
+// app.ts loads the plugin through this file rather than reaching past it to the package, which is the point: the
+// path a marketplace bundle takes is the path every instance takes, so a mistake in it stops a boot rather than
+// waiting for somebody's bundle to find it. And it is a re-export and not an alias, so the `realtime` a bundle
+// imports here is the same object the core loaded -- one plugin, one `realtime@1` registration, not a second copy
+// of each.
+export { realtime } from "@voidbase-cloud/plugin-realtime";

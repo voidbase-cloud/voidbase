@@ -5,7 +5,8 @@
 #   publish          when release v<package.json version> exists and npm lacks it: check, unit and cloud-rest tests,
 #                    then scripts/publish.ts -- every publishable package in the workspace packed with `bun pm pack`,
 #                    proved free of `workspace:` specs, smoke-installed together and published in dependency order
-#                    (provenance only where GitHub Actions' OIDC token exists), GitHub Packages, tarballs on the release
+#                    (provenance only where GitHub Actions' OIDC token exists), the GitHub Packages copy of everything
+#                    NEVER_MIRROR does not name, tarballs on the release
 #   executables      when that release lacks checksums.txt: every platform, the exe smoke, the archives and checksums on
 #                    the release, the notes opened with the `./voidbase update` hint
 # Idempotent: a re-run after a partial failure does only what is still missing. Steps are recorded for the status page

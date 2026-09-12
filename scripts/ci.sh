@@ -67,7 +67,14 @@ oracles() {  # the starter and the panel next to a production-shaped public/ (th
 plan() { bun scripts/ci-plan.ts; }
 cache_restore() { ./scripts/ci-cache.sh restore; }
 cache_save() { ./scripts/ci-cache.sh save; }
-typecheck() { ./node_modules/.bin/tsc --noEmit -p "$PKG/tsconfig.json" && ./node_modules/.bin/tsc --noEmit -p "$PKG/tsconfig.node.json" && ./node_modules/.bin/tsc --noEmit -p tsconfig.scripts.json; }
+typecheck() {
+  ./node_modules/.bin/tsc --noEmit -p "$PKG/tsconfig.json" && ./node_modules/.bin/tsc --noEmit -p "$PKG/tsconfig.node.json" || return 1
+  # each extracted plugin package's own program, globbed rather than listed so the next extraction needs no edit
+  # here. The core's published sources are TypeScript and join that program, so this pass is what says a package is
+  # still self-contained rather than leaning on the core's own tsconfig.
+  for t in packages/plugin-*/tsconfig.json; do [ -f "$t" ] || continue; ./node_modules/.bin/tsc --noEmit -p "$t" || return 1; done
+  ./node_modules/.bin/tsc --noEmit -p tsconfig.scripts.json
+}
 unit() { bun test; }
 browser() { local exports; exports=$(./scripts/ci-browser.sh) || return 1; eval "$exports"; echo "$exports"; }
 boot() {

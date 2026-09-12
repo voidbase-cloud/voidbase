@@ -56,8 +56,10 @@ missing. In hot mode it publishes to npm and leaves the executables to the first
    cloud-rest tests, then `scripts/publish.ts` -- `bun pm pack` over every publishable package in the workspace, the
    refusal of any packed manifest that still carries a `workspace:` spec or names a sibling that is never
    published, one smoke install of all the tarballs
-   together that imports each package by name and runs the bins it declares, `npm publish` in dependency order with
-   each package skipped when the registry already has it, the GitHub Packages copy (with `GH_PACKAGES_TOKEN`), and
+   together that imports each package by name (and each extracted plugin through the core's own
+   `/plugins/<name>` entry as well) and runs the bins it declares, `npm publish` in dependency order with
+   each package skipped when the registry already has it, the GitHub Packages copy of everything `NEVER_MIRROR`
+   does not name (with `GH_PACKAGES_TOKEN`), and
    the tarballs attached to the release (`scripts/gh-release.ts`). The next section is what "every package" means
    while there is one of them.
 4. `executables`, when that release lacks `checksums.txt`: the prebuilt executables for every platform
@@ -89,6 +91,12 @@ does not appear in the changelog.** A tooling-only `fix:` therefore does nothing
 sits in the git history until the next commit that does touch the package carries a release over it, with no
 changelog line of its own.
 
+Since 7.5 that rule reaches an extracted plugin package too: a commit touching only `packages/plugin-realtime/**`
+is, to release-please, a commit touching no tracked package. The version still *moves* there when a release is cut
+-- the `extra-files` glob below writes it into every `packages/*/package.json` -- but the plugin cannot be what cuts
+one. The fix while that matters is the same as for tooling: touch the core in the same commit. Hot mode, which is
+the mode in use during the beta, has no such rule and releases every push.
+
 This is a real change and not a side effect worth shrugging at. Until the move the configuration was keyed `"."`,
 and `"."` is release-please's root project path: `CommitSplit` (release-please 17.11.2,
 `build/src/util/commit-split.js`) deliberately skips it, and `Manifest.buildPullRequests` hands that path the
@@ -112,12 +120,21 @@ the first normal run after `hot off` is the one that goes back to the narrow rul
 
 ### N packages, one version
 
-The repository publishes one package and is about to publish more, so the release flow is written for N of them and
-is proved at N > 1 while N is 1. `scripts/publish.ts` is all of the packing and publishing;
-`packages/release-fixture` -- a private, never-published second workspace package that depends on
-`@voidbase-cloud/voidbase` through `workspace:*` -- is what keeps the N > 1 paths honest, and
-`test/unit/publish.test.ts` drives the whole loop over a throwaway two-package workspace against a stubbed registry
-on localhost.
+The repository publishes two packages -- `@voidbase-cloud/voidbase` and, since 7.5, `@voidbase-cloud/plugin-realtime`
+-- and will publish about ten, so the release flow is written for N of them. `scripts/publish.ts` is all of the
+packing and publishing. `packages/release-fixture` -- a private, never-published third workspace package that
+depends on `@voidbase-cloud/voidbase` through `workspace:*` -- is what keeps the *private* paths honest (the third
+gate, `NEVER_PUBLISH`, and what `publishable()` drops), and `test/unit/publish.test.ts` drives the whole loop over a
+throwaway two-package workspace against a stubbed registry on localhost. Delete the fixture once a real private
+package exists to exercise those paths; deleting it before that takes them with it.
+
+A release therefore packs the plugin package first and the core second, because the core depends on it:
+
+```
+publish 0.9.0-beta.52: 2 package(s) in dependency order: @voidbase-cloud/plugin-realtime, @voidbase-cloud/voidbase
+  packed packages/plugin-realtime -> ...tgz (@voidbase-cloud/voidbase workspace:* -> 0.9.0-beta.52)
+  packed packages/voidbase        -> ...tgz (@voidbase-cloud/plugin-realtime workspace:* -> 0.9.0-beta.52)
+```
 
 **Pack with `bun pm pack`, never `npm pack`.** A workspace dependency is written `workspace:*`, and npm copies that
 string into the published manifest verbatim -- measured on npm 11.19.0 against the fixture, which packs as
@@ -169,9 +186,35 @@ exports, and every bin it declares run with `--help`.
 registry already has. A retried or half-finished release finishes instead of dying on npm's 403, and a package is
 never published before a sibling it names. Dependency order is `dependencies` and `optionalDependencies` and
 nothing else: a devDependency cycle is legal and says nothing, and a **peer** edge says nothing either -- npm does
-not resolve peers at publish time. Reading peers as ordering would be worse than useless here, because every
-`@voidbase-cloud/plugin-*` package peer-depends on the core: the moment the core depends on an extracted plugin,
-that pair is a cycle and every release stops.
+not resolve peers at publish time. Reading peers as ordering would be worse than useless here, and this is no longer
+hypothetical: `@voidbase-cloud/plugin-realtime` peer-depends on the core while the core depends on it through
+`dependencies`. As an ordering edge that is a cycle and every release would stop on it; as what it is -- a statement
+about the project that installs the package -- the plugin simply goes first.
+
+**The smoke also imports the entry an extraction exists to preserve.** For every `@voidbase-cloud/plugin-*` package
+in the release, the scratch project imports `@voidbase-cloud/voidbase/plugins/<name>` as well as the package's own
+root entry, and refuses the pair unless they are the same exports and, key by key, the same objects. That name is
+what marketplace bundles import and bundles are audited, hashed and immutable, so it is the one thing an extraction
+may never break -- and nothing else in the release looks at it: a tarball whose re-export named a file it no longer
+ships, or whose entry handed back a second copy of the plugin serving a second `realtime@1`, would pass all three
+gates and the smoke and fail at somebody's boot.
+
+**The GitHub Packages mirror does not take every package** (`NEVER_MIRROR`, `scripts/publish.ts`). npm is the
+registry of record and takes the whole workspace. GitHub Packages is a copy, and on that registry
+`@voidbase-cloud/plugin-realtime` is **not ours to publish**: it is the package
+`voidbase-cloud/voidbase-plugin-realtime` publishes, at its own version and its own export shape, and the
+marketplace lists that one. The same holds for `-auth`, `-backups` and `-hardening`. Those four repositories go on
+publishing there until 7.11 moves the listings and archives them, so a release that mirrored the monorepo's
+`@voidbase-cloud/plugin-*` over them would leave npm's version rules to decide which of two unrelated packages a
+consumer got. The refusal is by name prefix rather than a list of four, because 7.6 to 7.10 add six more; it is
+*not* `publishable()`, because these packages are published -- to npm, where the names are free and this
+repository owns them.
+
+A failure of the mirror is logged with npm's own message and the release goes on, which is deliberate: by the time
+the mirror runs npm already has the version and a published version cannot be taken back, so throwing would report
+a release that happened as one that failed. The loop skips what the mirror already has, so the next run finishes
+it. What is not deliberate is silence -- the message is the only thing that says whether the mirror is down, the
+token expired or a name was refused -- so it is printed rather than dropped.
 
 **One version across the workspace** -- the owner's decision, and the reason a tarball can name a sibling at all.
 In hot mode `scripts/hot-release.ts` bumps every workspace package together and refuses a workspace whose
@@ -251,5 +294,14 @@ release-please's PR needs no organization setting for Actions, since a PAT opens
 testbed bumps (`bun scripts/testbeds.ts <version>`, run by hand: the three apps are their own projects), so it needs contents write on
 `voidbase-cloud/voidbase-demo`, `voidbase-marketplace` and `voidbase-site` as well.
 
-Consumers: `bun add @voidbase-cloud/voidbase`; from GitHub Packages instead, `.npmrc` with
-`@voidbase-cloud:registry=https://npm.pkg.github.com` and a token with `read:packages`.
+Consumers: `bun add @voidbase-cloud/voidbase`, from npm, which is the registry of record and the only registry
+that holds a complete install.
+
+The GitHub Packages copy is a copy of the core alone, and since 7.5 it is no longer an install path. It was one
+while `@voidbase-cloud/voidbase` had no dependency inside its own scope: an `.npmrc` with
+`@voidbase-cloud:registry=https://npm.pkg.github.com` and a token with `read:packages` sent the whole scope there
+and everything resolved. Now the core depends on `@voidbase-cloud/plugin-realtime` at its exact version, that
+redirect is scope-wide (npm has no per-package registry), and the version that registry holds under that name is
+another repository's package -- so the install either fails to find the version or finds the wrong package. Use
+npm for the core; GitHub Packages holds the mirrored tarball for anyone who wants to read it and the four
+standalone plugin repositories' own packages, which the marketplace lists, until 7.11.

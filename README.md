@@ -1,10 +1,11 @@
 # voidbase — repository
 
-This repository is a Bun workspace. It publishes exactly one package:
+This repository is a Bun workspace. Every package it publishes carries the same version:
 
 | path | what |
 | --- | --- |
-| [`packages/voidbase`](packages/voidbase) | **`@voidbase-cloud/voidbase`**, the published package, and the Void app this repository runs to test it. Its [README](packages/voidbase/README.md) is the project's. |
+| [`packages/voidbase`](packages/voidbase) | **`@voidbase-cloud/voidbase`**, the core package, and the Void app this repository runs to test it. Its [README](packages/voidbase/README.md) is the project's. |
+| [`packages/plugin-realtime`](packages/plugin-realtime) | **`@voidbase-cloud/plugin-realtime`**, the first shipped plugin extracted into a package of its own. The core depends on it and loads it, so an instance is unchanged; `@voidbase-cloud/voidbase/plugins/realtime` stays published as a re-export of it. |
 | `scripts/` | this repository's CI and release tooling (`ci.sh`, `release.sh`, `pipeline.ts` and the rest). It is not published: consumers used to download it with every install. |
 | `ci/` | the status Worker a build deploys ([docs/ci.md](packages/voidbase/docs/ci.md)). |
 | `surface/` | the surface map, rendered by `bun run surface`. |

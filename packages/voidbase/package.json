@@ -190,6 +190,7 @@
     "@cloudflare/workers-types": "^4.20250903.0",
     "@resvg/resvg-wasm": "2.6.2",
     "@simplewebauthn/server": "^14.0.1",
+    "@voidbase-cloud/plugin-realtime": "workspace:*",
     "bcryptjs": "^3.0.2",
     "cordis": "4.0.0-rc.9",
     "fflate": "^0.8.3",

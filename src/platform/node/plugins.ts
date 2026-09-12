@@ -96,9 +96,9 @@ const loaded = await loadInstalled(resolve(process.env.VOIDBASE_PLUGINS_DIR ?? "
 export const installed: InstalledPlugin[] = loaded.installed;
 export const disabled: string[] = loaded.disabled;
 
-// ---- the installer's view of the project on disk (src/server/plugins/installer.ts) --------------------------------
+// ---- the installer's view of the project on disk (src/server/installer-info.ts) --------------------------------
 import { addPlugin, listPlugins, removePlugin, updatePlugins } from "../../node/installed";
-import type { FilesystemInstaller } from "../../server/plugins/installer";
+import type { FilesystemInstaller } from "../../server/installer-info";
 const projectRoot = rootOfPluginsDir(resolve(process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins"));
 export const filesystem: FilesystemInstaller = {
   root: projectRoot,

@@ -23,6 +23,7 @@ import { resolve as resolvePath } from "node:path";
 import { Hono } from "hono";
 import { authRefresh } from "../../src/server/auth";
 import type { Collection } from "../../src/server/collections/model";
+import { installerInfo } from "../../src/server/installer-info";
 import type { Mail as MailInterface, Observability, Payments, Realtime, Tax } from "../../src/server/interfaces";
 import { createKernel, load, serve, using, whatLoaded, type Kernel } from "../../src/server/kernel";
 import { mailRoute } from "../../src/server/mail";
@@ -35,7 +36,7 @@ import { backups } from "../../src/server/plugins/backups";
 import { commerce, commerceInfo } from "../../src/server/plugins/commerce";
 import { domains, domainsInfo } from "../../src/server/plugins/domains";
 import { hardening } from "../../src/server/plugins/hardening";
-import { installer, installerInfo } from "../../src/server/plugins/installer";
+import { installer } from "../../src/server/plugins/installer";
 import { lemonsqueezy } from "../../src/server/plugins/lemonsqueezy";
 import { mail } from "../../src/server/plugins/mail";
 import type { Plugin } from "../../src/server/plugins/manifest";
@@ -82,6 +83,16 @@ async function oldAnswer(kernel: Kernel): Promise<Record<string, unknown>> {
 }
 
 afterAll(() => { commerce.stopWatchingPayments(); });
+
+/** the route as app.ts mounts it: c.json() serialises the whole answer at once, which is where a bad value lands */
+async function route(kernel: Kernel, opts: { timeoutMs?: number } = {}): Promise<Response> {
+  const app = new Hono<AppEnv>();
+  app.onError((err, c) => c.json({ crashed: err instanceof Error ? err.message : String(err) }, 500));
+  app.get("/api/plugins", async (c) => c.json(await pluginsReport(kernel, c.env, opts)));
+  return app.request("http://shop.example/api/plugins", {}, env as unknown as Bindings);
+}
+/** a failed field is logged, and a test that expects one says so rather than printing it */
+const quiet = () => spyOn(console, "error").mockImplementation(() => {});
 
 // --- the record context a plugin needs ----------------------------------------------------------------------------
 describe("a plugin asks the core for the request's record context", () => {
@@ -269,7 +280,7 @@ describe("a field is in the answer only while a plugin answers for it", () => {
   /** the same, answering for itself */
   const loud = (name: string): Plugin => ({ ...quiet(name), info: () => ({ theirs: name }) });
 
-  // This is the change 0.9.0-beta.46 made to what every instance reports about itself, and it is pinned here name
+  // This is the change this branch makes to what every instance through 0.9.0-beta.48 reported about itself, and it is pinned here name
   // by name so that it cannot drift back by accident: the core does not import a plugin module to answer for a
   // plugin that is not running, which is the whole of why the answer is assembled from what loaded.
   for (const name of ["ai", "translations", "domains", "previews", "commerce"]) {
@@ -346,6 +357,33 @@ describe("every loaded plugin with an info() answers, exactly once", () => {
     expect(answer["shipping-flat"]).toEqual(shippingFlatInfo(env));
   });
 
+  test("and the condition is commerce's own answer: a commerce that says nothing about itself does it too", async () => {
+    // not "with no commerce loaded": the field is there only while something answering under `commerce` has an
+    // info(), so a shipped commerce shadowed by a quiet plugin leaves the two providers nowhere to answer inside
+    const quiet: Plugin = { manifest: { name: "commerce", version: "2.0.0", tier: "community", voidbase: "*" } };
+    const answer = await pluginsReport(await instance([quiet], ["commerce"]), env);
+    expect("commerce" in answer).toBe(false);
+    expect(answer.names).toContain("commerce");
+    expect(answer["tax-flat"]).toEqual(taxFlatInfo(env));
+    expect(answer["shipping-flat"]).toEqual(shippingFlatInfo(env));
+  });
+
+  test("a plugin named `constructor` is answered: the check is on this answer's own keys, not the prototype's", async () => {
+    // the manifest's name rule is lowercase letters, digits and dashes, and `constructor` passes it. `name in
+    // answer` is true of it whatever the answer holds, because `in` walks the prototype chain, so such a plugin was
+    // dropped with a warning about a field this answer does not have — and the route sent no field for it either.
+    const theirs: Plugin = { manifest: { name: "constructor", version: "1.0.0", tier: "community", voidbase: "*" }, info: () => ({ mine: true }) };
+    const kernel = await instance([theirs]);
+    const logged = spyOn(console, "warn").mockImplementation(() => {});
+    const r = await route(kernel);
+    expect(r.status).toBe(200);
+    const answer = (await r.json()) as Record<string, unknown>;
+    expect(Object.hasOwn(answer, "constructor")).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(answer, "constructor")?.value).toEqual({ mine: true });
+    expect(logged).not.toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
   test("a plugin named like a field of the graph half is left out rather than allowed to overwrite it", async () => {
     const logged = spyOn(console, "warn").mockImplementation(() => {});
     const liar: Plugin = { manifest: { name: "names", version: "1.0.0", tier: "community", voidbase: "*" }, info: () => ({ not: "a list" }) };
@@ -359,15 +397,7 @@ describe("every loaded plugin with an info() answers, exactly once", () => {
 
 // --- what a plugin's answer can do to the route --------------------------------------------------------------------
 describe("an info() is held at arm's length by its answer as well as by its call", () => {
-  /** the route as app.ts mounts it: c.json() serialises the whole answer at once, which is where a bad value lands */
-  async function route(kernel: Kernel, opts: { timeoutMs?: number } = {}): Promise<Response> {
-    const app = new Hono<AppEnv>();
-    app.onError((err, c) => c.json({ crashed: err instanceof Error ? err.message : String(err) }, 500));
-    app.get("/api/plugins", async (c) => c.json(await pluginsReport(kernel, c.env, opts)));
-    return app.request("http://shop.example/api/plugins", {}, env as unknown as Bindings);
-  }
   const said = (name: string, info: () => object): Plugin => ({ manifest: { name, version: "2.0.0", tier: "community", voidbase: "*" }, info });
-  const quiet = () => spyOn(console, "error").mockImplementation(() => {});
 
   test("an answer with a cycle in it is that field's failure, not the route's", async () => {
     const logged = quiet();
@@ -411,10 +441,175 @@ describe("an info() is held at arm's length by its answer as well as by its call
     logged.mockRestore();
   });
 
+  test("a plugin whose `info` is a getter that throws fails its own field, not the report before it starts", async () => {
+    // reading `info` off the plugin object is reading the plugin's code, and it happens before any call is made:
+    // unguarded, a getter that throws here rejected pluginsReport itself and the route answered 500
+    const logged = quiet();
+    const nasty = { manifest: { name: "domains", version: "2.0.0", tier: "community", voidbase: "*" }, get info(): never { throw new Error("getter on the plugin object"); } } as unknown as Plugin;
+    const r = await route(await instance([nasty], ["domains"]), { timeoutMs: 50 });
+    expect(r.status).toBe(200);
+    const answer = (await r.json()) as { domains: { error: string }; installer: unknown };
+    expect(answer.domains).toEqual({ error: "getter on the plugin object" });
+    expect(answer.installer).toEqual(installerInfo(env));
+    logged.mockRestore();
+  });
+
+  test("the timeout is the whole report's and not each plugin's: four that never answer cost one of them", async () => {
+    // every call is started before any is awaited, so the races overlap. Awaited one after another, as this was,
+    // four plugins that never settle held the route for four timeouts, and the shipped default is a second each.
+    const logged = quiet();
+    const hang = (name: string): Plugin => ({ manifest: { name, version: "1.0.0", tier: "community", voidbase: "*" }, info: () => new Promise<object>(() => {}) });
+    const kernel = await instance([hang("domains"), hang("echo-1"), hang("echo-2"), hang("echo-3")], ["domains"]);
+    const began = Date.now();
+    const answer = await pluginsReport(kernel, env, { timeoutMs: 200 });
+    const took = Date.now() - began;
+    // a named field and three appended ones, so this measures the two halves of the answer overlapping as well
+    for (const name of ["domains", "echo-1", "echo-2", "echo-3"]) expect(answer[name]).toEqual({ error: `${name} did not say what it is within 200ms` });
+    expect(took).toBeLessThan(400); // one timeout and the rest of the answer; in turn it was over 800
+    logged.mockRestore();
+  });
+
   test("and what a field holds is what the route sends: the answer is the value that came back through JSON", async () => {
     const kernel = await instance([said("domains", () => ({ hostnames: ["shop.example"], at: new Date(0), gone: undefined, fn: () => 1 }))], ["domains"]);
     // a Date is a string over the wire and a function is nothing, so the field says what a reader will actually get
     expect((await pluginsReport(kernel, env)).domains).toEqual({ hostnames: ["shop.example"], at: "1970-01-01T00:00:00.000Z" });
+  });
+});
+
+// --- the two fields answered through an interface ------------------------------------------------------------------
+describe("a payments@1 or observability@1 provider is community code too, and is held like an info()", () => {
+  // These two are the older seam and the better one — what is reported is the provider's, whatever the plugin
+  // providing it is called — but the call is still a call into a plugin, and on an instance that installed one it is
+  // exactly the community code the arm's length above exists for. Called raw, as they were, a provider that threw,
+  // that never settled or that answered with something JSON cannot take took the whole route down.
+  /** an instance of nothing but the plugin under test, so the two fields are that plugin's and nobody else's */
+  async function only(plugins: Plugin[]): Promise<Kernel> {
+    const kernel = createKernel(new Hono<AppEnv>());
+    await load(kernel, plugins, VERSION);
+    return kernel;
+  }
+  const paying = (answer: () => unknown): Plugin => ({
+    manifest: { name: "pay-theirs", version: "1.0.0", tier: "community", voidbase: "*", provides: ["payments@1"] },
+    apply: (ctx) => { serve<Payments>(ctx, "payments@1", { route: answer } as unknown as Payments); },
+  });
+  const watching = (answer: () => unknown): Plugin => ({
+    manifest: { name: "obs-theirs", version: "1.0.0", tier: "community", voidbase: "*", provides: ["observability@1"] },
+    apply: (ctx) => { serve<Observability>(ctx, "observability@1", { sample: (async (_c: unknown, next: () => unknown) => next()), report: answer } as unknown as Observability); },
+  });
+
+  test("a payments provider that throws is that one field, through a mounted route that still answers 200", async () => {
+    const logged = quiet();
+    const r = await route(await only([paying(() => { throw new Error("payments provider blew up"); })]), { timeoutMs: 50 });
+    expect(r.status).toBe(200);
+    const answer = (await r.json()) as { payments: { error: string }; names: string[]; installer: unknown };
+    expect(answer.payments).toEqual({ error: "payments provider blew up" }); // and not `crashed`, which is the 500
+    expect(answer.names).toEqual(["pay-theirs"]); // the graph half still stands
+    expect(answer.installer).toEqual(installerInfo(env));
+    logged.mockRestore();
+  });
+
+  test("an observability provider that throws is the same failure, named for the plugin providing it", async () => {
+    const logged = quiet();
+    const r = await route(await only([watching(() => { throw new Error("observability provider blew up"); })]), { timeoutMs: 50 });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { observability: unknown }).observability).toEqual({ error: "observability provider blew up" });
+    logged.mockRestore();
+  });
+
+  test("an answer with a cycle in it never reaches c.json(): it went through JSON here, where it is one field", async () => {
+    const logged = quiet();
+    const cycle: Record<string, unknown> = { via: "theirs", webhook: "/x", livemode: false }; cycle.self = cycle;
+    const r = await route(await only([paying(() => cycle)]), { timeoutMs: 50 });
+    expect(r.status).toBe(200);
+    const answer = (await r.json()) as { payments: { error: string } };
+    expect(answer.payments.error).toContain("pay-theirs described itself with something that cannot be sent as JSON");
+    logged.mockRestore();
+  });
+
+  test("and one whose toJSON throws, which is the same value the route could not have sent", async () => {
+    const logged = quiet();
+    const r = await route(await only([watching(() => ({ toJSON() { throw new Error("gotcha"); } }))]), { timeoutMs: 50 });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { observability: { error: string } }).observability.error).toContain("gotcha");
+    logged.mockRestore();
+  });
+
+  test("and a provider whose method is a getter that throws: the implementation is read inside the gate too", async () => {
+    const logged = quiet();
+    // cordis hands back the object the plugin registered, so reading the method off it is already a plugin's code
+    const hostile: Plugin = {
+      manifest: { name: "pay-theirs", version: "1.0.0", tier: "community", voidbase: "*", provides: ["payments@1"] },
+      apply: (ctx) => { serve<Payments>(ctx, "payments@1", { get route(): never { throw new Error("lazy route getter blew up"); } } as unknown as Payments); },
+    };
+    const r = await route(await only([hostile]), { timeoutMs: 50 });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { payments: { error: string } }).payments).toEqual({ error: "lazy route getter blew up" });
+    logged.mockRestore();
+  });
+
+  test("a manifest field the route could not have sent is that part of the graph half, not the whole answer", async () => {
+    const logged = quiet();
+    // a manifest is an installed bundle's own file: checkManifest judges the names in it, not the shape of a tier
+    const tier: Record<string, unknown> = {}; tier.self = tier;
+    const odd: Plugin = { manifest: { name: "odd-tier", version: "1.0.0", tier: tier as never, voidbase: "*" }, apply: () => {} };
+    const r = await route(await only([odd]), { timeoutMs: 50 });
+    expect(r.status).toBe(200);
+    const answer = (await r.json()) as { names: string[]; tiers: { error: string }; installer: unknown };
+    expect(answer.names).toEqual(["odd-tier"]);
+    expect(typeof answer.tiers.error).toBe("string");
+    expect(answer.installer).toEqual(installerInfo(env));
+    logged.mockRestore();
+  });
+
+  test("a provider that never settles is a failed field rather than a request that never answers", async () => {
+    const logged = quiet();
+    const began = Date.now();
+    const r = await route(await only([watching(() => new Promise(() => {}))]), { timeoutMs: 50 });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { observability: unknown }).observability).toEqual({ error: "obs-theirs did not say what it is within 50ms" });
+    expect(Date.now() - began).toBeLessThan(1000);
+    logged.mockRestore();
+  });
+
+  test("and an answer that is not an object: a field of this answer is an object or it is an error", async () => {
+    const logged = spyOn(console, "warn").mockImplementation(() => {});
+    const answer = await pluginsReport(await only([paying(() => "somewhere")]), env, { timeoutMs: 50 });
+    expect(answer.payments).toEqual({ error: "pay-theirs answered string rather than an object" });
+    logged.mockRestore();
+  });
+
+  test("the defaults are the core's own and are what they were: no provider, and a provider with no key here", async () => {
+    expect(await pluginsReport(await only([]), env)).toMatchObject({ payments: { via: "none" }, observability: null });
+    // payments@1's route() answers null when that provider has no key in these bindings, which is not a failure
+    expect((await pluginsReport(await only([paying(() => null)]), env)).payments).toEqual({ via: "none" });
+    expect((await pluginsReport(await only([watching(() => null)]), env)).observability).toBeNull();
+    // and a provider that does answer is answered, which is what these two fields were always for
+    const said = { via: "theirs", webhook: "/api/theirs/webhook", livemode: false };
+    expect((await pluginsReport(await only([paying(() => said)]), env)).payments).toEqual(said);
+  });
+});
+
+// --- the core does not import a plugin -------------------------------------------------------------------------
+describe("report.ts answers for the installer without importing the installer plugin", () => {
+  const source = (file: string) => readFileSync(resolvePath(import.meta.dir, "../../src/server", file), "utf8");
+
+  test("the only thing report.ts imports from the plugins directory is the manifest's types", () => {
+    // the core importing a plugin is the edge this phase exists to remove, and the first thing that would block
+    // lifting the installer into a package of its own: where an instance's plugins live is the core's own fact and
+    // lives in src/server/installer-info.ts, which the plugin reads too.
+    const report = source("plugins/report.ts");
+    expect(report).not.toContain('from "./installer"');
+    const relative = [...report.matchAll(/^import\b[^\n]*?from "(\.[^"]*)";$/gm)].map((m) => m[1]!);
+    expect(relative.filter((i) => !i.startsWith("../"))).toEqual(["./manifest"]);
+    expect(relative).toContain("../installer-info");
+  });
+
+  test("and the plugin reads the same module, so the field says the same thing either way", async () => {
+    expect(source("plugins/installer.ts")).toContain('from "../installer-info"');
+    // loaded, the field is the plugin's own info(), which is installerInfo bound to the filesystem it was given
+    expect((await pluginsReport(await instance(), env)).installer).toEqual(installerInfo(env));
+    // turned off in voidbase.lock, the core answers it from the same function rather than the field going missing
+    expect((await pluginsReport(await instance([], ["installer"]), env)).installer).toEqual(installerInfo(env));
   });
 });
 

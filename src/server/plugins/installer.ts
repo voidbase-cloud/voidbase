@@ -22,39 +22,20 @@ import type { Context, Hono } from "hono";
 import { filesystem as platformFilesystem } from "#platform/plugins";
 import { requireSuperuser } from "../auth-slot";
 import { badRequest } from "../errors";
+// where this instance's plugins live is the core's own fact and lives in the core (../installer-info.ts): the
+// answer to GET /api/plugins carries it whatever is loaded, so plugins/report.ts has to reach it without importing
+// this module, and lifting this plugin into a package of its own leaves that file where it is.
+import { installerInfo, repoOf, type FilesystemInstaller } from "../installer-info";
 import type { Kernel } from "../kernel";
 import { refusal, removalCost, type PluginFacts } from "./resolve";
 import { download, fetchIndex, pick, type PluginVersion } from "../../node/registry";
 import { commitPlugins, LOCKFILE, lockOf, type Lock, type PluginChange, type Repo } from "../project-sync";
-import type { AppEnv, Bindings } from "../types";
+import type { AppEnv } from "../types";
 import type { Plugin } from "./manifest";
 
 const OFFICIAL = "https://marketplace.voidbase.cloud";
 const NAME = /^[a-z][a-z0-9-]*$/;
 const MARKETPLACE = /^https?:\/\/[^\s/]+(\/[^\s]*)?$/;
-
-/** what the Bun platform provides: the project on disk (src/platform/node/plugins.ts); null on Workers */
-export interface FilesystemInstaller {
-  root: string;
-  list(): { installed: { name: string; version: string; marketplace: string }[]; disabled: string[]; marketplaces: string[] };
-  add(spec: string, o: { marketplace?: string; voidbaseVersion: string }): Promise<{ name: string; version: string; marketplace: string; previous?: string; unchanged?: boolean }>;
-  remove(name: string, o?: { force?: boolean }): "removed" | "disabled" | "already-disabled";
-  update(name: string | undefined, o: { voidbaseVersion: string }): Promise<{ updated: { name: string; from: string; to: string; marketplace: string }[]; current: string[] }>;
-}
-
-export type Mode = "filesystem" | "repository" | "fixed";
-const repoOf = (env: Bindings): Repo | null => {
-  const e = env as unknown as Record<string, string | undefined>;
-  const fullName = String(e.VOIDBASE_PROJECT_REPO ?? "").trim().toLowerCase(); const token = String(e.VOIDBASE_GH_TOKEN ?? "");
-  if (!fullName || !token) return null;
-  return { fullName, token, branch: String(e.VOIDBASE_PROJECT_BRANCH ?? "").trim() || "master", api: e.GITHUB_API_BASE || undefined };
-};
-/** where this instance's plugins live, for /api/plugins and the dashboard */
-export function installerInfo(env: Bindings, filesystem: FilesystemInstaller | null = platformFilesystem): { mode: Mode; repository?: string; branch?: string; hint?: string } {
-  if (filesystem) return { mode: "filesystem" };
-  const repo = repoOf(env); if (repo) return { mode: "repository", repository: repo.fullName, branch: repo.branch };
-  return { mode: "fixed", hint: "This instance's plugins were fixed when its Worker was built. Deploy it from a repository and set VOIDBASE_PROJECT_REPO and VOIDBASE_GH_TOKEN on it, and a change here becomes a commit that the repository's build deploys." };
-}
 
 interface Body { name?: unknown; version?: unknown; marketplace?: unknown; force?: unknown }
 const readBody = async (c: Context<AppEnv>): Promise<Body> => { try { return (await c.req.json()) as Body; } catch { return {}; } };

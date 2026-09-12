@@ -71,6 +71,16 @@ describe("the plugin API is reachable from a package", () => {
     }
   });
 
+  // And the shape of the gap between the two lists, so that the docs' account of it cannot go stale unnoticed:
+  // `PROVIDED` is the shorter list today, and squaring the rest of it is 7.2's work.
+  test("the provided map is the shorter list: sixteen plugin entry points are in exports and not in it", () => {
+    const provided = readFileSync(resolve(root, "src/platform/node/plugins.ts"), "utf8");
+    const inProvided = (entry: string) => provided.includes(`"@voidbase-cloud/voidbase${entry.slice(1)}":`);
+    const plugins = Object.keys(exportsMap).filter((e) => e.startsWith("./plugins/"));
+    expect(plugins.filter(inProvided).sort()).toEqual(["./plugins/auth", "./plugins/backups", "./plugins/collections", "./plugins/hardening", "./plugins/realtime"]);
+    expect(plugins.filter((e) => !inProvided(e))).toHaveLength(16);
+  });
+
   // Published through 0.9.0-beta.48 and dropped here: `mountWebAuthn` is the only thing src/server/webauthn.ts
   // exports, and it cannot stand
   // on a router of its own any more. Its login handler finishes by building the request's record context, which it

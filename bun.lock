@@ -18,14 +18,14 @@
     },
     "packages/release-fixture": {
       "name": "@voidbase-cloud/release-fixture",
-      "version": "0.9.0-beta.51",
+      "version": "0.9.0-beta.52",
       "dependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
       },
     },
     "packages/voidbase": {
       "name": "@voidbase-cloud/voidbase",
-      "version": "0.9.0-beta.51",
+      "version": "0.9.0-beta.52",
       "bin": {
         "voidbase": "bin/voidbase.ts",
       },

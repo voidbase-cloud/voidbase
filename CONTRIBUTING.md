@@ -18,7 +18,8 @@ most features. Open a discussion before you spend a weekend on it so we can agre
 out of writing the comparison pages honestly, so each one is something another backend already does better. Pick one
 and say so in an issue before you start, because some of them are larger than they look.
 
-**Correctness against PocketBase.** [COMPAT.md](COMPAT.md) and [docs/differences.md](docs/differences.md) record
+**Correctness against PocketBase.** [COMPAT.md](packages/voidbase/COMPAT.md) and
+[docs/differences.md](packages/voidbase/docs/differences.md) record
 where we match and where we do not. A test that proves we diverge somewhere undocumented is a good bug report, and a
 better pull request.
 
@@ -39,9 +40,19 @@ bun run check        # codegen + three typecheck passes
 bun test             # the unit tests, about a second
 ```
 
+The repository is a Bun workspace and publishes one package. Everything that ships, and the Void app this
+repository runs to test it, is in `packages/voidbase`; the root holds this repository's own CI and release
+tooling (`scripts/`), the status Worker (`ci/`) and the surface map (`surface/`). The commands above are run
+from the root and reach into the package themselves.
+
+The app's environment file moved with the app: it is `packages/voidbase/.env`, copied from
+`packages/voidbase/.env.example`. A `.env` left at the repository root from before the move is read by nothing
+-- the dev server, the suites and the Worker build all run in `packages/voidbase` -- so copy it across rather
+than wondering why the superuser never appears.
+
 `bun run dev` starts the dev server. `bun run ci` runs the full suite the way CI does, which is slower and needs a
 browser for the panel tests; it works out which parts your change actually affects rather than running everything.
-[docs/ci.md](docs/ci.md) explains how that decision is made.
+[docs/ci.md](packages/voidbase/docs/ci.md) explains how that decision is made.
 
 ## Making a change
 
@@ -53,7 +64,8 @@ type(scope): subject          # imperative, no trailing period, header <= 100 ch
 ```
 
 `feat` and `fix` appear in the release notes and move the version; `docs`, `refactor`, `test`, `chore` and `ci` do
-not. `commitlint.config.js` lists the scopes. [docs/releasing.md](docs/releasing.md) has the whole flow, including
+not. `commitlint.config.js` lists the scopes. [docs/releasing.md](packages/voidbase/docs/releasing.md) has the whole
+flow, including
 what merging a release pull request does.
 
 Two things worth knowing before you open a pull request:
@@ -83,4 +95,4 @@ docs page has an "improve this page" link at the bottom that takes you straight 
 
 ## Licence
 
-Contributions are made under the [MIT licence](LICENSE), the same one the project ships under.
+Contributions are made under the [MIT licence](packages/voidbase/LICENSE), the same one the project ships under.

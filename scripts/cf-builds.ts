@@ -20,7 +20,7 @@
 // the API says 12030 to a third; the second slot stays free). Any other trigger on the CI Worker (the branches and
 // instance-build triggers of earlier layouts) is removed by setup. CLOUDFLARE_API_BASE and GITHUB_API_URL point
 // everything at test/cf-mock.ts.
-import { CfApi, CfError, ensureR2, resolveAccount, workersSubdomain } from "../src/cloud/rest";
+import { CfApi, CfError, ensureR2, resolveAccount, workersSubdomain } from "../packages/voidbase/src/cloud/rest";
 
 const [cmd = "status", ...rest] = process.argv.slice(2);
 const args: Record<string, string> = {}; const positional: string[] = []; const secretArgs: string[] = [];

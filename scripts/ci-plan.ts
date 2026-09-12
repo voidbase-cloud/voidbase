@@ -18,6 +18,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { posix, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
+// Every path below is repository-relative, the way `git ls-files` and `git diff --name-only` print them. The
+// application and its suites live in the published package; only the CI and release tooling is at the root.
+const PKG = "packages/voidbase";
+const p = (f: string) => `${PKG}/${f}`;
 export const CONFORMANCE = ["auth-flows", "backups", "batch", "cascade", "filter-corpus", "filters-extra", "hardening", "logs-crons", "manage-rule", "oauth2", "otp-mfa", "protected-files", "providers", "rules", "s3", "security", "settings", "sql", "thumbs", "views", "compare", "records", "realtime", "collections"];
 export const BROWSER = ["panel-smoke", "panel-collections", "panel-records", "panel-admin", "panel-login"];
 export const isBrowserKey = (key: string) => key.startsWith("suite:") && BROWSER.includes(key.slice(6));
@@ -28,22 +32,22 @@ export interface KeyMeta { kind: "step" | "suite" | "bun"; hot: HotClass; test?:
 export const KEY_META: Record<string, KeyMeta> = {
   "step:typecheck": { kind: "step", hot: "mandatory", seconds: 15 },
   "step:unit": { kind: "step", hot: "mandatory", seconds: 1 },
-  "step:deploy-cf": { kind: "step", hot: "candidate", test: "test/deploy-cf.ts", seconds: 8 },
-  "step:fresh-db": { kind: "step", hot: "candidate", test: "test/fresh-db.ts", seconds: 13 },
+  "step:deploy-cf": { kind: "step", hot: "candidate", test: p("test/deploy-cf.ts"), seconds: 8 },
+  "step:fresh-db": { kind: "step", hot: "candidate", test: p("test/fresh-db.ts"), seconds: 13 },
   // deferred in hot mode for now: the step has never passed on Cloudflare (the production preview answers 500 there
   // while it passes locally), so it waits for a normal run and its own fix rather than failing every hot build
-  "step:mail-http": { kind: "step", hot: "deferred", test: "test/mail-http.ts", seconds: 13 },
-  "step:exe-smoke": { kind: "step", hot: "candidate", test: "test/exe-smoke.ts", seconds: 11 },
-  "step:local": { kind: "step", hot: "candidate", test: "test/local.ts", seconds: 12 },
-  "step:starter": { kind: "step", hot: "deferred", test: "test/starter-smoke.ts", seconds: 28 },
-  "step:adapter": { kind: "step", hot: "candidate", test: "test/adapter.ts", seconds: 20 },
+  "step:mail-http": { kind: "step", hot: "deferred", test: p("test/mail-http.ts"), seconds: 13 },
+  "step:exe-smoke": { kind: "step", hot: "candidate", test: p("test/exe-smoke.ts"), seconds: 11 },
+  "step:local": { kind: "step", hot: "candidate", test: p("test/local.ts"), seconds: 12 },
+  "step:starter": { kind: "step", hot: "deferred", test: p("test/starter-smoke.ts"), seconds: 28 },
+  "step:adapter": { kind: "step", hot: "candidate", test: p("test/adapter.ts"), seconds: 20 },
 };
 const SUITE_SECONDS: Record<string, number> = { "auth-flows": 11, backups: 3, batch: 1, cascade: 3, "filter-corpus": 26, "filters-extra": 1, hardening: 57, "logs-crons": 7, "manage-rule": 1, oauth2: 2, "otp-mfa": 20, "protected-files": 1, providers: 1, rules: 3, s3: 5, security: 5, settings: 1, sql: 1, thumbs: 4, views: 1, compare: 1, records: 6, realtime: 1, collections: 2, "sdk-suite": 26, "cloud-rest": 1 };
-for (const s of CONFORMANCE) { KEY_META[`suite:${s}`] = { kind: "suite", hot: "candidate", test: `test/conformance/${s}.ts`, seconds: SUITE_SECONDS[s] ?? 5 }; KEY_META[`bun:${s}`] = { kind: "bun", hot: "deferred", test: `test/conformance/${s}.ts`, seconds: SUITE_SECONDS[s] ?? 5 }; }
-KEY_META["suite:sdk-suite"] = { kind: "suite", hot: "candidate", test: "test/sdk-suite.ts", seconds: 26 };
-KEY_META["bun:sdk-suite"] = { kind: "bun", hot: "deferred", test: "test/sdk-suite.ts", seconds: 26 };
-KEY_META["suite:cloud-rest"] = { kind: "suite", hot: "candidate", test: "test/cloud-rest.ts", seconds: 1 };
-for (const p of BROWSER) KEY_META[`suite:${p}`] = { kind: "suite", hot: "deferred", test: `test/${p}.ts`, seconds: 20 };
+for (const s of CONFORMANCE) { KEY_META[`suite:${s}`] = { kind: "suite", hot: "candidate", test: p(`test/conformance/${s}.ts`), seconds: SUITE_SECONDS[s] ?? 5 }; KEY_META[`bun:${s}`] = { kind: "bun", hot: "deferred", test: p(`test/conformance/${s}.ts`), seconds: SUITE_SECONDS[s] ?? 5 }; }
+KEY_META["suite:sdk-suite"] = { kind: "suite", hot: "candidate", test: p("test/sdk-suite.ts"), seconds: 26 };
+KEY_META["bun:sdk-suite"] = { kind: "bun", hot: "deferred", test: p("test/sdk-suite.ts"), seconds: 26 };
+KEY_META["suite:cloud-rest"] = { kind: "suite", hot: "candidate", test: p("test/cloud-rest.ts"), seconds: 1 };
+for (const b of BROWSER) KEY_META[`suite:${b}`] = { kind: "suite", hot: "deferred", test: p(`test/${b}.ts`), seconds: 20 };
 export const KEYS = Object.keys(KEY_META);
 
 // the suites a Conventional Commit scope points at (commitlint.config.js lists the scopes)
@@ -126,7 +130,7 @@ export class Tree {
   constructor() {
     for (const line of git(["ls-files", "-s"]).split("\n")) { const m = line.match(/^\d+ ([0-9a-f]{40}) \d\t(.+)$/); if (m) this.blobs.set(m[2]!, m[1]!); }
     for (const line of git(["status", "--porcelain", "--untracked-files=all"]).split("\n")) { const p = line.slice(3).trim(); if (p) this.dirty.add(p.includes(" -> ") ? p.split(" -> ")[1]! : p); }
-    try { const pkg = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8")) as { imports?: Record<string, { workerd?: string; default?: string }> }; for (const [k, v] of Object.entries(pkg.imports ?? {})) this.imports[k] = { workerd: v.workerd?.replace(/^\.\//, ""), default: v.default?.replace(/^\.\//, "") }; } catch { /* no aliases */ }
+    try { const pkg = JSON.parse(readFileSync(resolve(ROOT, `${PKG}/package.json`), "utf8")) as { imports?: Record<string, { workerd?: string; default?: string }> }; for (const [k, v] of Object.entries(pkg.imports ?? {})) this.imports[k] = { workerd: v.workerd && p(v.workerd.replace(/^\.\//, "")), default: v.default && p(v.default.replace(/^\.\//, "")) }; } catch { /* no aliases */ }
   }
   has(f: string) { return this.blobs.has(f); }
   under(...prefixes: string[]): string[] { return [...this.blobs.keys()].filter((f) => prefixes.some((p) => f === p || f.startsWith(p.endsWith("/") ? p : p + "/"))); }
@@ -159,31 +163,31 @@ export class Tree {
 /** the file sets of every check */
 export function keyFiles(t: Tree): Record<string, Set<string>> {
   const union = (...sets: Iterable<string>[]) => { const s = new Set<string>(); for (const x of sets) for (const f of x) s.add(f); return s; };
-  const deps = ["package.json", "bun.lock"];
+  const deps = ["package.json", "bun.lock", "bunfig.toml", p("package.json")];
   const harness = ["scripts/ci.sh", "scripts/ci-lib.sh", "scripts/ci-plan.ts", "scripts/ci-status.ts", "scripts/ci-oracles.sh"];
-  const harnessSuites = ["scripts/ci-suites.sh", "scripts/dev.sh", "scripts/seed-reference.sh", "scripts/seed-app-user.sh", "scripts/starter.sh", "scripts/sync-panel.ts", "scripts/sync-app.ts"];
+  const harnessSuites = ["scripts/ci-suites.sh", "scripts/dev.sh", "scripts/seed-reference.sh", "scripts/starter.sh", p("scripts/seed-app-user.sh"), p("scripts/sync-panel.ts"), p("scripts/sync-app.ts")];
   const harnessBrowser = ["scripts/ci-browser.sh"];
-  const config = ["vite.config.ts", "void.json", "hooks-plugin.ts", "env.ts", "wrangler.jsonc", "tsconfig.json", "tsconfig.node.json", "tsconfig.scripts.json"];
-  const mocks = t.closure(["test/smtp-sink.ts", "test/mock-oidc.ts", "test/s3-mock.ts", "test/cf-mock.ts"], "bun");
-  const SERVER = union(t.closure([...t.under("routes", "crons", "queues"), "hooks-plugin.ts", "vite.config.ts"], "workerd"), t.under("db", "types"), config);
-  const BUN = union(t.closure(["src/node/serve.ts"], "bun"), ["bin/voidbase.ts"], t.under("db", "types"));
-  const CLI = t.closure(["bin/voidbase.ts"], "bun");
+  const config = [p("vite.config.ts"), p("void.json"), p("hooks-plugin.ts"), p("env.ts"), p("wrangler.jsonc"), p("tsconfig.json"), p("tsconfig.node.json"), "tsconfig.scripts.json"];
+  const mocks = t.closure([p("test/smtp-sink.ts"), p("test/mock-oidc.ts"), p("test/s3-mock.ts"), p("test/cf-mock.ts")], "bun");
+  const SERVER = union(t.closure([...t.under(p("routes"), p("crons"), p("queues")), p("hooks-plugin.ts"), p("vite.config.ts")], "workerd"), t.under(p("db"), p("types")), config);
+  const BUN = union(t.closure([p("src/node/serve.ts")], "bun"), [p("bin/voidbase.ts")], t.under(p("db"), p("types")));
+  const CLI = t.closure([p("bin/voidbase.ts")], "bun");
   const common = union(deps, harness);
   const out: Record<string, Set<string>> = {};
-  out["step:typecheck"] = union(t.under("src", "routes", "bin", "crons", "queues", "db", "types").filter((f) => /\.tsx?$/.test(f)), ["env.ts", "hooks-plugin.ts", "vite.config.ts", "scripts/cf-builds.ts", "scripts/gh-release.ts", "scripts/ci-status.ts", "scripts/ci-plan.ts"], config, deps);
-  out["step:unit"] = union(t.closure(t.under("test/unit"), "bun"), common);
-  out["step:deploy-cf"] = union(t.closure(["test/deploy-cf.ts"], "bun"), CLI, SERVER, mocks, common, harnessSuites);
-  out["step:fresh-db"] = union(t.closure(["test/fresh-db.ts"], "bun"), SERVER, t.under("test/fixtures"), common);
-  out["step:mail-http"] = union(t.closure(["test/mail-http.ts"], "bun"), SERVER, common);
-  out["step:exe-smoke"] = union(t.closure(["test/exe-smoke.ts"], "bun"), CLI, ["scripts/build-exe.ts"], common);
-  out["step:local"] = union(t.closure(["test/local.ts"], "bun"), CLI, common);
-  out["step:starter"] = union(t.closure(["test/starter-smoke.ts"], "bun"), SERVER, common, harnessSuites, harnessBrowser);
+  out["step:typecheck"] = union(t.under(p("src"), p("routes"), p("bin"), p("crons"), p("queues"), p("db"), p("types")).filter((f) => /\.tsx?$/.test(f)), [p("env.ts"), p("hooks-plugin.ts"), p("vite.config.ts"), "scripts/cf-builds.ts", "scripts/gh-release.ts", "scripts/ci-status.ts", "scripts/ci-plan.ts", "scripts/pipeline.ts", "scripts/environment.ts"], config, deps);
+  out["step:unit"] = union(t.closure(t.under(p("test/unit")), "bun"), common);
+  out["step:deploy-cf"] = union(t.closure([p("test/deploy-cf.ts")], "bun"), CLI, SERVER, mocks, common, harnessSuites);
+  out["step:fresh-db"] = union(t.closure([p("test/fresh-db.ts")], "bun"), SERVER, t.under(p("test/fixtures")), common);
+  out["step:mail-http"] = union(t.closure([p("test/mail-http.ts")], "bun"), SERVER, common);
+  out["step:exe-smoke"] = union(t.closure([p("test/exe-smoke.ts")], "bun"), CLI, ["scripts/build-exe.ts"], common);
+  out["step:local"] = union(t.closure([p("test/local.ts")], "bun"), CLI, common);
+  out["step:starter"] = union(t.closure([p("test/starter-smoke.ts")], "bun"), SERVER, common, harnessSuites, harnessBrowser);
   // the fixture is a whole Void app the test converts, so every file under it counts, not just what a closure reaches
-  out["step:adapter"] = union(t.closure(["test/adapter.ts"], "bun"), SERVER, t.under("src/adapter"), t.under("test/fixtures/void-app"), ["hooks-plugin.ts"], common);
-  for (const s of CONFORMANCE) { const own = t.closure([`test/conformance/${s}.ts`], "bun"); out[`suite:${s}`] = union(own, SERVER, mocks, common, harnessSuites); out[`bun:${s}`] = union(own, BUN, mocks, common, harnessSuites); }
-  { const own = t.closure(["test/sdk-suite.ts"], "bun"); out["suite:sdk-suite"] = union(own, SERVER, mocks, common, harnessSuites); out["bun:sdk-suite"] = union(own, BUN, mocks, common, harnessSuites); }
-  out["suite:cloud-rest"] = union(t.closure(["test/cloud-rest.ts"], "bun"), mocks, common, harnessSuites);
-  for (const p of BROWSER) out[`suite:${p}`] = union(t.closure([`test/${p}.ts`], "bun"), SERVER, mocks, common, harnessSuites, harnessBrowser);
+  out["step:adapter"] = union(t.closure([p("test/adapter.ts")], "bun"), SERVER, t.under(p("src/adapter")), t.under(p("test/fixtures/void-app")), [p("hooks-plugin.ts")], common);
+  for (const s of CONFORMANCE) { const own = t.closure([p(`test/conformance/${s}.ts`)], "bun"); out[`suite:${s}`] = union(own, SERVER, mocks, common, harnessSuites); out[`bun:${s}`] = union(own, BUN, mocks, common, harnessSuites); }
+  { const own = t.closure([p("test/sdk-suite.ts")], "bun"); out["suite:sdk-suite"] = union(own, SERVER, mocks, common, harnessSuites); out["bun:sdk-suite"] = union(own, BUN, mocks, common, harnessSuites); }
+  out["suite:cloud-rest"] = union(t.closure([p("test/cloud-rest.ts")], "bun"), mocks, common, harnessSuites);
+  for (const b of BROWSER) out[`suite:${b}`] = union(t.closure([p(`test/${b}.ts`)], "bun"), SERVER, mocks, common, harnessSuites, harnessBrowser);
   return out;
 }
 

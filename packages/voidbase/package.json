@@ -1,0 +1,211 @@
+{
+  "name": "@voidbase-cloud/voidbase",
+  "version": "0.9.0-beta.50",
+  "description": "PocketBase-compatible backend on Cloudflare Workers (D1, R2, Queues, Durable Objects) via Void, or a single Bun process",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/voidbase-cloud/voidbase.git"
+  },
+  "homepage": "https://github.com/voidbase-cloud/voidbase#readme",
+  "bugs": {
+    "url": "https://github.com/voidbase-cloud/voidbase/issues"
+  },
+  "private": false,
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "voidbase": "bin/voidbase.ts"
+  },
+  "exports": {
+    "./app": "./src/server/app.ts",
+    "./crons": "./src/server/crons.ts",
+    "./workflows": "./src/server/workflows.ts",
+    "./jobs": "./src/server/jobs.ts",
+    "./hub": "./src/server/hub.ts",
+    "./durable-db": "./src/server/durable-db.ts",
+    "./plugin": "./hooks-plugin.ts",
+    "./schema": "./db/schema.ts",
+    "./env": "./env.ts",
+    "./scripts/export.ts": "./scripts/export.ts",
+    "./scripts/sync-panel.ts": "./scripts/sync-panel.ts",
+    "./scripts/sync-app.ts": "./scripts/sync-app.ts",
+    "./package.json": "./package.json",
+    ".": "./src/node/index.ts",
+    "./serve": "./src/node/serve.ts",
+    "./static": "./src/server/static.ts",
+    "./api": "./src/server/api.ts",
+    "./cloud": "./src/cloud/rest.ts",
+    "./cloud-client": "./src/cloud/client.ts",
+    "./bundle": "./src/node/bundle.ts",
+    "./adapter": "./src/adapter/runtime.ts",
+    "./adapter/plugin": "./src/adapter/index.ts",
+    "./kernel": "./src/server/kernel.ts",
+    "./interfaces": "./src/server/interfaces/index.ts",
+    "./plugins": "./src/server/plugins/manifest.ts",
+    "./auth-slot": "./src/server/auth-slot.ts",
+    "./record-slot": "./src/server/record-slot.ts",
+    "./realtime-slot": "./src/server/realtime-slot.ts",
+    "./deploy-plugin": "./src/node/deploy-plugin.ts",
+    "./plugins/auth": "./src/server/plugins/auth.ts",
+    "./plugins/backups": "./src/server/plugins/backups.ts",
+    "./plugins/realtime": "./src/server/plugins/realtime.ts",
+    "./plugins/hardening": "./src/server/plugins/hardening.ts",
+    "./plugins/openapi": "./src/server/plugins/openapi.ts",
+    "./plugins/mcp": "./src/server/plugins/mcp.ts",
+    "./plugins/seo": "./src/server/plugins/seo.ts",
+    "./plugins/mail": "./src/server/plugins/mail.ts",
+    "./plugins/ai": "./src/server/plugins/ai.ts",
+    "./plugins/observability": "./src/server/plugins/observability.ts",
+    "./plugins/translations": "./src/server/plugins/translations.ts",
+    "./plugins/stripe": "./src/server/plugins/stripe.ts",
+    "./plugins/polar": "./src/server/plugins/polar.ts",
+    "./plugins/lemonsqueezy": "./src/server/plugins/lemonsqueezy.ts",
+    "./plugins/payments-shared": "./src/server/plugins/payments-shared.ts",
+    "./plugins/tax-flat": "./src/server/plugins/tax-flat.ts",
+    "./plugins/shipping-flat": "./src/server/plugins/shipping-flat.ts",
+    "./plugins/commerce": "./src/server/plugins/commerce.ts",
+    "./plugins/domains": "./src/server/plugins/domains.ts",
+    "./plugins/previews": "./src/server/plugins/previews.ts",
+    "./plugins/collections": "./src/server/plugins/collections.ts",
+    "./registry": "./src/node/registry.ts",
+    "./sdk": "./src/server/entries/sdk.ts",
+    "./types": "./src/server/types.ts",
+    "./platform": {
+      "workerd": "./src/platform/workers/index.ts",
+      "default": "./src/platform/node/index.ts"
+    },
+    "./platform/email": {
+      "workerd": "./src/platform/workers/email.ts",
+      "default": "./src/platform/node/email.ts"
+    },
+    "./platform/raster": {
+      "workerd": "./src/platform/workers/raster.ts",
+      "default": "./src/platform/node/raster.ts"
+    },
+    "./auth-routes": "./src/server/entries/auth-routes.ts",
+    "./backups-api": "./src/server/entries/backups-api.ts",
+    "./hardening-middleware": "./src/server/entries/hardening-middleware.ts",
+    "./realtime-client": "./src/server/entries/realtime-client.ts",
+    "./mail": "./src/server/entries/mail.ts",
+    "./records-preview": "./src/server/entries/records-preview.ts",
+    "./records-files": "./src/server/entries/records-files.ts",
+    "./project-sync": "./src/server/entries/project-sync.ts",
+    "./secrets": "./src/env/define.ts"
+  },
+  "imports": {
+    "#platform/env": {
+      "workerd": "./src/platform/workers/env.ts",
+      "default": "./src/platform/node/env.ts"
+    },
+    "#platform/log": {
+      "workerd": "./src/platform/workers/log.ts",
+      "default": "./src/platform/node/log.ts"
+    },
+    "#platform/sse": {
+      "workerd": "./src/platform/workers/sse.ts",
+      "default": "./src/platform/node/sse.ts"
+    },
+    "#platform/sockets": {
+      "workerd": "./src/platform/workers/sockets.ts",
+      "default": "./src/platform/node/sockets.ts"
+    },
+    "#platform/email": {
+      "workerd": "./src/platform/workers/email.ts",
+      "default": "./src/platform/node/email.ts"
+    },
+    "#platform/hooks": {
+      "workerd": "./src/platform/workers/hooks.ts",
+      "default": "./src/platform/node/hooks.ts"
+    },
+    "#platform/migrations": {
+      "workerd": "./src/platform/workers/migrations.ts",
+      "default": "./src/platform/node/migrations.ts"
+    },
+    "#platform/photon": {
+      "workerd": "./src/platform/workers/photon.ts",
+      "default": "./src/platform/node/photon.ts"
+    },
+    "#platform/plugins": {
+      "workerd": "./src/platform/workers/plugins.ts",
+      "default": "./src/platform/node/plugins.ts"
+    },
+    "#platform/raster": {
+      "workerd": "./src/platform/workers/raster.ts",
+      "default": "./src/platform/node/raster.ts"
+    }
+  },
+  "files": [
+    "bin",
+    "src",
+    "db",
+    "crons",
+    "queues",
+    "routes",
+    "scripts/export.ts",
+    "scripts/sync-panel.ts",
+    "scripts/sync-app.ts",
+    "scripts/seed-app-user.sh",
+    "docs",
+    "hooks-plugin.ts",
+    "vite.config.ts",
+    "void.json",
+    "env.ts",
+    ".env.example",
+    "README.md",
+    "COMPAT.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE",
+    "types",
+    "tsconfig.node.json"
+  ],
+  "keywords": [
+    "pocketbase",
+    "cloudflare-workers",
+    "d1",
+    "r2",
+    "void",
+    "backend",
+    "baas"
+  ],
+  "engines": {
+    "bun": ">=1.2"
+  },
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "preview": "vp preview",
+    "panel:sync": "bun scripts/sync-panel.ts",
+    "app:sync": "bun scripts/sync-app.ts",
+    "test": "bun test",
+    "check": "void prepare && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "pack:check": "npm pack --dry-run",
+    "prepublishOnly": "bun run check && bun test"
+  },
+  "dependencies": {
+    "@cf-wasm/photon": "^0.4.0",
+    "@cloudflare/workers-types": "^4.20250903.0",
+    "@resvg/resvg-wasm": "2.6.2",
+    "@simplewebauthn/server": "^14.0.1",
+    "bcryptjs": "^3.0.2",
+    "cordis": "4.0.0-rc.9",
+    "fflate": "^0.8.3",
+    "hono": "^4.11.9",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.10",
+    "vite-plus": "^0.1.21",
+    "void": "^0.10.13"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
+    "@types/bun": "^1.4.1",
+    "husky": "^9.1.7",
+    "playwright": "^1.63.0",
+    "pocketbase": "0.28.0",
+    "subset-font": "2.7.0"
+  }
+}

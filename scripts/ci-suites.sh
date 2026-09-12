@@ -2,13 +2,15 @@
 # Runs every differential and browser suite against a reference PocketBase and a voidbase, printing one line per
 # suite and failing if any suite fails. Needs test/smtp-sink.ts (2525/2526), test/mock-oidc.ts (5190) and test/s3-mock.ts (5195) running.
 #   scripts/ci-suites.sh [pb=http://127.0.0.1:8090] [vb=http://127.0.0.1:5180] [suites...]
+# The suites live with the package they exercise and read the app's own files (public/_ for one), so the run
+# happens in packages/voidbase; the logs and the dev server's log stay at the repository root.
 set -u
-cd "$(dirname "$0")/.."
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT/packages/voidbase"
 PB="${1:-http://127.0.0.1:8090}"; VB="${2:-http://127.0.0.1:5180}"; shift 2 2>/dev/null || true
-LOGS="${CI_LOGS:-.void/ci-logs}"; mkdir -p "$LOGS"
+LOGS="${CI_LOGS:-$ROOT/.void/ci-logs}"; mkdir -p "$LOGS"
 POSITIONAL="auth-flows backups batch cascade filter-corpus filters-extra hardening logs-crons manage-rule oauth2 otp-mfa protected-files providers rules s3 security settings sql thumbs views"
 FLAGGED="compare records realtime collections"
-DEVLOG="${CI_DEV_LOG:-.void/dev.log}"
+DEVLOG="${CI_DEV_LOG:-$ROOT/.void/dev.log}"
 optimizations() { grep -cE "optimized|program reload" "$DEVLOG" 2>/dev/null || echo 0; }
 fail=0; run() {  # a suite that failed while the dev server re-optimized a dependency (a reload) gets one more attempt
   local name="$1" t0=$SECONDS o1; shift; o1=$(optimizations)

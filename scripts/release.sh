@@ -18,14 +18,14 @@
 # Environment: GH_TOKEN (contents + pull requests write on the repository), NPM_TOKEN, GH_PACKAGES_TOKEN (optional: the
 # Actions token or a classic PAT with write:packages; fine-grained tokens cannot publish packages), GITHUB_REPOSITORY.
 set -uo pipefail
-cd "$(dirname "$0")/.."; ROOT="$PWD"
+cd "$(dirname "$0")/.."; ROOT="$PWD"; PKG_DIR="$ROOT/packages/voidbase"
 . scripts/ci-lib.sh
 DRY=""; TAG=""; PR=1; HOT=""
 while [ $# -gt 0 ]; do case "$1" in --dry-run) DRY=1 ;; --tag) TAG="$2"; shift ;; --no-pr) PR=0 ;; --hot) HOT=1 ;; *) echo "unknown option $1"; exit 2 ;; esac; shift; done
 BACKEND=$(ci_backend); export CI_BACKEND_NAME="$BACKEND"
 REPO="${GITHUB_REPOSITORY:-voidbase-cloud/voidbase}"; export GITHUB_REPOSITORY="$REPO"
 BRANCH="${WORKERS_CI_BRANCH:-${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null)}}"
-VERSION=$(node -p "require('./package.json').version"); PKG="@voidbase-cloud/voidbase"
+VERSION=$(node -p "require('./packages/voidbase/package.json').version"); PKG="@voidbase-cloud/voidbase"
 RP=(bunx release-please@17.11.2); RP_ARGS=(--repo-url "$REPO" --token "${GH_TOKEN:-}" --target-branch master --config-file release-please-config.json --manifest-file .release-please-manifest.json)
 CI_CACHE_DIR="$(ci_cache_dir)"; export CI_CACHE_DIR; mkdir -p "$CI_CACHE_DIR"
 outputs() { if [ -n "${GITHUB_OUTPUT:-}" ]; then printf '%s\n' "$@" >> "$GITHUB_OUTPUT"; fi; }
@@ -56,9 +56,10 @@ has_asset() { printf '%s' "$release_json" | grep -qF "\"$1\""; }
 on_npm=0; npm view "$PKG@$VERSION" version >/dev/null 2>&1 && on_npm=1
 publish_npm() {
   # hot mode publishes what master is, unchecked: the point of hot mode is that nothing stands between a push and npm
-  if [ -z "$HOT" ]; then bun run check && bun test && bun test/cloud-rest.ts || return 1; fi
-  rm -f voidbase-cloud-voidbase-*.tgz; npm pack || return 1
-  local tarball; tarball="$PWD/$(ls voidbase-cloud-voidbase-*.tgz)"; ls -la "$tarball"
+  if [ -z "$HOT" ]; then bun run check && bun test && (cd "$PKG_DIR" && bun test/cloud-rest.ts) || return 1; fi
+  # the published package is packages/voidbase; the workspace root is private and is never packed
+  rm -f "$PKG_DIR"/voidbase-cloud-voidbase-*.tgz; (cd "$PKG_DIR" && npm pack) || return 1
+  local tarball; tarball="$PKG_DIR/$(cd "$PKG_DIR" && ls voidbase-cloud-voidbase-*.tgz)"; ls -la "$tarball"
   local smoke; smoke=$(mktemp -d)
   (cd "$smoke" && bun init -y >/dev/null && bun add "$tarball" && bunx voidbase help | head -n 5 && node -e "const p=require('$PKG/package.json'); if (p.version !== '$VERSION') throw new Error('version mismatch: ' + p.version)") || return 1
   [ -n "${NPM_TOKEN:-}" ] || { echo "NPM_TOKEN is not set"; return 1; }
@@ -96,7 +97,7 @@ build_executables() {
   XDG_CACHE_HOME="$CI_CACHE_DIR/xdg" bun run panel:sync || return 1
   bun scripts/build-exe.ts --targets all --out dist/release || return 1
   cat dist/release/checksums.txt
-  STARTER_VB_DIR="$STARTER_DIR/pb" bun test/exe-smoke.ts || return 1
+  (cd "$PKG_DIR" && STARTER_VB_DIR="$STARTER_DIR/pb" bun test/exe-smoke.ts) || return 1
   [ -n "$DRY" ] && return 0
   bun scripts/gh-release.ts upload "$TAG" dist/release/*.zip dist/release/checksums.txt || return 1
   # PocketBase's shape: the `./voidbase update` hint first, then the compiled notes (`voidbase update` strips the hint again)

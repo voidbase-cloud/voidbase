@@ -10,7 +10,7 @@
 # CI_CACHE_DIR for the downloads kept between runs, CI_STATUS_URL for the record of the last green run
 # (scripts/ci-plan.ts skips what that run already verified on the same inputs; CI_PLAN=full runs everything).
 set -uo pipefail
-cd "$(dirname "$0")/.."; ROOT="$PWD"
+cd "$(dirname "$0")/.."; ROOT="$PWD"; PKG="$ROOT/packages/voidbase"
 . scripts/ci-lib.sh
 export VOIDBASE_SUPERUSER_EMAIL="${VOIDBASE_SUPERUSER_EMAIL:-admin@example.com}"
 export VOIDBASE_SUPERUSER_PASSWORD="${VOIDBASE_SUPERUSER_PASSWORD:-changeme123}"
@@ -32,7 +32,7 @@ cleanup() {
   ./scripts/dev.sh stop >/dev/null 2>&1 || true
   for d in serve smtp-sink mock-oidc s3-mock cf-mock; do stop_daemon "$d"; done
   stop_reference
-  if [ -f .void/ci-env.backup ]; then mv .void/ci-env.backup .env; fi
+  if [ -f .void/ci-env.backup ]; then mv .void/ci-env.backup "$PKG/.env"; fi
   if [ "$rc" != 0 ]; then
     echo; echo "--- dev.log"; tail -n 60 .void/dev.log 2>/dev/null; echo "--- reference"; tail -n 30 .void/reference/pb.log 2>/dev/null
     for f in "$LOGS"/*.log "$LOGS"/bun/*.log; do [ -f "$f" ] && grep -qE "^FAIL" "$f" 2>/dev/null && { echo "--- $f"; grep -E "^FAIL|Error|error:" "$f" | head -8; }; done
@@ -56,28 +56,28 @@ commitlint_check() {  # the commits this run introduces; the last one when there
 }
 oracles() {  # the starter and the panel next to a production-shaped public/ (the SPA shell the boot test checks)
   . scripts/ci-oracles.sh
-  XDG_CACHE_HOME="$CI_CACHE_DIR/xdg" bun run panel:sync   # scripts/sync-panel.ts keeps the panel tarball under it
+  XDG_CACHE_HOME="$CI_CACHE_DIR/xdg" bun run panel:sync   # packages/voidbase/scripts/sync-panel.ts keeps the panel tarball under it
   # the starter's frontend build is kept with the clone and reused while the starter's commit is the same
   local head stamp; head=$(git -C "$STARTER_DIR" rev-parse HEAD 2>/dev/null || echo none); stamp="$STARTER_DIR/sk/build/.voidbase-ci-stamp"
   if [ -d "$STARTER_DIR/sk/build" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$head" ]; then echo "starter frontend build reused ($head)"
   else (cd "$STARTER_DIR/sk" && bun install --frozen-lockfile && bunx svelte-kit sync && bun run build) && echo "$head" > "$stamp"; fi
   VOIDBASE_APP_DIR="$STARTER_DIR/sk/build" bun run app:sync
-  ./node_modules/.bin/void prepare
+  (cd "$PKG" && "$ROOT/node_modules/.bin/void" prepare)
 }
 plan() { bun scripts/ci-plan.ts; }
 cache_restore() { ./scripts/ci-cache.sh restore; }
 cache_save() { ./scripts/ci-cache.sh save; }
-typecheck() { bunx tsc --noEmit -p tsconfig.json && bunx tsc --noEmit -p tsconfig.node.json && bunx tsc --noEmit -p tsconfig.scripts.json; }
+typecheck() { ./node_modules/.bin/tsc --noEmit -p "$PKG/tsconfig.json" && ./node_modules/.bin/tsc --noEmit -p "$PKG/tsconfig.node.json" && ./node_modules/.bin/tsc --noEmit -p tsconfig.scripts.json; }
 unit() { bun test; }
 browser() { local exports; exports=$(./scripts/ci-browser.sh) || return 1; eval "$exports"; echo "$exports"; }
 boot() {
   # the Worker reads its vars from .env (Void bakes them), not from the shell: the run writes its own values so both
   # sides serve the same starter; a dev machine's file is put back when the run ends (cleanup)
-  if [ -f .env ] && [ ! -f .void/ci-env.backup ]; then cp .env .void/ci-env.backup; fi
-  printf 'VOIDBASE_SUPERUSER_EMAIL=%s\nVOIDBASE_SUPERUSER_PASSWORD=%s\nVOIDBASE_HOOKS_DIR=%s\nVOIDBASE_MIGRATIONS_DIR=%s\nAUDITLOG=%s\nVOIDBASE_LOG_MIN_LEVEL=0\n' "$VOIDBASE_SUPERUSER_EMAIL" "$VOIDBASE_SUPERUSER_PASSWORD" "$STARTER_DIR/pb/pb_hooks" "$STARTER_DIR/pb/pb_migrations" "$AUDITLOG" > .env
-  ./node_modules/.bin/void db migrate
+  if [ -f "$PKG/.env" ] && [ ! -f .void/ci-env.backup ]; then cp "$PKG/.env" .void/ci-env.backup; fi
+  printf 'VOIDBASE_SUPERUSER_EMAIL=%s\nVOIDBASE_SUPERUSER_PASSWORD=%s\nVOIDBASE_HOOKS_DIR=%s\nVOIDBASE_MIGRATIONS_DIR=%s\nAUDITLOG=%s\nVOIDBASE_LOG_MIN_LEVEL=0\n' "$VOIDBASE_SUPERUSER_EMAIL" "$VOIDBASE_SUPERUSER_PASSWORD" "$STARTER_DIR/pb/pb_hooks" "$STARTER_DIR/pb/pb_migrations" "$AUDITLOG" > "$PKG/.env"
+  (cd "$PKG" && "$ROOT/node_modules/.bin/void" db migrate)
   ./scripts/dev.sh start "$PORT" && booted=1
-  ./scripts/seed-app-user.sh "$VB"
+  "$PKG/scripts/seed-app-user.sh" "$VB"
   warm_up
 }
 warm_up() {  # first requests to the paths whose dependencies Vite+ optimizes on first use (a reload that would lose a
@@ -99,10 +99,10 @@ start_reference() {  # a freshly seeded reference: state left by one run or one 
 stop_reference() { if [ "$started_pb" = 1 ] && [ -f .void/reference/pb.pid ]; then kill "$(cat .void/reference/pb.pid)" 2>/dev/null; for _ in $(seq 1 30); do port_busy "$PB_PORT" || break; sleep 0.5; done; started_pb=0; fi; }
 reference() {
   if port_busy "$PB_PORT"; then echo "reusing the PocketBase listening on $PB"; else start_reference; fi
-  helper smtp-sink 2525 bun test/smtp-sink.ts
-  helper mock-oidc 5190 bun test/mock-oidc.ts
-  helper s3-mock 5195 bun test/s3-mock.ts
-  helper cf-mock 5197 bun test/cf-mock.ts
+  helper smtp-sink 2525 bun "$PKG/test/smtp-sink.ts"
+  helper mock-oidc 5190 bun "$PKG/test/mock-oidc.ts"
+  helper s3-mock 5195 bun "$PKG/test/s3-mock.ts"
+  helper cf-mock 5197 bun "$PKG/test/cf-mock.ts"
   wait_http http://127.0.0.1:2526/messages 30; wait_http http://127.0.0.1:5190/ 30; wait_http http://127.0.0.1:5195/ 30; wait_http http://127.0.0.1:5197/__state 30
   warm_mail
 }
@@ -128,25 +128,27 @@ suites_bun() {  # the selected suites against `voidbase serve` (Bun runtime, SQL
   # gets a fresh one: both sides of every comparison then start from the same state
   if [ "$started_pb" = 1 ]; then stop_reference; start_reference; fi
   rm -rf .void/ci-serve; mkdir -p .void/ci-serve
-  daemon serve .void/serve.log bun bin/voidbase.ts serve --http 127.0.0.1:8093 --dir .void/ci-serve/pb_data --hooksDir "$STARTER_DIR/pb/pb_hooks" --migrationsDir "$STARTER_DIR/pb/pb_migrations"
+  daemon serve .void/serve.log bun "$PKG/bin/voidbase.ts" serve --http 127.0.0.1:8093 --dir .void/ci-serve/pb_data --hooksDir "$STARTER_DIR/pb/pb_hooks" --migrationsDir "$STARTER_DIR/pb/pb_migrations"
   wait_http http://127.0.0.1:8093/api/health 60
-  ./scripts/seed-app-user.sh http://127.0.0.1:8093
+  "$PKG/scripts/seed-app-user.sh" http://127.0.0.1:8093
   # shellcheck disable=SC2086
   CI_BROWSER=0 CI_LOGS="$LOGS/bun" ./scripts/ci-suites.sh "$PB" http://127.0.0.1:8093 $(plan_list bun); local rc=$?
   stop_daemon serve
   [ "$booted" = 1 ] && ./scripts/dev.sh start "$PORT"
   return "$rc"
 }
-deploy_cf() { bun test/deploy-cf.ts; }
-adapter() { bun test/adapter.ts; }   # a Void app converted into a voidbase app, then run
-fresh_db() { bun test/fresh-db.ts 5181; }
-mail_http() { bun test/mail-http.ts 5184; }
-exe_smoke() { STARTER_VB_DIR="$STARTER_DIR/pb" bun test/exe-smoke.ts; }
+# the app-facing tests run from the package (packages/voidbase), the directory their relative paths mean: db/
+# migrations, public/_, the app's .env.local and its .void state
+deploy_cf() { (cd "$PKG" && bun test/deploy-cf.ts); }
+adapter() { (cd "$PKG" && bun test/adapter.ts); }   # a Void app converted into a voidbase app, then run
+fresh_db() { (cd "$PKG" && bun test/fresh-db.ts 5181); }
+mail_http() { (cd "$PKG" && bun test/mail-http.ts 5184); }
+exe_smoke() { (cd "$PKG" && STARTER_VB_DIR="$STARTER_DIR/pb" bun test/exe-smoke.ts); }
 # instances on this machine: its own VOIDBASE_HOME so a build never touches a developer's registry
-local_instances() { bun test/local.ts; }
+local_instances() { (cd "$PKG" && bun test/local.ts); }
 starter() {  # the unmodified starter frontend against voidbase
   STARTER_SK_DIR="$STARTER_DIR/sk" ./scripts/starter.sh start 5174 "$VB"
-  bun test/starter-smoke.ts http://127.0.0.1:5174 "$LOGS/starter.png"
+  (cd "$PKG" && bun test/starter-smoke.ts http://127.0.0.1:5174 "$LOGS/starter.png")
 }
 
 release_work() {  # release-please, npm and the executables in this build (docs/releasing.md): on master, when the
@@ -156,7 +158,7 @@ release_work() {  # release-please, npm and the executables in this build (docs/
   if [ -z "${GH_TOKEN:-}" ]; then skip_step release "no GH_TOKEN"; return 0; fi
   local why=""; plan_flag release-merge && why="the release PR was merged"; plan_flag release-pr && why="${why:-releasable commits, refreshing the release PR}"; plan_flag release-dry-run && why="${why:-dry run requested by a commit}"
   if [ -z "$why" ]; then  # a release that still needs publishing or its executables: cut by hand, or left by hot mode
-    local v rel; v=$(node -p "require('./package.json').version"); rel=$(bun scripts/gh-release.ts view "v$v" 2>/dev/null) || rel=""
+    local v rel; v=$(node -p "require('./packages/voidbase/package.json').version"); rel=$(bun scripts/gh-release.ts view "v$v" 2>/dev/null) || rel=""
     if [ -n "$rel" ]; then
       if ! npm view "@voidbase-cloud/voidbase@$v" version >/dev/null 2>&1; then why="release v$v is not on npm yet"
       elif ! printf '%s' "$rel" | grep -q checksums.txt && [ "${CI_HOT:-0}" != 1 ]; then why="release v$v has no executables yet"; fi

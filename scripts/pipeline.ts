@@ -15,16 +15,18 @@ const here = environment();
 const CONFIG = ["-c", "ci/wrangler.jsonc"];
 const wrangler = "./node_modules/.bin/wrangler";
 
-const run = async (cmd: string[], what: string): Promise<never> => {
+const run = async (cmd: string[], what: string, cwd?: string): Promise<never> => {
   console.log(`[${verb}] ${what} — ${here.describe()}`);
-  process.exit(await Bun.spawn(cmd, { stdout: "inherit", stderr: "inherit", stdin: "inherit" }).exited);
+  process.exit(await Bun.spawn(cmd, { cwd, stdout: "inherit", stderr: "inherit", stdin: "inherit" }).exited);
 };
 const skip = (why: string): never => { console.log(`[${verb}] nothing to do: ${why} — ${here.describe()}`); process.exit(0); };
 
 switch (verb) {
   case "build": {
     const suite = here.automated && !process.env.VOIDBASE_CI_INNER;
-    await run(suite ? ["bash", "scripts/ci.sh"] : ["./node_modules/.bin/vp", "build"], suite ? "the CI suite" : "this project's Vite build");
+    // the Vite build is the app's, and the app is the published package (void.json is there); the CI suite is the
+    // repository's and runs from the root
+    await run(suite ? ["bash", "scripts/ci.sh"] : [`${process.cwd()}/node_modules/.bin/vp`, "build"], suite ? "the CI suite" : "this project's Vite build", suite ? undefined : "packages/voidbase");
     break;
   }
   case "deploy":

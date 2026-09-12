@@ -1,0 +1,10 @@
+# The workspace root pins the install layout, because the lockfile carries configVersion 1: adding `workspaces` to
+# package.json silently switches Bun from the hoisted linker to the isolated one, and the root's node_modules/.bin
+# then holds only the root's own devDependencies. The CI and release scripts call binaries out of that directory by
+# path -- scripts/pipeline.ts runs ./node_modules/.bin/wrangler, scripts/ci.sh ./node_modules/.bin/void and
+# node_modules/.bin/commitlint, scripts/dev.sh ./node_modules/.bin/vp -- and wrangler, drizzle-kit, esbuild and
+# workerd are transitive (void, vite-plus), so under the isolated linker they are simply not there. Hoisted also
+# keeps the one flat tree the package's own runtime resolution assumes. Measured: 12 entries in node_modules and no
+# wrangler under the isolated linker, 300+ and every binary under this one.
+[install]
+linker = "hoisted"

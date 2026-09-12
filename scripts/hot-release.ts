@@ -20,7 +20,8 @@ if (import.meta.main) {
   const repo = process.env.GITHUB_REPOSITORY ?? "voidbase-cloud/voidbase";
   const token = process.env.GH_TOKEN ?? "";
   const sh = async (cmd: string[], quiet = false) => { const p = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" }); const out = await new Response(p.stdout).text(); const err = await new Response(p.stderr).text(); if ((await p.exited) !== 0) throw new Error(`${cmd.slice(0, 3).join(" ")}: ${err.trim() || out.trim()}`); if (!quiet && out.trim()) console.log(out.trim()); return out.trim(); };
-  const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
+  const PKG = "packages/voidbase";  // the published package; the workspace root is private and has no version
+  const pkg = JSON.parse(readFileSync(`${PKG}/package.json`, "utf8")) as { version: string };
   const from = pkg.version, to = nextPrerelease(from);
   const lastTag = await sh(["git", "describe", "--tags", "--abbrev=0", "--match", "v*"], true).catch(() => "");
   const subjects = (await sh(["git", "log", "--format=%s", ...(lastTag ? [`${lastTag}..HEAD`] : ["-20"])], true)).split("\n").filter((l) => l && !/^chore\(master\): release/.test(l));
@@ -29,11 +30,11 @@ if (import.meta.main) {
   console.log(`hot release: ${from} -> ${to} (${subjects.length} commit(s) since ${lastTag || "the start"})${dry ? " [dry run]" : ""}`);
   if (dry) { console.log(notes); process.exit(0); }
   if (!token) { console.error("GH_TOKEN is not set: the release cannot be pushed"); process.exit(1); }
-  writeFileSync("package.json", readFileSync("package.json", "utf8").replace(`"version": "${from}"`, `"version": "${to}"`));
+  writeFileSync(`${PKG}/package.json`, readFileSync(`${PKG}/package.json`, "utf8").replace(`"version": "${from}"`, `"version": "${to}"`));
   try { const m = JSON.parse(readFileSync(".release-please-manifest.json", "utf8")) as Record<string, string>; for (const k of Object.keys(m)) if (m[k] === from) m[k] = to; writeFileSync(".release-please-manifest.json", `${JSON.stringify(m, null, 2)}\n`); } catch { /* no manifest */ }
-  try { const c = readFileSync("CHANGELOG.md", "utf8"); const i = c.indexOf("\n## "); writeFileSync("CHANGELOG.md", i >= 0 ? `${c.slice(0, i + 1)}${notes}\n${c.slice(i + 1)}` : `${c.trimEnd()}\n\n${notes}`); } catch { writeFileSync("CHANGELOG.md", `# Changelog\n\n${notes}`); }
+  try { const c = readFileSync(`${PKG}/CHANGELOG.md`, "utf8"); const i = c.indexOf("\n## "); writeFileSync(`${PKG}/CHANGELOG.md`, i >= 0 ? `${c.slice(0, i + 1)}${notes}\n${c.slice(i + 1)}` : `${c.trimEnd()}\n\n${notes}`); } catch { writeFileSync(`${PKG}/CHANGELOG.md`, `# Changelog\n\n${notes}`); }
   await sh(["git", "config", "user.name", "voidbase release"]); await sh(["git", "config", "user.email", "release@voidbase.cloud"]);
-  await sh(["git", "add", "package.json", ".release-please-manifest.json", "CHANGELOG.md"]);
+  await sh(["git", "add", `${PKG}/package.json`, ".release-please-manifest.json", `${PKG}/CHANGELOG.md`]);
   await sh(["git", "commit", "-q", "-m", `chore(master): release ${to} [CI Skip]`]);
   await sh(["git", "tag", `v${to}`]);
   const remote = `https://x-access-token:${token}@github.com/${repo}.git`;

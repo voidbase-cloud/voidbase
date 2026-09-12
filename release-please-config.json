@@ -59,7 +59,7 @@
     }
   ],
   "packages": {
-    ".": {
+    "packages/voidbase": {
       "package-name": "@voidbase-cloud/voidbase"
     }
   }

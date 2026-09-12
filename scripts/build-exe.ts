@@ -7,7 +7,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { join, relative, resolve } from "node:path";
 import { zipSync, type Zippable } from "fflate";
 
-const PKG = resolve(import.meta.dir, "..");
+// the published package: this script is the repository's release tooling and lives in the workspace root's scripts/
+const PKG = resolve(import.meta.dir, "../packages/voidbase");
 export const TARGETS: Record<string, { bun: string; os: string; arch: string; exe: string }> = {
   "linux-x64": { bun: "bun-linux-x64", os: "linux", arch: "amd64", exe: "voidbase" },
   "linux-arm64": { bun: "bun-linux-arm64", os: "linux", arch: "arm64", exe: "voidbase" },

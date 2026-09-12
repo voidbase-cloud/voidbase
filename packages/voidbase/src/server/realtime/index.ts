@@ -49,7 +49,7 @@ export function parseSubscription(raw: string): Subscription | null {
   if (topic.startsWith("@")) return { topic: raw, collection: topic, recordId: null, query: {}, headers: {} }; // @oauth2 and friends: messages, not records
   if (topic === PRESENCE_TOPIC) return { topic: raw, collection: PRESENCE_TOPIC, recordId: null, query: {}, headers: {} }; // who is here now, not a collection
   const m = /^([^/]+)\/(.+)$/.exec(topic);
-  if (!m) return null;
+  if (!m && !topic) return null;
   let query: Record<string, string> = {}, headers: Record<string, string> = {};
   if (optionsPart) {
     try {
@@ -58,6 +58,11 @@ export function parseSubscription(raw: string): Subscription | null {
       headers = Object.fromEntries(Object.entries(o.headers ?? {}).map(([k, v]) => [k.toLowerCase(), String(v)]));
     } catch { /* ignore malformed options */ }
   }
+  // A bare collection name is PocketBase's deprecated alias for the whole collection: apis/realtime.go maps
+  // `collection.Name + "?"` to the list rule exactly as it maps `collection.Name + "/*?"`. Dropping it here was
+  // silent in the worst way -- the subscribe still answered 204, and the client waited forever for events that
+  // nothing would ever match. `recordId: null` is what makes it the wildcard.
+  if (!m) return { topic: raw, collection: topic, recordId: null, query, headers };
   return { topic: raw, collection: m[1]!, recordId: m[2] === "*" ? null : m[2]!, query, headers };
 }
 

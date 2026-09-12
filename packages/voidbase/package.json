@@ -192,6 +192,7 @@
     "@simplewebauthn/server": "^14.0.1",
     "@voidbase-cloud/plugin-backups": "workspace:*",
     "@voidbase-cloud/plugin-domains": "workspace:*",
+    "@voidbase-cloud/plugin-hardening": "workspace:*",
     "@voidbase-cloud/plugin-realtime": "workspace:*",
     "bcryptjs": "^3.0.2",
     "cordis": "4.0.0-rc.9",

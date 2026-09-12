@@ -1,0 +1,47 @@
+{
+  "name": "@voidbase-cloud/plugin-hardening",
+  "version": "0.9.0-beta.55",
+  "description": "The hardening plugin of voidbase: provides hardening@1, the body limit, the rate limit, the response policy and GET /api/csrf",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/voidbase-cloud/voidbase.git",
+    "directory": "packages/plugin-hardening"
+  },
+  "homepage": "https://github.com/voidbase-cloud/voidbase/tree/master/packages/plugin-hardening#readme",
+  "bugs": {
+    "url": "https://github.com/voidbase-cloud/voidbase/issues"
+  },
+  "private": false,
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "tsconfig.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "voidbase",
+    "voidbase-plugin",
+    "hardening",
+    "cloudflare-workers"
+  ],
+  "engines": {
+    "bun": ">=1.2"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@voidbase-cloud/voidbase": "workspace:*",
+    "hono": "^4.11.9"
+  }
+}

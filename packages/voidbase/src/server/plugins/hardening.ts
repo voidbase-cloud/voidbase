@@ -1,33 +1,15 @@
-// Hardening, as the plugin that provides `hardening@1`: PocketBase's body limit and its rate limit rules, and the
-// response policy (the headers on every response, the files' Content-Security-Policy, CORS and the CSRF check;
-// response-policy.ts has the knobs, all off unless set).
+// `@voidbase-cloud/voidbase/plugins/hardening`, which since 7.6 is a re-export of `@voidbase-cloud/plugin-hardening`.
 //
-// Middleware is the one thing a plugin cannot mount for itself here. Hono composes handlers in the order they were
-// registered, and the kernel loads after the routes are mounted (see app.ts on why), so a `use("*")` from a plugin
-// would sit behind every route and never run. The plugin therefore provides the three handlers, and app.ts holds
-// their place in the chain with slots that ask the provider at request time. Removing this plugin removes the
-// limits and the policy, CORS included; replacing either is providing `hardening@1` from another plugin.
+// The plugin itself moved out of the core; this entry stays where it was, published under the same name, forever. A
+// marketplace bundle is audited, bundled and hashed against the names it imports and is then immutable, so a bundle
+// that imports this name goes on importing it for as long as the bundle exists.
 //
-// One route is the exception, and it is a route because it has to hand something back: `GET /api/csrf`, the
-// double-submit token (../csrf.ts). It is mounted whatever the knob says and answers 404 while the knob is off,
-// since the knob is read per request and the routes are fixed when the app is built.
-import { mountCsrfRoute } from "../csrf";
-import { bodyLimitMiddleware, rateLimitMiddleware } from "../hardening";
-import type { Hardening } from "../interfaces";
-import { serve, type Kernel } from "../kernel";
-import { responsePolicy, responsePolicyMiddleware } from "../response-policy";
-import type { Plugin } from "./manifest";
-
-export const hardening: Plugin = {
-  manifest: {
-    name: "hardening",
-    version: "0.1.0",
-    tier: "official",
-    voidbase: "*",
-    provides: ["hardening@1"],
-  },
-  apply(ctx: Kernel) {
-    mountCsrfRoute(ctx.app, (env) => responsePolicy(env).csrf);
-    serve<Hardening>(ctx, "hardening@1", { bodyLimit: bodyLimitMiddleware(), rateLimit: rateLimitMiddleware(), responsePolicy: responsePolicyMiddleware(), policy: responsePolicy });
-  },
-};
+// The middleware did not move with the plugin, and could not: `../csrf.ts`, `../hardening.ts` and
+// `../response-policy.ts` are the core's, read by files-api.ts, backups.ts and auth-response.ts as well. The package
+// reaches the five calls the plugin makes through `/hardening-middleware`, the entry published for it.
+//
+// app.ts loads the plugin through this file rather than reaching past it to the package, which is the point: the
+// path a marketplace bundle takes is the path every instance takes. It is a re-export and not an alias, so the
+// `hardening` a bundle imports here is the same object the core loaded -- one plugin, one `hardening@1` provider,
+// and the slots in app.ts's middleware chain find the handlers this one served.
+export * from "@voidbase-cloud/plugin-hardening";

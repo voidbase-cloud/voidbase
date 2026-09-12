@@ -70,6 +70,7 @@ const MODULES: Record<string, () => Promise<object>> = {
   "./src/server/plugins/mail-binding.ts": () => import("../server/plugins/mail-binding"),
   "./src/server/plugins/mcp.ts": () => import("../server/plugins/mcp"),
   "./src/server/plugins/observability.ts": () => import("../server/plugins/observability"),
+  "./src/server/plugins/observability-binding.ts": () => import("../server/plugins/observability-binding"),
   "./src/server/plugins/openapi.ts": () => import("../server/plugins/openapi"),
   "./src/server/plugins/payments-shared.ts": () => import("../server/plugins/payments-shared"),
   "./src/server/plugins/polar.ts": () => import("../server/plugins/polar"),

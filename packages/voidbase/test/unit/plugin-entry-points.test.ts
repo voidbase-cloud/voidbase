@@ -42,6 +42,10 @@ const expected: Record<string, string[]> = {
   "./plugins/mail-binding": ["MAIL_BINDING", "MAIL_DOMAIN_VAR"],
   "./plugins/ai": ["ai", "aiWith", "aiRoute"],
   "./plugins/observability": ["observability", "observabilityWith", "observabilityReport", "sampler"],
+  // not a plugin either: the names the observability plugin and `voidbase deploy` agree on, so that
+  // src/node/deploy-cf.ts can turn the Worker's own logs on and bake the knobs without importing what the plugin
+  // does (the kernel, the routes, D1, the SQL client). Published in 7.6, for the reason /plugins/mail-binding was.
+  "./plugins/observability-binding": ["ANALYTICS_BINDING", "OBSERVABILITY_VAR", "SAMPLE_VAR", "ACCOUNT_VAR", "TOKEN_VAR", "DATASET_VAR", "WORKER_NAME_VAR", "ACCOUNT_ID_VAR", "observabilityOn", "sampleRateOf", "analyticsDataset", "workerObservability"],
   "./plugins/translations": ["translations", "translationsWith", "parseTranslatable", "parseLocales", "negotiateLocale"],
   "./plugins/stripe": ["stripe", "stripeWith", "verifySignature", "formEncode", "applyEvent"],
   "./plugins/polar": ["polar", "polarWith", "verifySignature", "applyEvent"],

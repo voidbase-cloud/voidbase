@@ -39,6 +39,9 @@ const expected: Record<string, string[]> = {
   // not a plugin: the two names the mail plugin and `voidbase deploy` have to agree on, so that src/node/deploy-cf.ts
   // can write the binding without importing what the plugin does. Published in 7.6, when the plugin left the core
   // and the sibling import that carried the agreement stopped resolving.
+  // Same shape again, for the same reason, published in 7.7 when the ai plugin left the core: src/node/deploy-cf.ts
+  // writes the AI binding and has to name it, and the plugin package cannot be what tells it the name.
+  "./plugins/ai-binding": ["AI_BINDING", "AI_VAR", "DEFAULT_MODEL", "aiModelOf"],
   "./plugins/mail-binding": ["MAIL_BINDING", "MAIL_DOMAIN_VAR"],
   "./plugins/ai": ["ai", "aiWith", "aiRoute"],
   "./plugins/observability": ["observability", "observabilityWith", "observabilityReport", "sampler"],

@@ -20,7 +20,7 @@
     "cf:builds": "bun scripts/cf-builds.ts",
     "build:exe": "bun scripts/build-exe.ts",
     "surface": "bun surface/render.ts",
-    "check": "cd packages/voidbase && bun run check && cd ../plugin-backups && bun run check && cd ../plugin-domains && bun run check && cd ../plugin-hardening && bun run check && cd ../plugin-mail && bun run check && cd ../plugin-mcp && bun run check && cd ../plugin-openapi && bun run check && cd ../plugin-observability && bun run check && cd ../plugin-previews && bun run check && cd ../plugin-realtime && bun run check && cd ../plugin-shipping-flat && bun run check && cd ../plugin-tax-flat && bun run check && cd ../plugin-translations && bun run check && cd ../.. && tsc -p tsconfig.scripts.json --noEmit",
+    "check": "cd packages/voidbase && bun run check && cd ../plugin-ai && bun run check && cd ../plugin-backups && bun run check && cd ../plugin-domains && bun run check && cd ../plugin-hardening && bun run check && cd ../plugin-mail && bun run check && cd ../plugin-mcp && bun run check && cd ../plugin-openapi && bun run check && cd ../plugin-observability && bun run check && cd ../plugin-previews && bun run check && cd ../plugin-realtime && bun run check && cd ../plugin-shipping-flat && bun run check && cd ../plugin-tax-flat && bun run check && cd ../plugin-translations && bun run check && cd ../.. && tsc -p tsconfig.scripts.json --noEmit",
     "test": "bun test",
     "dev": "cd packages/voidbase && bun run dev",
     "preview": "cd packages/voidbase && bun run preview",

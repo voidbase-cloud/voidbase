@@ -59,6 +59,7 @@ const MODULES: Record<string, () => Promise<object>> = {
   "./src/node/registry.ts": () => import("./registry"),
   // the plugins this package ships, which the official @voidbase-cloud/plugin-* packages re-export
   "./src/server/plugins/ai.ts": () => import("../server/plugins/ai"),
+  "./src/server/plugins/ai-binding.ts": () => import("../server/plugins/ai-binding"),
   "./src/server/plugins/auth.ts": () => import("../server/plugins/auth"),
   "./src/server/plugins/backups.ts": () => import("../server/plugins/backups"),
   "./src/server/plugins/collections.ts": () => import("../server/plugins/collections"),

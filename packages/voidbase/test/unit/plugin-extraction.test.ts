@@ -53,6 +53,15 @@ describe("the workspace's extracted plugin packages", () => {
     // -- ten of the shipped plugin files already do. Being allowed to import it is not the same as being allowed to
     // leave it undeclared: an install resolves what the manifest names and nothing else, so the rule here is that
     // every specifier outside the package is a package this one's own manifest declares.
+    //
+    // And the rule the other way round, because the template carried `hono` into all ten manifests while two of
+    // them import it: a peer a package never names is a constraint it does not have, and npm 7+ and bun both
+    // auto-install peers, so it is also a package every standalone install of it pulls down for nothing. A
+    // type-only import counts as importing it -- `tsconfig.json` and `scripts.check` are in the tarball, so an
+    // installed copy is expected to be able to type-check itself, and the types are in the package's own
+    // signatures either way. The core is the exception: it is peer-depended on by every plugin package and
+    // imported by name by nearly all of them, and a package that happens to need nothing of it still has to say
+    // which instances it loads into.
     test(`${pkg.name} reaches the core only through entries an instance provides, and declares what else it imports`, () => {
       const files = filesOf(join(pkg.dir, "src"));
       expect(files.length).toBeGreaterThan(0);
@@ -79,10 +88,14 @@ describe("the workspace's extracted plugin packages", () => {
       for (const f of files) expect(specifiersOf(readFileSync(f, "utf8")).filter((s) => s.startsWith("#")), f).toEqual([]);
       // said once more the other way round, so a package that reaches for something new has to name it: the rule is
       // not a list of two blessed prefixes, it is "declared in this manifest"
+      const imported = new Set<string>();
       for (const f of files) for (const spec of specifiersOf(readFileSync(f, "utf8"))) {
         if (spec.startsWith(".") || spec.startsWith("node:")) continue;
         expect(declared[packageOf(spec)], `${f} imports ${spec}; ${pkg.path}/package.json declares no ${packageOf(spec)}`).toBeDefined();
+        imported.add(packageOf(spec));
       }
+      // ...and nothing it does not import, the core aside
+      expect(Object.keys(declared).filter((n) => n !== CORE && !imported.has(n)), `${pkg.path}/package.json declares what it never imports`).toEqual([]);
     });
 
     // A plugin package is loaded by the core, and the core loads it from `src/server/plugins/<name>.ts`, which is

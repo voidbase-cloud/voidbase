@@ -61,7 +61,8 @@ missing. In hot mode it publishes to npm and leaves the executables to the first
    each package skipped when the registry already has it, the GitHub Packages copy of everything `NEVER_MIRROR`
    does not name (with `GH_PACKAGES_TOKEN`), and
    the tarballs attached to the release (`scripts/gh-release.ts`). The next section is what "every package" means
-   while there is one of them.
+   now that there are eleven of them, and what a release that publishes a name for the first time costs in wall
+   clock.
 4. `executables`, when that release lacks `checksums.txt`: the prebuilt executables for every platform
    (`scripts/build-exe.ts`: Bun cross-compiles from one machine; the panel, the system migrations and the hooks
    typings are embedded), the smoke of the machine's own build (`test/exe-smoke.ts`: serve with pb_hooks, the panel
@@ -91,11 +92,12 @@ does not appear in the changelog.** A tooling-only `fix:` therefore does nothing
 sits in the git history until the next commit that does touch the package carries a release over it, with no
 changelog line of its own.
 
-Since 7.5 that rule reaches an extracted plugin package too: a commit touching only `packages/plugin-realtime/**`
-is, to release-please, a commit touching no tracked package. The version still *moves* there when a release is cut
--- the `extra-files` glob below writes it into every `packages/*/package.json` -- but the plugin cannot be what cuts
-one. The fix while that matters is the same as for tooling: touch the core in the same commit. Hot mode, which is
-the mode in use during the beta, has no such rule and releases every push.
+Since 7.5 that rule reaches the extracted plugin packages too: a commit touching only `packages/plugin-*/**` is, to
+release-please, a commit touching no tracked package -- and after 7.6 there are ten of those directories, so this is
+now the ordinary shape of a plugin change rather than an edge case. The version still *moves* there when a release
+is cut -- the `extra-files` glob below writes it into every `packages/*/package.json` -- but a plugin package cannot
+be what cuts one. The fix while that matters is the same as for tooling: touch the core in the same commit. Hot
+mode, which is the mode in use during the beta, has no such rule and releases every push.
 
 This is a real change and not a side effect worth shrugging at. Until the move the configuration was keyed `"."`,
 and `"."` is release-please's root project path: `CommitSplit` (release-please 17.11.2,
@@ -120,20 +122,44 @@ the first normal run after `hot off` is the one that goes back to the narrow rul
 
 ### N packages, one version
 
-The repository publishes two packages -- `@voidbase-cloud/voidbase` and, since 7.5, `@voidbase-cloud/plugin-realtime`
--- and will publish about ten, so the release flow is written for N of them. `scripts/publish.ts` is all of the
-packing and publishing. `packages/release-fixture` -- a private, never-published third workspace package that
-depends on `@voidbase-cloud/voidbase` through `workspace:*` -- is what keeps the *private* paths honest (the third
-gate, `NEVER_PUBLISH`, and what `publishable()` drops), and `test/unit/publish.test.ts` drives the whole loop over a
+The repository publishes **eleven** packages: `@voidbase-cloud/voidbase` and the ten `@voidbase-cloud/plugin-*`
+packages the core depends on -- `-realtime` since 7.5, and `-domains`, `-backups`, `-hardening`, `-shipping-flat`,
+`-tax-flat`, `-previews`, `-translations`, `-mail` and `-observability` since 7.6. 7.7 to 7.10 extract the rest, so
+the flow is written for N of them and not for eleven. `scripts/publish.ts` is all of the packing and publishing.
+`packages/release-fixture` -- a private, never-published twelfth workspace package that depends on
+`@voidbase-cloud/voidbase` through `workspace:*` -- is what keeps the *private* paths honest (the third gate,
+`NEVER_PUBLISH`, and what `publishable()` drops), and `test/unit/publish.test.ts` drives the whole loop over a
 throwaway two-package workspace against a stubbed registry on localhost. Delete the fixture once a real private
 package exists to exercise those paths; deleting it before that takes them with it.
 
-A release therefore packs the plugin package first and the core second, because the core depends on it:
+A release therefore packs the ten plugin packages first and the core last, because the core depends on every one of
+them. The rehearsal below is `bun scripts/publish.ts --dry-run --registry http://127.0.0.1:48171` against a stub
+registry on localhost that holds nothing, so every package reads as missing and every step runs; `...` marks a line
+repeated once per package and nothing else:
 
 ```
-publish 0.9.0-beta.52: 2 package(s) in dependency order: @voidbase-cloud/plugin-realtime, @voidbase-cloud/voidbase
-  packed packages/plugin-realtime -> ...tgz (@voidbase-cloud/voidbase workspace:* -> 0.9.0-beta.52)
-  packed packages/voidbase        -> ...tgz (@voidbase-cloud/plugin-realtime workspace:* -> 0.9.0-beta.52)
+publish 0.9.0-beta.55 to http://127.0.0.1:48171: 11 package(s) in dependency order: @voidbase-cloud/plugin-backups,
+  @voidbase-cloud/plugin-domains, ... @voidbase-cloud/plugin-translations, @voidbase-cloud/voidbase (dry run)
+  packed packages/plugin-backups -> voidbase-cloud-plugin-backups-0.9.0-beta.55.tgz (@voidbase-cloud/voidbase workspace:* -> 0.9.0-beta.55)
+  ...
+  packed packages/voidbase -> voidbase-cloud-voidbase-0.9.0-beta.55.tgz (@voidbase-cloud/plugin-backups workspace:* -> 0.9.0-beta.55, ... nine more)
+smoke install: 11 tarball(s) into a scratch project
+  @voidbase-cloud/plugin-backups@0.9.0-beta.55: import("@voidbase-cloud/plugin-backups") -> 1 export(s)
+  ...
+  @voidbase-cloud/voidbase@0.9.0-beta.55: import("@voidbase-cloud/voidbase") -> 7 export(s)
+  @voidbase-cloud/voidbase/plugins/backups: the same 1 export(s) as @voidbase-cloud/plugin-backups, object for object
+  ...
+  @voidbase-cloud/voidbase: voidbase --help -> voidbase - PocketBase-compatible backend: a single Bun proce
+  wave 1 of 2: @voidbase-cloud/plugin-backups, ... @voidbase-cloud/plugin-translations
+  wave 2 of 2: @voidbase-cloud/voidbase
+  @voidbase-cloud/plugin-backups@0.9.0-beta.55: npm publish --tag latest --dry-run
+  ...
+  a real run would now wait for 10 package(s) to become resolvable, together, before wave 2 (@voidbase-cloud/voidbase): ... (dry run: not waited)
+  @voidbase-cloud/voidbase@0.9.0-beta.55: npm publish --tag latest --dry-run
+  GitHub Packages: @voidbase-cloud/plugin-backups is not mirrored (NEVER_MIRROR: that name is another repository's there)
+  ...
+GitHub Packages: skipped (no GH_PACKAGES_TOKEN)
+publish: @voidbase-cloud/plugin-backups dry-run, ... @voidbase-cloud/voidbase dry-run
 ```
 
 **Pack with `bun pm pack`, never `npm pack`.** A workspace dependency is written `workspace:*`, and npm copies that
@@ -187,9 +213,29 @@ registry already has. A retried or half-finished release finishes instead of dyi
 never published before a sibling it names. Dependency order is `dependencies` and `optionalDependencies` and
 nothing else: a devDependency cycle is legal and says nothing, and a **peer** edge says nothing either -- npm does
 not resolve peers at publish time. Reading peers as ordering would be worse than useless here, and this is no longer
-hypothetical: `@voidbase-cloud/plugin-realtime` peer-depends on the core while the core depends on it through
-`dependencies`. As an ordering edge that is a cycle and every release would stop on it; as what it is -- a statement
-about the project that installs the package -- the plugin simply goes first.
+hypothetical: every `@voidbase-cloud/plugin-*` package peer-depends on the core while the core depends on all ten of
+them through `dependencies`. As an ordering edge that is ten cycles and every release would stop on the first; as
+what it is -- a statement about the project that installs the package -- the plugins simply go first.
+
+**A first publish is taken before it can be installed, and a release with ten new names has to overlap the waiting.**
+npm writes the version document before the packument that installers read. On a package's *first* publish that gap
+was **210 seconds** -- measured on `@voidbase-cloud/plugin-realtime@0.9.0-beta.53`, where
+`registry.npmjs.org/@voidbase-cloud/plugin-realtime/0.9.0-beta.53` answered 200 while the packument beside it
+answered 404, so `bun add @voidbase-cloud/voidbase@0.9.0-beta.53` failed on the sibling the core names exactly.
+Publishing a dependent into that window ships a release nobody can install, so the loop waits for any package
+something later in the run names, and gives up (`RESOLVABLE_TIMEOUT_MS`, 600s) rather than publishing into it.
+
+Waited one package at a time that cost is paid once per first-time name. The release after 7.6 publishes nine of
+them, which is about 31 minutes of waiting alone -- inside a Cloudflare Workers build that is killed at 20 minutes
+(docs/ci.md). So the loop publishes in **waves**: `publishWaves` cuts the run into levels of the dependency graph --
+here the ten plugin packages, then the core -- and `publishPacked` publishes a whole wave before it asks about any
+of it, so every wait a wave owes the next one runs at once (one `Promise.all`) and the release pays about *one* lag
+rather than nine. Nothing about the ordering guarantee moves: nothing in a wave depends on anything else in it, and
+a wave does not publish until every package the previous one owed answers. Measured in `test/unit/publish.test.ts`
+against a stub registry that withholds each packument for a fixed 500ms after the publish that created it, over nine
+first publishes and a tenth package naming all of them: **serial 4549ms (~9.1 lags), overlapped 510ms (~1.0 lags)**,
+with the dependent's own publish still at least one full lag after the last of its siblings was accepted. A longer
+timeout would not have helped: the build, not the registry, is what runs out.
 
 **The smoke also imports the entry an extraction exists to preserve.** For every `@voidbase-cloud/plugin-*` package
 in the release, the scratch project imports `@voidbase-cloud/voidbase/plugins/<name>` as well as the package's own
@@ -200,15 +246,17 @@ ships, or whose entry handed back a second copy of the plugin serving a second `
 gates and the smoke and fail at somebody's boot.
 
 **The GitHub Packages mirror does not take every package** (`NEVER_MIRROR`, `scripts/publish.ts`). npm is the
-registry of record and takes the whole workspace. GitHub Packages is a copy, and on that registry
-`@voidbase-cloud/plugin-realtime` is **not ours to publish**: it is the package
-`voidbase-cloud/voidbase-plugin-realtime` publishes, at its own version and its own export shape, and the
-marketplace lists that one. The same holds for `-auth`, `-backups` and `-hardening`. Those four repositories go on
-publishing there until 7.11 moves the listings and archives them, so a release that mirrored the monorepo's
+registry of record and takes the whole workspace. GitHub Packages is a copy, and on that registry no
+`packages/plugin-*` of this repository is **ours to publish**: `@voidbase-cloud/plugin-realtime`, `-auth`,
+`-backups` and `-hardening` are what the four standalone `voidbase-cloud/voidbase-plugin-*` repositories publish
+there, each at its own version and its own export shape, and the marketplace lists those. Those four repositories go
+on publishing there until 7.11 moves the listings and archives them, so a release that mirrored the monorepo's
 `@voidbase-cloud/plugin-*` over them would leave npm's version rules to decide which of two unrelated packages a
-consumer got. The refusal is by name prefix rather than a list of four, because 7.6 to 7.10 add six more; it is
-*not* `publishable()`, because these packages are published -- to npm, where the names are free and this
-repository owns them.
+consumer got. The refusal is by name prefix and not by a list, which is why 7.6's nine new packages needed no edit
+to it -- and why the seven of the ten names that nobody else publishes there are held off it too: the rule is the
+prefix, and a per-name exception list would be three entries to keep in step with another repository's archiving. The prefix is
+*not* `publishable()`, because these packages are published -- to npm, where the names are free and this repository
+owns them. The rehearsal above prints the refusal once per package, by name.
 
 A failure of the mirror is logged with npm's own message and the release goes on, which is deliberate: by the time
 the mirror runs npm already has the version and a published version cannot be taken back, so throwing would report
@@ -300,8 +348,10 @@ that holds a complete install.
 The GitHub Packages copy is a copy of the core alone, and since 7.5 it is no longer an install path. It was one
 while `@voidbase-cloud/voidbase` had no dependency inside its own scope: an `.npmrc` with
 `@voidbase-cloud:registry=https://npm.pkg.github.com` and a token with `read:packages` sent the whole scope there
-and everything resolved. Now the core depends on `@voidbase-cloud/plugin-realtime` at its exact version, that
-redirect is scope-wide (npm has no per-package registry), and the version that registry holds under that name is
-another repository's package -- so the install either fails to find the version or finds the wrong package. Use
-npm for the core; GitHub Packages holds the mirrored tarball for anyone who wants to read it and the four
-standalone plugin repositories' own packages, which the marketplace lists, until 7.11.
+and everything resolved. The core now depends on **ten** `@voidbase-cloud/plugin-*` packages, each at its exact
+version, and that redirect is scope-wide (npm has no per-package registry). So the install goes to GitHub Packages
+for all ten: four of those names are there but hold another repository's package at another repository's versions,
+and the other six are not there at all, because `NEVER_MIRROR` keeps every `packages/plugin-*` off the mirror. The
+install fails outright on the six and, if it got past them, would take the wrong package on the four. Use npm for
+the core; GitHub Packages holds the mirrored core tarball for anyone who wants to read it, and the four standalone
+plugin repositories' own packages, which the marketplace lists, until 7.11.

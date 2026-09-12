@@ -21,7 +21,6 @@
       "version": "0.9.0-beta.55",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
-        "hono": "^4.11.9",
       },
     },
     "packages/plugin-domains": {
@@ -29,7 +28,6 @@
       "version": "0.9.0-beta.55",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
-        "hono": "^4.11.9",
       },
     },
     "packages/plugin-hardening": {
@@ -37,7 +35,6 @@
       "version": "0.9.0-beta.55",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
-        "hono": "^4.11.9",
       },
     },
     "packages/plugin-mail": {
@@ -45,7 +42,6 @@
       "version": "0.9.0-beta.55",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
-        "hono": "^4.11.9",
       },
     },
     "packages/plugin-observability": {
@@ -69,7 +65,6 @@
       "version": "0.9.0-beta.55",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
-        "hono": "^4.11.9",
       },
     },
     "packages/plugin-shipping-flat": {
@@ -77,7 +72,6 @@
       "version": "0.9.0-beta.55",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
-        "hono": "^4.11.9",
       },
     },
     "packages/plugin-tax-flat": {
@@ -85,7 +79,6 @@
       "version": "0.9.0-beta.55",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:*",
-        "hono": "^4.11.9",
       },
     },
     "packages/plugin-translations": {

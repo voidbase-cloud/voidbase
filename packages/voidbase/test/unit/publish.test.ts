@@ -32,6 +32,8 @@ import {
   packDir,
   packedManifest,
   publishOrder,
+  publishPacked,
+  publishWaves,
   publishWorkspace,
   publishable,
   readWorkspace,
@@ -42,8 +44,11 @@ import {
   syncLockfile,
   until,
   workspaceSpecs,
+  type IsPublished,
   type Manifest,
+  type Packed,
   type Pkg,
+  type Run,
 } from "../../../../scripts/publish";
 import { bumpVersion, lockstep, prependNotes } from "../../../../scripts/hot-release";
 
@@ -61,12 +66,41 @@ const pkg = (name: string, version: string, deps: Record<string, string> = {}, e
   ...extra,
 });
 
+/**
+ * The core's own list of the extracted plugin packages, which is the second source of truth the workspace list is
+ * held against: the `./plugins/<name>` entries it publishes whose file is one statement, a re-export of
+ * `@voidbase-cloud/plugin-<name>`.
+ *
+ * Reading the workspace and then comparing it against a list derived from the same read proves nothing -- an
+ * unexpected `packages/plugin-*` directory, or one whose name is a typo, is simply on both sides of the equality.
+ * Until 7.6 the names were written out and that was the pin; deriving them took the pin with it. This is the pin
+ * put back, and it is a better one than a list to remember, because the entry is what an extraction exists to
+ * preserve: a package with no entry is unreachable by the name every marketplace bundle imports, and an entry with
+ * no package behind it does not resolve at all. Two lists that are produced by different things and have to agree.
+ */
+function reexportedPlugins(): string[] {
+  const core = JSON.parse(readFileSync(join(ROOT, "packages/voidbase/package.json"), "utf8")) as { exports: Record<string, string | { default?: string }> };
+  const out: string[] = [];
+  for (const [entry, target] of Object.entries(core.exports)) {
+    if (!entry.startsWith("./plugins/")) continue;
+    const file = typeof target === "string" ? target : target.default;
+    if (!file) continue;
+    const name = `@voidbase-cloud/plugin-${entry.slice("./plugins/".length)}`;
+    const code = readFileSync(join(ROOT, "packages/voidbase", file), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("//"));
+    if (code.length === 1 && code[0]!.includes(`from "${name}"`)) out.push(name);
+  }
+  return out.sort();
+}
+
 describe("the workspace the release packs", () => {
   const workspace = readWorkspace(ROOT);
   /** every extracted plugin package, in the order a release publishes them: one at 7.5, ten by the end of 7.6 */
   const PLUGINS = workspace.map((p) => p.name).filter((n) => n.startsWith("@voidbase-cloud/plugin-")).sort();
 
   test("holds the core, a package per extracted plugin, and the fixture that keeps the private path exercised", () => {
+    // the pin, and the reason this equality can fail at all: the directories the workspace globs reach have to be
+    // exactly the packages the core re-exports through the entries it keeps (reexportedPlugins, above)
+    expect(PLUGINS).toEqual(reexportedPlugins());
     expect(workspace.map((p) => p.name).sort()).toEqual([...PLUGINS, FIXTURE, PACKAGE].sort());
     expect(PLUGINS).toContain(PLUGIN);
     expect(workspace.find((p) => p.name === FIXTURE)!.private).toBe(true);
@@ -77,9 +111,18 @@ describe("the workspace the release packs", () => {
       expect(plugin.private, name).toBe(false);
       // 7.5's pair, in the real workspace: the core depends on the plugin, the plugin peer-depends back on the core
       expect(workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies![name]).toBe("workspace:*");
-      // hono beside the core: a plugin with routes adds them to the core's own Hono app, so the two have to be the
-      // same hono and the range is the core's (test/unit/plugin-extraction.test.ts holds the rule)
-      expect(plugin.manifest.peerDependencies, name).toEqual({ [PACKAGE]: "workspace:*", hono: workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies!.hono! });
+      // The peers, and only two things are true of all ten. The core is one of them, at `workspace:*`. hono is
+      // not: it is declared by the packages that name it and by no others (two of the ten -- observability, whose
+      // `hono/route` is a value import, and previews, whose `Context` and `Hono` are types its own `bun run check`
+      // has to resolve out of the tarball), because npm 7+ and bun auto-install peers, so a peer a package does
+      // not import is both a constraint the manifest claims falsely and a package every standalone install pulls
+      // for nothing. Where it *is* declared the range is the core's own: a plugin's routes go on the core's Hono
+      // app and the two have to be holding one copy. `test/unit/plugin-extraction.test.ts` holds both halves per
+      // specifier -- every name a file imports is declared, and every peer beside the core is a name it imports.
+      const peers = plugin.manifest.peerDependencies ?? {};
+      expect(peers[PACKAGE], name).toBe("workspace:*");
+      expect(Object.keys(peers).filter((n) => n !== PACKAGE && n !== "hono"), name).toEqual([]);
+      if ("hono" in peers) expect(peers.hono, name).toBe(workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies!.hono!);
       expect(plugin.manifest.dependencies, name).toBeUndefined();
     }
   });
@@ -619,4 +662,129 @@ describe("a package a later one depends on has to be resolvable, not merely acce
   test("RESOLVABLE_TIMEOUT_MS is longer than the gap that was measured", () => {
     expect(RESOLVABLE_TIMEOUT_MS).toBeGreaterThan(210_000);
   });
+});
+
+// ...and the shape of the waiting, which is what decides whether the release this repository is about to make can
+// finish at all. One wait is 210 seconds. After 7.6 the core depends on ten plugin packages, nine of them names npm
+// has never seen, so a loop that waits once per name owes about 31 minutes of waiting inside a Cloudflare Workers
+// build that is killed at 20 (docs/ci.md). `publishWaves` cuts the run into levels and `publishPacked` publishes a
+// whole level before it asks about any of it, so the waits a level owes the next one overlap and the release pays
+// about one of them. The ordering guarantee is unchanged: a level does not start until the previous one answers.
+describe("the resolvable waits overlap, because a release with nine first publishes cannot afford them one at a time", () => {
+  test("the waves are the levels of the dependency graph, and this workspace has two of them", () => {
+    const real = publishable(readWorkspace(ROOT));
+    const waves = publishWaves(real);
+    expect(waves.length).toBe(2);
+    expect(waves[0]!.map((p) => p.name).sort()).toEqual(real.map((p) => p.name).filter((n) => n.startsWith("@voidbase-cloud/plugin-")).sort());
+    expect(waves[1]!.map((p) => p.name)).toEqual([PACKAGE]);
+    // a chain cannot be overlapped and is not: each link is its own wave, which is the serial shape and correct
+    const chain = [pkg("@x/c", "1.0.0", { "@x/b": "workspace:*" }), pkg("@x/a", "1.0.0"), pkg("@x/b", "1.0.0", { "@x/a": "workspace:*" })];
+    expect(publishWaves(chain).map((w) => w.map((p) => p.name))).toEqual([["@x/a"], ["@x/b"], ["@x/c"]]);
+    // a leaf that sorts after a dependent still joins the first wave: levels, not the order the sort produced
+    const mixed = [pkg("@x/b", "1.0.0", { "@x/a": "workspace:*" }, { path: "packages/b" }), pkg("@x/a", "1.0.0", {}, { path: "packages/a" }), pkg("@x/c", "1.0.0", {}, { path: "packages/c" })];
+    expect(publishOrder(mixed).map((p) => p.name)).toEqual(["@x/a", "@x/b", "@x/c"]);
+    expect(publishWaves(mixed).map((w) => w.map((p) => p.name))).toEqual([["@x/a", "@x/c"], ["@x/b"]]);
+    expect(() => publishWaves([pkg("@x/a", "1.0.0", { "@x/b": "workspace:*" }), pkg("@x/b", "1.0.0", { "@x/a": "workspace:*" })])).toThrow(/cycle/);
+  });
+
+  // The measurement. A stub registry on localhost behaves the way npm's did on a first publish: the PUT is
+  // accepted at once, and the packument a resolvability check reads answers 404 for a fixed lag afterwards. 210
+  // seconds is that lag in production; here it is LAG_MS, so the measurement is a test and not a coffee break.
+  // Nothing in this block can reach npm: every request goes to this origin, and `npm publish` is never run.
+  const LAG_MS = 500;
+  const N = 9;                                      // the nine names 7.6 publishes for the first time
+  const CORE_NAME = "@vbwave/core";
+  const acceptedAt = new Map<string, number>();
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const key = decodeURIComponent(new URL(req.url).pathname.replace(/^\//, ""));
+      if (req.method === "PUT") { acceptedAt.set(key, Date.now()); return new Response(null, { status: 201 }); }
+      const at = acceptedAt.get(key);
+      if (at === undefined) return new Response("no such version", { status: 404 });
+      // the version document is there the instant it is taken; the packument an install reads is not, for LAG_MS
+      return Date.now() - at >= LAG_MS ? new Response("1.0.0") : new Response("no packument yet", { status: 404 });
+    },
+  });
+  const registry = `http://127.0.0.1:${server.port}`;
+  afterAll(() => server.stop(true));
+
+  const version = "1.0.0";
+  const asPacked = (p: Pkg): Packed => ({ pkg: p, tarball: `/nowhere/${p.name.replace(/[@/]/g, "-")}.tgz`, manifest: { name: p.name, version: p.version } });
+  const leaves = [...Array(N)].map((_, i) => pkg(`@vbwave/leaf-${i}`, version, {}, { path: `packages/leaf-${i}` }));
+  const core = pkg(CORE_NAME, version, Object.fromEntries(leaves.map((l) => [l.name, "workspace:*"])), { path: "packages/core" });
+  const packed = [...leaves, core].map(asPacked);
+  const byTarball = new Map(packed.map((p) => [p.tarball, p.pkg]));
+  const key = (name: string) => encodeURIComponent(`${name}@${version}`);
+  /** the publish, as far as this registry is concerned: the PUT that takes the version */
+  const put = (name: string) => fetch(`${registry}/${key(name)}`, { method: "PUT" });
+  const isResolvable: IsPublished = async (name, v) => (await fetch(`${registry}/${encodeURIComponent(`${name}@${v}`)}`)).ok;
+  const publishedOrder: string[] = [];
+  const run: Run = async (cmd) => {
+    if (cmd[1] === "publish") { const p = byTarball.get(cmd[2]!)!; publishedOrder.push(p.name); await put(p.name); }
+    return { code: 0, stdout: "", stderr: "" };
+  };
+
+  test(`${N} first publishes and a core that names them all: serial costs ${N} lags, the loop costs one`, async () => {
+    // the shape the loop had before this was closed, written out because it is the baseline being beaten -- and
+    // written with the same `until` the loop uses, so the two numbers are measured the same way
+    acceptedAt.clear();
+    const serialStarted = Date.now();
+    for (const p of packed) {
+      await put(p.pkg.name);
+      if (p.pkg.name !== CORE_NAME) expect(await until(() => isResolvable(p.pkg.name, version, registry), 30_000, () => {}, 25), p.pkg.name).toBe(true);
+    }
+    const serialMs = Date.now() - serialStarted;
+
+    // and the loop as it is now
+    acceptedAt.clear();
+    publishedOrder.length = 0;
+    const log: string[] = [];
+    const overlappedStarted = Date.now();
+    const results = await publishPacked(packed, { registry, tag: "latest", log: (l) => log.push(l), run, isPublished: isResolvable, pollMs: 25, timeoutMs: 30_000 });
+    const overlappedMs = Date.now() - overlappedStarted;
+
+    // every package published, the core last, and the whole run in wave order
+    expect(results.map((r) => r.action)).toEqual([...Array(N + 1)].map(() => "published"));
+    expect(results.map((r) => r.name)).toEqual([...leaves.map((l) => l.name), CORE_NAME]);
+    expect(publishedOrder).toEqual(results.map((r) => r.name));
+
+    // the ordering guarantee, measured rather than reasoned about: the core's own publish is at least one lag
+    // after the last leaf was accepted, which is the only way every leaf can have been resolvable before it
+    const coreAt = acceptedAt.get(decodeURIComponent(key(CORE_NAME)))!;
+    const lastLeafAt = Math.max(...leaves.map((l) => acceptedAt.get(decodeURIComponent(key(l.name)))!));
+    expect(coreAt - lastLeafAt).toBeGreaterThanOrEqual(LAG_MS);
+
+    // and the cost: N lags against one. The bound is deliberately loose -- what is being pinned is the shape, not
+    // the machine -- but the real numbers are printed, because those are the evidence.
+    console.log(`  resolvable wait, ${N} first publishes at a ${LAG_MS}ms packument lag: serial ${serialMs}ms (~${(serialMs / LAG_MS).toFixed(1)} lags), overlapped ${overlappedMs}ms (~${(overlappedMs / LAG_MS).toFixed(1)} lags)`);
+    expect(overlappedMs).toBeGreaterThanOrEqual(LAG_MS);          // it really did wait: the guarantee is not skipped
+    expect(serialMs).toBeGreaterThanOrEqual(N * LAG_MS);          // and the baseline really is N of them
+    expect(overlappedMs).toBeLessThan(serialMs / 3);              // 9x in principle; a third of it is the pin
+
+    // the log says so as well, which is what an operator watching a release sees
+    expect(log.join("\n")).toContain(`waiting for ${N} package(s) to become resolvable, together, before wave 2 (${CORE_NAME})`);
+    expect(log.filter((l) => l.includes("resolvable after")).length).toBe(1);
+  }, 120_000);
+
+  test("a package nothing else in the run names is never waited for at all", async () => {
+    acceptedAt.clear();
+    const log: string[] = [];
+    const alone = [asPacked(pkg("@vbwave/only", version, {}, { path: "packages/only" }))];
+    const started = Date.now();
+    const results = await publishPacked(alone, { registry, tag: "latest", log: (l) => log.push(l), run: async () => { await put("@vbwave/only"); return { code: 0, stdout: "", stderr: "" }; }, isPublished: isResolvable, pollMs: 25, timeoutMs: 30_000 });
+    expect(results.map((r) => r.action)).toEqual(["published"]);
+    expect(Date.now() - started).toBeLessThan(LAG_MS);            // it did not wait for a packument nobody reads
+    expect(log.join("\n")).not.toContain("resolvable");
+  }, 60_000);
+
+  test("a wave that never becomes resolvable fails, and names every package the run is still waiting on", async () => {
+    acceptedAt.clear();
+    publishedOrder.length = 0;
+    const never: IsPublished = async () => false;
+    await expect(publishPacked(packed, { registry, tag: "latest", log: () => {}, run, isPublished: never, pollMs: 25, timeoutMs: 300 }))
+      .rejects.toThrow(/were published but the registry still does not answer for them after 0.3s, and @vbwave\/core name them/);
+    // and the dependent was never published into that window
+    expect(publishedOrder).not.toContain(CORE_NAME);
+  }, 60_000);
 });

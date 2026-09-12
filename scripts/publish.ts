@@ -32,9 +32,12 @@
 //            its own tarball, because a sibling's resolved version is not on the registry yet and the install would
 //            otherwise go looking for it -- and each package is then used by name: `import(name)` through its
 //            exports, and every bin it declares run with `--help`.
-//   publish  a loop in dependency order, each package skipped when the registry already has that name@version. A
-//            retried or half-finished release finishes instead of dying on npm's 403, and a package that depends on
-//            a sibling is never published before the sibling it needs.
+//   publish  wave by wave, each package skipped when the registry already has that name@version. A retried or
+//            half-finished release finishes instead of dying on npm's 403, and a package that depends on a sibling
+//            is never published before that sibling is resolvable. A wave is the packages that depend on nothing
+//            later in the run, so everything in one can be published at once; the resolvability waits a wave owes
+//            the next one are then awaited together rather than one after another, which is what keeps a release
+//            that publishes nine first-time names inside a 20-minute build (publishWaves, publishPacked).
 //   mirror   a second loop over GitHub Packages, which is a copy and not the registry of record -- and which takes
 //            only `mirrorable()` packages: `NEVER_MIRROR` names what a *different* repository already publishes
 //            there under this scope (the standalone `voidbase-plugin-*` repos, until 7.11), and publishing over
@@ -161,6 +164,37 @@ export function publishOrder(pkgs: Pkg[]): Pkg[] {
   };
   for (const p of [...pkgs].sort((a, b) => a.path.localeCompare(b.path))) visit(p, []);
   return out;
+}
+
+/**
+ * The publish order, cut into waves: wave 0 is every package that depends on no sibling in the run, wave N+1 is
+ * every package whose siblings are all in waves 0..N. Nothing in a wave depends on anything else in it, so the
+ * whole wave can be published before any of it is waited on -- and that is the only reason the waves exist.
+ *
+ * A first publish is taken by the registry before an install can resolve it (the 210 seconds measured on
+ * `@voidbase-cloud/plugin-realtime@0.9.0-beta.53`), so a package something later names has to be waited for. Done
+ * one package at a time that wait is paid once per name: with ten packages and the core depending on all of them
+ * it is nine or ten waits end to end, about half an hour, inside a Cloudflare Workers build that is killed at
+ * twenty minutes (docs/ci.md). Published a wave at a time it is one wait, because the waits inside a wave overlap
+ * -- every package in it was already published before any of them was asked about.
+ *
+ * The ordering guarantee is unchanged and is the reason the cut is by level rather than by anything cheaper: a
+ * package's siblings are all in strictly earlier waves, and an earlier wave is fully resolvable before the next
+ * one publishes anything.
+ */
+export function publishWaves(pkgs: Pkg[]): Pkg[][] {
+  const siblings = new Set(pkgs.map((p) => p.name));
+  const level = new Map<string, number>();
+  const waves: Pkg[][] = [];
+  // publishOrder first, so every sibling's level is known by the time it is read -- and so a cycle is still a
+  // failure here rather than a silently truncated release
+  for (const p of publishOrder(pkgs)) {
+    const deps = dependsOn(p, siblings);
+    const n = deps.length === 0 ? 0 : Math.max(...deps.map((d) => level.get(d) ?? 0)) + 1;
+    level.set(p.name, n);
+    (waves[n] ??= []).push(p);
+  }
+  return waves;
 }
 
 /**
@@ -533,6 +567,8 @@ export interface PublishOptions {
   githubPackages?: boolean;
   /** where the mirror is; only a test moves it, to drive the loop without reaching GitHub Packages */
   githubPackagesRegistry?: string;
+  /** how often a resolvability check asks; only a test moves it, to drive the wait without five-second steps */
+  resolvablePollMs?: number;
   /** write the lockfile's workspace versions before packing; only a test turns this off, to watch the gate fire */
   syncLockfile?: boolean;
   log?: (line: string) => void;
@@ -551,15 +587,105 @@ export interface PublishResult {
 export async function pending(opts: PublishOptions = {}): Promise<Pkg[]> {
   const registry = opts.registry ?? NPM_REGISTRY;
   const isPublished = opts.isPublished ?? npmView;
-  const pkgs = publishable(publishOrder(readWorkspace(opts.root ?? ROOT)));
+  const pkgs = publishWaves(publishable(readWorkspace(opts.root ?? ROOT))).flat();
   const out: Pkg[] = [];
   for (const p of pkgs) if (!(await isPublished(p.name, p.version, registry))) out.push(p);
   return out;
 }
 
+export interface PublishPackedOptions {
+  registry: string;
+  tag: string;
+  /** the npmrc the publish runs under; the caller owns it, because it holds the token */
+  npmrc?: string;
+  dryRun?: boolean;
+  provenance?: boolean;
+  log: (line: string) => void;
+  run: Run;
+  isPublished: IsPublished;
+  /** how often each resolvability check asks; only a test moves it, to drive the wait without five-second steps */
+  pollMs?: number;
+  timeoutMs?: number;
+}
+
+/**
+ * The publish loop: the packed tarballs onto the registry, a wave at a time, skipping whatever it already has.
+ *
+ * A version the registry has taken is not yet a version an install can resolve. npm writes the version document
+ * before the packument that installers read, and on a package's FIRST publish that gap was 210 seconds -- measured
+ * on @voidbase-cloud/plugin-realtime@0.9.0-beta.53, where registry.npmjs.org/@voidbase-cloud/plugin-realtime/0.9.0-beta.53
+ * answered 200 while the packument beside it answered 404, so `bun add @voidbase-cloud/voidbase@0.9.0-beta.53`
+ * failed on the sibling the core names exactly. Publishing a dependent into that window ships a release nobody can
+ * install, so a package something later in the run names is waited for before that later package is published.
+ *
+ * **The waits overlap, and they have to.** Paid one package at a time the wait is paid once per first-time name:
+ * after 7.6 the core depends on ten plugin packages, so the release that first publishes nine of those names owed
+ * nine of those waits end to end -- about half an hour, inside a Cloudflare Workers build killed at twenty minutes
+ * (docs/ci.md). The fix is the shape of the loop and not a longer timeout: everything in a wave is published
+ * before any of it is asked about, so the waits a wave owes the next one run at once and the release pays about
+ * one of them. `publishWaves` is what makes that safe -- nothing in a wave depends on anything else in it, and a
+ * wave does not start until every package the previous one owed is resolvable.
+ *
+ * Failing here is safe either way: the next run skips what is already published and carries on from the one that
+ * is missing.
+ */
+export async function publishPacked(packed: Packed[], opts: PublishPackedOptions): Promise<PublishResult[]> {
+  const { registry, tag, npmrc, log, run, isPublished } = opts;
+  const timeoutMs = opts.timeoutMs ?? RESOLVABLE_TIMEOUT_MS;
+  const byName = new Map(packed.map((p) => [p.pkg.name, p]));
+  const waves = publishWaves(packed.map((p) => p.pkg));
+  const siblings = new Set(packed.map((p) => p.pkg.name));
+  // the names something else in this run installs. A dependent is always in a later wave, so this is exactly the
+  // set of packages a wave may owe the next one -- and a package nothing here names is never waited for at all.
+  const needed = new Set(packed.flatMap((p) => dependsOn(p.pkg, siblings)));
+  if (waves.length > 1) for (const [i, w] of waves.entries()) log(`  wave ${i + 1} of ${waves.length}: ${w.map((p) => p.name).join(", ")}`);
+  const acc: PublishResult[] = [];
+  for (const [i, wave] of waves.entries()) {
+    const owed: Packed[] = [];
+    for (const entry of wave) {
+      const p = byName.get(entry.name)!;
+      if (await isPublished(p.pkg.name, p.pkg.version, registry, npmrc)) {
+        log(`  ${p.pkg.name}@${p.pkg.version} is already on the registry: skipped`);
+        acc.push({ name: p.pkg.name, version: p.pkg.version, tarball: p.tarball, action: "skipped" });
+        continue;
+      }
+      const cmd = ["npm", "publish", p.tarball, "--access", "public", "--registry", registry, "--tag", tag];
+      if (opts.provenance) cmd.push("--provenance");
+      if (opts.dryRun) cmd.push("--dry-run");
+      log(`  ${p.pkg.name}@${p.pkg.version}: npm publish --tag ${tag}${opts.provenance ? " --provenance" : ""}${opts.dryRun ? " --dry-run" : ""}`);
+      const r = await run(cmd, npmrc ? { env: { NPM_CONFIG_USERCONFIG: npmrc } } : {});
+      if (r.code !== 0) throw new Error(`npm publish ${p.pkg.name}@${p.pkg.version} exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(0, 600)}`);
+      // npm refuses to publish a prerelease unless --tag is explicit, because the default would quietly move
+      // `latest` onto it. Here that is the intent: while voidbase is in public beta the beta is what we ask people
+      // to run. The channel tag is added afterwards, so `@beta` works for anyone who would rather pin to it.
+      if (!opts.dryRun && p.pkg.version.includes("-")) {
+        const t = await run(["npm", "dist-tag", "add", `${p.pkg.name}@${p.pkg.version}`, "beta", "--registry", registry], npmrc ? { env: { NPM_CONFIG_USERCONFIG: npmrc } } : {});
+        if (t.code !== 0) log(`  dist-tag beta failed for ${p.pkg.name} (${tag} is the tag of record; continuing)`);
+      }
+      acc.push({ name: p.pkg.name, version: p.pkg.version, tarball: p.tarball, action: opts.dryRun ? "dry-run" : "published" });
+      if (needed.has(p.pkg.name)) owed.push(p);
+    }
+    if (owed.length === 0) continue;
+    const names = owed.map((p) => `${p.pkg.name}@${p.pkg.version}`).join(", ");
+    const next = waves[i + 1]?.map((p) => p.name).join(", ") ?? "";
+    if (opts.dryRun) { log(`  a real run would now wait for ${owed.length} package(s) to become resolvable, together, before wave ${i + 2} (${next}): ${names} (dry run: not waited)`); continue; }
+    log(`  waiting for ${owed.length} package(s) to become resolvable, together, before wave ${i + 2} (${next}): ${names}`);
+    const started = Date.now();
+    // one deadline, one set of polls, all at once: the wave costs about one packument lag rather than one per name
+    const settled = await Promise.all(owed.map(async (p) => ({
+      p,
+      ok: await until(() => isPublished(p.pkg.name, p.pkg.version, registry, npmrc), timeoutMs, (s) => log(`  waiting for ${p.pkg.name}@${p.pkg.version} to be resolvable: ${s}s`), opts.pollMs),
+    })));
+    const late = settled.filter((x) => !x.ok).map((x) => `${x.p.pkg.name}@${x.p.pkg.version}`);
+    if (late.length) throw new Error(`${late.join(", ")} ${late.length === 1 ? "was" : "were"} published but the registry still does not answer for ${late.length === 1 ? "it" : "them"} after ${timeoutMs / 1000}s, and ${next || "a later package"} name ${late.length === 1 ? "it" : "them"}. Re-run the release: what is published is skipped.`);
+    log(`  wave ${i + 1} resolvable after ${Math.round((Date.now() - started) / 1000)}s (${owed.length} wait(s) overlapped)`);
+  }
+  return acc;
+}
+
 /**
  * Pack, prove, smoke and publish the whole workspace. Returns one result per publishable package, in the order
- * they were visited.
+ * they were published: wave by wave, and within a wave in dependency order.
  */
 export async function publishWorkspace(opts: PublishOptions = {}): Promise<PublishResult[]> {
   const root = opts.root ?? ROOT;
@@ -601,43 +727,9 @@ export async function publishWorkspace(opts: PublishOptions = {}): Promise<Publi
 
   const token = process.env.NPM_TOKEN ?? "";
   if (!token) throw new Error("NPM_TOKEN is not set: nothing can be published");
-  const results = await withNpmrc(registry, token, undefined, async (npmrc) => {
-    const acc: PublishResult[] = [];
-    for (const p of packed) {
-      if (await isPublished(p.pkg.name, p.pkg.version, registry, npmrc)) {
-        log(`  ${p.pkg.name}@${p.pkg.version} is already on the registry: skipped`);
-        acc.push({ name: p.pkg.name, version: p.pkg.version, tarball: p.tarball, action: "skipped" });
-        continue;
-      }
-      const cmd = ["npm", "publish", p.tarball, "--access", "public", "--registry", registry, "--tag", tag];
-      if (opts.provenance) cmd.push("--provenance");
-      if (opts.dryRun) cmd.push("--dry-run");
-      log(`  ${p.pkg.name}@${p.pkg.version}: npm publish --tag ${tag}${opts.provenance ? " --provenance" : ""}${opts.dryRun ? " --dry-run" : ""}`);
-      const r = await run(cmd, { env: { NPM_CONFIG_USERCONFIG: npmrc } });
-      if (r.code !== 0) throw new Error(`npm publish ${p.pkg.name}@${p.pkg.version} exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(0, 600)}`);
-      // npm refuses to publish a prerelease unless --tag is explicit, because the default would quietly move
-      // `latest` onto it. Here that is the intent: while voidbase is in public beta the beta is what we ask people
-      // to run. The channel tag is added afterwards, so `@beta` works for anyone who would rather pin to it.
-      if (!opts.dryRun && p.pkg.version.includes("-")) {
-        const t = await run(["npm", "dist-tag", "add", `${p.pkg.name}@${p.pkg.version}`, "beta", "--registry", registry], { env: { NPM_CONFIG_USERCONFIG: npmrc } });
-        if (t.code !== 0) log(`  dist-tag beta failed for ${p.pkg.name} (${tag} is the tag of record; continuing)`);
-      }
-      acc.push({ name: p.pkg.name, version: p.pkg.version, tarball: p.tarball, action: opts.dryRun ? "dry-run" : "published" });
-      // A version the registry has taken is not yet a version an install can resolve. npm writes the version
-      // document before the packument that installers read, and on a package's FIRST publish that gap was 210
-      // seconds -- measured on @voidbase-cloud/plugin-realtime@0.9.0-beta.53, where
-      // registry.npmjs.org/@voidbase-cloud/plugin-realtime/0.9.0-beta.53 answered 200 while the packument beside it
-      // answered 404, so `bun add @voidbase-cloud/voidbase@0.9.0-beta.53` failed on the sibling the core names
-      // exactly. Publishing the dependent into that window ships a release nobody can install, so wait for the
-      // registry to answer for a package something later in this loop depends on. Failing here is safe: the next
-      // run skips what is already published and carries on from the one that is missing.
-      if (!opts.dryRun && packed.slice(acc.length).some((q) => dependsOn(q.pkg, new Set([p.pkg.name])).length)) {
-        const waited = await until(() => isPublished(p.pkg.name, p.pkg.version, registry, npmrc), RESOLVABLE_TIMEOUT_MS, (s) => log(`  waiting for ${p.pkg.name}@${p.pkg.version} to be resolvable: ${s}s`));
-        if (waited === false) throw new Error(`${p.pkg.name}@${p.pkg.version} was published but the registry still does not answer for it after ${RESOLVABLE_TIMEOUT_MS / 1000}s, and ${packed.slice(acc.length).map((q) => q.pkg.name).join(", ")} name it. Re-run the release: what is published is skipped.`);
-      }
-    }
-    return acc;
-  });
+  const results = await withNpmrc(registry, token, undefined, (npmrc) =>
+    publishPacked(packed, { registry, tag, npmrc, dryRun: opts.dryRun, provenance: opts.provenance, log, run, isPublished, pollMs: opts.resolvablePollMs }),
+  );
 
   // GitHub Packages is a mirror, never the registry of record -- and it does not take every package. `NEVER_MIRROR`
   // holds the names another repository already publishes there (the four standalone `voidbase-plugin-*` repos, whose

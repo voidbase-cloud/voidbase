@@ -10,7 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { refusal, removalCost, satisfies, type PluginFacts, type RemovalCost } from "../server/plugins/resolve";
 import { SHIPPED, SHIPPED_FACTS } from "../server/plugins/shipped";
 import { compareVersions, download, fetchIndex, integrityOf, pick, type PluginVersion, type RegistryIndex } from "./registry";
-import { refusalFor } from "./provided";
+import { refusalFor } from "./refusals";
 
 export const DEFAULT_MARKETPLACES = ["https://marketplace.voidbase.cloud"];
 export const LOCKFILE = "voidbase.lock";

@@ -81,39 +81,6 @@ const MODULES: Record<string, () => Promise<object>> = {
   "./src/server/plugins/translations.ts": () => import("../server/plugins/translations"),
 };
 
-/**
- * The published entries an instance does not hand a bundle, and why not. Two kinds: entries that are not a module a
- * plugin could run, and entries that are the application or the tooling around it — importing one would put the
- * whole app in a plugin's graph, which is the one thing this phase exists to prevent.
- *
- * Both halves of an instance read this: the Bun loader refuses one of these names before it imports a bundle
- * (src/platform/node/plugins.ts), and the Workers build refuses it while it resolves the bundle's imports
- * (`providedImport` below is called from hooks-plugin.ts's `resolveId`), each with the reason written here.
- */
-export const NOT_PROVIDED: Record<string, string> = {
-  "./package.json": "the manifest, read as data; not a module",
-  "./scripts/*": "a pattern over this repository's own build scripts",
-  "./schema": "the project's drizzle schema, which every project defines for itself",
-  "./env": "the project's env definition, likewise",
-  "./secrets": "src/env/define.ts, read by the deploy to declare secrets, not by an instance",
-  "./plugin": "hooks-plugin.ts: the Void build plugin, which runs in the build",
-  "./deploy-plugin": "types only, and a deploy plugin runs in the build (src/node/deploy-plugins.ts)",
-  ".": "the CLI (src/node/index.ts)",
-  "./serve": "the Bun server the CLI starts",
-  "./bundle": "the marketplace bundler: it builds plugins, it is not one",
-  "./adapter": "the Void adapter, which runs in the build",
-  "./adapter/plugin": "the same adapter's Vite half",
-  "./cloud": "voidbase.cloud's Cloudflare API client",
-  "./cloud-client": "voidbase.cloud's browser client",
-  "./app": "the application a plugin is loaded into; a plugin that imports it is the failure this phase prevents",
-  "./api": "the application's REST routes",
-  "./static": "the application's static handler",
-  "./crons": "a Worker entry point",
-  "./jobs": "a Worker entry point",
-  "./hub": "a Worker entry point (the realtime Durable Object)",
-  "./durable-db": "a Worker entry point (the database Durable Object)",
-  "./workflows": "a Worker entry point, and it imports ./app; a project's own workflows/ module may import it, a plugin may not",
-};
 
 /** an `exports` target as one path: the conditional entries are the platform picks, and Bun takes the default */
 const targetOf = (target: string | Record<string, string>): string => (typeof target === "string" ? target : (target.default ?? ""));
@@ -121,11 +88,6 @@ const targetOf = (target: string | Record<string, string>): string => (typeof ta
 /** `./kernel` as a bundle writes it; `.` would be the package itself, which is not something a bundle imports */
 const specifierOf = (entry: string): string => `@voidbase-cloud/voidbase${entry === "." ? "" : entry.slice(1)}`;
 
-const PKG = "@voidbase-cloud/voidbase";
-
-/** the `exports` entry a bundle's specifier names, or null when the specifier is not this package's */
-export const entryOf = (specifier: string): string | null =>
-  specifier === PKG ? "." : specifier.startsWith(`${PKG}/`) ? `.${specifier.slice(PKG.length)}` : null;
 
 /**
  * The entry points a bundle may import, as the modules this process runs. Generated from package.json's `exports`,
@@ -138,21 +100,6 @@ export const PROVIDED: Record<string, () => Promise<object>> = Object.fromEntrie
   }),
 );
 
-/**
- * Why an instance refuses this specifier to a plugin, or null when it does not refuse it. The message both halves
- * answer with: the Bun loader before it imports a bundle, the Workers build while it resolves one. A name that is
- * neither provided nor refused is not this package's at all, and answers null here the way `left-pad` does.
- */
-export function refusalFor(specifier: string): string | null {
-  const entry = entryOf(specifier);
-  if (!entry) return null;
-  const why = NOT_PROVIDED[entry] ?? Object.entries(NOT_PROVIDED).find(([e]) => e.endsWith("/*") && entry.startsWith(e.slice(0, -1)))?.[1];
-  return why ? `${specifier} is not something an instance provides to a plugin: ${why}` : null;
-}
-
-/**
- * What a bundle may import at all: this package and hono, nothing else. Enforced in the two places a bundle is
- * read — the Bun loader's check before it imports one (src/platform/node/plugins.ts), and hooks-plugin.ts's
- * `resolveId` when a Worker is built, which hands anything else back to Vite and fails the build on it.
- */
-export const PROVIDED_RE = /^(@voidbase-cloud\/voidbase|hono)(\/|$)/;
+// the refusal list and the specifier helpers live in ./refusals.ts, which the Workers half reads without this
+// module's thunks; they are re-exported here so a reader of either name finds it where it was
+export { entryOf, NOT_PROVIDED, PROVIDED_RE, refusalFor } from "./refusals";

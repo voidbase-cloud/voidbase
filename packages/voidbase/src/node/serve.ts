@@ -84,8 +84,10 @@ export async function openLocal(opts: ServeOptions) {
   try { if (!existsSync(`${dir}/types.d.ts`)) writeFileSync(`${dir}/types.d.ts`, emb?.typesDts ?? readFileSync(`${PKG}/types/pb_data.d.ts`, "utf8")); } catch { /* optional */ }
   const sqlite = openDatabase(`${dir}/data.db`);
   applySystemMigrations(sqlite, emb?.migrations ?? readSystemMigrations());
-  // PocketBase serves ./pb_public at / when the directory exists (--publicDir); a build there is a full static host
-  const publicDir = opts.publicDir ? resolve(opts.publicDir) : existsSync(resolve("pb_public")) ? resolve("pb_public") : undefined;
+  // PocketBase serves ./pb_public at / (--publicDir); a build there is a full static host. The route is there whether or
+  // not the directory exists yet, and the fetcher looks on each request, so a pb_public made while the instance runs
+  // is served without a restart, as PocketBase does
+  const publicDir = resolve(opts.publicDir ?? "pb_public");
   // the panel: where it is, whether its entry is guarded, and whether /_/ is still served. Set before the app
   // module is imported, which is what lets it mount the guard on the path itself (src/server/app.ts)
   const panelPath = opts.panel ? normalizePanelPath(opts.panel.path ?? PANEL_DEFAULT_PATH) : PANEL_DEFAULT_PATH;

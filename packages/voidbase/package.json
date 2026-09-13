@@ -87,6 +87,7 @@
     "./secrets": "./src/env/define.ts",
     "./serve": "./src/node/serve.ts",
     "./static": "./src/server/static.ts",
+    "./testing": "./src/server/entries/testing.ts",
     "./types": "./src/server/types.ts",
     "./workflows": "./src/server/workflows.ts"
   },

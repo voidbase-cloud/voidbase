@@ -236,7 +236,15 @@ export async function locate(marketplaces: string[], name: string, version: stri
   return hits[0]!;
 }
 
-export interface AddOptions { marketplace?: string; force?: boolean; voidbaseVersion: string; fetchImpl?: typeof fetch; env?: Record<string, string | undefined> }
+export interface AddOptions {
+  marketplace?: string; force?: boolean; voidbaseVersion: string; fetchImpl?: typeof fetch; env?: Record<string, string | undefined>;
+  /**
+   * write pb_plugins/<name>/config.json at each field's default (the default): a project's configuration, committed with
+   * it. The admin panel of a vanilla instance passes false, since that instance keeps what an admin sets in `_params`
+   * and a config.json there would read as the project's and turn the plane read only (src/server/plugin-config.ts).
+   */
+  defaultConfig?: boolean;
+}
 export interface Added { name: string; version: string; marketplace: string; previous?: string; unchanged?: boolean; shadows: boolean }
 
 /** install a plugin: locate it, download it, verify the bytes, write pb_plugins/<name> and the lockfile */
@@ -256,7 +264,7 @@ export async function addPlugin(root: string, spec: string, o: AddOptions): Prom
     const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as { name?: string; version?: string };
     if (manifest.name !== name || manifest.version !== v.version) { rmSync(dir, { recursive: true, force: true }); throw new Error(`${v.source.repository}@${v.source.commit} declares ${manifest.name} ${manifest.version} in manifest.json, and ${found.marketplace} lists ${name} ${v.version}; nothing was installed`); }
     writeFileSync(join(dir, "release.json"), `${JSON.stringify(v, null, 2)}\n`);
-    writeDefaultConfig(dir, (manifest as PluginVersion["manifest"]).config ?? v.manifest.config);
+    if (o.defaultConfig !== false) writeDefaultConfig(dir, (manifest as PluginVersion["manifest"]).config ?? v.manifest.config);
     lock.plugins[name] = { version: v.version, shape: "files", integrity: await integrityOfDir(dir), marketplace: found.marketplace, source: v.source, installedOn: new Date().toISOString().slice(0, 10) };
     lock.disabled = lock.disabled.filter((d) => d !== name);
     writeLock(root, lock);
@@ -275,7 +283,7 @@ export async function addPlugin(root: string, spec: string, o: AddOptions): Prom
     writeFileSync(join(dir, "deploy.js"), d.bytes);
   } else rmSync(join(dir, "deploy.js"), { force: true });
   writeFileSync(join(dir, "release.json"), `${JSON.stringify(v, null, 2)}\n`);
-  writeDefaultConfig(dir, v.manifest.config);
+  if (o.defaultConfig !== false) writeDefaultConfig(dir, v.manifest.config);
   lock.plugins[name] = { version: v.version, integrity: v.integrity ?? "", ...(v.deploy ? { deploy: v.deploy.integrity } : {}), marketplace: found.marketplace, source: v.source, installedOn: new Date().toISOString().slice(0, 10) };
   lock.disabled = lock.disabled.filter((d) => d !== name);
   writeLock(root, lock);

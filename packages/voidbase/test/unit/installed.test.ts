@@ -54,7 +54,7 @@ describe("a plugin that is pb_ files at a commit (3.6)", () => {
   Bun.spawnSync(["tar", "-czf", join(src, "audit.tar.gz"), "-C", src, `voidbase-plugin-audit-${COMMIT}`]);
   const tarballs = Bun.serve({ port: 0, fetch: (req) => new URL(req.url).pathname === `/tarballs/example/voidbase-plugin-audit/tar.gz/${COMMIT}` ? new Response(Bun.file(join(src, "audit.tar.gz"))) : new Response("not found", { status: 404 }) });
   const listing = { name: "audit", repository: "example/voidbase-plugin-audit", title: "Audit", summary: "pb_ files at a commit", latest: "0.1.0",
-    versions: [{ version: "0.1.0", manifest: { name: "audit", version: "0.1.0", tier: "community", voidbase: "*" }, source: { repository: "example/voidbase-plugin-audit", commit: COMMIT }, publishedOn: "2026-09-13" }] };
+    versions: [{ version: "0.1.0", manifest: { name: "audit", version: "0.1.0", tier: "community", voidbase: "*", config: { level: { type: "string", default: "strict", applies: "runtime" } } }, source: { repository: "example/voidbase-plugin-audit", commit: COMMIT }, publishedOn: "2026-09-13" }] };
   const market = serveFixture((path, text) => { if (!path.endsWith("index.json")) return text; const i = JSON.parse(text); i.plugins.push(listing); return JSON.stringify(i); });
   const before = process.env.VOIDBASE_TARBALL_URL;
   process.env.VOIDBASE_TARBALL_URL = `http://127.0.0.1:${tarballs.port}/tarballs`;
@@ -71,6 +71,14 @@ describe("a plugin that is pb_ files at a commit (3.6)", () => {
     expect(entry).toMatchObject({ version: "0.1.0", shape: "files", source: { repository: "example/voidbase-plugin-audit", commit: COMMIT } });
     expect(entry.integrity).toBe(await integrityOfDir(join(root, "pb_plugins/audit")));
     expect((await addPlugin(root, "audit", opts(url(market)))).unchanged).toBe(true);
+  });
+
+  test("adding writes config.json at the defaults, for a project to commit; the admin panel of a vanilla instance writes none", async () => {
+    await addPlugin(root, "audit", { ...opts(url(market)), force: true });
+    expect(JSON.parse(readFileSync(join(root, "pb_plugins/audit/config.json"), "utf8"))).toEqual({ level: "strict" });
+    // the panel keeps what an admin sets in _params: a config.json here would read as the project's and lock the plane
+    await addPlugin(root, "audit", { ...opts(url(market)), force: true, defaultConfig: false });
+    expect(existsSync(join(root, "pb_plugins/audit/config.json"))).toBe(false);
   });
 
   test("a Worker build imports its compiled pb_hooks from a module of its own, and its manifest is the plugin", async () => {

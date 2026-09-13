@@ -30,6 +30,7 @@ export const NOT_PROVIDED: Record<string, string> = {
   ".": "the CLI (src/node/index.ts)",
   "./serve": "the Bun server the CLI starts",
   "./bundle": "the marketplace bundler: it builds plugins, it is not one",
+  "./testing": "what a plugin's own tests import to stand up a kernel and a database on bun:sqlite; an instance never runs a test",
   "./adapter": "the Void adapter, which runs in the build",
   "./adapter/plugin": "the same adapter's Vite half",
   "./cloud": "voidbase.cloud's Cloudflare API client",

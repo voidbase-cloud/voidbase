@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.59](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.58...v0.9.0-beta.59) (2026-09-13)
+
+* fix(plugin): removing a plugin that is not there answers 400 with the reason
+
 ## [0.9.0-beta.58](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.57...v0.9.0-beta.58) (2026-09-12)
 
 * fix(ci): a release moves the core and what changed, not every package

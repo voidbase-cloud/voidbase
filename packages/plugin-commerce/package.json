@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-commerce",
-  "version": "0.9.0-beta.58",
+  "version": "0.9.0-beta.59",
   "description": "The commerce plugin of voidbase: a shop that requires payments@1, tax@1 and shipping@1 rather than particular plugins",
   "license": "MIT",
   "repository": {

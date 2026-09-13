@@ -185,7 +185,7 @@ describe("/api/plugins is what the plugins that loaded say about themselves", ()
   // `source` on each plugin and `files` came after the snapshot, on purpose (16.5); the rest is held to it
   const beforeSources = (a: Record<string, unknown>) => {
     const { files: _files, waiting: _waiting, ...rest } = a;
-    return { ...rest, plugins: (rest.plugins as { source?: string }[]).map(({ source: _source, ...p }) => p) };
+    return { ...rest, plugins: (rest.plugins as { source?: string; config?: unknown }[]).map(({ source: _source, config: _config, ...p }) => p) };
   };
 
   test("a default instance answers byte for byte what it answered before, key order and all", async () => {
@@ -353,7 +353,7 @@ describe("a field is in the answer only while a plugin answers for it", () => {
     const answer = await pluginsReport(await instance([quiet("domains")], ["domains"]), env);
     expect("domains" in answer).toBe(false);
     expect(answer.names).toContain("domains");
-    expect(answer.plugins).toContainEqual({ name: "domains", tier: "community", core: false, provides: [], requires: [], source: "voidbase" });
+    expect(answer.plugins).toContainEqual({ name: "domains", tier: "community", core: false, provides: [], requires: [], source: "voidbase", config: null });
   });
 
   test("installer, mail, payments and observability are there whatever is loaded: they are not a plugin's to take away", async () => {

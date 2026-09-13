@@ -1,4 +1,4 @@
-// A plugin's configuration plane (src/server/plugins/config.ts): what a manifest may declare, where a value comes from,
+// A plugin's configuration plane (src/server/plugin-config.ts): what a manifest may declare, where a value comes from,
 // that a runtime field takes effect at once and a rebuild field waits, that a project's configuration is read only on
 // the instance, and the config.json an extended project gets when it adds a plugin.
 import { afterAll, beforeEach, expect, test } from "bun:test";
@@ -8,8 +8,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { d1 } from "../../src/node/d1";
 import { projectConfigOf, writeDefaultConfig } from "../../src/node/installed";
-import { configKnob, configReport, declareConfig } from "../../src/server/plugins/config";
-import { setPluginConfig } from "../../src/server/plugins/config-store";
+import { configKnob, configReport, declareConfig } from "../../src/server/plugin-config";
+import { setPluginConfig } from "../../src/server/plugin-config-store";
 import { checkManifest, type PluginManifest } from "../../src/server/plugins/manifest";
 import { readKnob, responsePolicy } from "../../src/server/response-policy";
 

@@ -1,11 +1,11 @@
 // Where an admin's plugin configuration is kept on a vanilla instance: one `_params` row, like the settings, read into
-// ./config.ts before a request reads a knob. An isolate re-reads it after a short while so a change made through
+// ./plugin-config.ts before a request reads a knob. An isolate re-reads it after a short while so a change made through
 // another isolate reaches this one; the isolate that made the change has it at once.
-import { one, run } from "../db";
-import { ApiError, badRequest, notFound } from "../errors";
-import { nowString } from "../ids";
-import { coerce, configPlane, configuredInProject, useStoredConfig, type ConfigValues } from "./config";
-import type { ConfigValue } from "./manifest";
+import { one, run } from "./db";
+import { ApiError, badRequest, notFound } from "./errors";
+import { nowString } from "./ids";
+import { coerce, configPlane, configuredInProject, useStoredConfig, type ConfigValues } from "./plugin-config";
+import type { ConfigValue } from "./plugins/manifest";
 
 const ROW = "plugin-config";
 let readAt = 0;

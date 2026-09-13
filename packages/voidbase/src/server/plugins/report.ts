@@ -54,6 +54,7 @@ import type { Observability, Payments } from "../interfaces";
 import { loadedPlugin, using, whatLoaded, type Kernel } from "../kernel";
 import { mailRoute } from "../mail";
 import type { Bindings } from "../types";
+import { configReport, environmentOf } from "../plugin-config";
 import type { InterfaceName } from "./manifest";
 
 /** what this plugin says about itself, bound to it, or nothing when there is no plugin under that name to ask */
@@ -244,7 +245,9 @@ export async function pluginsReport(kernel: Kernel, env: Bindings, opts: { timeo
   // ships it, the repository the instance is built from declares it, or the instance itself holds it. The panel
   // reads this to know what it may offer to change (decision 12), and D2 reads it to see the project declares a plugin.
   const mode = installerInfo(env).mode;
-  if (Array.isArray(answer.plugins)) answer.plugins = (answer.plugins as { name: string }[]).map((p) => ({ ...p, source: sourceOf(graph.origins[p.name], mode) }));
+  // and how each is configured: its configuration plane field by field (../plugin-config.ts), or null when it declares none
+  const planes = configReport(environmentOf(env));
+  if (Array.isArray(answer.plugins)) answer.plugins = (answer.plugins as { name: string }[]).map((p) => ({ ...p, source: sourceOf(graph.origins[p.name], mode), config: planes[p.name]?.fields ?? null }));
   const files = sourceOf("", mode);
   answer.files = { pb_hooks: files, pb_migrations: files, pb_public: files };
   for (const [key, value] of fields) if (value) answer[key] = await value;

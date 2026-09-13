@@ -119,4 +119,4 @@ export function checkManifest(m: PluginManifest): string[] {
   return wrong;
 }
 
-export { configKnob } from "./config";
+export { configKnob } from "../plugin-config";

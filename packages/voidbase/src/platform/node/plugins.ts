@@ -92,7 +92,7 @@ export async function loadInstalled(dir: string): Promise<{ installed: Installed
 const loaded = await loadInstalled(resolve(process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins"));
 export const installed: InstalledPlugin[] = loaded.installed;
 export const disabled: string[] = loaded.disabled;
-/** pb_plugins/<name>/config.json, the configuration an extended project commits (src/server/plugins/config.ts) */
+/** pb_plugins/<name>/config.json, the configuration an extended project commits (src/server/plugin-config.ts) */
 export const projectConfig = projectConfigOf(resolve(process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins"));
 
 // ---- the installer's view of the project on disk (src/server/installer-info.ts) --------------------------------

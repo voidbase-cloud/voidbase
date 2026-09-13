@@ -9,7 +9,7 @@
 // Where a value comes from, first match wins:
 //   environment  the knob itself (VOIDBASE_HSTS, ...), set on the deploy or the process. It was the only place
 //                through 0.9.0-beta.58 and it still wins, so nothing that configured a plugin that way changes.
-//   instance     what an admin set from the panel on a vanilla instance, kept in `_params` (./config-store.ts).
+//   instance     what an admin set from the panel on a vanilla instance, kept in `_params` (./plugin-config-store.ts).
 //   project      pb_plugins/<name>/config.json on an extended project, committed with the project and carried by
 //                its build. A plugin configured there is read only on the instance: git is what declares it.
 //   default      what the manifest says.
@@ -17,7 +17,7 @@
 // This module holds no database and no platform: the knob readers (response-policy.ts `readKnob`, payments-shared
 // `knob`, and a plugin's own) ask `configKnob` after the environment, synchronously, and the store fills in what an
 // admin set before the request reads it.
-import type { ConfigField, ConfigValue, PluginManifest } from "./manifest";
+import type { ConfigField, ConfigValue, PluginManifest } from "./plugins/manifest";
 
 export type ConfigValues = Record<string, Record<string, ConfigValue>>;
 export type ConfigSource = "environment" | "instance" | "project" | "default";
@@ -78,6 +78,13 @@ export function coerce(spec: ConfigField, value: unknown): { value: ConfigValue 
   if (value === "true" || value === "false") return { value: value === "true" };
   return { problem: "must be true or false" };
 }
+
+/** a knob as the environment sets it for this request: the request's bindings, then the process's; undefined when unset */
+export const environmentOf = (env?: object) => (knob: string): string | undefined => {
+  let v = "";
+  try { v = String((env as Record<string, unknown> | undefined)?.[knob] ?? (typeof process === "undefined" ? undefined : process.env?.[knob]) ?? "").trim(); } catch { v = ""; }
+  return v || undefined;
+};
 
 export interface FieldReport extends ConfigField { knob: string; value: ConfigValue | null; source: ConfigSource; pending?: ConfigValue | null }
 

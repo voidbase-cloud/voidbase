@@ -538,12 +538,12 @@ when it is read when the instance is built or started. That second mark is the p
 plugin knows where it reads the value. hardening's fields are all `runtime`; observability's `sample_rate` is
 `rebuild`, because `voidbase deploy` writes it into the Worker's configuration.
 
-A field's value comes from, first match wins (`src/server/plugins/config.ts`):
+A field's value comes from, first match wins (`src/server/plugin-config.ts`):
 
 | source | where |
 | --- | --- |
 | environment | the knob itself (`VOIDBASE_HSTS`, ...), as before; it still wins |
-| instance | what an admin set on a vanilla instance, kept in `_params` (`plugins/config-store.ts`) |
+| instance | what an admin set on a vanilla instance, kept in `_params` (`plugin-config-store.ts`) |
 | project | `pb_plugins/<name>/config.json`, committed with an extended project and carried by its build |
 | default | the manifest |
 

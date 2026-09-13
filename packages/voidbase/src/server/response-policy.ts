@@ -27,7 +27,7 @@ import { env as runtimeEnv } from "#platform/env";
 import { csrfModeOf, csrfTokenRefusal, STATE_CHANGING, type CsrfMode } from "./csrf";
 import { ApiError } from "./errors";
 import { pathMatches } from "./path-glob";
-import { configKnob } from "./plugins/config";
+import { configKnob } from "./plugin-config";
 import type { AppEnv } from "./types";
 
 /** the policy on a served file, PocketBase's (apis/file.go): nothing runs, nothing loads, nothing escapes the sandbox */
@@ -61,7 +61,7 @@ export interface ResponsePolicy {
 
 /**
  * One knob's value: the request's env first (a knob may be a feature flag evaluated per request: flags.ts), then
- * the runtime's, then the process's, then the plugin configuration a knob is a field of (plugins/config.ts). Exported because auth-cookie.ts reads its own knobs exactly this way.
+ * the runtime's, then the process's, then the plugin configuration a knob is a field of (plugin-config.ts). Exported because auth-cookie.ts reads its own knobs exactly this way.
  */
 export const readKnob = (name: string, env?: object): string => {
   try { return String((env as Record<string, unknown> | undefined)?.[name] ?? (runtimeEnv as Record<string, unknown>)[name] ?? process.env?.[name] ?? configKnob(name) ?? "").trim(); } catch { return ""; }

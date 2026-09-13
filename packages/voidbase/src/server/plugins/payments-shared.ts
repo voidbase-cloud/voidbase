@@ -34,7 +34,7 @@ import { createRecord, updateRecord, type RecordContext } from "../records/servi
 import { rowToValues } from "../records/values";
 import type { AppEnv, AuthRecord, Bindings, Row } from "../types";
 import { ensureCollections } from "./collections";
-import { configKnob } from "./config";
+import { configKnob } from "../plugin-config";
 import type { Plugin } from "./manifest";
 import type { Context, Hono } from "hono";
 

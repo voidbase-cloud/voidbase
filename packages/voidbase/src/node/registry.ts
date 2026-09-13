@@ -37,14 +37,20 @@ export interface PluginVersion {
   version: string;
   /** the manifest as the source declares it; the instance checks the loaded bundle says the same */
   manifest: PluginManifest;
-  /** SRI: `sha256-<base64>` of the bundle's bytes */
-  integrity: string;
-  /** the bundle's URL, absolute or relative to the index */
-  bundle: string;
-  bytes: number;
+  /**
+   * A version is one of two shapes. A bundle version names a built ES module the marketplace hosts: `bundle`, its
+   * `integrity` and its `bytes`. A pb_ files version names none of those: it is the `manifest.json` and `pb_*`
+   * directories at `source.commit` in `source.repository` (under `source.directory` for a repository that holds more
+   * than one), loaded as they are, which is what 3.6 and decision 4 ask for. `isFilesVersion` tells them apart.
+   */
+  /** SRI: `sha256-<base64>` of the bundle's bytes (bundle versions) */
+  integrity?: string;
+  /** the bundle's URL, absolute or relative to the index (bundle versions) */
+  bundle?: string;
+  bytes?: number;
   /** the plugin's deploy-time half (docs/plugins.md, "What a plugin does at deploy time"): its URL like `bundle`, and its SRI */
   deploy?: { file: string; integrity: string };
-  source: { repository: string; commit: string };
+  source: { repository: string; commit: string; /** the plugin's directory inside the repository, when it is not the root */ directory?: string };
   publishedOn: string;
   /** what the marketplace checked, so a reader can disagree with any single check */
   audit?: AuditRecord;
@@ -112,10 +118,14 @@ export function problemsWithIndex(index: unknown): string[] {
         if (v.manifest.name !== name) out.push(`${vat}.manifest is called ${JSON.stringify(v.manifest.name)}, and the listing ${JSON.stringify(name)}`);
         if (v.manifest.version !== version) out.push(`${vat}.manifest says version ${JSON.stringify(v.manifest.version)}, and the record ${JSON.stringify(version)}`);
       }
-      if (!isString(v.integrity) || !INTEGRITY.test(v.integrity)) out.push(`${vat}.integrity has to be sha256-<base64>`);
-      if (!isString(v.bundle)) out.push(`${vat}.bundle (the bundle's URL) is required`);
-      if (!Number.isInteger(v.bytes) || (v.bytes as number) <= 0) out.push(`${vat}.bytes has to be the bundle's size`);
+      // a bundle version says where its bytes are and what they hash to; a pb_ files version is its commit, below
+      if ("bundle" in v) {
+        if (!isString(v.integrity) || !INTEGRITY.test(v.integrity)) out.push(`${vat}.integrity has to be sha256-<base64>`);
+        if (!isString(v.bundle)) out.push(`${vat}.bundle (the bundle's URL) is required`);
+        if (!Number.isInteger(v.bytes) || (v.bytes as number) <= 0) out.push(`${vat}.bytes has to be the bundle's size`);
+      }
       const s = v.source;
+      if (isRecord(s) && s.directory !== undefined && (!isString(s.directory) || !s.directory || s.directory.startsWith("/") || s.directory.split("/").includes(".."))) out.push(`${vat}.source.directory has to be a path inside the repository`);
       if (!isRecord(s) || !isString(s.repository) || !REPOSITORY.test(s.repository) || !isString(s.commit) || !COMMIT.test(s.commit)) out.push(`${vat}.source needs the repository (owner/name) and the commit it was built from`);
       if (!isString(v.publishedOn)) out.push(`${vat}.publishedOn is required`);
     });
@@ -153,6 +163,9 @@ export function compareVersions(a: string, b: string): number {
 }
 
 /** SRI over the bundle's bytes, the form the index carries and the instance recomputes */
+/** whether a version is pb_ files loaded as they are, rather than a bundle the marketplace built */
+export const isFilesVersion = (v: Pick<PluginVersion, "bundle">): boolean => v.bundle === undefined;
+
 export async function integrityOf(bytes: Uint8Array): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))); // a copy: the digest wants a plain ArrayBuffer view
   let s = ""; for (const b of digest) s += String.fromCharCode(b);
@@ -165,7 +178,10 @@ export const verifyIntegrity = async (bytes: Uint8Array, expected: string): Prom
 export const indexUrl = (base: string): string => (base.endsWith("index.json") ? base : `${base.replace(/\/+$/, "")}/${INDEX_PATH}`);
 
 /** a bundle URL is absolute or relative to the index that named it */
-export const bundleUrl = (index: string, v: PluginVersion): string => new URL(v.bundle, index).toString();
+export const bundleUrl = (index: string, v: PluginVersion): string => {
+  if (v.bundle === undefined) throw new Error(`${v.manifest.name} ${v.version} is pb_ files at ${v.source.repository}@${v.source.commit}: it is fetched from its repository, not downloaded as a bundle`);
+  return new URL(v.bundle, index).toString();
+};
 
 export async function fetchIndex(base: string, fetchImpl: typeof fetch = fetch): Promise<{ url: string; index: RegistryIndex }> {
   const url = indexUrl(base);
@@ -190,5 +206,5 @@ export async function download(index: string, v: PluginVersion, fetchImpl: typeo
   const res = await fetchImpl(url);
   if (!res.ok) throw new Error(`${url} answered ${res.status}`);
   const bytes = new Uint8Array(await res.arrayBuffer());
-  return { url, bytes, verified: await verifyIntegrity(bytes, v.integrity) };
+  return { url, bytes, verified: await verifyIntegrity(bytes, v.integrity ?? "") };
 }

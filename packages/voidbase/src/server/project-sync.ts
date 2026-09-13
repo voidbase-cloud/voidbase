@@ -66,9 +66,11 @@ export async function commitPlugins(repo: Repo, change: PluginChange, message = 
     delete lock.plugins[name];
   }
   for (const a of change.add) {
+    // a pb_ files version is its repository's files at a commit; committing those from an instance is not written yet
+    if (a.version.bundle === undefined) throw new Error(`${a.name} ${a.version.version} is pb_ files at a commit, which this instance cannot commit to ${full} yet: run voidbase plugins add ${a.name} in a checkout and push it`);
     tree.push({ path: `${PLUGINS_DIR}/${a.name}/bundle.js`, mode: "100644", type: "blob", sha: await blob(b64(a.bytes), "base64") });
     tree.push({ path: `${PLUGINS_DIR}/${a.name}/release.json`, mode: "100644", type: "blob", sha: await blob(`${JSON.stringify(a.version, null, 2)}\n`, "utf-8") });
-    lock.plugins[a.name] = { version: a.version.version, integrity: a.version.integrity, marketplace: a.marketplace, source: a.version.source, installedOn: new Date().toISOString().slice(0, 10) };
+    lock.plugins[a.name] = { version: a.version.version, integrity: a.version.integrity ?? "", marketplace: a.marketplace, source: a.version.source, installedOn: new Date().toISOString().slice(0, 10) };
     lock.disabled = lock.disabled.filter((d) => d !== a.name);
   }
   tree.push({ path: LOCKFILE, mode: "100644", type: "blob", sha: await blob(lockText(lock), "utf-8") });

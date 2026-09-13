@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pbHooksPlugin } from "../../hooks-plugin";
-import { addPlugin, enablePlugin, listPlugins, locate, outsideRange, pluginFacts, pluginsModuleSource, providedImport, readLock, removalCostFor, removePlugin, updatePlugins, verifyInstalled } from "../../src/node/installed";
+import { addPlugin, enablePlugin, integrityOfDir, listPlugins, locate, outsideRange, pluginFacts, pluginsModuleSource, providedImport, readLock, removalCostFor, removePlugin, updatePlugins, verifyInstalled } from "../../src/node/installed";
 import { refusalFor } from "../../src/node/provided";
 import pkgJson from "../../package.json" with { type: "json" };
 import { integrityOf } from "../../src/node/registry";
@@ -37,6 +37,54 @@ afterAll(() => { one.stop(true); two.stop(true); newer.stop(true); });
 let root = "";
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), "voidbase-project-")); });
 const opts = (marketplaces: string) => ({ voidbaseVersion: "0.9.0", env: { VOIDBASE_PLUGIN_MARKETPLACES: marketplaces } });
+
+describe("a plugin that is pb_ files at a commit (3.6)", () => {
+  const COMMIT = "0123456789abcdef0123456789abcdef01234567";
+  // the repository at that commit, packed the way GitHub's codeload packs it: one top-level <repo>-<commit>/ directory
+  const src = mkdtempSync(join(tmpdir(), "voidbase-audit-src-"));
+  const top = join(src, `voidbase-plugin-audit-${COMMIT}`);
+  mkdirSync(join(top, "pb_hooks"), { recursive: true });
+  writeFileSync(join(top, "manifest.json"), JSON.stringify({ name: "audit", version: "0.1.0", tier: "community", voidbase: "*" }));
+  writeFileSync(join(top, "pb_hooks/audit.pb.js"), 'routerAdd("GET", "/api/audit", (e) => e.json(200, { audited: true }))\n');
+  writeFileSync(join(top, "README.md"), "not part of the plugin\n");
+  Bun.spawnSync(["tar", "-czf", join(src, "audit.tar.gz"), "-C", src, `voidbase-plugin-audit-${COMMIT}`]);
+  const tarballs = Bun.serve({ port: 0, fetch: (req) => new URL(req.url).pathname === `/tarballs/example/voidbase-plugin-audit/tar.gz/${COMMIT}` ? new Response(Bun.file(join(src, "audit.tar.gz"))) : new Response("not found", { status: 404 }) });
+  const listing = { name: "audit", repository: "example/voidbase-plugin-audit", title: "Audit", summary: "pb_ files at a commit", latest: "0.1.0",
+    versions: [{ version: "0.1.0", manifest: { name: "audit", version: "0.1.0", tier: "community", voidbase: "*" }, source: { repository: "example/voidbase-plugin-audit", commit: COMMIT }, publishedOn: "2026-09-13" }] };
+  const market = serveFixture((path, text) => { if (!path.endsWith("index.json")) return text; const i = JSON.parse(text); i.plugins.push(listing); return JSON.stringify(i); });
+  const before = process.env.VOIDBASE_TARBALL_URL;
+  process.env.VOIDBASE_TARBALL_URL = `http://127.0.0.1:${tarballs.port}/tarballs`;
+  afterAll(() => { tarballs.stop(true); market.stop(true); rmSync(src, { recursive: true, force: true }); if (before === undefined) delete process.env.VOIDBASE_TARBALL_URL; else process.env.VOIDBASE_TARBALL_URL = before; });
+
+  test("fetches the approved commit, keeps its manifest and pb_ directories as they are, and pins the files", async () => {
+    const a = await addPlugin(root, "audit", opts(url(market)));
+    expect(a).toMatchObject({ name: "audit", version: "0.1.0", marketplace: url(market) });
+    expect(readFileSync(join(root, "pb_plugins/audit/pb_hooks/audit.pb.js"), "utf8")).toContain("/api/audit");
+    expect(existsSync(join(root, "pb_plugins/audit/manifest.json"))).toBe(true);
+    expect(existsSync(join(root, "pb_plugins/audit/bundle.js"))).toBe(false);
+    expect(existsSync(join(root, "pb_plugins/audit/README.md"))).toBe(false);
+    const entry = readLock(root).plugins.audit!;
+    expect(entry).toMatchObject({ version: "0.1.0", shape: "files", source: { repository: "example/voidbase-plugin-audit", commit: COMMIT } });
+    expect(entry.integrity).toBe(await integrityOfDir(join(root, "pb_plugins/audit")));
+    expect((await addPlugin(root, "audit", opts(url(market)))).unchanged).toBe(true);
+  });
+
+  test("a Worker build imports its compiled pb_hooks from a module of its own, and its manifest is the plugin", async () => {
+    await addPlugin(root, "audit", opts(url(market)));
+    const src = await pluginsModuleSource(join(root, "pb_plugins"));
+    expect(src).toContain('import * as h0 from "virtual:voidbase-plugin-hooks/audit";');
+    expect(src).toContain('plugin: { manifest: {"name":"audit","version":"0.1.0","tier":"community","voidbase":"*"} }');
+    expect(src).toContain("hooks: h0");
+  });
+
+  test("the files on disk are the files the lock promises, or nothing loads", async () => {
+    await addPlugin(root, "audit", opts(url(market)));
+    const { installed } = await verifyInstalled(root);
+    expect(installed.find((p) => p.name === "audit")).toMatchObject({ shape: "files", file: join(root, "pb_plugins/audit") });
+    writeFileSync(join(root, "pb_plugins/audit/pb_hooks/audit.pb.js"), 'routerAdd("GET", "/api/audit", (e) => e.json(200, { audited: false }))\n');
+    await expect(verifyInstalled(root)).rejects.toThrow("pb_plugins/audit is not the files voidbase.lock promises for audit 0.1.0");
+  });
+});
 
 describe("voidbase plugins add", () => {
   test("downloads the bundle, verifies it, and pins it in voidbase.lock", async () => {

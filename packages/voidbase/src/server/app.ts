@@ -708,5 +708,7 @@ installServices({
   // $app.newMailClient().send(): synchronous like PocketBase's mailer, errors surface to the hook
   sendMail: async (msg) => { const ctx = await hookStore.getStore()!.ctx(); await sendMail(ctx.db, { from: msg.from, to: msg.to, cc: msg.cc, bcc: msg.bcc, subject: msg.subject, html: msg.html, text: msg.text, headers: msg.headers }, { inline: true }); },
 });
-loadHooks();
+// the project's pb_hooks, and each installed pb_ files plugin's that loaded and is not waiting for a capability
+const waitingFor = new Set(whatLoaded(kernel).waiting.map((w) => w.plugin));
+loadHooks(installedPlugins.flatMap((p) => (p.hooks && !waitingFor.has(p.name) && !disabledPlugins.includes(p.name) ? [{ name: p.name, hooks: p.hooks }] : [])));
 mountHookRoutes(app);

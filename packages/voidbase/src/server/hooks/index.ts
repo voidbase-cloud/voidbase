@@ -98,8 +98,45 @@ function requireModule(path: string): unknown {
 const GLOBALS = buildGlobals();
 export const hookGlobals = () => GLOBALS;
 
+/** a pb_hooks directory compiled by hooks-plugin.ts compileHooksDir: a project's, or an installed pb_ files plugin's */
+export interface CompiledHooks {
+  hooks: { name: string; run: (g: Record<string, unknown>) => Promise<void> }[];
+  modules: Record<string, (g: Record<string, unknown>) => Promise<unknown> | unknown>;
+  files: Record<string, string>;
+  routeDocs?: { method: string; path: string; superuser: boolean; response?: Record<string, unknown> }[];
+}
+
+/**
+ * The globals a pb_ files plugin's hooks run with: the instance's own, except that `__hooks`, `require` and `$os`
+ * are the plugin's directory, so `require(`${__hooks}/x.js`)` and `$os.readFile` reach the plugin's files and not
+ * the project's.
+ */
+function pluginGlobals(name: string, compiled: CompiledHooks): Record<string, unknown> {
+  const prefix = `/pb_plugins/${name}/pb_hooks`;
+  const cache = new Map<string, unknown>();
+  const own: Record<string, unknown> = { __hooks: prefix, $os: makeOs(compiled.files, prefix) };
+  const view: Record<string, unknown> = new Proxy(own, { get: (t, prop: string) => (prop in t ? t[prop] : (GLOBALS as Record<string, unknown>)[prop]) });
+  own.require = (path: string): unknown => {
+    const rel = path.replace(/^\.\//, "").replace(new RegExp("^" + prefix + "/?"), "").replace(/\.js$/, "");
+    if (cache.has(rel)) return cache.get(rel);
+    const factory = compiled.modules[rel];
+    if (!factory) throw new Error(`Cannot find module '${path}' in the ${name} plugin`);
+    const module = { exports: {} as Record<string, unknown> };
+    const g = new Proxy({ module, exports: module.exports } as Record<string, unknown>, { get: (t, prop: string) => (prop in t ? t[prop] : view[prop]) });
+    const result = factory(g);
+    const exported = result instanceof Promise ? module.exports : (result ?? module.exports);
+    cache.set(rel, exported);
+    return exported;
+  };
+  return view;
+}
+
 let loaded = false;
-export function loadHooks() {
+/**
+ * The project's pb_hooks, then each installed pb_ files plugin's (3.6), in the order they are given: the loaded
+ * plugins that are not waiting for a capability (app.ts decides which).
+ */
+export function loadHooks(plugins: { name: string; hooks: CompiledHooks }[] = []) {
   if (loaded) return;
   loaded = true;
   // a dev reload re-evaluates this module while runtime.ts keeps its registries: start from empty
@@ -113,7 +150,16 @@ export function loadHooks() {
       void h.run(GLOBALS).catch((err) => logger.error("voidbase: hook file failed", { hook: h.name, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }));
     } catch (err) { logger.error("voidbase: hook file failed", { hook: h.name, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }); }
   }
-  console.log(`voidbase: loaded ${hooks.length} hook file(s) from ${hooksDir}, ${routes.length} route(s)`);
+  for (const plugin of plugins) {
+    const g = pluginGlobals(plugin.name, plugin.hooks);
+    sourceRouteDocs.push(...(plugin.hooks.routeDocs ?? []));
+    for (const h of plugin.hooks.hooks) {
+      try { void h.run(g).catch((err) => logger.error("voidbase: a plugin's hook file failed", { plugin: plugin.name, hook: h.name, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) })); }
+      catch (err) { logger.error("voidbase: a plugin's hook file failed", { plugin: plugin.name, hook: h.name, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }); }
+    }
+  }
+  const fromPlugins = plugins.reduce((n, p) => n + p.hooks.hooks.length, 0);
+  console.log(`voidbase: loaded ${hooks.length} hook file(s) from ${hooksDir}${fromPlugins ? ` and ${fromPlugins} from ${plugins.length} plugin(s)` : ""}, ${routes.length} route(s)`);
 }
 
 // Runs handlers registered with routerAdd. Registered after the core routes so PocketBase's own API wins.

@@ -85,6 +85,16 @@ describe("what an index has to say", () => {
     }
   });
 
+  test("a pb_ files version names its commit and no bundle, and is a good index entry (3.6)", async () => {
+    const { index } = await fetchIndex(base);
+    const audit = { name: "audit", repository: "example/voidbase-plugins", title: "Audit", summary: "pb_ files at a commit", latest: "0.1.0",
+      versions: [{ version: "0.1.0", manifest: { name: "audit", version: "0.1.0", tier: "community", voidbase: "*" }, source: { repository: "example/voidbase-plugins", commit: "0123456789abcdef0123456789abcdef01234567", directory: "plugins/audit" }, publishedOn: "2026-09-13" }] };
+    expect(problemsWithIndex({ ...index, plugins: [...index.plugins, audit] })).toEqual([]);
+    const escaping = { ...audit, versions: [{ ...audit.versions[0]!, source: { ...audit.versions[0]!.source, directory: "../elsewhere" } }] };
+    expect(problemsWithIndex({ ...index, plugins: [...index.plugins, escaping] }).join()).toContain("source.directory has to be a path inside the repository");
+    await expect(download(base, audit.versions[0] as never)).rejects.toThrow("is pb_ files at example/voidbase-plugins@0123456789abcdef0123456789abcdef01234567");
+  });
+
   test("a name served twice is refused: an instance qualifies collisions across marketplaces, not within one", async () => {
     const { index } = await fetchIndex(base);
     const twice = { ...index, plugins: [index.plugins[0]!, index.plugins[0]!] };

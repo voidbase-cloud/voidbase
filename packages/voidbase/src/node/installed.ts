@@ -5,11 +5,14 @@
 // release.json beside it is the marketplace's record (manifest, audit) for a person to read. A shipped plugin can be
 // turned off here too, and an installed plugin with a shipped plugin's name takes its place: that is what keeps an
 // instance free of our own plugins, not only of our marketplace. Nothing in this file runs a plugin.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, resolve } from "node:path";
+import { githubToken } from "./github-token";
+import { extractTarball, tarballUrl } from "./template";
 import { refusal, removalCost, satisfies, type PluginFacts, type RemovalCost } from "../server/plugins/resolve";
 import { SHIPPED, SHIPPED_FACTS } from "../server/plugins/shipped";
-import { compareVersions, download, fetchIndex, integrityOf, pick, type PluginVersion, type RegistryIndex } from "./registry";
+import { compareVersions, download, fetchIndex, integrityOf, isFilesVersion, pick, type PluginVersion, type RegistryIndex } from "./registry";
 import { refusalFor } from "./refusals";
 
 export const DEFAULT_MARKETPLACES = ["https://marketplace.voidbase.cloud"];
@@ -18,14 +21,56 @@ const NAME = /^[a-z][a-z0-9-]*$/;
 
 export interface LockEntry {
   version: string;
-  /** SRI of pb_plugins/<name>/bundle.js, recomputed before anything loads */
+  /** `files` for a plugin that is pb_ files at a commit (3.6); absent for a bundle the marketplace built */
+  shape?: "files";
+  /**
+   * SRI recomputed before anything loads: of pb_plugins/<name>/bundle.js for a bundle, and for pb_ files of the
+   * plugin's manifest.json and pb_* directories together (`integrityOfDir`)
+   */
   integrity: string;
   /** SRI of pb_plugins/<name>/deploy.js, the plugin's deploy-time half, when it has one (docs/plugins.md) */
   deploy?: string;
   /** the marketplace it came from, which is where `update` looks */
   marketplace: string;
-  source: { repository: string; commit: string };
+  source: { repository: string; commit: string; directory?: string };
   installedOn: string;
+}
+
+/** what a pb_ files plugin is made of: its declaration and the directories an instance reads, nothing else */
+export const FILES_ENTRIES = ["manifest.json", "pb_hooks", "pb_migrations", "pb_public"] as const;
+
+/** one hash over a pb_ files plugin: every file under FILES_ENTRIES, by sorted path, each path beside its bytes */
+export async function integrityOfDir(dir: string): Promise<string> {
+  const files: string[] = [];
+  const walk = (p: string) => { if (!existsSync(p)) return; if (statSync(p).isDirectory()) { for (const n of readdirSync(p)) walk(join(p, n)); } else files.push(relative(dir, p).replace(/\\/g, "/")); };
+  for (const e of FILES_ENTRIES) walk(join(dir, e));
+  const enc = new TextEncoder(); const parts: Uint8Array[] = [];
+  for (const f of files.sort()) parts.push(enc.encode(`${f}\0`), new Uint8Array(readFileSync(join(dir, f))), enc.encode("\0"));
+  const all = new Uint8Array(parts.reduce((n, b) => n + b.length, 0)); let at = 0; for (const b of parts) { all.set(b, at); at += b.length; }
+  return integrityOf(all);
+}
+
+/**
+ * A pb_ files version, fetched: GitHub's tarball of the repository at the approved commit (VOIDBASE_TARBALL_URL
+ * points it elsewhere, for a mirror or a test), unpacked, and only its manifest.json and pb_* directories copied into
+ * `target`, from `source.directory` when the repository holds more than one plugin.
+ */
+export async function fetchCommitDirectory(v: PluginVersion, target: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const { repository, commit, directory } = v.source;
+  const base = (process.env.VOIDBASE_TARBALL_URL ?? "").replace(/\/+$/, "");
+  const url = base ? `${base}/${repository}/tar.gz/${commit}` : tarballUrl(repository, commit);
+  const token = githubToken();
+  const res = await fetchImpl(url, { headers: { "user-agent": "voidbase-plugins", ...(token && !base ? { authorization: `Bearer ${token}` } : {}) }, redirect: "follow" });
+  if (!res.ok) throw new Error(`${url} answered ${res.status}: ${v.manifest.name} ${v.version} could not be fetched at ${repository}@${commit}`);
+  const scratch = mkdtempSync(join(tmpdir(), "voidbase-plugin-"));
+  try {
+    const tgz = join(scratch, "plugin.tar.gz"); writeFileSync(tgz, new Uint8Array(await res.arrayBuffer()));
+    const unpacked = join(scratch, "unpacked"); await extractTarball(tgz, unpacked);
+    const from = join(unpacked, directory ?? "");
+    if (!existsSync(join(from, "manifest.json"))) throw new Error(`${repository}@${commit}${directory ? ` under ${directory}` : ""} has no manifest.json, so it is not a pb_ files plugin`);
+    rmSync(target, { recursive: true, force: true }); mkdirSync(target, { recursive: true });
+    for (const e of FILES_ENTRIES) if (existsSync(join(from, e))) cpSync(join(from, e), join(target, e), { recursive: true });
+  } finally { rmSync(scratch, { recursive: true, force: true }); }
 }
 export interface Lock {
   lockfileVersion: 1;
@@ -63,7 +108,10 @@ export function marketplacesFor(lock: Lock, env: Record<string, string | undefin
   return fromEnv.length ? fromEnv : lock.marketplaces;
 }
 
-export interface Installed { name: string; version: string; marketplace: string; integrity: string; file: string; record?: PluginVersion;
+export interface Installed { name: string; version: string; marketplace: string; integrity: string;
+  /** pb_plugins/<name>/bundle.js for a bundle; the plugin's directory for pb_ files */
+  file: string; record?: PluginVersion;
+  shape?: "files";
   /** pb_plugins/<name>/deploy.js, when the lock pins one (src/node/deploy-plugins.ts runs it at deploy time) */
   deploy?: string }
 
@@ -79,6 +127,16 @@ export async function verifyInstalled(root: string): Promise<{ installed: Instal
     return file;
   };
   for (const [name, e] of Object.entries(lock.plugins)) {
+    if (e.shape === "files") {
+      const dir = join(pluginsDirOf(root), name);
+      if (!existsSync(join(dir, "manifest.json"))) throw new Error(`voidbase.lock lists ${name} ${e.version} but pb_plugins/${name}/manifest.json is missing: voidbase plugins update ${name}, or voidbase plugins remove ${name}`);
+      const actual = await integrityOfDir(dir);
+      if (actual !== e.integrity) throw new Error(`pb_plugins/${name} is not the files voidbase.lock promises for ${name} ${e.version} (${actual} on disk, ${e.integrity} locked): reinstall it, or remove it`);
+      const recordPath = join(dir, "release.json");
+      const record = existsSync(recordPath) ? (JSON.parse(readFileSync(recordPath, "utf8")) as PluginVersion) : undefined;
+      installed.push({ name, version: e.version, marketplace: e.marketplace, integrity: e.integrity, file: dir, record, shape: "files" });
+      continue;
+    }
     const file = await check(name, e, "bundle", e.integrity);
     const deploy = e.deploy ? await check(name, e, "deploy", e.deploy) : undefined;
     const recordPath = join(pluginsDirOf(root), name, "release.json");
@@ -92,8 +150,16 @@ export async function verifyInstalled(root: string): Promise<{ installed: Instal
 export async function pluginsModuleSource(pluginsDir: string): Promise<string> {
   const root = rootOfPluginsDir(pluginsDir);
   const { installed, disabled } = existsSync(lockPath(root)) ? await verifyInstalled(root) : { installed: [], disabled: [] as string[] };
-  const lines = installed.map((p, i) => `import p${i} from ${JSON.stringify(p.file)};`);
-  lines.push(`export const installed = [${installed.map((p, i) => `{ plugin: p${i}, name: ${JSON.stringify(p.name)}, version: ${JSON.stringify(p.version)}, marketplace: ${JSON.stringify(p.marketplace)} }`).join(", ")}];`);
+  // a bundle is imported by path; a pb_ files plugin is its manifest.json as the plugin, and its pb_hooks compiled into
+  // a virtual module of its own (hooks-plugin.ts), which the hooks loader runs after the project's
+  const lines = installed.map((p, i) => (p.shape === "files" ? `import * as h${i} from ${JSON.stringify(`virtual:voidbase-plugin-hooks/${p.name}`)};` : `import p${i} from ${JSON.stringify(p.file)};`));
+  const entry = (p: Installed, i: number) => {
+    const common = `name: ${JSON.stringify(p.name)}, version: ${JSON.stringify(p.version)}, marketplace: ${JSON.stringify(p.marketplace)}`;
+    if (p.shape !== "files") return `{ plugin: p${i}, ${common} }`;
+    const manifest = readFileSync(join(p.file, "manifest.json"), "utf8").trim();
+    return `{ plugin: { manifest: ${manifest} }, ${common}, hooks: h${i} }`;
+  };
+  lines.push(`export const installed = [${installed.map(entry).join(", ")}];`);
   lines.push(`export const disabled = ${JSON.stringify(disabled)};`);
   return `${lines.join("\n")}\n`;
 }
@@ -127,6 +193,18 @@ export async function addPlugin(root: string, spec: string, o: AddOptions): Prom
   if (v.manifest.name !== name) throw new Error(`${found.marketplace} serves ${name} with a manifest called ${JSON.stringify(v.manifest.name)}; nothing was installed`);
   if (!satisfies(o.voidbaseVersion, v.manifest.voidbase)) throw new Error(`${name} ${v.version} works against voidbase ${v.manifest.voidbase}, and this is ${o.voidbaseVersion}; nothing was installed`);
   const have = lock.plugins[name];
+  if (isFilesVersion(v)) {
+    if (have && have.shape === "files" && have.version === v.version && have.source.commit === v.source.commit && !o.force) return { name, version: v.version, marketplace: found.marketplace, previous: have.version, unchanged: true, shadows: isShipped(name) };
+    const dir = join(pluginsDirOf(root), name);
+    await fetchCommitDirectory(v, dir, o.fetchImpl ?? fetch);
+    const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as { name?: string; version?: string };
+    if (manifest.name !== name || manifest.version !== v.version) { rmSync(dir, { recursive: true, force: true }); throw new Error(`${v.source.repository}@${v.source.commit} declares ${manifest.name} ${manifest.version} in manifest.json, and ${found.marketplace} lists ${name} ${v.version}; nothing was installed`); }
+    writeFileSync(join(dir, "release.json"), `${JSON.stringify(v, null, 2)}\n`);
+    lock.plugins[name] = { version: v.version, shape: "files", integrity: await integrityOfDir(dir), marketplace: found.marketplace, source: v.source, installedOn: new Date().toISOString().slice(0, 10) };
+    lock.disabled = lock.disabled.filter((d) => d !== name);
+    writeLock(root, lock);
+    return { name, version: v.version, marketplace: found.marketplace, previous: have?.version, shadows: isShipped(name) };
+  }
   if (have && have.version === v.version && have.integrity === v.integrity && !o.force) return { name, version: v.version, marketplace: found.marketplace, previous: have.version, unchanged: true, shadows: isShipped(name) };
   const got = await download(found.indexUrl, v, o.fetchImpl ?? fetch);
   if (!got.verified) throw new Error(`${got.url} is not the bytes ${found.marketplace} promised (${v.integrity}); nothing was installed`);
@@ -140,7 +218,7 @@ export async function addPlugin(root: string, spec: string, o: AddOptions): Prom
     writeFileSync(join(dir, "deploy.js"), d.bytes);
   } else rmSync(join(dir, "deploy.js"), { force: true });
   writeFileSync(join(dir, "release.json"), `${JSON.stringify(v, null, 2)}\n`);
-  lock.plugins[name] = { version: v.version, integrity: v.integrity, ...(v.deploy ? { deploy: v.deploy.integrity } : {}), marketplace: found.marketplace, source: v.source, installedOn: new Date().toISOString().slice(0, 10) };
+  lock.plugins[name] = { version: v.version, integrity: v.integrity ?? "", ...(v.deploy ? { deploy: v.deploy.integrity } : {}), marketplace: found.marketplace, source: v.source, installedOn: new Date().toISOString().slice(0, 10) };
   lock.disabled = lock.disabled.filter((d) => d !== name);
   writeLock(root, lock);
   return { name, version: v.version, marketplace: found.marketplace, previous: have?.version, shadows: isShipped(name) };

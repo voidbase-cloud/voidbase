@@ -77,6 +77,25 @@ with the reason, both at load on Bun and when a Worker is built, `NOT_PROVIDED` 
 never imports Node built-ins, because an instance may be a Worker. A bundle is evaluated inside the instance the way
 `pb_hooks` is; a marketplace builds and audits it and never runs it.
 
+## pb_ files at a commit
+
+A version need not be a bundle. One that names no `bundle`, `integrity` or `bytes` is **pb_ files**: the
+`manifest.json` and the `pb_hooks`, `pb_migrations` and `pb_public` directories of `source.repository` at
+`source.commit`, under `source.directory` when the repository holds more than one plugin (a path inside the
+repository, never absolute and never through `..`). Nothing is built and nothing is hosted: the marketplace lists the
+commit it approved, and an instance fetches that commit and loads the files as they are (`isFilesVersion` in
+`src/node/registry.ts`).
+
+An instance fetches GitHub's tarball of the commit (`VOIDBASE_TARBALL_URL` points that at a mirror or a test server),
+keeps only those four entries in `pb_plugins/<name>/`, checks `manifest.json` names the listing's plugin and version,
+and records the lock entry with `"shape": "files"` and an `integrity` computed over the files themselves
+(`integrityOfDir`: every file by sorted path, each path beside its bytes), which is recomputed before anything loads.
+The plugin in the graph is its manifest; its `pb_hooks` are compiled like the project's own and run after them, with
+`__hooks`, `require` and `$os` pointing at the plugin's directory. On Workers the build compiles them into a virtual
+module of their own (`virtual:voidbase-plugin-hooks/<name>`). A pb_ files plugin that requires a capability nothing
+provides loads and waits, like any other. An instance deployed from a repository cannot yet commit one there itself
+(src/server/project-sync.ts says so): install it in a checkout and push.
+
 ## What an instance does with it
 
 1. Reads the index and refuses it with every reason named if it is not a registry (`problemsWithIndex`).

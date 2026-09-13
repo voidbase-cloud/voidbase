@@ -20,6 +20,9 @@ const RESOLVED_MIGRATIONS = "\0" + VIRTUAL_MIGRATIONS;
 // pb_plugins: the installed bundles, each verified against voidbase.lock at build time (src/node/installed.ts)
 const VIRTUAL_PLUGINS = "virtual:voidbase-plugins";
 const RESOLVED_PLUGINS = "\0" + VIRTUAL_PLUGINS;
+// pb_plugins/<name>/pb_hooks of a pb_ files plugin (3.6), compiled like the project's own pb_hooks, one module each
+const VIRTUAL_PLUGIN_HOOKS = "virtual:voidbase-plugin-hooks/";
+const RESOLVED_PLUGIN_HOOKS = "\0" + VIRTUAL_PLUGIN_HOOKS;
 
 // method names whose calls perform I/O in the voidbase runtime
 const ASYNC_PROPS = new Set([
@@ -333,6 +336,7 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; p
       if (id === VIRTUAL) return RESOLVED;
       if (id === VIRTUAL_MIGRATIONS) return RESOLVED_MIGRATIONS;
       if (id === VIRTUAL_PLUGINS) return RESOLVED_PLUGINS;
+      if (id.startsWith(VIRTUAL_PLUGIN_HOOKS) && /^[a-z][a-z0-9-]*$/.test(id.slice(VIRTUAL_PLUGIN_HOOKS.length))) return "\0" + id;
       // an installed bundle's, or a bundled workflow's, bare imports mean this package's own modules (src/node/installed.ts
       // providedImport). Which of the two is asking decides what it may have: a plugin bundle is refused the entries
       // src/node/provided.ts records a reason for, here, where the Worker is built, and the build fails with that reason;
@@ -349,6 +353,11 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; p
       return null;
     },
     async load(id) {
+      if (id.startsWith(RESOLVED_PLUGIN_HOOKS)) {
+        const pluginHooks = join(pluginsDir, id.slice(RESOLVED_PLUGIN_HOOKS.length), "pb_hooks");
+        if (existsSync(pluginHooks)) for (const f of readdirSync(pluginHooks)) this.addWatchFile(join(pluginHooks, f));
+        return existsSync(pluginHooks) ? compileHooksDir(pluginHooks) : "export const routeDocs = [];\nexport const hooks = [];\nexport const modules = {};\nexport const files = {};\n";
+      }
       if (id === RESOLVED_PLUGINS) {
         const root = resolve(pluginsDir, "..");
         for (const f of ["voidbase.lock"]) if (existsSync(join(root, f))) this.addWatchFile(join(root, f));

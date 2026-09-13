@@ -5,14 +5,18 @@
 // what lets the same bundle load inside the standalone executable, which has no node_modules at all, and it means a
 // plugin gets the instance's own hono and kernel rather than a second copy.
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { compileHooksDir } from "../../../hooks-plugin";
+import { loadCompiled } from "./hooks";
 import { pathToFileURL } from "node:url";
 import * as hono from "hono";
 import { lockPath, rootOfPluginsDir, verifyInstalled } from "../../node/installed";
 import { PROVIDED, PROVIDED_RE, refusalFor } from "../../node/provided";
 import type { Plugin } from "../../server/plugins/manifest";
 
-export interface InstalledPlugin { plugin: Plugin; name: string; version: string; marketplace: string }
+export interface InstalledPlugin { plugin: Plugin; name: string; version: string; marketplace: string;
+  /** a pb_ files plugin's compiled pb_hooks, which the hooks loader runs (3.6); absent for a bundle */
+  hooks?: import("../../server/hooks").CompiledHooks }
 
 /**
  * What a bundle may import, and the module each name is: package.json's `exports` and the files behind it, built in
@@ -54,7 +58,17 @@ const importsOf = (file: string): string[] => new Bun.Transpiler({ loader: "js" 
 export async function loadInstalled(dir: string): Promise<{ installed: InstalledPlugin[]; disabled: string[] }> {
   const root = rootOfPluginsDir(dir);
   if (!existsSync(lockPath(root))) return { installed: [], disabled: [] };
-  const { installed, disabled } = await verifyInstalled(root);
+  const { installed: verified, disabled } = await verifyInstalled(root);
+  const out: InstalledPlugin[] = [];
+  // pb_ files plugins: the declaration is manifest.json, the behaviour is pb_hooks compiled like the project's own
+  for (const p of verified.filter((v) => v.shape === "files")) {
+    const manifest = JSON.parse(readFileSync(join(p.file, "manifest.json"), "utf8")) as Plugin["manifest"];
+    if (manifest.name !== p.name || manifest.version !== p.version) throw new Error(`pb_plugins/${p.name}/manifest.json says it is ${manifest.name} ${manifest.version}, and voidbase.lock says ${p.name} ${p.version}`);
+    const hooksDir = join(p.file, "pb_hooks");
+    const hooks = existsSync(hooksDir) ? ((await loadCompiled(compileHooksDir(hooksDir), `plugin-${p.name}`)) as import("../../server/hooks").CompiledHooks) : { hooks: [], modules: {}, files: {} };
+    out.push({ plugin: { manifest }, name: p.name, version: p.version, marketplace: p.marketplace, hooks });
+  }
+  const installed = verified.filter((v) => v.shape !== "files");
   for (const p of installed) {
     const specifiers = importsOf(p.file);
     const foreign = specifiers.filter((i) => !PROVIDED_RE.test(i));
@@ -65,7 +79,6 @@ export async function loadInstalled(dir: string): Promise<{ installed: Installed
     if (refused.length) throw new Error(`pb_plugins/${p.name}/bundle.js: ${refused.join("; ")}`);
     provide(specifiers);
   }
-  const out: InstalledPlugin[] = [];
   for (const p of installed) {
     const mod = (await import(pathToFileURL(p.file).href)) as { default?: Plugin };
     const plugin = mod.default;

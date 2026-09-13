@@ -198,6 +198,7 @@
     "@voidbase-cloud/plugin-ai": "workspace:*",
     "@voidbase-cloud/plugin-auth": "workspace:*",
     "@voidbase-cloud/plugin-backups": "workspace:*",
+    "@voidbase-cloud/plugin-commerce": "workspace:*",
     "@voidbase-cloud/plugin-domains": "workspace:*",
     "@voidbase-cloud/plugin-hardening": "workspace:*",
     "@voidbase-cloud/plugin-lemonsqueezy": "workspace:*",

@@ -43,6 +43,14 @@
         "@voidbase-cloud/voidbase": "workspace:^",
       },
     },
+    "packages/plugin-commerce": {
+      "name": "@voidbase-cloud/plugin-commerce",
+      "version": "0.9.0-beta.58",
+      "peerDependencies": {
+        "@voidbase-cloud/voidbase": "workspace:^",
+        "hono": "^4.11.9",
+      },
+    },
     "packages/plugin-domains": {
       "name": "@voidbase-cloud/plugin-domains",
       "version": "0.9.0-beta.58",
@@ -191,6 +199,7 @@
         "@voidbase-cloud/plugin-ai": "workspace:*",
         "@voidbase-cloud/plugin-auth": "workspace:*",
         "@voidbase-cloud/plugin-backups": "workspace:*",
+        "@voidbase-cloud/plugin-commerce": "workspace:*",
         "@voidbase-cloud/plugin-domains": "workspace:*",
         "@voidbase-cloud/plugin-hardening": "workspace:*",
         "@voidbase-cloud/plugin-lemonsqueezy": "workspace:*",
@@ -772,6 +781,8 @@
     "@voidbase-cloud/plugin-auth": ["@voidbase-cloud/plugin-auth@workspace:packages/plugin-auth"],
 
     "@voidbase-cloud/plugin-backups": ["@voidbase-cloud/plugin-backups@workspace:packages/plugin-backups"],
+
+    "@voidbase-cloud/plugin-commerce": ["@voidbase-cloud/plugin-commerce@workspace:packages/plugin-commerce"],
 
     "@voidbase-cloud/plugin-domains": ["@voidbase-cloud/plugin-domains@workspace:packages/plugin-domains"],
 

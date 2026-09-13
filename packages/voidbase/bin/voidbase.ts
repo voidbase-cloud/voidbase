@@ -120,6 +120,9 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
 
   update --cloudflare <name> [--account id]
                                      rebuild an instance on Cloudflare onto this voidbase, as a new version of its Worker
+  instances create --cloudflare <name> [--account id] [--email a@b]
+                                     create a vanilla instance on Cloudflare from this voidbase's release, with the
+                                     Cloudflare token this machine has; the superuser password is printed once
   instances [--local | --cloudflare [--account id]]
                                      list instances: the ones this machine keeps (--local, the default) or the voidbase
                                      instances on the Cloudflare account the token reaches (--cloudflare)
@@ -682,6 +685,24 @@ switch (cmd) {
     break;
   }
   case "instances": {
+    // create --cloudflare <name>: a vanilla instance made on Cloudflare from this CLI's release (src/node/cloud-create.ts)
+    if (sub === "create") {
+      const name = typeof flags.cloudflare === "string" && flags.cloudflare !== "1" ? flags.cloudflare : String(rest[0] ?? "");
+      if (!flags.cloudflare || !name) { console.error("usage: voidbase instances create --cloudflare <name> [--account id] [--email a@b]   (an instance on this machine is voidbase local new <name>)"); process.exit(1); }
+      const { deployTarget } = await import("../src/node/deploy-cf");
+      const { workerExists } = await import("../src/cloud/rest");
+      const { createOnCloudflare, createRefusal } = await import("../src/node/cloud-create");
+      const { api, account } = await deployTarget({ account: flags.account, name, log: () => undefined });
+      const why = createRefusal(name, await workerExists(api, account.id, name));
+      if (why) { console.error(why); process.exit(1); }
+      console.log(`creating ${name} on ${account.name}: building the release`);
+      const email = typeof flags.email === "string" && flags.email !== "1" ? flags.email : "admin@example.com";
+      const c = await createOnCloudflare({ api, account: account.id, name, email });
+      console.log(`\ncreated ${name}, voidbase ${c.release}${c.url ? `, at ${c.url}` : ""}`);
+      console.log(`superuser ${c.email}`);
+      console.log(`password  ${c.password}   (shown once, kept nowhere)`);
+      break;
+    }
     // One command for both kinds, a flag choosing which: --local is the instances this machine keeps (the default, as it
     // needs no credentials), --cloudflare the ones on the account the Cloudflare token reaches. --account implies it.
     if (!flags.cloudflare && !flags.account) {

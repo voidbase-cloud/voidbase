@@ -18,6 +18,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ensurePanelDir } from "../node/panel";
+import { PANEL_EXTENSIONS } from "../panel/extensions";
 import { normalizePanelPath, panelRedirectLines, PANEL_DEFAULT_PATH, PANEL_ENTRY_FILE } from "../server/panel-paths";
 
 export interface PanelOptions {
@@ -47,7 +48,8 @@ export interface PanelResult {
 const BASE_CALL = /(\bnew\s+[A-Za-z_$][\w$]*\s*\(\s*)(["'`])\.\.\/\2/g;
 /** the one absolute URL the bundle loads, the UI extension registry */
 const EXTENSIONS = /(["'`])\/_\/extensions\.js\1/g;
-const EXTENSIONS_STUB = "// voidbase: no UI extensions configured\n";
+/** voidbase's pages in the panel (src/panel/extensions.ts), where PocketBase would serve its extension registry */
+const EXTENSIONS_FILE = PANEL_EXTENSIONS;
 
 /**
  * Rewrites the API base and the extensions URL in the copied panel's bundles. Returns the files it changed; throws
@@ -108,7 +110,8 @@ export async function writePanel(publicDir: string, opts: PanelOptions): Promise
     rmSync(dest, { recursive: true, force: true });
     mkdirSync(dest, { recursive: true });
     for (const entry of readdirSync(src)) { cpSync(join(src, entry), join(dest, entry), { recursive: true }); copied++; }
-    if (!existsSync(join(dest, "extensions.js"))) { writeFileSync(join(dest, "extensions.js"), EXTENSIONS_STUB); copied++; }
+    if (!existsSync(join(dest, "extensions.js"))) copied++;
+    writeFileSync(join(dest, "extensions.js"), EXTENSIONS_FILE);
     rebased = rebasePanelAssets(dest, path);
     // Cloudflare answers an unmatched path with the nearest 404.html; the panel's index is its own, the way
     // scripts/sync-panel.ts writes it for /_/. Not under a guard: that copy would be the index, readable.

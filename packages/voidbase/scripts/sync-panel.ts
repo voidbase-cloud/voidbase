@@ -11,6 +11,7 @@
 // repository root, which is two directories above this package), else the pinned release tarball
 // (POCKETBASE_PANEL_VERSION) cached under ~/.cache/voidbase. Which one won is printed with the result.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { PANEL_EXTENSIONS } from "../src/panel/extensions";
 import { resolve } from "node:path";
 
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, arr) => (a.startsWith("--") ? [a.slice(2), arr[i + 1] ?? "1"] : [])).filter((x) => x.length));
@@ -41,8 +42,8 @@ if (!src || !existsSync(`${src}/index.html`)) {
 }
 rmSync(dest, { recursive: true, force: true });
 cpSync(src, dest, { recursive: true });
-// PocketBase serves /_/extensions.js (UI extension registry). Without extensions it is an empty module.
-writeFileSync(`${dest}/extensions.js`, "// voidbase: no UI extensions configured\n");
+// PocketBase serves /_/extensions.js (UI extension registry): voidbase's own pages (src/panel/extensions.ts)
+writeFileSync(`${dest}/extensions.js`, PANEL_EXTENSIONS);
 console.log(`synced panel ${src} (${from}) -> ${dest} (${statSync(`${dest}/index.html`).size} bytes index.html)`);
 
 if (brandDir) {

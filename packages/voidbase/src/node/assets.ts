@@ -3,6 +3,7 @@
 // that path (the adapter copies and rebases them there), and an empty `panelDir` is how `hide` reaches here --
 // /_/ stops resolving, exactly as the `_redirects` rules the same option writes make it stop on Cloudflare.
 import { existsSync, statSync } from "node:fs";
+import { PANEL_EXTENSIONS } from "../panel/extensions";
 import { join, normalize } from "node:path";
 export function assetsFetcher(opts: { panelDir: string; publicDir?: string }) {
   // Cloudflare's asset layer resolves an extensionless path against `<path>.html` and `<path>/index.html`
@@ -22,6 +23,8 @@ export function assetsFetcher(opts: { panelDir: string; publicDir?: string }) {
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url); const path = decodeURIComponent(url.pathname);
       const panel = path === "/_" || path.startsWith("/_/");
+      // the panel's extension registry is voidbase's pages, whichever ui/dist the panel came from (src/panel/extensions.ts)
+      if (path === "/_/extensions.js" && opts.panelDir) return new Response(req.method === "HEAD" ? null : PANEL_EXTENSIONS, { status: 200, headers: { "content-type": "text/javascript; charset=utf-8" } });
       const target = panel ? (opts.panelDir ? file(opts.panelDir, path.slice(2) || "/") : null) : opts.publicDir ? file(opts.publicDir, path) : null;
       if (!target) return new Response("not found", { status: 404 });
       const f = Bun.file(target);

@@ -308,6 +308,9 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; p
     config() {
       const workersFile = (n: string) => resolve(here, "src/platform/workers", `${n === "raster" && !seoPng ? "raster-off" : n}.ts`);
       const alias = { alias: [
+        // a project entry loads voidbase by name, and Vite resolves a bare package name before a plugin's resolveId runs,
+        // so the Worker app API is an alias, matched exactly, or the Bun CLI (src/node/index.ts) lands in the Worker
+        { find: /^@voidbase-cloud\/voidbase$/, replacement: resolve(here, "src/server/library.ts") },
         { find: "@voidbase-cloud/voidbase/platform/email", replacement: workersFile("email") },
         { find: "@voidbase-cloud/voidbase/platform/raster", replacement: workersFile("raster") },
         { find: "@voidbase-cloud/voidbase/platform", replacement: resolve(here, "src/platform/workers", "index.ts") },

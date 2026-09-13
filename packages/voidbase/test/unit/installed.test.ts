@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pbHooksPlugin } from "../../hooks-plugin";
-import { addPlugin, enablePlugin, integrityOfDir, listPlugins, locate, outsideRange, pluginFacts, pluginsModuleSource, providedImport, readLock, removalCostFor, removePlugin, updatePlugins, verifyInstalled } from "../../src/node/installed";
+import { addPlugin, enablePlugin, filesPluginImports, integrityOfDir, listPlugins, locate, outsideRange, pluginFacts, pluginsModuleSource, providedImport, readLock, removalCostFor, removePlugin, updatePlugins, verifyInstalled } from "../../src/node/installed";
 import { refusalFor } from "../../src/node/provided";
 import pkgJson from "../../package.json" with { type: "json" };
 import { integrityOf } from "../../src/node/registry";
@@ -46,6 +46,10 @@ describe("a plugin that is pb_ files at a commit (3.6)", () => {
   mkdirSync(join(top, "pb_hooks"), { recursive: true });
   writeFileSync(join(top, "manifest.json"), JSON.stringify({ name: "audit", version: "0.1.0", tier: "community", voidbase: "*" }));
   writeFileSync(join(top, "pb_hooks/audit.pb.js"), 'routerAdd("GET", "/api/audit", (e) => e.json(200, { audited: true }))\n');
+  // what cordis applies, as plain JavaScript loaded as it is: a provided import, and a module of its own under lib/
+  mkdirSync(join(top, "lib"), { recursive: true });
+  writeFileSync(join(top, "lib/greeting.js"), 'export const greeting = () => "hello from lib";\n');
+  writeFileSync(join(top, "main.js"), 'import { using } from "@voidbase-cloud/voidbase/kernel";\nimport { greeting } from "./lib/greeting.js";\nexport default { apply(ctx) { ctx.app.get("/api/audit/main", (c) => c.json({ greeting: greeting(), kernel: typeof using })); } };\n');
   writeFileSync(join(top, "README.md"), "not part of the plugin\n");
   Bun.spawnSync(["tar", "-czf", join(src, "audit.tar.gz"), "-C", src, `voidbase-plugin-audit-${COMMIT}`]);
   const tarballs = Bun.serve({ port: 0, fetch: (req) => new URL(req.url).pathname === `/tarballs/example/voidbase-plugin-audit/tar.gz/${COMMIT}` ? new Response(Bun.file(join(src, "audit.tar.gz"))) : new Response("not found", { status: 404 }) });
@@ -73,8 +77,30 @@ describe("a plugin that is pb_ files at a commit (3.6)", () => {
     await addPlugin(root, "audit", opts(url(market)));
     const src = await pluginsModuleSource(join(root, "pb_plugins"));
     expect(src).toContain('import * as h0 from "virtual:voidbase-plugin-hooks/audit";');
-    expect(src).toContain('plugin: { manifest: {"name":"audit","version":"0.1.0","tier":"community","voidbase":"*"} }');
+    expect(src).toContain(`import m0 from ${JSON.stringify(join(root, "pb_plugins/audit/main.js"))};`);
+    expect(src).toContain('plugin: { ...m0, manifest: {"name":"audit","version":"0.1.0","tier":"community","voidbase":"*"} }');
     expect(src).toContain("hooks: h0");
+  });
+
+  test("its main.js is loaded as it is, with the instance's modules behind its imports and its own lib/ beside it", async () => {
+    await addPlugin(root, "audit", opts(url(market)));
+    expect(existsSync(join(root, "pb_plugins/audit/lib/greeting.js"))).toBe(true);
+    const { installed } = await loadInstalled(join(root, "pb_plugins"));
+    const audit = installed.find((p) => p.name === "audit")!;
+    expect(audit.plugin.manifest.name).toBe("audit");
+    const app = new Hono(); const kernel = createKernel(app as never);
+    await load(kernel, [audit.plugin], "0.9.0");
+    expect(await (await app.request("/api/audit/main")).json()).toEqual({ greeting: "hello from lib", kernel: "function" });
+  });
+
+  test("a main.js that imports what an instance does not provide, or reaches outside the plugin, is refused before it runs", () => {
+    const d = mkdtempSync(join(tmpdir(), "voidbase-files-imports-"));
+    try {
+      writeFileSync(join(d, "main.js"), 'import _ from "lodash";\nimport secret from "../../voidbase.lock";\nexport default {};\n');
+      expect(() => filesPluginImports("bad", d)).toThrow('pb_plugins/bad cannot be loaded as it is: main.js imports lodash, which an instance does not provide; main.js imports ../../voidbase.lock, which is outside the plugin');
+      writeFileSync(join(d, "main.js"), 'import { serve } from "@voidbase-cloud/voidbase/kernel";\nimport "./lib/x.js";\nexport default {};\n');
+      expect(filesPluginImports("good", d)).toEqual(["@voidbase-cloud/voidbase/kernel"]);
+    } finally { rmSync(d, { recursive: true, force: true }); }
   });
 
   test("the files on disk are the files the lock promises, or nothing loads", async () => {

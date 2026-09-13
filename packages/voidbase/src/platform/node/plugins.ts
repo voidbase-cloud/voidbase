@@ -10,7 +10,7 @@ import { compileHooksDir } from "../../../hooks-plugin";
 import { loadCompiled } from "./hooks";
 import { pathToFileURL } from "node:url";
 import * as hono from "hono";
-import { lockPath, rootOfPluginsDir, verifyInstalled } from "../../node/installed";
+import { filesPluginImports, lockPath, rootOfPluginsDir, verifyInstalled } from "../../node/installed";
 import { PROVIDED, PROVIDED_RE, refusalFor } from "../../node/provided";
 import type { Plugin } from "../../server/plugins/manifest";
 
@@ -66,7 +66,15 @@ export async function loadInstalled(dir: string): Promise<{ installed: Installed
     if (manifest.name !== p.name || manifest.version !== p.version) throw new Error(`pb_plugins/${p.name}/manifest.json says it is ${manifest.name} ${manifest.version}, and voidbase.lock says ${p.name} ${p.version}`);
     const hooksDir = join(p.file, "pb_hooks");
     const hooks = existsSync(hooksDir) ? ((await loadCompiled(compileHooksDir(hooksDir), `plugin-${p.name}`)) as import("../../server/hooks").CompiledHooks) : { hooks: [], modules: {}, files: {} };
-    out.push({ plugin: { manifest }, name: p.name, version: p.version, marketplace: p.marketplace, hooks });
+    // and its main.js, when it has one: the imports checked and provided the way a bundle's are, then imported as it is
+    let behaviour: Omit<Plugin, "manifest"> = {};
+    if (existsSync(join(p.file, "main.js"))) {
+      provide(filesPluginImports(p.name, p.file));
+      const loaded = ((await import(pathToFileURL(join(p.file, "main.js")).href)) as { default?: unknown }).default;
+      if (!loaded || typeof loaded !== "object" || ("apply" in loaded && typeof (loaded as Plugin).apply !== "function")) throw new Error(`pb_plugins/${p.name}/main.js does not export what the plugin does (apply, info) as its default export`);
+      const { manifest: _declared, ...rest } = loaded as Plugin; behaviour = rest;
+    }
+    out.push({ plugin: { ...behaviour, manifest }, name: p.name, version: p.version, marketplace: p.marketplace, hooks });
   }
   const installed = verified.filter((v) => v.shape !== "files");
   for (const p of installed) {

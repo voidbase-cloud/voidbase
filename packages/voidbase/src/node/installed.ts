@@ -13,7 +13,7 @@ import { extractTarball, tarballUrl } from "./template";
 import { refusal, removalCost, satisfies, type PluginFacts, type RemovalCost } from "../server/plugins/resolve";
 import { SHIPPED, SHIPPED_FACTS } from "../server/plugins/shipped";
 import { compareVersions, download, fetchIndex, integrityOf, isFilesVersion, pick, type PluginVersion, type RegistryIndex } from "./registry";
-import { refusalFor } from "./refusals";
+import { PROVIDED_RE, refusalFor } from "./refusals";
 
 export const DEFAULT_MARKETPLACES = ["https://marketplace.voidbase.cloud"];
 export const LOCKFILE = "voidbase.lock";
@@ -36,8 +36,36 @@ export interface LockEntry {
   installedOn: string;
 }
 
-/** what a pb_ files plugin is made of: its declaration and the directories an instance reads, nothing else */
-export const FILES_ENTRIES = ["manifest.json", "pb_hooks", "pb_migrations", "pb_public"] as const;
+/**
+ * what a pb_ files plugin is made of: its declaration, the directories an instance reads, and the plain JavaScript
+ * cordis applies (`main.js`, and the modules it imports from `lib/`), nothing else
+ */
+export const FILES_ENTRIES = ["manifest.json", "pb_hooks", "pb_migrations", "pb_public", "main.js", "lib"] as const;
+
+/**
+ * What a pb_ files plugin's code imports: main.js and every .js under lib/, read without running them. A plugin brings
+ * what it needs with it (voidbase-stories plugin-repos.feature), so a bare import has to be something an instance
+ * provides (./provided.ts) and a relative one has to stay inside the plugin. Returns the bare imports, or throws with
+ * every problem at once; a plugin without main.js imports nothing.
+ */
+export function filesPluginImports(name: string, dir: string): string[] {
+  const main = join(dir, "main.js");
+  if (!existsSync(main)) return [];
+  const walkJs = (d: string): string[] => (existsSync(d) ? readdirSync(d).sort().flatMap((n) => { const f = join(d, n); return statSync(f).isDirectory() ? walkJs(f) : f.endsWith(".js") ? [f] : []; }) : []);
+  const scan = new Bun.Transpiler({ loader: "js" });
+  const bare = new Set<string>(); const problems: string[] = [];
+  for (const file of [main, ...walkJs(join(dir, "lib"))]) {
+    const at = relative(dir, file).replace(/\\/g, "/");
+    for (const { path } of scan.scanImports(readFileSync(file, "utf8"))) {
+      if (path.startsWith(".")) { if (!resolve(dirname(file), path).startsWith(resolve(dir) + "/")) problems.push(`${at} imports ${path}, which is outside the plugin`); continue; }
+      if (!PROVIDED_RE.test(path)) { problems.push(`${at} imports ${path}, which an instance does not provide`); continue; }
+      const why = refusalFor(path);
+      if (why) problems.push(`${at}: ${why}`); else bare.add(path);
+    }
+  }
+  if (problems.length) throw new Error(`pb_plugins/${name} cannot be loaded as it is: ${problems.join("; ")}`);
+  return [...bare];
+}
 
 /** one hash over a pb_ files plugin: every file under FILES_ENTRIES, by sorted path, each path beside its bytes */
 export async function integrityOfDir(dir: string): Promise<string> {
@@ -152,12 +180,15 @@ export async function pluginsModuleSource(pluginsDir: string): Promise<string> {
   const { installed, disabled } = existsSync(lockPath(root)) ? await verifyInstalled(root) : { installed: [], disabled: [] as string[] };
   // a bundle is imported by path; a pb_ files plugin is its manifest.json as the plugin, and its pb_hooks compiled into
   // a virtual module of its own (hooks-plugin.ts), which the hooks loader runs after the project's
-  const lines = installed.map((p, i) => (p.shape === "files" ? `import * as h${i} from ${JSON.stringify(`virtual:voidbase-plugin-hooks/${p.name}`)};` : `import p${i} from ${JSON.stringify(p.file)};`));
+  const hasMain = (p: Installed) => p.shape === "files" && existsSync(join(p.file, "main.js"));
+  // a files plugin's main.js is imported as it is; its imports are checked first, so a Worker build fails the way Bun does
+  for (const p of installed) if (hasMain(p)) filesPluginImports(p.name, p.file);
+  const lines = installed.map((p, i) => (p.shape === "files" ? `import * as h${i} from ${JSON.stringify(`virtual:voidbase-plugin-hooks/${p.name}`)};${hasMain(p) ? `\nimport m${i} from ${JSON.stringify(join(p.file, "main.js"))};` : ""}` : `import p${i} from ${JSON.stringify(p.file)};`));
   const entry = (p: Installed, i: number) => {
     const common = `name: ${JSON.stringify(p.name)}, version: ${JSON.stringify(p.version)}, marketplace: ${JSON.stringify(p.marketplace)}`;
     if (p.shape !== "files") return `{ plugin: p${i}, ${common} }`;
     const manifest = readFileSync(join(p.file, "manifest.json"), "utf8").trim();
-    return `{ plugin: { manifest: ${manifest} }, ${common}, hooks: h${i} }`;
+    return `{ plugin: { ${hasMain(p) ? `...m${i}, ` : ""}manifest: ${manifest} }, ${common}, hooks: h${i} }`;
   };
   lines.push(`export const installed = [${installed.map(entry).join(", ")}];`);
   lines.push(`export const disabled = ${JSON.stringify(disabled)};`);

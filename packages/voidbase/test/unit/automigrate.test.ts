@@ -61,3 +61,35 @@ test("with automigrate on and no git connection: written, recorded as applied, a
   expect(compileMigrationsDir(dir)).toContain('name: "1789000000_updated_vaults.js"');
   expect(await recordSchemaChange({ DB: db } as unknown as Bindings, null, "deleted", vaults, null)).toBeNull();
 });
+
+test("with a git connection the migration is committed to the branch, and when GitHub fails it stays pending", async () => {
+  const seen: { method: string; path: string; body: Record<string, unknown> | null }[] = [];
+  let failing = false;
+  const github = Bun.serve({ port: 0, fetch: async (req) => {
+    const path = new URL(req.url).pathname; const body = req.method === "GET" ? null : ((await req.json()) as Record<string, unknown>);
+    seen.push({ method: req.method, path, body });
+    if (failing) return new Response(JSON.stringify({ message: "boom" }), { status: 500 });
+    if (path === "/repos/me/app/git/ref/heads/master") return Response.json({ object: { sha: "head1" } });
+    if (path === "/repos/me/app/git/commits/head1") return Response.json({ tree: { sha: "tree1" } });
+    if (path === "/repos/me/app/git/blobs") return Response.json({ sha: "blob1" });
+    if (path === "/repos/me/app/git/trees") return Response.json({ sha: "tree2" });
+    if (path === "/repos/me/app/git/commits") return Response.json({ sha: "commit2", html_url: "https://github.com/me/app/commit/commit2" });
+    if (path === "/repos/me/app/git/refs/heads/master") return Response.json({ ref: "refs/heads/master" });
+    return new Response("not found", { status: 404 });
+  } });
+  try {
+    const db = database();
+    const env = { DB: db, VOIDBASE_AUTOMIGRATE: "on", VOIDBASE_PROJECT_REPO: "me/app", VOIDBASE_GH_TOKEN: "t", GITHUB_API_BASE: `http://127.0.0.1:${github.port}` } as unknown as Bindings;
+    const r = await recordSchemaChange(env, null, "created", null, vaults, 1_789_000_100_000);
+    expect(r).toEqual({ file: "1789000100_created_vaults.js", written: false, committed: "https://github.com/me/app/commit/commit2", inRepository: true });
+    expect(seen.find((s) => s.path.endsWith("/git/blobs"))?.body?.content).toBe(migrationSource("created", null, vaults));
+    expect(seen.find((s) => s.path.endsWith("/git/trees"))?.body).toEqual({ base_tree: "tree1", tree: [{ path: "pb_migrations/1789000100_created_vaults.js", mode: "100644", type: "blob", sha: "blob1" }] });
+    expect(seen.find((s) => s.method === "PATCH")?.body).toEqual({ sha: "commit2", force: false });
+    expect(await pendingSchemaChanges(db)).toEqual([]);
+
+    failing = true;
+    const kept = await recordSchemaChange(env, null, "deleted", vaults, null, 1_789_000_200_000);
+    expect(kept).toMatchObject({ committed: null, inRepository: false });
+    expect((await pendingSchemaChanges(db)).map((p) => p.file)).toEqual(["1789000200_deleted_vaults.js"]);
+  } finally { github.stop(true); }
+});

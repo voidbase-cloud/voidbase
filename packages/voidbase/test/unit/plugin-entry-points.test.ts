@@ -55,13 +55,7 @@ const expected: Record<string, string[]> = {
   // does (the kernel, the routes, D1, the SQL client). Published in 7.6, for the reason /plugins/mail-binding was.
   "./plugins/observability-binding": ["ANALYTICS_BINDING", "OBSERVABILITY_VAR", "SAMPLE_VAR", "ACCOUNT_VAR", "TOKEN_VAR", "DATASET_VAR", "WORKER_NAME_VAR", "ACCOUNT_ID_VAR", "observabilityOn", "sampleRateOf", "analyticsDataset", "workerObservability"],
   "./plugins/translations": ["translations", "translationsWith", "parseTranslatable", "parseLocales", "negotiateLocale"],
-  "./plugins/stripe": ["stripe", "stripeWith", "verifySignature", "formEncode", "applyEvent"],
-  "./plugins/polar": ["polar", "polarWith", "verifySignature", "applyEvent"],
-  "./plugins/lemonsqueezy": ["lemonsqueezy", "lemonsqueezyWith", "verifySignature", "applyEvent"],
   "./plugins/payments-shared": ["paymentsPlugin", "collectionDefinitions", "d1Rows", "ensureCustomer", "upsert", "customerForUser", "onPaymentWritten"],
-  "./plugins/tax-flat": ["taxFlat", "taxRate", "taxQuote"],
-  "./plugins/shipping-flat": ["shippingFlat", "flatAmount", "freeOver", "flatRates"],
-  "./plugins/commerce": ["commerce", "commerceWith", "collectionDefinitions", "commerceOn", "COMMERCE_COLLECTIONS"],
   "./plugins/domains": ["domains", "domainsInfo"],
   "./plugins/previews": ["previews", "previewsInfo", "previewWorkerName"],
   "./plugins/collections": ["ensureCollections"],
@@ -231,7 +225,7 @@ describe("the plugin API is reachable from a package", () => {
 
   test("each shipped plugin's manifest name is its entry point's last segment", async () => {
     const camel: Record<string, string> = { "tax-flat": "taxFlat", "shipping-flat": "shippingFlat" };
-    for (const name of ["auth", "observability", "backups", "realtime", "hardening", "openapi", "mcp", "seo", "mail", "ai", "translations", "stripe", "polar", "lemonsqueezy", "tax-flat", "shipping-flat", "commerce", "previews", "domains"]) {
+    for (const name of ["auth", "observability", "backups", "realtime", "hardening", "openapi", "mcp", "seo", "mail", "ai", "translations", "previews", "domains"]) {
       const mod = (await import(resolve(root, exportsMap[`./plugins/${name}`]!))) as Record<string, { manifest: { name: string } }>;
       expect(mod[camel[name] ?? name]!.manifest.name).toBe(name);
     }

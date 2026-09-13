@@ -18,14 +18,7 @@
 // are `/interfaces`, `/types` and `/plugins`, and `./payments-shared` is `/plugins/payments-shared`, which stays in
 // the core because it is what the providers share rather than a plugin. Nothing else about the plugin changed.
 import { ApiError, badRequest } from "@voidbase-cloud/voidbase/sdk";
-import type { Payments } from "@voidbase-cloud/voidbase/interfaces";
-import type { AuthRecord, Bindings, Row } from "@voidbase-cloud/voidbase/types";
-import type { Plugin } from "@voidbase-cloud/voidbase/plugins";
-import {
-  apiPrefix, constantTimeEqual, depsWith, ensureCustomer, hex, hmacSha256, isoDate, knob, obj, paymentsPlugin, str, upsert, webhookPathOf, webhookResult,
-  REFERENCE_KEY, type CancelMode, type CheckoutInput, type Fetch, type PaymentDeps, type PaymentProvider, type PaymentRows, type Verdict, type WebhookResult,
-} from "@voidbase-cloud/voidbase/plugins/payments-shared";
-
+import { apiPrefix, constantTimeEqual, depsWith, ensureCustomer, hex, hmacSha256, isoDate, knob, obj, paymentsPlugin, str, upsert, webhookPathOf, webhookResult, REFERENCE_KEY, } from "@voidbase-cloud/voidbase/plugins/payments-shared";
 export const LEMONSQUEEZY_API = "https://api.lemonsqueezy.com";
 export const KEY_VAR = "LEMONSQUEEZY_API_KEY";
 export const STORE_VAR = "LEMONSQUEEZY_STORE_ID";
@@ -34,30 +27,26 @@ export const PROVIDER = "lemonsqueezy";
 export const API = apiPrefix(PROVIDER);
 export const WEBHOOK_PATH = webhookPathOf(PROVIDER);
 const JSONAPI = "application/vnd.api+json";
-
-export const apiKey = (env: Bindings): string => knob(env, KEY_VAR);
-export const storeId = (env: Bindings): string => knob(env, STORE_VAR);
-export const webhookSecret = (env: Bindings): string => knob(env, WEBHOOK_SECRET_VAR);
-
+export const apiKey = (env) => knob(env, KEY_VAR);
+export const storeId = (env) => knob(env, STORE_VAR);
+export const webhookSecret = (env) => knob(env, WEBHOOK_SECRET_VAR);
 // ---- the wire -------------------------------------------------------------------------------------
-
-async function call(fetchFn: Fetch, key: string, method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: Record<string, unknown>): Promise<Row> {
+async function call(fetchFn, key, method, path, body) {
   const res = await fetchFn(`${LEMONSQUEEZY_API}${path}`, {
     method,
     headers: { authorization: `Bearer ${key}`, accept: JSONAPI, ...(body !== undefined ? { "content-type": JSONAPI } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
-  const json = (await res.json().catch(() => ({}))) as Row;
+  const json = (await res.json().catch(() => ({})));
   if (!res.ok) {
-    const first = obj((json.errors as unknown[] | undefined)?.[0]);
+    const first = obj(json.errors?.[0]);
     const message = String(first.detail ?? first.title ?? json.message ?? res.statusText ?? "");
     throw new ApiError(res.status >= 500 ? 502 : 400, `Lemon Squeezy answered ${res.status}${message ? `: ${message}` : ""}`);
   }
   return json;
 }
-
 /** the JSON:API envelope around one resource, with a store relationship where one is asked for */
-const resource = (type: string, attributes: Record<string, unknown>, o: { id?: string; store?: string; variant?: string } = {}): Record<string, unknown> => ({
+const resource = (type, attributes, o = {}) => ({
   data: {
     type,
     ...(o.id ? { id: o.id } : {}),
@@ -70,36 +59,33 @@ const resource = (type: string, attributes: Record<string, unknown>, o: { id?: s
     } : {}),
   },
 });
-
 // ---- the signature ----------------------------------------------------------------------------------
-
 /** the hex HMAC SHA-256 of the raw body under the signing secret: what Lemon Squeezy puts in `X-Signature` */
-export async function signPayload(secret: string, payload: string): Promise<string> {
+export async function signPayload(secret, payload) {
   return hex(await hmacSha256(secret, payload));
 }
-
 /**
  * Check `X-Signature` against the payload as it arrived. Lemon Squeezy signs the raw body and nothing else, so
  * there is no timestamp to bound: a replay of a signed body verifies, and the upsert by provider id is what makes
  * it a no-op.
  */
-export async function verifySignature(payload: string, header: string | null, secret: string): Promise<{ ok: true } | { ok: false; reason: string }> {
-  if (!secret) return { ok: false, reason: `no ${WEBHOOK_SECRET_VAR} to verify against` };
-  if (!header) return { ok: false, reason: "no X-Signature header" };
+export async function verifySignature(payload, header, secret) {
+  if (!secret)
+    return { ok: false, reason: `no ${WEBHOOK_SECRET_VAR} to verify against` };
+  if (!header)
+    return { ok: false, reason: "no X-Signature header" };
   const expected = await signPayload(secret, payload);
-  if (!constantTimeEqual(header.trim().toLowerCase(), expected)) return { ok: false, reason: "the signature does not match the payload" };
+  if (!constantTimeEqual(header.trim().toLowerCase(), expected))
+    return { ok: false, reason: "the signature does not match the payload" };
   return { ok: true };
 }
-
 // ---- what the webhook says, applied to the rows -----------------------------------------------------
-
 /** Lemon Squeezy's subscription statuses as the rows' vocabulary; `cancelled` still runs until `ends_at` */
-export const SUBSCRIPTION_STATUS: Record<string, string> = { on_trial: "trialing", active: "active", paused: "paused", past_due: "past_due", unpaid: "unpaid", cancelled: "active", expired: "canceled" };
-const orderStatus = (a: Row): string => (a.refunded === true || a.status === "refunded" ? "refunded" : a.status === "paid" ? "succeeded" : a.status === "failed" || a.status === "fraudulent" ? "failed" : "pending");
-const invoiceStatus = (event: string, a: Row): string => (a.refunded === true || a.status === "refunded" ? "refunded" : event === "subscription_payment_failed" ? "failed" : a.status === "void" ? "canceled" : "succeeded");
-
+export const SUBSCRIPTION_STATUS = { on_trial: "trialing", active: "active", paused: "paused", past_due: "past_due", unpaid: "unpaid", cancelled: "active", expired: "canceled" };
+const orderStatus = (a) => (a.refunded === true || a.status === "refunded" ? "refunded" : a.status === "paid" ? "succeeded" : a.status === "failed" || a.status === "fraudulent" ? "failed" : "pending");
+const invoiceStatus = (event, a) => (a.refunded === true || a.status === "refunded" ? "refunded" : event === "subscription_payment_failed" ? "failed" : a.status === "void" ? "canceled" : "succeeded");
 /** write one verified event into the rows; null for an event this plugin does not read */
-export async function applyEvent(rows: PaymentRows, event: Row): Promise<WebhookResult | null> {
+export async function applyEvent(rows, event) {
   const meta = obj(event.meta);
   const name = str(meta.event_name);
   const data = obj(event.data);
@@ -109,18 +95,17 @@ export async function applyEvent(rows: PaymentRows, event: Row): Promise<Webhook
   const user = str(custom.voidbase_user);
   // what the checkout was started with (the user, the customers row, the order it pays) comes back in the envelope's
   // custom data and not on the object, so the object is kept with it beside, for whoever reads a payments row's raw
-  const raw: Row = Object.keys(custom).length ? { ...data, meta: { ...obj(data.meta), custom_data: custom } } : data;
-  const out = (r: Omit<WebhookResult, "kind" | "raw">) => webhookResult(name, raw, r);
-
+  const raw = Object.keys(custom).length ? { ...data, meta: { ...obj(data.meta), custom_data: custom } } : data;
+  const out = (r) => webhookResult(name, raw, r);
   if (name === "order_created" || name === "order_refunded") {
     const customer = await ensureCustomer(rows, PROVIDER, str(a.customer_id), { email: str(a.user_email), user });
     const payment = await upsert(rows, "payments", `order_${id}`, { customer: str(customer?.id), amount: Number(a.total ?? 0), currency: str(a.currency), status: orderStatus(a), raw });
     return out({ customer: str(customer?.id), payment: str(payment.id) });
   }
-
   if (name.startsWith("subscription_payment_")) {
     // a subscription invoice; the `initial` one is the order that order_created already wrote
-    if (a.billing_reason === "initial") return out({});
+    if (a.billing_reason === "initial")
+      return out({});
     const customer = await ensureCustomer(rows, PROVIDER, str(a.customer_id), { email: str(a.user_email), user });
     const subId = str(a.subscription_id);
     const sub = subId ? await rows.find("subscriptions", { providerId: subId }) : null;
@@ -129,7 +114,6 @@ export async function applyEvent(rows: PaymentRows, event: Row): Promise<Webhook
     });
     return out({ customer: str(customer?.id), subscription: str(sub?.id), payment: str(payment.id) });
   }
-
   if (name.startsWith("subscription_")) {
     // created, updated, cancelled, resumed, expired, paused, unpaused: every one carries the whole subscription
     const customer = await ensureCustomer(rows, PROVIDER, str(a.customer_id), { email: str(a.user_email), user });
@@ -140,65 +124,63 @@ export async function applyEvent(rows: PaymentRows, event: Row): Promise<Webhook
     });
     // the order that started it is this subscription's first payment
     const order = a.order_id ? await rows.find("payments", { providerId: `order_${str(a.order_id)}` }) : null;
-    if (order && !order.subscription) await rows.update("payments", str(order.id), { subscription: str(sub.id) });
+    if (order && !order.subscription)
+      await rows.update("payments", str(order.id), { subscription: str(sub.id) });
     return out({ customer: str(customer?.id), subscription: str(sub.id), payment: str(order?.id) });
   }
-
   return null;
 }
-
-// ---- the provider -----------------------------------------------------------------------------------
-
-export type LemonSqueezyDeps = PaymentDeps;
-
 /** Lemon Squeezy over its dependencies: the knobs, the calls, the signature, the events */
-export function lemonsqueezyProvider(deps: PaymentDeps): PaymentProvider {
-  const mustKey = (env: Bindings): { key: string; store: string } => {
+export function lemonsqueezyProvider(deps) {
+  const mustKey = (env) => {
     const key = apiKey(env), store = storeId(env);
-    if (!key) throw new ApiError(503, `Lemon Squeezy is not configured on this instance: set ${KEY_VAR} (a secret) and ${STORE_VAR}, and, for the webhook, ${WEBHOOK_SECRET_VAR}`);
-    if (!store) throw new ApiError(503, `Lemon Squeezy needs ${STORE_VAR}: the numeric id of the store the checkouts belong to`);
+    if (!key)
+      throw new ApiError(503, `Lemon Squeezy is not configured on this instance: set ${KEY_VAR} (a secret) and ${STORE_VAR}, and, for the webhook, ${WEBHOOK_SECRET_VAR}`);
+    if (!store)
+      throw new ApiError(503, `Lemon Squeezy needs ${STORE_VAR}: the numeric id of the store the checkouts belong to`);
     return { key, store };
   };
-  const api = (env: Bindings) => {
+  const api = (env) => {
     const { key, store } = mustKey(env);
-    return { store, call: (method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: Record<string, unknown>) => call(deps.fetch, key, method, path, body) };
+    return { store, call: (method, path, body) => call(deps.fetch, key, method, path, body) };
   };
-  const attributesOf = (answer: Row): Row => obj(obj(answer.data).attributes);
-  const checkCharge = (o: CheckoutInput): void => {
+  const attributesOf = (answer) => obj(obj(answer.data).attributes);
+  const checkCharge = (o) => {
     // a checkout here is one variant at its price, with nowhere to put an amount computed here (a tax, a shipping
     // total) and no second variant, so a checkout carrying either is refused before Lemon Squeezy is called rather
     // than charged without it; the route and payments@1 both make this check
-    if (o.amounts?.length) throw badRequest(`Lemon Squeezy charges one variant at its price and has no line for an amount, so a checkout with ${o.amounts.map((a) => a.name).join(", ")} cannot be charged in full through Lemon Squeezy and is refused rather than charged without them`);
-    if (o.items.length !== 1) throw badRequest("a Lemon Squeezy checkout takes one item: the variant to buy, with its quantity");
-    if (!/^\d+$/.test(o.items[0]!.price)) throw badRequest("price must be the numeric id of a Lemon Squeezy variant");
+    if (o.amounts?.length)
+      throw badRequest(`Lemon Squeezy charges one variant at its price and has no line for an amount, so a checkout with ${o.amounts.map((a) => a.name).join(", ")} cannot be charged in full through Lemon Squeezy and is refused rather than charged without them`);
+    if (o.items.length !== 1)
+      throw badRequest("a Lemon Squeezy checkout takes one item: the variant to buy, with its quantity");
+    if (!/^\d+$/.test(o.items[0].price))
+      throw badRequest("price must be the numeric id of a Lemon Squeezy variant");
   };
   return {
     name: PROVIDER, label: "Lemon Squeezy", keyVar: KEY_VAR, webhookSecretVar: WEBHOOK_SECRET_VAR,
     key: apiKey, webhookSecret,
     // test mode is a switch on the store, not a property of the key: the key is the same in both
     livemode: () => true,
-
-    async createCustomer(env, auth: AuthRecord) {
+    async createCustomer(env, auth) {
       const { store, call: ls } = api(env);
       const email = str(auth.row.email), user = str(auth.row.id);
       // an email is unique in a store: one that bought before is found, not created again
       if (email) {
         const found = await ls("GET", `/v1/customers?filter[store_id]=${encodeURIComponent(store)}&filter[email]=${encodeURIComponent(email)}`);
-        const existing = obj((found.data as unknown[] | undefined)?.[0]);
-        if (existing.id) return { providerId: str(existing.id), email };
+        const existing = obj(found.data?.[0]);
+        if (existing.id)
+          return { providerId: str(existing.id), email };
       }
       const name = str(auth.row.name) || email.split("@")[0] || user;
       const created = await ls("POST", "/v1/customers", resource("customers", { name, email }, { store }));
       return { providerId: str(obj(created.data).id), email };
     },
-
     checkCharge,
-
     async checkout(env, row, o) {
       // the check again, for a caller that went straight here: the first item alone would otherwise be charged
       checkCharge(o);
       const { store, call: ls } = api(env);
-      const item = o.items[0]!;
+      const item = o.items[0];
       const answer = await ls("POST", "/v1/checkouts", resource("checkouts", {
         product_options: { redirect_url: o.success },
         // A checkout that pays a reference (commerce's order) has to pay the order's total or the order stays pending,
@@ -214,20 +196,20 @@ export function lemonsqueezyProvider(deps: PaymentDeps): PaymentProvider {
       }, { store, variant: item.price }));
       return { url: str(attributesOf(answer).url) };
     },
-
     async portal(env, row) {
       // the customer portal is a signed URL on the customer, there once they have ordered; `return` has nowhere to go
       const answer = await api(env).call("GET", `/v1/customers/${encodeURIComponent(str(row.providerId))}`);
       const url = str(obj(attributesOf(answer).urls).customer_portal);
-      if (!url) throw badRequest("Lemon Squeezy has no customer portal for this customer yet: it appears after their first order");
+      if (!url)
+        throw badRequest("Lemon Squeezy has no customer portal for this customer yet: it appears after their first order");
       return { url };
     },
-
-    async cancel(env, sub, mode: CancelMode) {
+    async cancel(env, sub, mode) {
       const { call: ls } = api(env);
       const id = str(sub.providerId);
       const path = `/v1/subscriptions/${encodeURIComponent(id)}`;
-      if (mode === "now") throw badRequest("Lemon Squeezy cancels at the period's end only: a cancelled subscription runs until ends_at, and there is no cancelling now");
+      if (mode === "now")
+        throw badRequest("Lemon Squeezy cancels at the period's end only: a cancelled subscription runs until ends_at, and there is no cancelling now");
       const answer = mode === "period_end" ? await ls("DELETE", path) : await ls("PATCH", path, resource("subscriptions", { cancelled: false }, { id }));
       const a = attributesOf(answer);
       const cancelled = a.cancelled === true || a.status === "cancelled";
@@ -237,17 +219,17 @@ export function lemonsqueezyProvider(deps: PaymentDeps): PaymentProvider {
         ...(a.ends_at || a.renews_at ? { currentPeriodEnd: isoDate(cancelled ? a.ends_at || a.renews_at : a.renews_at) } : {}),
       };
     },
-
-    verify: (payload, headers, secret): Promise<Verdict> => verifySignature(payload, headers.get("x-signature"), secret),
+    verify: (payload, headers, secret) => verifySignature(payload, headers.get("x-signature"), secret),
     applyEvent,
   };
 }
-
 /** the plugin over its dependencies: the shipped one uses fetch, D1 and the clock; tests replace all three */
-export function lemonsqueezyWith(overrides: Partial<LemonSqueezyDeps> = {}): Plugin & { payments: Payments } {
+export function lemonsqueezyWith(overrides = {}) {
   const deps = depsWith({ name: PROVIDER, keyVar: KEY_VAR }, overrides);
   return paymentsPlugin(lemonsqueezyProvider(deps), deps, { anchor: false });
 }
-
 /** the shipped plugin: Lemon Squeezy over fetch, the rows in D1, the real clock; it joins stripe's family for payments@1 */
-export const lemonsqueezy: Plugin & { payments: Payments } = lemonsqueezyWith();
+const lemonsqueezy = lemonsqueezyWith();
+
+// what the plugin does; its declaration is manifest.json beside this file, which the instance reads
+export default lemonsqueezy;

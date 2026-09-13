@@ -22,4 +22,4 @@ import declared from "@voidbase-cloud/plugin-mail/manifest.json" with { type: "j
 import type { Plugin, PluginManifest } from "./manifest";
 
 export * from "@voidbase-cloud/plugin-mail";
-export const mail: Plugin = { ...behaviour, manifest: declared as PluginManifest };
+export const mail: Plugin = Object.assign(behaviour, { manifest: declared as PluginManifest });

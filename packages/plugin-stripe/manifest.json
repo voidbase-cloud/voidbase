@@ -1,0 +1,14 @@
+{
+  "name": "stripe",
+  "version": "0.9.0-beta.58",
+  "tier": "official",
+  "voidbase": "*",
+  "provides": [
+    "payments@1"
+  ],
+  "collections": [
+    "customers",
+    "subscriptions",
+    "payments"
+  ]
+}

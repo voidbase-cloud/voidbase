@@ -1,0 +1,9 @@
+{
+  "name": "lemonsqueezy",
+  "version": "0.9.0-beta.58",
+  "tier": "official",
+  "voidbase": "*",
+  "requires": [
+    "payments@1"
+  ]
+}

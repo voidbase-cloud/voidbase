@@ -21,7 +21,7 @@ import declared from "@voidbase-cloud/plugin-openapi/manifest.json" with { type:
 import type { Plugin, PluginManifest } from "./manifest";
 
 export * from "@voidbase-cloud/plugin-openapi";
-export const openapi: Plugin = { ...behaviour, manifest: declared as PluginManifest };
+export const openapi: Plugin = Object.assign(behaviour, { manifest: declared as PluginManifest });
 
 /** the plugin with its dependencies swapped, for a test or an embedding: the package's factory, with the same manifest */
-export const openapiWith = (...args: Parameters<typeof behaviourWith>): Plugin => ({ ...behaviourWith(...args), manifest: declared as PluginManifest });
+export const openapiWith = (...args: Parameters<typeof behaviourWith>): Plugin => Object.assign(behaviourWith(...args), { manifest: declared as PluginManifest });

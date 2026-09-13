@@ -18,11 +18,17 @@
     "access": "public"
   },
   "exports": {
-    ".": "./src/index.ts",
+    ".": {
+      "types": "./main.d.ts",
+      "default": "./main.js"
+    },
+    "./manifest.json": "./manifest.json",
     "./package.json": "./package.json"
   },
   "files": [
-    "src",
+    "main.js",
+    "main.d.ts",
+    "manifest.json",
     "tsconfig.json",
     "README.md",
     "CHANGELOG.md",
@@ -42,7 +48,6 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@voidbase-cloud/voidbase": "workspace:^",
-    "hono": "^4.11.9"
+    "@voidbase-cloud/voidbase": "workspace:^"
   }
 }

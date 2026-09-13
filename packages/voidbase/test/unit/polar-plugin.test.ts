@@ -12,8 +12,8 @@ import { createKernel, load, using } from "../../src/server/kernel";
 import type { PaymentCollection, PaymentRows } from "../../src/server/plugins/payments-shared";
 import {
   applyEvent, KEY_VAR, polar, polarProvider, polarWith, SANDBOX_VAR, signPayload, verifySignature, webhookKeys, WEBHOOK_PATH, WEBHOOK_SECRET_VAR,
-} from "../../src/server/plugins/polar";
-import { stripeWith } from "../../src/server/plugins/stripe";
+} from "../support/plugins/polar";
+import { stripeWith } from "../support/plugins/stripe";
 import type { AppEnv, AuthRecord, Bindings, Row } from "../../src/server/types";
 
 // ---- fakes ----------------------------------------------------------------------------------------

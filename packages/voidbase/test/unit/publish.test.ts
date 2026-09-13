@@ -103,11 +103,14 @@ describe("the workspace the release packs", () => {
   const workspace = readWorkspace(ROOT);
   /** every extracted plugin package, in the order a release publishes them: one at 7.5, ten by the end of 7.6 */
   const PLUGINS = workspace.map((p) => p.name).filter((n) => n.startsWith("@voidbase-cloud/plugin-")).sort();
+  /** the plugin packages the core imports (tier 1); the others are installed by hand (tier 2), so the core does not depend on them */
+  const IMPORTED = PLUGINS.filter((n) => workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies?.[n]);
 
   test("holds the core, a package per extracted plugin, and the fixture that keeps the private path exercised", () => {
     // the pin, and the reason this equality can fail at all: the directories the workspace globs reach have to be
     // exactly the packages the core re-exports through the entries it keeps (reexportedPlugins, above)
-    expect(PLUGINS).toEqual(reexportedPlugins());
+    expect(IMPORTED).toEqual(reexportedPlugins());
+    expect(IMPORTED.length).toBeGreaterThan(0);
     expect(workspace.map((p) => p.name).sort()).toEqual([...PLUGINS, FIXTURE, PACKAGE, SDK].sort());
     expect(PLUGINS).toContain(PLUGIN);
     expect(workspace.find((p) => p.name === FIXTURE)!.private).toBe(true);
@@ -117,7 +120,7 @@ describe("the workspace the release packs", () => {
       const plugin = workspace.find((p) => p.name === name)!;
       expect(plugin.private, name).toBe(false);
       // 7.5's pair, in the real workspace: the core depends on the plugin, the plugin peer-depends back on the core
-      expect(workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies![name]).toBe("workspace:*");
+      expect(workspace.find((p) => p.name === PACKAGE)!.manifest.dependencies?.[name]).toBe(IMPORTED.includes(name) ? "workspace:*" : undefined);
       // The peers, and only two things are true of all ten. The core is one of them, at `workspace:*`. hono is
       // not: it is declared by the packages that name it and by no others (two of the ten -- observability, whose
       // `hono/route` is a value import, and previews, whose `Context` and `Hono` are types its own `bun run check`
@@ -190,7 +193,7 @@ describe("the workspace the release packs", () => {
     // Kept as a constructed pair as well, so the rule is pinned by something other than the workspace of the day.
     const real = readWorkspace(ROOT);
     const names = new Set(real.map((p) => p.name));
-    expect(dependsOn(real.find((p) => p.name === PACKAGE)!, names)).toEqual(PLUGINS);
+    expect(dependsOn(real.find((p) => p.name === PACKAGE)!, names)).toEqual(IMPORTED);
     // every plugin package depends on siblings only, and on none through the core: the leaves on nothing, the
     // chain on the package it is written from
     for (const name of PLUGINS) {

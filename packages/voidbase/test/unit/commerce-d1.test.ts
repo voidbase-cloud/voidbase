@@ -18,10 +18,10 @@ import { ApiError } from "../../src/server/errors";
 import { eventHooks, onEvent } from "../../src/server/hooks/runtime";
 import type { Auth } from "../../src/server/interfaces";
 import { createKernel, load, runBootstraps } from "../../src/server/kernel";
-import { API, commerceWith, d1Rows } from "../../src/server/plugins/commerce";
-import { shippingFlat } from "../../src/server/plugins/shipping-flat";
-import { KEY_VAR, signPayload, stripeWith, WEBHOOK_SECRET_VAR } from "../../src/server/plugins/stripe";
-import { taxFlat } from "../../src/server/plugins/tax-flat";
+import { API, commerceWith, d1Rows } from "../support/plugins/commerce";
+import { shippingFlat } from "../support/plugins/shipping-flat";
+import { KEY_VAR, signPayload, stripeWith, WEBHOOK_SECRET_VAR } from "../support/plugins/stripe";
+import { taxFlat } from "../support/plugins/tax-flat";
 import { ensureSettingsRow, invalidateSettings } from "../../src/server/settings";
 import type { AppEnv, AuthRecord, Bindings, Row } from "../../src/server/types";
 

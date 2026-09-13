@@ -35,12 +35,6 @@ import { mail as mailPlugin } from "./plugins/mail";
 import { ai as aiPlugin } from "./plugins/ai";
 import { observability as observabilityPlugin } from "./plugins/observability";
 import { translations as translationsPlugin } from "./plugins/translations";
-import { stripe as stripePlugin } from "./plugins/stripe";
-import { polar as polarPlugin } from "./plugins/polar";
-import { lemonsqueezy as lemonsqueezyPlugin } from "./plugins/lemonsqueezy";
-import { taxFlat as taxFlatPlugin } from "./plugins/tax-flat";
-import { shippingFlat as shippingFlatPlugin } from "./plugins/shipping-flat";
-import { commerce as commercePlugin } from "./plugins/commerce";
 import { previews as previewsPlugin } from "./plugins/previews";
 import { domains as domainsPlugin } from "./plugins/domains";
 import { realtime as realtimePlugin } from "./plugins/realtime";
@@ -595,7 +589,7 @@ mountCronsApi(app);
 export const kernel = createKernel(app);
 // What ships, minus what the project turned off, minus what an installed plugin shadows by name; then what the
 // project installed (pb_plugins, verified against voidbase.lock by the platform module). One graph, resolved once.
-const shipped = [authPlugin, observabilityPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION, undefined, () => whatLoaded(kernel).plugins), openapiPlugin, mcpPlugin, seoPlugin, mailPlugin, aiPlugin, translationsPlugin, stripePlugin, polarPlugin, lemonsqueezyPlugin, taxFlatPlugin, shippingFlatPlugin, commercePlugin, previewsPlugin, domainsPlugin];
+const shipped = [authPlugin, observabilityPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION, undefined, () => whatLoaded(kernel).plugins), openapiPlugin, mcpPlugin, seoPlugin, mailPlugin, aiPlugin, translationsPlugin, previewsPlugin, domainsPlugin];
 if (shipped.map((p) => p.manifest.name).join() !== SHIPPED.join()) throw new Error("voidbase: src/server/plugins/shipped.ts disagrees with the plugins app.ts loads");
 // and the facts the CLI reads out of that file without importing any of this: tier, provides, requires
 const factsOf = (f: { tier: string; provides?: readonly string[]; requires?: readonly string[] }) => JSON.stringify([f.tier, f.provides ?? [], f.requires ?? []]);

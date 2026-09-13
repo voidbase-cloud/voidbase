@@ -10,9 +10,9 @@ import type { Auth, Payments } from "../../src/server/interfaces";
 import { createKernel, load, using } from "../../src/server/kernel";
 import {
   applyEvent, KEY_VAR, lemonsqueezy, lemonsqueezyProvider, lemonsqueezyWith, signPayload, STORE_VAR, verifySignature, WEBHOOK_PATH, WEBHOOK_SECRET_VAR,
-} from "../../src/server/plugins/lemonsqueezy";
+} from "../support/plugins/lemonsqueezy";
 import type { PaymentCollection, PaymentRows } from "../../src/server/plugins/payments-shared";
-import { stripeWith } from "../../src/server/plugins/stripe";
+import { stripeWith } from "../support/plugins/stripe";
 import type { AppEnv, AuthRecord, Bindings, Row } from "../../src/server/types";
 
 // ---- fakes ----------------------------------------------------------------------------------------

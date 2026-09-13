@@ -16,4 +16,4 @@ import declared from "@voidbase-cloud/plugin-auth/manifest.json" with { type: "j
 import type { Plugin, PluginManifest } from "./manifest";
 
 export * from "@voidbase-cloud/plugin-auth";
-export const auth: Plugin = { ...behaviour, manifest: declared as PluginManifest };
+export const auth: Plugin = Object.assign(behaviour, { manifest: declared as PluginManifest });

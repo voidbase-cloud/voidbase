@@ -22,14 +22,14 @@ import { createKernel, load, serve, using, type Kernel } from "../../src/server/
 import {
   API, collectionDefinitions, COMMERCE_COLLECTIONS, commerceOn, commerceWith, defaultCurrency,
   type CommerceCollection, type CommerceRows,
-} from "../../src/server/plugins/commerce";
-import { KEY_VAR as LS_KEY, lemonsqueezyWith, signPayload as lsSign, STORE_VAR as LS_STORE, WEBHOOK_SECRET_VAR as LS_WEBHOOK_SECRET } from "../../src/server/plugins/lemonsqueezy";
+} from "../support/plugins/commerce";
+import { KEY_VAR as LS_KEY, lemonsqueezyWith, signPayload as lsSign, STORE_VAR as LS_STORE, WEBHOOK_SECRET_VAR as LS_WEBHOOK_SECRET } from "../support/plugins/lemonsqueezy";
 import type { Plugin } from "../../src/server/plugins/manifest";
-import { KEY_VAR as POLAR_KEY, polarWith, signPayload as polarSign, WEBHOOK_SECRET_VAR as POLAR_WEBHOOK_SECRET } from "../../src/server/plugins/polar";
+import { KEY_VAR as POLAR_KEY, polarWith, signPayload as polarSign, WEBHOOK_SECRET_VAR as POLAR_WEBHOOK_SECRET } from "../support/plugins/polar";
 import { SHIPPED, SHIPPED_FACTS } from "../../src/server/plugins/shipped";
-import { flatRates, freeOver, shippingFlat, SHIPPING_FLAT_VAR, SHIPPING_FREE_OVER_VAR } from "../../src/server/plugins/shipping-flat";
-import { KEY_VAR, signPayload, stripeWith, WEBHOOK_SECRET_VAR } from "../../src/server/plugins/stripe";
-import { taxFlat, taxQuote, taxRate, TAX_RATE_VAR } from "../../src/server/plugins/tax-flat";
+import { flatRates, freeOver, shippingFlat, SHIPPING_FLAT_VAR, SHIPPING_FREE_OVER_VAR } from "../support/plugins/shipping-flat";
+import { KEY_VAR, signPayload, stripeWith, WEBHOOK_SECRET_VAR } from "../support/plugins/stripe";
+import { taxFlat, taxQuote, taxRate, TAX_RATE_VAR } from "../support/plugins/tax-flat";
 import type { PaymentCollection, PaymentRows } from "../../src/server/plugins/payments-shared";
 import type { AppEnv, AuthRecord, Bindings, Row } from "../../src/server/types";
 
@@ -329,11 +329,12 @@ describe("the plugin and the two interfaces beside it", () => {
     expect(s.kernel.bootstraps.map((b) => b.plugin).at(-1)).toBe("commerce");
   });
 
-  test("the shipped table says the same as the manifests, so the CLI reads it without importing them", () => {
-    for (const name of ["tax-flat", "shipping-flat", "commerce"] as const) expect(SHIPPED).toContain(name);
-    expect(SHIPPED_FACTS["tax-flat"]).toEqual({ tier: "official", provides: ["tax@1"] });
-    expect(SHIPPED_FACTS["shipping-flat"]).toEqual({ tier: "official", provides: ["shipping@1"] });
-    expect(SHIPPED_FACTS.commerce).toEqual({ tier: "official", provides: ["commerce@1"], requires: ["payments@1", "tax@1", "shipping@1"] });
+  test("tier 2: the core ships none of the three, and each one's manifest.json says what it provides and needs", () => {
+    for (const name of ["tax-flat", "shipping-flat", "commerce"]) expect(SHIPPED as readonly string[]).not.toContain(name);
+    const facts = (m: { tier: string; provides?: string[]; requires?: string[] }) => ({ tier: m.tier, provides: m.provides, ...(m.requires ? { requires: m.requires } : {}) });
+    expect(facts(taxFlat.manifest)).toEqual({ tier: "official", provides: ["tax@1"] });
+    expect(facts(shippingFlat.manifest)).toEqual({ tier: "official", provides: ["shipping@1"] });
+    expect(facts(commerceWith().manifest)).toEqual({ tier: "official", provides: ["commerce@1"], requires: ["payments@1", "tax@1", "shipping@1"] });
   });
 
   test("the knobs: the shop is off unless VOIDBASE_COMMERCE says otherwise, and every route says so", async () => {

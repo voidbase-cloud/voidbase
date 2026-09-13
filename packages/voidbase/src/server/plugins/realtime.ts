@@ -19,4 +19,4 @@ import declared from "@voidbase-cloud/plugin-realtime/manifest.json" with { type
 import type { Plugin, PluginManifest } from "./manifest";
 
 export * from "@voidbase-cloud/plugin-realtime";
-export const realtime: Plugin = { ...behaviour, manifest: declared as PluginManifest };
+export const realtime: Plugin = Object.assign(behaviour, { manifest: declared as PluginManifest });

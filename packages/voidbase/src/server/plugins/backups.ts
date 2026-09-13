@@ -21,4 +21,4 @@ import declared from "@voidbase-cloud/plugin-backups/manifest.json" with { type:
 import type { Plugin, PluginManifest } from "./manifest";
 
 export * from "@voidbase-cloud/plugin-backups";
-export const backups: Plugin = { ...behaviour, manifest: declared as PluginManifest };
+export const backups: Plugin = Object.assign(behaviour, { manifest: declared as PluginManifest });

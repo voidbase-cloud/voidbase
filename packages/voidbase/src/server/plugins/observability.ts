@@ -26,7 +26,7 @@ import declared from "@voidbase-cloud/plugin-observability/manifest.json" with {
 import type { Plugin, PluginManifest } from "./manifest";
 
 export * from "@voidbase-cloud/plugin-observability";
-export const observability: Plugin = { ...behaviour, manifest: declared as PluginManifest };
+export const observability: Plugin = Object.assign(behaviour, { manifest: declared as PluginManifest });
 
 /** the plugin with its dependencies swapped, for a test or an embedding: the package's factory, with the same manifest */
-export const observabilityWith = (...args: Parameters<typeof behaviourWith>): Plugin => ({ ...behaviourWith(...args), manifest: declared as PluginManifest });
+export const observabilityWith = (...args: Parameters<typeof behaviourWith>): Plugin => Object.assign(behaviourWith(...args), { manifest: declared as PluginManifest });

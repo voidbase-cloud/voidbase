@@ -136,6 +136,17 @@ describe("the workspace's extracted plugin packages", () => {
 
     test(`${pkg.name} and the core name each other, in lockstep`, () => {
       const core = readWorkspace(ROOT).find((p) => p.name === CORE)!;
+      if (!core.manifest.dependencies?.[pkg.name]) {
+        // a package the core does not import (tier 2, voidbase-stories plugin-kinds.feature): an instance has it because
+        // someone installed it, so the core neither depends on it, nor publishes an entry for it, nor loads it
+        expect(Object.keys(corePkg.exports), `${entry} is still published`).not.toContain(entry);
+        expect(readFileSync(resolve(ROOT, "packages/voidbase/src/server/app.ts"), "utf8")).not.toContain(`from "./plugins/${shipped}"`);
+        expect(existsSync(resolve(ROOT, "packages/voidbase/src/server/plugins", `${shipped}.ts`))).toBe(false);
+        expect(SHIPPED as readonly string[]).not.toContain(shipped);
+        expect(pkg.manifest.peerDependencies?.[CORE]).toBe("workspace:^");
+        expect(pkg.private).toBe(false);
+        return;
+      }
       // the core depends on the package: that is what keeps the plugin shipped and on by default, and the
       // dependency is named by the entry the core publishes rather than by the application
       expect(core.manifest.dependencies?.[pkg.name]).toBe("workspace:*");
@@ -218,6 +229,7 @@ describe("the workspace's extracted plugin packages", () => {
     });
 
     test(`${CORE}${entry.slice(1)} is the package, re-exported`, async () => {
+      if (!(corePkg as { dependencies?: Record<string, string> }).dependencies?.[pkg.name]) return;   // not imported: the lockstep test says so
       const target = (corePkg.exports as Record<string, string>)[entry];
       expect(target, `${entry} is published`).toBeDefined();
       expect(existsSync(resolve(ROOT, "packages/voidbase", target!))).toBe(true);
@@ -265,6 +277,7 @@ describe("the workspace's extracted plugin packages", () => {
     // dropped it would fail a Worker build with a refusal that names a plugin the instance still ships.
     test(`a Worker build resolves ${CORE}${entry.slice(1)} to the core's re-export`, () => {
       const spec = `${CORE}${entry.slice(1)}`;
+      if (!(corePkg as { dependencies?: Record<string, string> }).dependencies?.[pkg.name]) { expect(providedImport(spec, "/pkg", corePkg.exports as Record<string, string>)).toBeNull(); return; }
       expect(refusalFor(spec)).toBeNull();
       expect(providedImport(spec, "/pkg", corePkg.exports as Record<string, string>)).toEqual({ file: `/pkg/src/server/plugins/${shipped}.ts` });
     });

@@ -10,12 +10,12 @@ import { invalidateCollections } from "../../src/server/collections/model";
 import { ApiError, badRequest } from "../../src/server/errors";
 import type { Payments } from "../../src/server/interfaces";
 import { createKernel, load, using } from "../../src/server/kernel";
-import { applyEvent as applyLemonSqueezyEvent, KEY_VAR as LS_KEY, lemonsqueezyWith, STORE_VAR } from "../../src/server/plugins/lemonsqueezy";
+import { applyEvent as applyLemonSqueezyEvent, KEY_VAR as LS_KEY, lemonsqueezyWith, STORE_VAR } from "../support/plugins/lemonsqueezy";
 import {
   chargedBeforeProviderTax, collectionDefinitions, customerForUser, ensureCustomer, paymentReference, paymentsPlugin, purchasedItems, upsert, type CheckoutInput, type PaymentCollection, type PaymentProvider, type PaymentRows,
 } from "../../src/server/plugins/payments-shared";
-import { KEY_VAR as POLAR_KEY, polarWith } from "../../src/server/plugins/polar";
-import { KEY_VAR as STRIPE_KEY, stripeWith } from "../../src/server/plugins/stripe";
+import { KEY_VAR as POLAR_KEY, polarWith } from "../support/plugins/polar";
+import { KEY_VAR as STRIPE_KEY, stripeWith } from "../support/plugins/stripe";
 import type { AppEnv, AuthRecord, Bindings, Row } from "../../src/server/types";
 
 function memoryRows(seed: Partial<Record<PaymentCollection, Row[]>> = {}) {

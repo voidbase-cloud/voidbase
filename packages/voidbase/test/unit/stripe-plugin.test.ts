@@ -11,7 +11,7 @@ import { createKernel, load, using } from "../../src/server/kernel";
 import {
   applyEvent, collectionDefinitions, formEncode, KEY_VAR, signPayload, stripe, STRIPE_VERSION, stripeWith, verifySignature, WEBHOOK_PATH, WEBHOOK_SECRET_VAR,
   type PaymentCollection, type PaymentRows,
-} from "../../src/server/plugins/stripe";
+} from "../support/plugins/stripe";
 import type { AppEnv, AuthRecord, Bindings, Row } from "../../src/server/types";
 
 // ---- fakes ----------------------------------------------------------------------------------------

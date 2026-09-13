@@ -21,20 +21,9 @@
 // are `/interfaces`, `/types` and `/plugins`, and `./payments-shared` is `/plugins/payments-shared`, which stays in
 // the core because it is what the providers share rather than a plugin. Nothing else about the plugin changed.
 import { ApiError, badRequest } from "@voidbase-cloud/voidbase/sdk";
-import type { Payments } from "@voidbase-cloud/voidbase/interfaces";
-import type { AuthRecord, Bindings, Row } from "@voidbase-cloud/voidbase/types";
-import type { Plugin } from "@voidbase-cloud/voidbase/plugins";
-import {
-  apiPrefix, constantTimeEqual, depsWith, ensureCustomer, hex, hmacSha256, knob, obj, paymentsPlugin, str, unixToDate, upsert, webhookPathOf, webhookResult,
-  REFERENCE_KEY, TOLERANCE_SECONDS, type CancelMode, type CheckoutInput, type Fetch, type PaymentDeps, type PaymentProvider, type PaymentRows, type Verdict, type WebhookResult,
-} from "@voidbase-cloud/voidbase/plugins/payments-shared";
-
+import { apiPrefix, constantTimeEqual, depsWith, ensureCustomer, hex, hmacSha256, knob, obj, paymentsPlugin, str, unixToDate, upsert, webhookPathOf, webhookResult, REFERENCE_KEY, TOLERANCE_SECONDS, } from "@voidbase-cloud/voidbase/plugins/payments-shared";
 // what the shared module holds and this file's callers used to import from here
-export {
-  collectionDefinitions, customerForUser, d1Rows, PAYMENT_STATUSES, SUBSCRIPTION_STATUSES, TOLERANCE_SECONDS,
-  type Fetch, type PaymentCollection, type PaymentRows, type WebhookResult,
-} from "@voidbase-cloud/voidbase/plugins/payments-shared";
-
+export { collectionDefinitions, customerForUser, d1Rows, PAYMENT_STATUSES, SUBSCRIPTION_STATUSES, TOLERANCE_SECONDS, } from "@voidbase-cloud/voidbase/plugins/payments-shared";
 export const STRIPE_API = "https://api.stripe.com";
 /** the API version every call pins, so a change on Stripe's side arrives when this line changes and not before */
 export const STRIPE_VERSION = "2025-08-27.basil";
@@ -43,110 +32,112 @@ export const WEBHOOK_SECRET_VAR = "STRIPE_WEBHOOK_SECRET";
 export const PROVIDER = "stripe";
 export const API = apiPrefix(PROVIDER);
 export const WEBHOOK_PATH = webhookPathOf(PROVIDER);
-
 /** the secret key these bindings carry, or empty */
-export const secretKey = (env: Bindings): string => knob(env, KEY_VAR);
+export const secretKey = (env) => knob(env, KEY_VAR);
 /** the webhook signing secret these bindings carry, or empty */
-export const webhookSecret = (env: Bindings): string => knob(env, WEBHOOK_SECRET_VAR);
+export const webhookSecret = (env) => knob(env, WEBHOOK_SECRET_VAR);
 /** whether a key is a live one: `sk_live_`, `rk_live_`; anything else is test mode */
-export const isLive = (key: string): boolean => /^[a-z]+_live_/.test(key);
-
+export const isLive = (key) => /^[a-z]+_live_/.test(key);
 // ---- the wire -------------------------------------------------------------------------------------
-
 /** Stripe's form encoding of nested params: `{ line_items: [{ price }] }` becomes `line_items[0][price]` */
-export function formEncode(params: Record<string, unknown>): string {
+export function formEncode(params) {
   const out = new URLSearchParams();
-  const add = (key: string, v: unknown) => {
-    if (v === undefined || v === null) return;
-    if (Array.isArray(v)) v.forEach((x, i) => add(`${key}[${i}]`, x));
-    else if (typeof v === "object") for (const [k, x] of Object.entries(v as Record<string, unknown>)) add(`${key}[${k}]`, x);
-    else out.append(key, String(v));
+  const add = (key, v) => {
+    if (v === undefined || v === null)
+      return;
+    if (Array.isArray(v))
+      v.forEach((x, i) => add(`${key}[${i}]`, x));
+    else if (typeof v === "object")
+      for (const [k, x] of Object.entries(v))
+        add(`${key}[${k}]`, x);
+    else
+      out.append(key, String(v));
   };
-  for (const [k, v] of Object.entries(params)) add(k, v);
+  for (const [k, v] of Object.entries(params))
+    add(k, v);
   return out.toString();
 }
-
-async function call(fetchFn: Fetch, key: string, method: "GET" | "POST" | "DELETE", path: string, params?: Record<string, unknown>): Promise<Row> {
+async function call(fetchFn, key, method, path, params) {
   const body = params ? formEncode(params) : undefined;
   const res = await fetchFn(`${STRIPE_API}${path}`, {
     method,
     headers: { authorization: `Bearer ${key}`, "stripe-version": STRIPE_VERSION, ...(body !== undefined ? { "content-type": "application/x-www-form-urlencoded" } : {}) },
     ...(body !== undefined ? { body } : {}),
   });
-  const json = (await res.json().catch(() => ({}))) as Row;
+  const json = (await res.json().catch(() => ({})));
   if (!res.ok) {
-    const message = String((json.error as Row | undefined)?.message ?? res.statusText ?? "");
+    const message = String(json.error?.message ?? res.statusText ?? "");
     throw new ApiError(res.status >= 500 ? 502 : 400, `Stripe answered ${res.status}${message ? `: ${message}` : ""}`);
   }
   return json;
 }
-
 // ---- the signature ----------------------------------------------------------------------------------
-
 /** HMAC SHA-256 of `${t}.${payload}` under the signing secret, in hex: what Stripe puts in `v1=` */
-export async function signPayload(secret: string, payload: string, t: number): Promise<string> {
+export async function signPayload(secret, payload, t) {
   return hex(await hmacSha256(secret, `${t}.${payload}`));
 }
-
 /**
  * Check a `Stripe-Signature` header (`t=<unix seconds>,v1=<hex>[,v1=<hex>]`) against the payload as it arrived:
  * the signature is over `t.payload`, so the body is verified as bytes and parsed only afterwards. A timestamp more
  * than `tolerance` seconds from `now` is refused whatever the signature says, which is what closes replay.
  */
-export async function verifySignature(payload: string, header: string | null, secret: string, o: { now?: number; tolerance?: number } = {}): Promise<{ ok: true; t: number } | { ok: false; reason: string }> {
-  if (!secret) return { ok: false, reason: `no ${WEBHOOK_SECRET_VAR} to verify against` };
-  if (!header) return { ok: false, reason: "no Stripe-Signature header" };
+export async function verifySignature(payload, header, secret, o = {}) {
+  if (!secret)
+    return { ok: false, reason: `no ${WEBHOOK_SECRET_VAR} to verify against` };
+  if (!header)
+    return { ok: false, reason: "no Stripe-Signature header" };
   let t = 0;
-  const sigs: string[] = [];
+  const sigs = [];
   for (const part of header.split(",")) {
     const i = part.indexOf("=");
-    if (i < 0) continue;
+    if (i < 0)
+      continue;
     const k = part.slice(0, i).trim(), v = part.slice(i + 1).trim();
-    if (k === "t") t = Number(v);
-    else if (k === "v1") sigs.push(v);
+    if (k === "t")
+      t = Number(v);
+    else if (k === "v1")
+      sigs.push(v);
   }
-  if (!Number.isFinite(t) || t <= 0) return { ok: false, reason: "no timestamp in Stripe-Signature" };
-  if (!sigs.length) return { ok: false, reason: "no v1 signature in Stripe-Signature" };
+  if (!Number.isFinite(t) || t <= 0)
+    return { ok: false, reason: "no timestamp in Stripe-Signature" };
+  if (!sigs.length)
+    return { ok: false, reason: "no v1 signature in Stripe-Signature" };
   const expected = await signPayload(secret, payload, t);
-  if (!sigs.some((s) => constantTimeEqual(s, expected))) return { ok: false, reason: "the signature does not match the payload" };
+  if (!sigs.some((s) => constantTimeEqual(s, expected)))
+    return { ok: false, reason: "the signature does not match the payload" };
   const now = o.now ?? Math.floor(Date.now() / 1000);
   const tolerance = o.tolerance ?? TOLERANCE_SECONDS;
-  if (Math.abs(now - t) > tolerance) return { ok: false, reason: `the timestamp is ${Math.abs(now - t)} seconds from now, more than the ${tolerance} allowed` };
+  if (Math.abs(now - t) > tolerance)
+    return { ok: false, reason: `the timestamp is ${Math.abs(now - t)} seconds from now, more than the ${tolerance} allowed` };
   return { ok: true, t };
 }
-
 // ---- what the webhook says, applied to the rows -----------------------------------------------------
-
 // Stripe's 2025 versions moved a few fields: a subscription's period now lives on its items, an invoice's
 // subscription under `parent`, and its payment intent under `payments`. Both shapes are read.
-const subscriptionPeriodEnd = (sub: Row): string => unixToDate(sub.current_period_end ?? obj((obj(sub.items).data as unknown[] | undefined)?.[0]).current_period_end);
-const subscriptionPrice = (sub: Row): string => str(obj(obj((obj(sub.items).data as unknown[] | undefined)?.[0]).price).id);
-const invoiceSubscription = (inv: Row): string => str(inv.subscription || obj(obj(inv.parent).subscription_details).subscription);
-const invoicePaymentIntent = (inv: Row): string => str(inv.payment_intent || obj(obj((obj(inv.payments).data as unknown[] | undefined)?.[0]).payment).payment_intent);
-
+const subscriptionPeriodEnd = (sub) => unixToDate(sub.current_period_end ?? obj(obj(sub.items).data?.[0]).current_period_end);
+const subscriptionPrice = (sub) => str(obj(obj(obj(sub.items).data?.[0]).price).id);
+const invoiceSubscription = (inv) => str(inv.subscription || obj(obj(inv.parent).subscription_details).subscription);
+const invoicePaymentIntent = (inv) => str(inv.payment_intent || obj(obj(obj(inv.payments).data?.[0]).payment).payment_intent);
 /** write one verified event into the rows; null for an event this plugin does not read */
-export async function applyEvent(rows: PaymentRows, event: Row): Promise<WebhookResult | null> {
+export async function applyEvent(rows, event) {
   const type = str(event.type);
   const o = obj(obj(event.data).object);
-  const out = (r: Omit<WebhookResult, "kind" | "raw">) => webhookResult(type, o, r);
-
+  const out = (r) => webhookResult(type, o, r);
   if (type === "checkout.session.completed") {
     const meta = obj(o.metadata);
     const customer = await ensureCustomer(rows, PROVIDER, str(o.customer), { email: str(obj(o.customer_details).email || o.customer_email), user: str(meta.voidbase_user) });
-    let payment: Row | undefined;
+    let payment;
     if (o.mode === "payment" && o.payment_intent) {
       payment = await upsert(rows, "payments", str(o.payment_intent), { customer: str(customer?.id), amount: Number(o.amount_total ?? 0), currency: str(o.currency), status: o.payment_status === "paid" ? "succeeded" : "pending", raw: o });
     }
     return out({ customer: str(customer?.id), payment: str(payment?.id) });
   }
-
   if (type === "customer.subscription.created" || type === "customer.subscription.updated" || type === "customer.subscription.deleted") {
     const customer = await ensureCustomer(rows, PROVIDER, str(o.customer));
     const status = type.endsWith("deleted") ? "canceled" : str(o.status);
     const sub = await upsert(rows, "subscriptions", str(o.id), { customer: str(customer?.id), status, price: subscriptionPrice(o), currentPeriodEnd: subscriptionPeriodEnd(o), cancelAtPeriodEnd: !!o.cancel_at_period_end });
     return out({ customer: str(customer?.id), subscription: str(sub.id) });
   }
-
   if (type === "invoice.paid" || type === "invoice.payment_failed") {
     const customer = await ensureCustomer(rows, PROVIDER, str(o.customer), { email: str(o.customer_email) });
     const subId = invoiceSubscription(o);
@@ -157,43 +148,35 @@ export async function applyEvent(rows: PaymentRows, event: Row): Promise<Webhook
     });
     return out({ customer: str(customer?.id), subscription: str(sub?.id), payment: str(payment.id) });
   }
-
   if (type === "payment_intent.succeeded" || type === "payment_intent.payment_failed") {
     const customer = await ensureCustomer(rows, PROVIDER, str(o.customer));
     const payment = await upsert(rows, "payments", str(o.id), { customer: str(customer?.id), amount: Number(o.amount ?? 0), currency: str(o.currency), status: type.endsWith("succeeded") ? "succeeded" : "failed", raw: o });
     return out({ customer: str(customer?.id), payment: str(payment.id) });
   }
-
   return null;
 }
-
-// ---- the provider -----------------------------------------------------------------------------------
-
-export type StripeDeps = PaymentDeps;
-
 /** Stripe over its dependencies: the knobs, the calls, the signature, the events */
-export function stripeProvider(deps: PaymentDeps): PaymentProvider {
-  const mustKey = (env: Bindings): string => {
+export function stripeProvider(deps) {
+  const mustKey = (env) => {
     const key = secretKey(env);
-    if (!key) throw new ApiError(503, `Stripe is not configured on this instance: set ${KEY_VAR} (a secret) and, for the webhook, ${WEBHOOK_SECRET_VAR}`);
+    if (!key)
+      throw new ApiError(503, `Stripe is not configured on this instance: set ${KEY_VAR} (a secret) and, for the webhook, ${WEBHOOK_SECRET_VAR}`);
     return key;
   };
   return {
     name: PROVIDER, label: "Stripe", keyVar: KEY_VAR, webhookSecretVar: WEBHOOK_SECRET_VAR,
     key: secretKey, webhookSecret, livemode: (env) => isLive(secretKey(env)),
-
-    async createCustomer(env, auth: AuthRecord) {
+    async createCustomer(env, auth) {
       const email = str(auth.row.email);
       const created = await call(deps.fetch, mustKey(env), "POST", "/v1/customers", { ...(email ? { email } : {}), metadata: { voidbase_user: str(auth.row.id), voidbase_collection: auth.collection.name } });
       return { providerId: str(created.id), email };
     },
-
     // the route's rule and not a charge's: a browser posting to the route says where a buyer who backs out goes. A
     // plugin calling payments@1 may leave it out, and its session then has no cancel_url and Stripe offers no way back
-    checkCheckout(o: CheckoutInput) {
-      if (!o.cancel) throw badRequest("success and cancel must be the URLs to return to");
+    checkCheckout(o) {
+      if (!o.cancel)
+        throw badRequest("success and cancel must be the URLs to return to");
     },
-
     async checkout(env, row, o) {
       const mode = o.mode ?? "payment";
       const reference = o.reference ? { [REFERENCE_KEY]: o.reference } : {};
@@ -217,13 +200,11 @@ export function stripeProvider(deps: PaymentDeps): PaymentProvider {
       });
       return { url: str(session.url) };
     },
-
     async portal(env, row, o) {
       const session = await call(deps.fetch, mustKey(env), "POST", "/v1/billing_portal/sessions", { customer: str(row.providerId), return_url: o.return });
       return { url: str(session.url) };
     },
-
-    async cancel(env, sub, mode: CancelMode) {
+    async cancel(env, sub, mode) {
       const key = mustKey(env);
       const path = `/v1/subscriptions/${encodeURIComponent(str(sub.providerId))}`;
       if (mode === "now") {
@@ -233,18 +214,18 @@ export function stripeProvider(deps: PaymentDeps): PaymentProvider {
       const answer = await call(deps.fetch, key, "POST", path, { cancel_at_period_end: mode === "period_end" });
       return { cancelAtPeriodEnd: mode === "period_end" ? answer.cancel_at_period_end !== false : answer.cancel_at_period_end === true, ...(answer.status ? { status: str(answer.status) } : {}) };
     },
-
-    verify: (payload, headers, secret, now): Promise<Verdict> => verifySignature(payload, headers.get("stripe-signature"), secret, { now }),
+    verify: (payload, headers, secret, now) => verifySignature(payload, headers.get("stripe-signature"), secret, { now }),
     applyEvent,
   };
 }
-
 /** the plugin over its dependencies: the shipped one uses fetch, D1 and the clock; tests replace all three */
-export function stripeWith(overrides: Partial<StripeDeps> = {}): Plugin & { payments: Payments } {
+export function stripeWith(overrides = {}) {
   const deps = depsWith({ name: PROVIDER, keyVar: KEY_VAR }, overrides);
   // stripe is the family's anchor: it claims payments@1 and owns the collections for polar and lemonsqueezy too
   return paymentsPlugin(stripeProvider(deps), deps, { anchor: true });
 }
-
 /** the shipped plugin: Stripe over fetch, the rows in D1, the real clock */
-export const stripe: Plugin & { payments: Payments } = stripeWith();
+const stripe = stripeWith();
+
+// what the plugin does; its declaration is manifest.json beside this file, which the instance reads
+export default stripe;

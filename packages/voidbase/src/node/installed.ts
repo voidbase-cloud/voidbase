@@ -188,7 +188,7 @@ export async function pluginsModuleSource(pluginsDir: string): Promise<string> {
     const common = `name: ${JSON.stringify(p.name)}, version: ${JSON.stringify(p.version)}, marketplace: ${JSON.stringify(p.marketplace)}`;
     if (p.shape !== "files") return `{ plugin: p${i}, ${common} }`;
     const manifest = readFileSync(join(p.file, "manifest.json"), "utf8").trim();
-    return `{ plugin: { ${hasMain(p) ? `...m${i}, ` : ""}manifest: ${manifest} }, ${common}, hooks: h${i} }`;
+    return `{ plugin: ${hasMain(p) ? `Object.assign(m${i}, { manifest: ${manifest} })` : `{ manifest: ${manifest} }`}, ${common}, hooks: h${i} }`;
   };
   lines.push(`export const installed = [${installed.map(entry).join(", ")}];`);
   lines.push(`export const disabled = ${JSON.stringify(disabled)};`);

@@ -11,51 +11,41 @@
 // becomes `@voidbase-cloud/voidbase/platform`, and `../types`, `../interfaces`, `../kernel` and `./manifest` become
 // `/types`, `/interfaces`, `/kernel` and `/plugins`. Nothing else about the plugin changed.
 import { env as voidEnv } from "@voidbase-cloud/voidbase/platform";
-import type { Bindings } from "@voidbase-cloud/voidbase/types";
-import type { Shipping, ShippingRate } from "@voidbase-cloud/voidbase/interfaces";
-import { serve, type Kernel } from "@voidbase-cloud/voidbase/kernel";
-import type { Plugin } from "@voidbase-cloud/voidbase/plugins";
-
+import { serve } from "@voidbase-cloud/voidbase/kernel";
 export const SHIPPING_FLAT_VAR = "VOIDBASE_SHIPPING_FLAT";
 export const SHIPPING_FREE_OVER_VAR = "VOIDBASE_SHIPPING_FREE_OVER";
 /** the one rate's id, which a checkout may name and which never changes */
 export const FLAT_RATE_ID = "flat";
-
-const knob = (env: object | undefined, name: string): string =>
-  String((env as Record<string, unknown> | undefined)?.[name] ?? (voidEnv as Record<string, unknown>)[name] ?? "").trim();
-
+const knob = (env, name) => String(env?.[name] ?? voidEnv[name] ?? "").trim();
 /** a whole number of minor units, or 0 when the knob is unset, negative or not a number */
-const amountKnob = (env: object | undefined, name: string): number => {
+const amountKnob = (env, name) => {
   const n = Number(knob(env, name));
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
 };
-
-export const flatAmount = (env?: object): number => amountKnob(env, SHIPPING_FLAT_VAR);
-export const freeOver = (env?: object): number => amountKnob(env, SHIPPING_FREE_OVER_VAR);
-
+export const flatAmount = (env) => amountKnob(env, SHIPPING_FLAT_VAR);
+export const freeOver = (env) => amountKnob(env, SHIPPING_FREE_OVER_VAR);
 /** the one rate these items get: the flat amount, or nothing to pay once the subtotal reaches the threshold */
-export function flatRates(env: object | undefined, items: { quantity: number; unitPrice: number }[]): ShippingRate[] {
+export function flatRates(env, items) {
   const subtotal = items.reduce((n, i) => n + Math.trunc(i.unitPrice) * Math.trunc(i.quantity), 0);
   const threshold = freeOver(env);
   const amount = threshold > 0 && subtotal >= threshold ? 0 : flatAmount(env);
   return [{ id: FLAT_RATE_ID, label: amount === 0 ? "Free shipping" : "Standard shipping", amount }];
 }
-
-export const shipping: Shipping = {
-  async rates(env: Bindings, o) {
+export const shipping = {
+  async rates(env, o) {
     return flatRates(env, o.items);
   },
 };
-
 /** what `/api/plugins` says about it: the amount and the threshold this instance is set to */
-export const shippingFlatInfo = (env?: object): { flat: number; freeOver: number } => ({ flat: flatAmount(env), freeOver: freeOver(env) });
-
+export const shippingFlatInfo = (env) => ({ flat: flatAmount(env), freeOver: freeOver(env) });
 /** the shipped plugin: one rate, provided as `shipping@1` */
-export const shippingFlat: Plugin & { shipping: Shipping } = {
-  manifest: { name: "shipping-flat", version: "0.1.0", tier: "official", voidbase: "*", provides: ["shipping@1"] },
+const shippingFlat = {
   info: (env) => shippingFlatInfo(env),
   shipping,
-  apply(ctx: Kernel) {
-    serve<Shipping>(ctx, "shipping@1", shipping);
+  apply(ctx) {
+    serve(ctx, "shipping@1", shipping);
   },
 };
+
+// what the plugin does; its declaration is manifest.json beside this file, which the instance reads
+export default shippingFlat;

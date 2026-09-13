@@ -21,4 +21,4 @@ import declared from "@voidbase-cloud/plugin-hardening/manifest.json" with { typ
 import type { Plugin, PluginManifest } from "./manifest";
 
 export * from "@voidbase-cloud/plugin-hardening";
-export const hardening: Plugin = { ...behaviour, manifest: declared as PluginManifest };
+export const hardening: Plugin = Object.assign(behaviour, { manifest: declared as PluginManifest });

@@ -78,7 +78,7 @@ describe("a plugin that is pb_ files at a commit (3.6)", () => {
     const src = await pluginsModuleSource(join(root, "pb_plugins"));
     expect(src).toContain('import * as h0 from "virtual:voidbase-plugin-hooks/audit";');
     expect(src).toContain(`import m0 from ${JSON.stringify(join(root, "pb_plugins/audit/main.js"))};`);
-    expect(src).toContain('plugin: { ...m0, manifest: {"name":"audit","version":"0.1.0","tier":"community","voidbase":"*"} }');
+    expect(src).toContain('plugin: Object.assign(m0, { manifest: {"name":"audit","version":"0.1.0","tier":"community","voidbase":"*"} })');
     expect(src).toContain("hooks: h0");
   });
 
@@ -272,17 +272,20 @@ describe("remove, enable, update", () => {
   });
 
   test("a plugin another installed plugin requires is refused too, and the dependent is named", () => {
-    // an installed plugin's manifest is the release.json beside its bundle, which is where its requires come from
-    mkdirSync(join(root, "pb_plugins/receipts"), { recursive: true });
-    writeFileSync(join(root, "pb_plugins/receipts/release.json"), JSON.stringify({ version: "0.1.0", manifest: { name: "receipts", version: "0.1.0", tier: "community", voidbase: "*", requires: ["tax@1"] } }));
-    writeFileSync(join(root, "voidbase.lock"), JSON.stringify({ lockfileVersion: 1, marketplaces: [], disabled: ["commerce"], plugins: { receipts: { version: "0.1.0", integrity: "sha256-x", marketplace: "http://m", source: { repository: "a/b", commit: "0123456" }, installedOn: "2026-09-11" } } }));
-    // commerce, which requires tax@1 too, is turned off here, so receipts is the one dependent left to name
+    // an installed plugin's manifest is the release.json beside its bundle, which is where its provides and requires come
+    // from; tax@1's providers are all installed now that the core imports no tier 2 plugin
+    for (const [name, declared] of [["taxes", { provides: ["tax@1"] }], ["receipts", { requires: ["tax@1"] }]] as const) {
+      mkdirSync(join(root, `pb_plugins/${name}`), { recursive: true });
+      writeFileSync(join(root, `pb_plugins/${name}/release.json`), JSON.stringify({ version: "0.1.0", manifest: { name, version: "0.1.0", tier: "community", voidbase: "*", ...declared } }));
+    }
+    const entry = { version: "0.1.0", integrity: "sha256-x", marketplace: "https://m.example", source: { repository: "a/b", commit: "c" }, installedOn: "2026-09-13" };
+    writeFileSync(join(root, "voidbase.lock"), JSON.stringify({ lockfileVersion: 1, marketplaces: [], disabled: [], plugins: { taxes: entry, receipts: entry } }));
     expect(pluginFacts(root).find((p) => p.name === "receipts")).toEqual({ name: "receipts", tier: "community", provides: [], requires: ["tax@1"] });
-    const cost = removalCostFor(root, "tax-flat")!;
+    const cost = removalCostFor(root, "taxes")!;
     expect(cost.core).toBe(false);
     expect(cost.dependents).toEqual(["receipts"]);
-    expect(() => removePlugin(root, "tax-flat")).toThrow("receipts requires tax@1, and only tax-flat provides it");
-    expect(removePlugin(root, "tax-flat", { force: true })).toBe("disabled");
+    expect(() => removePlugin(root, "taxes")).toThrow("receipts requires tax@1, and only taxes provides it");
+    expect(removePlugin(root, "taxes", { force: true })).toBe("removed");
   });
 
   test("an installed plugin with a shipped plugin's name shadows it, which the listing says", async () => {

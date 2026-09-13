@@ -9,6 +9,7 @@ const PLATFORM_MODULES = ["env", "log", "sse", "sockets", "hooks", "migrations",
 import ts from "typescript";
 import type { Plugin } from "vite";
 import { pluginsModuleSource, providedImport } from "./src/node/installed";
+import { NOT_PROVIDED } from "./src/node/refusals";
 import { writeSeoRedirects } from "./src/adapter/seo-redirects";
 import { seoPngOn } from "./src/server/plugins/seo-paths";
 import pkg from "./package.json" with { type: "json" };
@@ -306,12 +307,27 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; p
     // longer names come first, because a string alias matches the beginning of a specifier.
     config() {
       const workersFile = (n: string) => resolve(here, "src/platform/workers", `${n === "raster" && !seoPng ? "raster-off" : n}.ts`);
-      return { resolve: { alias: [
+      const alias = { alias: [
         { find: "@voidbase-cloud/voidbase/platform/email", replacement: workersFile("email") },
         { find: "@voidbase-cloud/voidbase/platform/raster", replacement: workersFile("raster") },
         { find: "@voidbase-cloud/voidbase/platform", replacement: resolve(here, "src/platform/workers", "index.ts") },
         ...PLATFORM_MODULES.map((n) => ({ find: `#platform/${n}`, replacement: workersFile(n) })),
-      ] } };
+      ] };
+      if (process.env.VOIDBASE_REBUILDABLE !== "1") return { resolve: alias };
+      // A release an instance can rebuild itself from (voidbase-stories vanilla-rebuild.feature): the plugins module and
+      // every name a plugin may import are entries of their own, at names that do not change between builds. A new
+      // version is then this release's modules with voidbase-plugins.js swapped and the plugins' files beside it, their
+      // imports pointed at provided/..., which are the same module instances the core runs on.
+      const input: Record<string, string> = { "voidbase-plugins": VIRTUAL_PLUGINS, "provided/hono": "hono" };
+      for (const entry of Object.keys(pkg.exports as Record<string, unknown>)) {
+        if (entry === "." || entry in NOT_PROVIDED) continue;
+        // the platform names go through the same pick the aliases above make (raster-off while share cards are off)
+        const platform = entry === "./platform" ? resolve(here, "src/platform/workers", "index.ts") : entry.startsWith("./platform/") ? workersFile(entry.slice("./platform/".length)) : null;
+        const target = platform ? { file: platform } : providedImport(`@voidbase-cloud/voidbase${entry.slice(1)}`, here, pkg.exports as Record<string, string | Record<string, string>>, "project");
+        if (target && "file" in target) input[`provided/voidbase${entry.slice(1)}`] = target.file;
+      }
+      const rollupOptions = { input, preserveEntrySignatures: "exports-only" as const };
+      return { resolve: alias, environments: { void_worker: { build: { rollupOptions } } } };
     },
     configResolved(config) { clientOut = resolve(config.root, config.environments?.client?.build?.outDir ?? config.build.outDir); },
     // Asset-first on Cloudflare: the asset layer answers every request outside /api, so the Worker is never invoked

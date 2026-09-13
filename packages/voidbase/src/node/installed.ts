@@ -36,11 +36,9 @@ export interface LockEntry {
   installedOn: string;
 }
 
-/**
- * what a pb_ files plugin is made of: its declaration, the directories an instance reads, and the plain JavaScript
- * cordis applies (`main.js`, and the modules it imports from `lib/`), nothing else
- */
-export const FILES_ENTRIES = ["manifest.json", "pb_hooks", "pb_migrations", "pb_public", "main.js", "lib"] as const;
+/** what a pb_ files plugin is made of; one list with the rebuild inside an instance, which reads the same files */
+import { FILES_ENTRIES } from "../server/rebuild/assemble";
+export { FILES_ENTRIES };
 
 /**
  * What a pb_ files plugin's code imports: main.js and every .js under lib/, read without running them. A plugin brings

@@ -20,11 +20,12 @@
 // the secrets.json, run `voidbase sync`. The first run says which dashboard step the API cannot do (install the
 // GitHub App for the repository and connect it, which also creates the build token); the second run finishes.
 import { syncDataUp } from "./sync-data";
-import { githubToken } from "./github-token";
+import { githubToken, ghLoginToken } from "./github-token";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { CfApi, resolveAccount } from "../cloud/rest";
-import { appNotInstalled, buildTokens, buildsSettingsLink, connectRepo, ensureTrigger, githubRepo, setTriggerEnv, triggers, workerTag, type BuildEnv } from "../cloud/builds";
+import { coverRepo } from "../cloud/github-app";
+import { appNotInstalled, buildsSettingsLink, connectRepo, ensureBuildToken, ensureTrigger, githubRepo, setTriggerEnv, triggers, workerTag, type BuildEnv } from "../cloud/builds";
 import { deployToCloudflare, type DeployOptions } from "./deploy-cf";
 import { SECRETS_DIR, secretsState } from "./secrets";
 
@@ -140,10 +141,21 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   const manual = `open ${link}\n  Under Builds, connect ${repo}: that installs the "Cloudflare Workers and Pages" GitHub App for it and creates the build token. Then run voidbase sync again.`;
   let connection: string;
   try { connection = await connectRepo(cf, account.id, info); }
-  catch (e) { if (appNotInstalled(e)) { log(`\nci: the GitHub App is not installed for ${repo}. One dashboard step: ${manual}`); return; } throw e; }
-  const tokens = await buildTokens(cf, account.id);
-  const buildToken = tokens[0]?.uuid;
-  if (!buildToken) { log(`\nci: the account has no build token yet. One dashboard step: ${manual}`); return; }
+  catch (e) {
+    if (!appNotInstalled(e)) throw e;
+    // the App is arranged from here where GitHub lets a token do it: a repository added to the installation that exists
+    const cover = await coverRepo(info, { token: ghLoginToken() || githubToken() });
+    if (cover.state === "added" || cover.state === "covered") {
+      if (cover.state === "added") log(`\nci: added ${repo} to the Cloudflare Workers and Pages GitHub App's installation on ${info.owner.login}`);
+      connection = await connectRepo(cf, account.id, info);
+    } else { log(`\nci: the GitHub App does not cover ${repo}: ${cover.why}. Install it with one click, ${cover.link}, then run voidbase sync again.`); return; }
+  }
+  // the build token builds run with: the account's, or one made from a token that may create tokens
+  const creatorToken = process.env.CLOUDFLARE_TOKEN_CREATOR;
+  const made = await ensureBuildToken(cf, account.id, creatorToken ? new CfApi(creatorToken, API) : null);
+  if (!made) { log(`\nci: the account has no build token yet, and no CLOUDFLARE_TOKEN_CREATOR (a Cloudflare token with User > API Tokens > Edit) to make one. Set it, or one dashboard step: ${manual}`); return; }
+  if (made.created) log(`\nci: made the account's build token "voidbase builds"`);
+  const buildToken = made.uuid;
 
   const existing = await triggers(cf, account.id, tag);
   const common = { root_directory: "/", build_caching: true, path_includes: ["*"], path_excludes: [] as string[] };

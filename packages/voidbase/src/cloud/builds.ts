@@ -2,10 +2,12 @@
 // to a deployed instance so that a push builds and deploys it (docs/deploy.md). scripts/cf-builds.ts, which wires
 // this repository's own CI, does the same by hand.
 //
-// Two things the API cannot do, and a dashboard visit must: install the "Cloudflare Workers and Pages" GitHub App
-// for the repository (a connection to a repository the App does not cover fails with code 8000008), and create the
-// build token (the dashboard's connect wizard makes one; `POST /builds/tokens` accepts nothing). Every endpoint here
-// wants a *user* API token with "Workers Builds Configuration: Edit" and "Workers Scripts: Edit".
+// Two things a connection needs first. The "Cloudflare Workers and Pages" GitHub App has to cover the repository (a
+// connection it does not cover fails with code 8000008): ./github-app.ts adds the repository to an installation that
+// exists, and names the one click on github.com otherwise. And the account needs a build token, which builds run with:
+// `ensureBuildToken` makes one from an API token it creates, given a token that may create tokens
+// (CLOUDFLARE_TOKEN_CREATOR, User > API Tokens > Edit). Every endpoint here wants a *user* API token with "Workers
+// Builds Configuration: Edit" and "Workers Scripts: Edit".
 import { CfError, type CfApi } from "./rest";
 
 export interface Trigger {
@@ -15,7 +17,7 @@ export interface Trigger {
 }
 export type TriggerSpec = Omit<Trigger, "trigger_uuid" | "external_script_id" | "repo_connection_uuid" | "build_token_uuid">;
 export type BuildEnv = Record<string, { value: string; is_secret: boolean }>;
-export interface GithubRepo { id: number; name: string; owner: { id: number; login: string }; default_branch?: string }
+export interface GithubRepo { id: number; name: string; owner: { id: number; login: string; type?: "User" | "Organization" | string }; default_branch?: string }
 
 /** the Worker's tag, which the Builds endpoints address it by; null when there is no such Worker */
 export async function workerTag(cf: CfApi, account: string, name: string): Promise<string | null> {
@@ -49,6 +51,30 @@ export const appNotInstalled = (e: unknown): boolean => e instanceof CfError && 
 export async function buildTokens(cf: CfApi, account: string): Promise<{ uuid: string; name?: string }[]> {
   const r = await cf.json<{ build_token_uuid: string; build_token_name?: string }[]>("GET", `/accounts/${account}/builds/tokens`);
   return (r.result ?? []).map((t) => ({ uuid: t.build_token_uuid, name: t.build_token_name }));
+}
+
+/** what a build deploys with: the Worker, its bindings' resources, and the account read that finds them */
+export const BUILD_TOKEN_PERMISSIONS = ["Workers Scripts Write", "Workers KV Storage Write", "Workers R2 Storage Write", "D1 Write", "Queues Write", "Account Settings Read"];
+
+/**
+ * The build token the account's builds run with: the one it has, or one made here. Making one is two calls: an API
+ * token scoped to this account with BUILD_TOKEN_PERMISSIONS, created through `creator` (a token allowed to create tokens),
+ * then registered with Workers Builds (POST /builds/tokens: build_token_name, build_token_secret, cloudflare_token_id).
+ * Null when there is none and no creator to make one.
+ */
+export async function ensureBuildToken(builds: CfApi, account: string, creator: CfApi | null, name = "voidbase builds"): Promise<{ uuid: string; created: boolean } | null> {
+  const have = await buildTokens(builds, account);
+  if (have[0]) return { uuid: have[0].uuid, created: false };
+  if (!creator) return null;
+  const groups = (await creator.json<{ id: string; name: string }[]>("GET", "/user/tokens/permission_groups")).result ?? [];
+  const ids = BUILD_TOKEN_PERMISSIONS.map((n) => ({ n, id: groups.find((g) => g.name === n)?.id }));
+  const missing = ids.filter((x) => !x.id).map((x) => x.n);
+  if (missing.length) throw new Error(`Cloudflare offers no permission group called ${missing.join(", ")}; a build token cannot be made with them`);
+  const token = (await creator.json<{ id: string; value: string }>("POST", "/user/tokens", {
+    name, policies: [{ effect: "allow", resources: { [`com.cloudflare.api.account.${account}`]: "*" }, permission_groups: ids.map((x) => ({ id: x.id })) }],
+  })).result;
+  const made = (await builds.json<{ build_token_uuid: string }>("POST", `/accounts/${account}/builds/tokens`, { build_token_name: name, build_token_secret: token.value, cloudflare_token_id: token.id })).result;
+  return { uuid: made.build_token_uuid, created: true };
 }
 
 export async function triggers(cf: CfApi, account: string, tag: string): Promise<Trigger[]> {

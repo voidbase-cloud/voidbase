@@ -226,12 +226,21 @@ describe("getting the document", () => {
     await fetchDocument({ url: "http://vb", email: "a@b", password: "p", fetch: f });
     expect(asked.map((a) => a.url)).toEqual(["http://vb/api/collections/_superusers/auth-with-password", "http://vb/api/openapi.json"]);
     await expect(fetchDocument({ url: "http://vb", email: "x@y", password: "p", fetch: f })).rejects.toThrow(/sign-in as x@y at http:\/\/vb failed: 400/);
-    await expect(fetchDocument({ url: "http://vb", fetch: f })).rejects.toThrow(/a superuser is needed/);
   });
 
-  test("a document of another scope is refused: it would describe less than every collection", async () => {
+  test("with no token and no credentials the guest's document comes back, and nobody signs in", async () => {
+    const { f, asked } = fake({ "http://vb/api/openapi.json": (init) => ((init?.headers as Record<string, string>).authorization ? json(superuserDoc) : json(document({ kind: "anonymous" }))) });
+    const doc = await fetchDocument({ url: "http://vb", fetch: f });
+    expect(doc.info?.["x-voidbase"]?.scope).not.toBe("superuser");
+    expect(generateTypes(doc, { source: "http://vb/api/openapi.json", regenerate: "voidbase types" })).toContain("as a guest sees it");
+    expect(asked.map((a) => a.url)).toEqual(["http://vb/api/openapi.json"]);
+  });
+
+  test("a user's document is accepted: the types hold what that user may reach, and say whose they are", async () => {
     const { f } = fake({ "http://vb/api/openapi.json": () => json(document({ kind: "user", collection: "users" })) });
-    await expect(fetchDocument({ url: "http://vb", token: "t", fetch: f })).rejects.toThrow(/as user sees it, not as a superuser/);
+    const doc = await fetchDocument({ url: "http://vb", token: "t", fetch: f });
+    expect(doc.info?.["x-voidbase"]?.scope).toBe("user");
+    expect(generateTypes(doc, { source: "http://vb/api/openapi.json", regenerate: "voidbase types" })).toContain("as a user sees it");
     expect(() => checkDocument({ openapi: "3.1.0" }, "x.json")).toThrow(/not an OpenAPI document/);
   });
 

@@ -312,6 +312,14 @@ A voidbase project is PocketBase's layout, and each directory means what it mean
 Only `pb_hooks/` and `pb_migrations/` are worth putting in version control from day one. The rest appear when you
 need them.
 
+### Handing the project to someone as one file
+
+`voidbase build --compile index.ts --outfile my-app` squashes the project into a single binary with Bun's
+compiler: your entry file, voidbase, and `pb_hooks/`, `pb_migrations/`, `pb_plugins/`, `pb_public/` and
+`voidbase.lock` inside it. Whoever runs `./my-app` needs nothing else installed; the instance keeps its data in
+`pb_data/` beside it. A pb_ folder that exists where the binary runs is used instead of the one inside, and the
+plugins inside cannot be changed from the admin panel: to change them, change the project and build again.
+
 ## The voidbase stack: a Void app with a backend inside
 
 The paths above give you a backend that a separate frontend talks to. This one gives you a single application: a

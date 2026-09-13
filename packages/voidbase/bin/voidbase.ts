@@ -385,10 +385,10 @@ switch (cmd) {
     break;
   }
   case "types": {
-    // A typed client from the instance's own OpenAPI description (src/node/typed-client.ts): fetched as a superuser so
-    // every collection is in it, or read from a saved document with --json. --watch keeps fetching it. Works from the
-    // executable too.
-    const { collectionsOf, fetchDocument, generateTypes, readDocument, watchTypes } = await import("../src/node/typed-client");
+    // A typed client from the instance's own OpenAPI description (src/node/typed-client.ts), as the caller may reach it:
+    // a superuser's (--email/--password, or the environment's) has every collection, a --token has what its holder may
+    // reach, and with neither it is a guest's. Or read from a saved document with --json. --watch keeps fetching it.
+    const { collectionsOf, fetchDocument, generateTypes, readDocument, scopeOf, watchTypes } = await import("../src/node/typed-client");
     const out = flags.out ?? "src/voidbase.ts";
     const json = flags.json && flags.json !== "1" ? flags.json : undefined;
     const watching = "watch" in flags;
@@ -416,7 +416,7 @@ switch (cmd) {
       mkdirSync(resolve(out, ".."), { recursive: true });
       writeFileSync(resolve(out), text);
       const n = collectionsOf(doc).length;
-      console.log(`wrote ${out}: ${n} collection${n === 1 ? "" : "s"} from ${source}`);
+      console.log(`wrote ${out}: ${n} collection${n === 1 ? "" : "s"} from ${source}, as ${scopeOf(doc)} sees it`);
     } catch (err) { console.error(`types failed: ${err instanceof Error ? err.message : String(err)}`); process.exit(1); }
     break;
   }

@@ -529,6 +529,36 @@ record names the file and its integrity (`deploy: { file, integrity }`, docs/reg
 downloads it with the bundle, and the lockfile pins its bytes too (`deploy` next to `integrity`), so a changed
 `deploy.js` refuses the deploy the way a changed bundle refuses the build.
 
+## A plugin's configuration plane
+
+A plugin declares the fields it can be configured with under `config` in its manifest
+(`src/server/plugins/manifest.ts`, `ConfigField`): a type (`string`, `number` or `boolean`), a default, the knob
+that sets it from the environment, and `applies`: `runtime` when the plugin reads it on every request, `rebuild`
+when it is read when the instance is built or started. That second mark is the plugin's call, because only the
+plugin knows where it reads the value. hardening's fields are all `runtime`; observability's `sample_rate` is
+`rebuild`, because `voidbase deploy` writes it into the Worker's configuration.
+
+A field's value comes from, first match wins (`src/server/plugins/config.ts`):
+
+| source | where |
+| --- | --- |
+| environment | the knob itself (`VOIDBASE_HSTS`, ...), as before; it still wins |
+| instance | what an admin set on a vanilla instance, kept in `_params` (`plugins/config-store.ts`) |
+| project | `pb_plugins/<name>/config.json`, committed with an extended project and carried by its build |
+| default | the manifest |
+
+The knob readers (`readKnob` in `response-policy.ts`, `knob` in `payments-shared.ts`, and a plugin's own through
+`configKnob` from `@voidbase-cloud/voidbase/plugins`) ask the plane after the environment, so a plugin keeps
+reading its knob and gets its configuration.
+
+- `GET /api/plugins/config` (superuser): every plane, field by field, with the value in effect, its source, whether
+  the plugin is `editable` here, and for a rebuild field changed since the instance started, the `pending` value.
+- `PATCH /api/plugins/config/<name>` (superuser) with the fields to change: runtime fields take effect at once,
+  rebuild fields answer `waitsForRebuild`. A plugin the project configures answers 409: change `config.json`,
+  commit it, and let the build carry it.
+- `voidbase plugins add` writes `pb_plugins/<name>/config.json` with each field at its default when the plugin
+  declares a plane and the file is not there yet. It is not part of what `voidbase.lock` pins.
+
 ## What a plugin does at deploy time
 
 A runtime plugin lives inside the instance and answers requests. Some of what a plugin is about happens around a

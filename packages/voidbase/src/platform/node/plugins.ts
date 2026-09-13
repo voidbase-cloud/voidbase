@@ -92,9 +92,11 @@ export async function loadInstalled(dir: string): Promise<{ installed: Installed
 const loaded = await loadInstalled(resolve(process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins"));
 export const installed: InstalledPlugin[] = loaded.installed;
 export const disabled: string[] = loaded.disabled;
+/** pb_plugins/<name>/config.json, the configuration an extended project commits (src/server/plugins/config.ts) */
+export const projectConfig = projectConfigOf(resolve(process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins"));
 
 // ---- the installer's view of the project on disk (src/server/installer-info.ts) --------------------------------
-import { addPlugin, listPlugins, removePlugin, updatePlugins } from "../../node/installed";
+import { addPlugin, listPlugins, projectConfigOf, removePlugin, updatePlugins } from "../../node/installed";
 import type { FilesystemInstaller } from "../../server/installer-info";
 const projectRoot = rootOfPluginsDir(resolve(process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins"));
 // null in a binary squashed from a project (src/node/baked-project.ts): its plugins were decided when it was built

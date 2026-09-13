@@ -21,6 +21,22 @@ export type InterfaceName = `${string}@${number}`;
  */
 export type Tier = "core" | "official" | "community";
 
+/** a configuration field's value, as its type says */
+export type ConfigValue = string | number | boolean;
+
+/**
+ * One field of a plugin's configuration plane (./config.ts). `applies` is the plugin's promise about when a change
+ * takes effect: `runtime`, read on every request; `rebuild`, read when the instance is built or started. `knob` is the
+ * environment variable that sets it too, and the one the plugin reads; without one it is VOIDBASE_<PLUGIN>_<FIELD>.
+ */
+export interface ConfigField {
+  type: "string" | "number" | "boolean";
+  applies: "runtime" | "rebuild";
+  default?: ConfigValue;
+  knob?: string;
+  description?: string;
+}
+
 /** a field a plugin adds to a collection somebody else owns */
 export interface FieldPatch {
   name: string;
@@ -53,6 +69,11 @@ export interface PluginManifest {
    * owner is absent.
    */
   extends?: Record<string, FieldPatch[]>;
+  /**
+   * The plugin's configuration plane: the fields an admin sets on a vanilla instance and a developer commits in
+   * pb_plugins/<name>/config.json on an extended one. Declared, so both can be shown before anything is changed.
+   */
+  config?: Record<string, ConfigField>;
 }
 
 /** a plugin as the loader holds it: what it declared, and what it does */
@@ -73,6 +94,8 @@ export interface Plugin {
 
 const NAME = /^[a-z][a-z0-9-]*$/;
 const INTERFACE = /^[a-z][a-z0-9-]*@\d+$/;
+const FIELD = /^[a-z][a-z0-9_]*$/;
+const KNOB = /^[A-Z][A-Z0-9_]*$/;
 
 /** what is wrong with a manifest, said all at once rather than one throw at a time */
 export function checkManifest(m: PluginManifest): string[] {
@@ -85,5 +108,15 @@ export function checkManifest(m: PluginManifest): string[] {
   for (const c of m.collections ?? []) {
     if (m.extends && c in m.extends) wrong.push(`${m.name} both owns and extends "${c}"; it is one or the other`);
   }
+  for (const [field, spec] of Object.entries(m.config ?? {})) {
+    const at = `${m.name}'s config field ${JSON.stringify(field)}`;
+    if (!FIELD.test(field)) wrong.push(`${at} must be lowercase letters, digits and underscores`);
+    if (!["string", "number", "boolean"].includes(spec?.type)) wrong.push(`${at} has type ${JSON.stringify(spec?.type)}, and a field is a string, a number or a boolean`);
+    if (!["runtime", "rebuild"].includes(spec?.applies)) wrong.push(`${at} must say whether it applies at runtime or needs a rebuild`);
+    if (spec?.default !== undefined && typeof spec.default !== spec.type) wrong.push(`${at} defaults to a ${typeof spec.default}, and it is a ${spec.type}`);
+    if (spec?.knob !== undefined && !KNOB.test(spec.knob)) wrong.push(`${at} names the knob ${JSON.stringify(spec.knob)}, which is not an environment variable name`);
+  }
   return wrong;
 }
+
+export { configKnob } from "./config";

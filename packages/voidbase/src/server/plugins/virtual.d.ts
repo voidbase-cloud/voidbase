@@ -5,4 +5,6 @@ declare module "virtual:voidbase-plugins" {
   /** `hooks` is a pb_ files plugin's compiled pb_hooks (3.6), from its own virtual:voidbase-plugin-hooks/<name> module */
   export const installed: { plugin: Plugin; name: string; version: string; marketplace: string; hooks?: import("../hooks").CompiledHooks }[];
   export const disabled: string[];
+  /** pb_plugins/<name>/config.json as the build found them (./config.ts) */
+  export const projectConfig: Record<string, Record<string, string | number | boolean>>;
 }

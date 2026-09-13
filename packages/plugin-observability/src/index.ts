@@ -42,7 +42,7 @@ import { all, badRequest, loadSettings, nowString, requireSuperuser } from "@voi
 import type { Observability } from "@voidbase-cloud/voidbase/interfaces";
 import { serve, type Kernel } from "@voidbase-cloud/voidbase/kernel";
 import type { AppEnv, Bindings } from "@voidbase-cloud/voidbase/types";
-import type { Plugin } from "@voidbase-cloud/voidbase/plugins";
+import { configKnob, type Plugin } from "@voidbase-cloud/voidbase/plugins";
 import {
   ACCOUNT_ID_VAR, ACCOUNT_VAR, analyticsDataset, DATASET_VAR, OBSERVABILITY_VAR, observabilityOn,
   SAMPLE_VAR, sampleRateOf, TOKEN_VAR, WORKER_NAME_VAR,
@@ -50,7 +50,7 @@ import {
 
 // --- the knobs, read from the request's env first and the runtime's after, like seo's and hardening's -------------
 const read = (name: string, env?: object): string => {
-  try { return String((env as Record<string, unknown> | undefined)?.[name] ?? (runtimeEnv as Record<string, unknown>)[name] ?? process.env?.[name] ?? "").trim(); } catch { return ""; }
+  try { return String((env as Record<string, unknown> | undefined)?.[name] ?? (runtimeEnv as Record<string, unknown>)[name] ?? process.env?.[name] ?? configKnob(name) ?? "").trim(); } catch { return ""; }
 };
 /** whether the plugin records anything at all: the same knob the deploy reads, off by the same words */
 export const recording = (env?: object): boolean => observabilityOn(read(OBSERVABILITY_VAR, env));
@@ -379,7 +379,13 @@ export const observabilityWith = (o: { fetch?: Fetch; now?: () => number; random
   const now = o.now ?? Date.now;
   const f: Fetch = o.fetch ?? ((url, init) => fetch(url, init));
   return {
-    manifest: { name: "observability", version: "0.1.0", tier: "core", voidbase: "*", provides: ["observability@1"] },
+    manifest: {
+      name: "observability", version: "0.1.0", tier: "core", voidbase: "*", provides: ["observability@1"],
+      config: {
+        // written into the Worker's configuration when it is deployed, so a change waits for the next rebuild
+        sample_rate: { type: "number", applies: "rebuild", knob: SAMPLE_VAR, description: "The share of requests the Worker's own logs keep, from 0 to 1." },
+      },
+    },
     apply(ctx: Kernel) {
       serve<Observability>(ctx, "observability@1", { sample: sampler(now, o.random), report: observabilityReport });
       mountRoutes(ctx.app, f, now);

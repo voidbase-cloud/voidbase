@@ -34,6 +34,7 @@ import { createRecord, updateRecord, type RecordContext } from "../records/servi
 import { rowToValues } from "../records/values";
 import type { AppEnv, AuthRecord, Bindings, Row } from "../types";
 import { ensureCollections } from "./collections";
+import { configKnob } from "./config";
 import type { Plugin } from "./manifest";
 import type { Context, Hono } from "hono";
 
@@ -41,7 +42,7 @@ import type { Context, Hono } from "hono";
 export const TOLERANCE_SECONDS = 300;
 
 /** a knob as these bindings carry it: the request env first, the runtime env second, like the mail plugin's domain */
-export const knob = (env: Bindings, name: string): string => String((env as unknown as Record<string, unknown>)[name] ?? (voidEnv as Record<string, unknown>)[name] ?? "").trim();
+export const knob = (env: Bindings, name: string): string => String((env as unknown as Record<string, unknown>)[name] ?? (voidEnv as Record<string, unknown>)[name] ?? configKnob(name) ?? "").trim();
 
 // ---- small readers every provider needs -----------------------------------------------------------------
 

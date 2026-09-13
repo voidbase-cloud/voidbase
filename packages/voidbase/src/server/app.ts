@@ -22,7 +22,7 @@ import { mountFilesApi, protectedAccess } from "./files-api";
 import { BATCH_CONTEXT_HEADER, batchContextToken, mountBatch } from "./batch";
 import { mountLogsApi, requestLogger } from "./logs";
 import { mountCronsApi } from "./crons";
-import { createKernel, load, runAfterRead, runBootstraps, using, whatLoaded } from "./kernel";
+import { createKernel, load, loadedPlugin, runAfterRead, runBootstraps, using, whatLoaded } from "./kernel";
 import { provideRecordContext } from "./record-slot";
 import { realtimeOf } from "./realtime-slot";
 import { auth as authPlugin } from "./plugins/auth";
@@ -47,7 +47,9 @@ import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
 import { SHIPPED, SHIPPED_FACTS, type ShippedName } from "./plugins/shipped";
 import { pluginsReport } from "./plugins/report";
-import { disabled as disabledPlugins, installed as installedPlugins } from "#platform/plugins";
+import { disabled as disabledPlugins, installed as installedPlugins, projectConfig } from "#platform/plugins";
+import { configReport, declareConfig } from "./plugins/config";
+import { loadStoredConfig, setPluginConfig } from "./plugins/config-store";
 import type { Auth, Hardening, Mail, Observability, Realtime } from "./interfaces";
 import { VERSION } from "./version";
 import { mountSqlApi } from "./sql";
@@ -85,6 +87,9 @@ let served = false; // onBootstrap / onServe fire once per isolate, on the first
 // routes, so the slot asks the provider at request time (the kernel is a const declared at the end of this module,
 // fine here because this runs per request). No provider, no policy, and no CORS. The limits below share the slot.
 const hardened = () => using<Hardening | undefined>(kernel, "hardening@1");
+// what an admin set in a plugin's configuration plane, read before anything reads a knob (plugins/config-store.ts);
+// before the first migration there is no _params yet, and every field reads its project value or its default
+app.use("*", async (c, next) => { try { await loadStoredConfig(c.env.DB); } catch { /* not bootstrapped yet */ } return next(); });
 app.use("*", (c, next) => hardened()?.responsePolicy(c, next) ?? next());
 // What the instance can see about itself, from whoever provides observability@1, through a slot of the same kind:
 // its sampler wraps the request path and records one data point per request (plugins/observability.ts). No
@@ -583,6 +588,8 @@ await load(kernel, [...active, ...installedPlugins.map((p) => p.plugin)], VERSIO
   origins: Object.fromEntries([...active.map((p) => [p.manifest.name, "shipped"]), ...installedPlugins.map((p) => [p.name, `${p.marketplace} ${p.version}`])]),
   disabled: disabledPlugins,
 });
+// the configuration planes of what loaded, and the configuration the project committed for them (plugins/config.ts)
+declareConfig(whatLoaded(kernel).names.map((n) => loadedPlugin(kernel, n)!.manifest), projectConfig);
 // from here on the core asks whoever provides auth@1 who is signed in and what a superuser is (auth-slot.ts); looked
 // up on every question rather than kept, because a provider can be replaced while the instance runs
 provideAuthLookup(() => using<Auth | undefined>(kernel, "auth@1"));
@@ -596,6 +603,17 @@ provideRecordContext(recordContextFor);
 // the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface. What a
 // plugin says about itself comes from the plugin that loaded under that name, so that a plugin installed over a
 // shipped one answers for it rather than being described by the code it replaced (plugins/report.ts).
+// A plugin's configuration plane, field by field, and a change to it: runtime fields take effect at once, rebuild
+// fields wait for the next rebuild, and a plugin the project configures is read only here (plugins/config.ts).
+app.get("/api/plugins/config", async (c) => {
+  requireSuperuser(c);
+  await loadStoredConfig(c.env.DB, 0);
+  return c.json(configReport((knob) => { const v = String((c.env as unknown as Record<string, unknown>)[knob] ?? process.env?.[knob] ?? "").trim(); return v || undefined; }));
+});
+app.patch("/api/plugins/config/:name", async (c) => {
+  requireSuperuser(c);
+  return c.json(await setPluginConfig(c.env.DB, c.req.param("name"), await c.req.json().catch(() => null)));
+});
 app.get("/api/plugins", async (c) => {
   requireSuperuser(c);
   return c.json(await pluginsReport(kernel, c.env));

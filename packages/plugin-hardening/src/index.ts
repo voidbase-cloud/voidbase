@@ -35,6 +35,18 @@ export const hardening: Plugin = {
     tier: "core",
     voidbase: "*",
     provides: ["hardening@1"],
+    // every one is read per request (response-policy.ts), so every change takes effect at once
+    config: {
+      cors_origins: { type: "string", applies: "runtime", default: "", knob: "VOIDBASE_CORS_ORIGINS", description: "The origins a browser may call the API from, comma separated. Empty allows any." },
+      referrer_policy: { type: "string", applies: "runtime", default: "", knob: "VOIDBASE_REFERRER_POLICY", description: "The Referrer-Policy header, when it names one." },
+      permissions_policy: { type: "string", applies: "runtime", default: "", knob: "VOIDBASE_PERMISSIONS_POLICY", description: "The Permissions-Policy header, when it names one." },
+      hsts: { type: "string", applies: "runtime", default: "", knob: "VOIDBASE_HSTS", description: "Strict-Transport-Security: 1 for one year, or the header's own value." },
+      csp: { type: "string", applies: "runtime", default: "", knob: "VOIDBASE_CSP", description: "The Content-Security-Policy for everything no route or file policy covers." },
+      csp_files: { type: "string", applies: "runtime", default: "", knob: "VOIDBASE_CSP_FILES", description: "The Content-Security-Policy on served files. Empty keeps the built-in one." },
+      csp_routes: { type: "string", applies: "runtime", default: "", knob: "VOIDBASE_CSP_ROUTES", description: "<path glob>:<policy> entries separated by ;, the first match deciding." },
+      csrf: { type: "string", applies: "runtime", default: "", knob: "VOIDBASE_CSRF", description: "double-submit requires the X-CSRF-Token header on a cookie request." },
+      cross_origin: { type: "string", applies: "runtime", default: "", knob: "VOIDBASE_CROSS_ORIGIN", description: "1 sends Cross-Origin-Embedder-Policy require-corp and Cross-Origin-Resource-Policy same-origin." },
+    },
   },
   apply(ctx: Kernel) {
     mountCsrfRoute(ctx.app, (env) => responsePolicy(env).csrf);

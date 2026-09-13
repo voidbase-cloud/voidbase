@@ -161,7 +161,32 @@ export async function pluginsModuleSource(pluginsDir: string): Promise<string> {
   };
   lines.push(`export const installed = [${installed.map(entry).join(", ")}];`);
   lines.push(`export const disabled = ${JSON.stringify(disabled)};`);
+  lines.push(`export const projectConfig = ${JSON.stringify(projectConfigOf(pluginsDir))};`);
   return `${lines.join("\n")}\n`;
+}
+
+/**
+ * A plugin with a configuration plane gets its configuration file when it is added: pb_plugins/<name>/config.json,
+ * each field at its default, for the developer to change and commit. One already there is the project's and is kept,
+ * which is also what an update does. It is not part of what voidbase.lock pins (a files plugin's integrity covers its
+ * manifest.json and pb_ directories only): it is configuration, not the plugin.
+ */
+export function writeDefaultConfig(dir: string, plane: Record<string, { default?: unknown }> | undefined): void {
+  const file = join(dir, "config.json");
+  if (!plane || !Object.keys(plane).length || existsSync(file)) return;
+  writeFileSync(file, `${JSON.stringify(Object.fromEntries(Object.entries(plane).map(([f, s]) => [f, s.default ?? null]).filter(([, d]) => d !== null)), null, 2)}\n`);
+}
+
+/** every pb_plugins/<name>/config.json in the project, shipped plugins' included: the configuration its build carries */
+export function projectConfigOf(pluginsDir: string): Record<string, Record<string, string | number | boolean>> {
+  const out: Record<string, Record<string, string | number | boolean>> = {};
+  if (!existsSync(pluginsDir)) return out;
+  for (const name of readdirSync(pluginsDir).sort()) {
+    const file = join(pluginsDir, name, "config.json");
+    if (!NAME.test(name) || !existsSync(file)) continue;
+    try { out[name] = JSON.parse(readFileSync(file, "utf8")); } catch (err) { throw new Error(`pb_plugins/${name}/config.json is not JSON: ${err instanceof Error ? err.message : String(err)}`); }
+  }
+  return out;
 }
 
 export interface Found { marketplace: string; indexUrl: string; index: RegistryIndex; version: PluginVersion }
@@ -200,6 +225,7 @@ export async function addPlugin(root: string, spec: string, o: AddOptions): Prom
     const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as { name?: string; version?: string };
     if (manifest.name !== name || manifest.version !== v.version) { rmSync(dir, { recursive: true, force: true }); throw new Error(`${v.source.repository}@${v.source.commit} declares ${manifest.name} ${manifest.version} in manifest.json, and ${found.marketplace} lists ${name} ${v.version}; nothing was installed`); }
     writeFileSync(join(dir, "release.json"), `${JSON.stringify(v, null, 2)}\n`);
+    writeDefaultConfig(dir, (manifest as PluginVersion["manifest"]).config ?? v.manifest.config);
     lock.plugins[name] = { version: v.version, shape: "files", integrity: await integrityOfDir(dir), marketplace: found.marketplace, source: v.source, installedOn: new Date().toISOString().slice(0, 10) };
     lock.disabled = lock.disabled.filter((d) => d !== name);
     writeLock(root, lock);
@@ -218,6 +244,7 @@ export async function addPlugin(root: string, spec: string, o: AddOptions): Prom
     writeFileSync(join(dir, "deploy.js"), d.bytes);
   } else rmSync(join(dir, "deploy.js"), { force: true });
   writeFileSync(join(dir, "release.json"), `${JSON.stringify(v, null, 2)}\n`);
+  writeDefaultConfig(dir, v.manifest.config);
   lock.plugins[name] = { version: v.version, integrity: v.integrity ?? "", ...(v.deploy ? { deploy: v.deploy.integrity } : {}), marketplace: found.marketplace, source: v.source, installedOn: new Date().toISOString().slice(0, 10) };
   lock.disabled = lock.disabled.filter((d) => d !== name);
   writeLock(root, lock);

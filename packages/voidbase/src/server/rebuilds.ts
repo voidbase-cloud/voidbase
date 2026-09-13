@@ -6,9 +6,11 @@
 // and which one failed, and a retry resumes from the step that broke rather than from the beginning. A version is kept,
 // so a plugin that breaks the instance is a rollback rather than a repair.
 //
-// Only the types live here: the runner is the platform's (src/node/rebuild.ts on Bun; a Worker has none yet, and says so).
+// Only the types live here: the runner is the platform's (src/node/rebuild.ts on Bun; src/server/rebuild/cloudflare.ts
+// on Cloudflare, over D1 and the instance's own Workflow), so a method may answer at once or once D1 has.
 
 export type StepName = "declare" | "fetch" | "assemble" | "upload" | "restart";
+export const STEPS_ORDER: StepName[] = ["declare", "fetch", "assemble", "upload", "restart"];
 
 export interface RebuildStep {
   name: StepName;
@@ -37,18 +39,24 @@ export interface RebuildRun {
   finishedAt?: string;
 }
 
-export interface InstanceVersion { number: number; at: string; plugins: Record<string, Declared>; disabled: string[]; from: number | null; run: number }
+export interface InstanceVersion {
+  number: number; at: string; plugins: Record<string, Declared>; disabled: string[]; from: number | null; run: number;
+  /** on Cloudflare: the Worker version it was uploaded as, which a rollback deploys again */
+  workerVersion?: string;
+  /** on Cloudflare: the declaration it was built from, which a rollback puts back */
+  declaration?: unknown;
+}
 
 export interface RebuildState { runs: RebuildRun[]; versions: InstanceVersion[]; current: number | null }
 
 export interface Rebuilds {
   /** a change to the declaration: folds into a waiting run, or queues the next */
-  queue(reason: string): RebuildRun;
+  queue(reason: string): RebuildRun | Promise<RebuildRun>;
   /** a change is still being made (a plugin downloading): nothing starts until the returned release is called */
   hold(): () => void;
   /** resume the failed run from the step that failed, or null when the last run did not fail */
-  retry(): RebuildRun | null;
+  retry(): RebuildRun | null | Promise<RebuildRun | null>;
   /** put the instance back onto a version it already assembled */
-  rollback(version: number): RebuildRun;
-  state(): RebuildState;
+  rollback(version: number): RebuildRun | Promise<RebuildRun>;
+  state(): RebuildState | Promise<RebuildState>;
 }

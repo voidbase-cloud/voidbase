@@ -104,6 +104,8 @@ export interface ReleaseManifest {
   modules: ReleaseModule[]; assets: ReleaseAsset[]; migrations: { name: string; size: number }[];
   crons: string[]; durableObjects: { binding: string; className: string; tag: string }[];
   queueBinding: string | null; assetsConfig: Record<string, unknown>;
+  /** a release an instance can rebuild itself from (src/server/rebuild): the Workflow class its Worker exports */
+  rebuild?: { className: string };
 }
 /** bytes of one release file: "worker/<module path>", "assets/<asset path>", "migrations/<file>" */
 export interface ReleaseSource { manifest: ReleaseManifest; read(path: string): Promise<Uint8Array> }
@@ -127,6 +129,8 @@ export interface ProvisionOptions {
   superuser?: { email: string; password: string };
   /** secret names to carry over from the deployed script instead of supplying values for */
   inheritSecrets?: string[];
+  /** the instance's own token for rebuilding itself (src/cloud/tokens.ts createRebuildToken), kept as its secret VOIDBASE_REBUILD_TOKEN */
+  rebuildToken?: string;
   /** plain-text worker vars and secrets (VOIDBASE_* knobs, the hooks' AUDITLOG, ...) */
   vars?: Record<string, string>; secrets?: Record<string, string>;
   queue?: boolean; hub?: boolean; cron?: boolean; rateLimit?: { limit: number; period: 10 | 60 } | null; smartPlacement?: boolean;
@@ -177,8 +181,15 @@ export async function provisionInstance(cf: CfApi, o: ProvisionOptions): Promise
   if (o.hub !== false) for (const d of m.durableObjects) bindings.push({ type: "durable_object_namespace", name: d.binding, class_name: d.className });
   if (o.rateLimit) bindings.push({ type: "ratelimit", name: "RATE_LIMITER", namespace_id: rateLimitNamespace(o.name), simple: { limit: o.rateLimit.limit, period: o.rateLimit.period } });
   for (const [k, v] of Object.entries(o.vars ?? {})) bindings.push({ type: "plain_text", name: k, text: v });
+  // an instance that rebuilds itself: its Workflow, and the account and Worker its upload names (src/server/rebuild/run.ts)
+  if (m.rebuild) {
+    bindings.push({ type: "workflow", name: "VOIDBASE_REBUILD", workflow_name: `${o.name}-rebuild`, class_name: m.rebuild.className });
+    if (!o.vars?.VOIDBASE_ACCOUNT_ID) bindings.push({ type: "plain_text", name: "VOIDBASE_ACCOUNT_ID", text: o.account });
+    if (!o.vars?.VOIDBASE_WORKER_NAME) bindings.push({ type: "plain_text", name: "VOIDBASE_WORKER_NAME", text: o.name });
+  }
   const secrets = {
     ...(o.superuser ? { VOIDBASE_SUPERUSER_EMAIL: o.superuser.email, VOIDBASE_SUPERUSER_PASSWORD: o.superuser.password } : {}),
+    ...(o.rebuildToken ? { VOIDBASE_REBUILD_TOKEN: o.rebuildToken } : {}),
     ...(o.secrets ?? {}),
   };
   for (const [k, v] of Object.entries(secrets)) bindings.push({ type: "secret_text", name: k, text: v });
@@ -198,6 +209,13 @@ export async function provisionInstance(cf: CfApi, o: ProvisionOptions): Promise
   for (const mod of m.modules) form.append(mod.path, new Blob([await o.release.read(`worker/${mod.path}`) as BlobPart], { type: moduleMime(mod.type) }), mod.path);
   await cf.form("PUT", `/accounts/${o.account}/workers/scripts/${o.name}`, form);
   log(`worker ${o.name} uploaded (${m.modules.length} modules, release ${m.version})`);
+  // the release an instance rebuilds itself from, in its own bucket: every rebuild assembles from these (src/server/rebuild/run.ts)
+  if (m.rebuild) {
+    const { putObject } = await import("./worker-versions");
+    await putObject(cf, o.account, res.bucket, "_voidbase/release/manifest.json", new TextEncoder().encode(JSON.stringify(m)), "application/json");
+    for (const mod of m.modules) await putObject(cf, o.account, res.bucket, `_voidbase/release/worker/${mod.path}`, await o.release.read(`worker/${mod.path}`));
+    log(`release ${m.version} kept in ${res.bucket} for the instance's own rebuilds${o.rebuildToken ? "" : " (no rebuild token: set CLOUDFLARE_TOKEN_CREATOR so the instance can upload itself)"}`);
+  }
 
   if (queue) {
     const consumers = await cf.json<{ script?: string; script_name?: string }[]>("GET", `/accounts/${o.account}/queues/${queue.id}/consumers`);

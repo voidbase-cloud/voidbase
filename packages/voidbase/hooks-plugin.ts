@@ -343,6 +343,8 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; p
           ...(hubEntry ? [`export { VoidbaseHub } from ${JSON.stringify(hubEntry)};`] : []),
           ...(databaseEntry ? [`export { VoidbaseDatabase } from ${JSON.stringify(databaseEntry)};`] : []),
           ...(options.workflows ?? []).map((w) => `export { default as ${w.className} } from ${JSON.stringify(resolve(w.file))};`),
+          // a release an instance rebuilds itself from carries the Workflow that does it (src/server/rebuild/workflow.ts)
+          ...(process.env.VOIDBASE_REBUILDABLE === "1" ? [`export { VoidbaseRebuild } from ${JSON.stringify(resolve(here, "src/server/rebuild/workflow.ts"))};`] : []),
         ];
         if (extra.length) return { code: `${code}\n${extra.join("\n")}\n`, map: null };
       }

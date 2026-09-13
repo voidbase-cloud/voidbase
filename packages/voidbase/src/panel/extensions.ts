@@ -33,7 +33,7 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
 
   function modeLine(installer) {
     var mode = installer && installer.mode;
-    if (mode === "filesystem") return "Vanilla: this instance holds its own plugins and files, and changes to them are made here.";
+    if (mode === "filesystem" || mode === "declaration") return "Vanilla: this instance holds its own plugins and files, and changes to them are made here.";
     if (mode === "repository") return "Extended: the repository " + (installer.repository || "") + " declares this instance. The panel shows what it declares and changes none of it.";
     if (mode === "fixed") return "Extended: this instance was built with its plugins and files. The panel shows them and changes none of them.";
     return "The instance did not say where its plugins live, so the panel changes nothing.";
@@ -60,7 +60,7 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
     var p = data.planes[name];
     var fields = Object.keys(p.fields);
     // changed here only on an instance that holds its own files, and only when the project does not declare it
-    var extended = !data.installer || data.installer.mode !== "filesystem";
+    var extended = !data.installer || (data.installer.mode !== "filesystem" && data.installer.mode !== "declaration");
     var editable = p.editable && !extended;
     return t.div({ className: "panel m-b-base plugin-config", "data-plugin": name },
       t.div({ className: "flex gap-10 m-b-sm" },
@@ -130,7 +130,7 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
     var data = store({ loading: true, plugins: [], files: {}, installer: null, planes: {}, drafts: {}, saving: "", publicFiles: [], publicEditable: false, chosen: [], pendingSchema: [], rebuilds: null, available: [], updates: [], installed: [], busy: "" });
     var timer = null;
 
-    function vanilla() { return !!data.installer && data.installer.mode === "filesystem"; }
+    function vanilla() { return !!data.installer && (data.installer.mode === "filesystem" || data.installer.mode === "declaration"); }
 
     function load() {
       data.loading = true;

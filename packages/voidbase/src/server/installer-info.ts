@@ -12,23 +12,27 @@
 // repository changes them by one commit there, and `mode: "repository"` is what says so.
 import { filesystem as platformFilesystem } from "#platform/plugins";
 import type { Repo } from "./project-sync";
+import { rebuildsOnCloudflare } from "./rebuild/cloudflare";
 import type { Bindings } from "./types";
 
-/** what the Bun platform provides: the project on disk (src/platform/node/plugins.ts); null on Workers */
+export interface Listed { installed: { name: string; version: string; marketplace: string }[]; disabled: string[]; marketplaces: string[] }
+export type Removed = "removed" | "already-removed";
+
+/** what the Bun platform provides: the project on disk (src/platform/node/plugins.ts); null on Workers, where a vanilla instance that rebuilds itself has the same over D1 (src/server/plugins/installer.ts) */
 export interface FilesystemInstaller {
   root: string;
-  list(): { installed: { name: string; version: string; marketplace: string }[]; disabled: string[]; marketplaces: string[] };
+  list(): Listed | Promise<Listed>;
   add(spec: string, o: { marketplace?: string; voidbaseVersion: string; defaultConfig?: boolean }): Promise<{ name: string; version: string; marketplace: string; previous?: string; unchanged?: boolean }>;
-  remove(name: string, o?: { force?: boolean }): "removed" | "already-removed";
+  remove(name: string, o?: { force?: boolean }): Removed | Promise<Removed>;
   update(name: string | undefined, o: { voidbaseVersion: string; defaultConfig?: boolean }): Promise<{ updated: { name: string; from: string; to: string; marketplace: string }[]; current: string[] }>;
   /** queue a rebuild of the instance onto the changed declaration (src/node/rebuild.ts); false when this process has no rebuilder */
-  rebuild?: (reason: string) => boolean;
+  rebuild?: (reason: string) => boolean | Promise<boolean>;
   /** a change is being made: the rebuild it will queue waits for it (src/server/rebuilds.ts, hold) */
   hold?: () => () => void;
 }
 
 /** the three places an instance's plugins can live; the installer's routes read it to know what a change is */
-export type Mode = "filesystem" | "repository" | "fixed";
+export type Mode = "filesystem" | "declaration" | "repository" | "fixed";
 
 /** the repository this instance deploys from, and the token that commits there, or nothing when it has neither */
 export const repoOf = (env: Bindings): Repo | null => {
@@ -42,5 +46,7 @@ export const repoOf = (env: Bindings): Repo | null => {
 export function installerInfo(env: Bindings, filesystem: FilesystemInstaller | null = platformFilesystem): { mode: Mode; repository?: string; branch?: string; hint?: string } {
   if (filesystem) return { mode: "filesystem" };
   const repo = repoOf(env); if (repo) return { mode: "repository", repository: repo.fullName, branch: repo.branch };
+  // a vanilla instance on Cloudflare that rebuilds itself: its declaration is in its own D1 (src/server/rebuild)
+  if (rebuildsOnCloudflare(env as never)) return { mode: "declaration" };
   return { mode: "fixed", hint: "This instance's plugins were fixed when its Worker was built. Deploy it from a repository and set VOIDBASE_PROJECT_REPO and VOIDBASE_GH_TOKEN on it, and a change here becomes a commit that the repository's build deploys." };
 }

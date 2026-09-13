@@ -45,7 +45,10 @@ export async function buildRelease(o: BundleOptions = {}): Promise<{ dir: string
   log(`building release ${version} in ${cloud}`);
   await sh(["bun", resolve(PKG, "scripts/sync-panel.ts"), "--dest", `${cloud}/public/_`], cloud);
   // vp resolved the way src/node/serve-workers.ts resolves it: from this package, wherever the installer put it
-  await sh(["bun", resolve(Bun.resolveSync("vite-plus/package.json", PKG), "..", "..", ".bin", "vp"), "build"], cloud);
+  // every release is one an instance can rebuild itself from (hooks-plugin.ts): named plugins module, provided modules, the Workflow
+  const wasRebuildable = process.env.VOIDBASE_REBUILDABLE; process.env.VOIDBASE_REBUILDABLE = "1";
+  try { await sh(["bun", resolve(Bun.resolveSync("vite-plus/package.json", PKG), "..", "..", ".bin", "vp"), "build"], cloud); }
+  finally { if (wasRebuildable === undefined) delete process.env.VOIDBASE_REBUILDABLE; else process.env.VOIDBASE_REBUILDABLE = wasRebuildable; }
   const W = JSON.parse(readFileSync(`${cloud}/dist/ssr/wrangler.json`, "utf8")) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
   const ssr = `${cloud}/dist/ssr`, client = `${cloud}/dist/client`;
   const modules = walk(ssr).filter((f) => f !== "wrangler.json" && !f.startsWith(".vite/")).map((path) => ({ path, type: /\.(m?js)$/.test(path) ? "esm" as const : path.endsWith(".wasm") ? "wasm" as const : "data" as const, size: statSync(join(ssr, path)).size }));
@@ -58,6 +61,7 @@ export async function buildRelease(o: BundleOptions = {}): Promise<{ dir: string
     version, voidbase: pkg.version, builtAt: new Date().toISOString(),
     compatibilityDate: String(W.compatibility_date), compatibilityFlags: (W.compatibility_flags ?? []) as string[], mainModule: String(W.main ?? "index.js"),
     modules, assets, migrations, crons: ((W.triggers?.crons ?? []) as string[]), durableObjects: hub ? doBindings : [],
+    ...(modules.some((m) => m.path === "voidbase-plugins.js") && readFileSync(join(ssr, String(W.main ?? "index.js")), "utf8").includes("VoidbaseRebuild") ? { rebuild: { className: "VoidbaseRebuild" } } : {}),
     queueBinding: queue ? String(W.queues?.producers?.[0]?.binding ?? "QUEUE_JOBS") : null,
     assetsConfig: { ...(W.assets?.html_handling ? { html_handling: W.assets.html_handling } : {}), ...(W.assets?.not_found_handling ? { not_found_handling: W.assets.not_found_handling } : {}), ...(W.assets?.run_worker_first ? { run_worker_first: W.assets.run_worker_first } : {}) },
   };

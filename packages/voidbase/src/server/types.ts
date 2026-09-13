@@ -16,6 +16,12 @@ export interface Bindings {
   RATE_LIMITER?: { limit(options: { key: string }): Promise<{ success: boolean }> };
   LOGS_ANALYTICS?: { writeDataPoint(point: { blobs?: string[]; doubles?: number[]; indexes?: string[] }): void };
   HUB?: DurableObjectNamespace; // the instance's realtime hub (src/server/hub.ts)
+  // a vanilla instance rebuilding itself on Cloudflare (src/server/rebuild/cloudflare.ts): its Workflow, the token its
+  // upload uses, and the account and Worker it uploads to
+  VOIDBASE_REBUILD?: { create(options: { id?: string; params?: unknown }): Promise<unknown> };
+  VOIDBASE_REBUILD_TOKEN?: string;
+  VOIDBASE_ACCOUNT_ID?: string;
+  VOIDBASE_WORKER_NAME?: string;
   // the instance's database as a SQLite-backed Durable Object (src/server/durable-db.ts), bound instead of D1 with
   // VOIDBASE_DATABASE=durable; every entry point rebinds DB to it first (src/server/durable-d1.ts bindDatabase)
   DB_OBJECT?: DurableObjectNamespace;

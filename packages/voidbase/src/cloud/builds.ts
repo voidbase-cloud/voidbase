@@ -9,6 +9,7 @@
 // (CLOUDFLARE_TOKEN_CREATOR, User > API Tokens > Edit). Every endpoint here wants a *user* API token with "Workers
 // Builds Configuration: Edit" and "Workers Scripts: Edit".
 import { CfError, type CfApi } from "./rest";
+import { createAccountToken } from "./tokens";
 
 export interface Trigger {
   trigger_uuid: string; trigger_name: string; external_script_id?: string; repo_connection_uuid?: string; build_token_uuid?: string;
@@ -66,13 +67,7 @@ export async function ensureBuildToken(builds: CfApi, account: string, creator: 
   const have = await buildTokens(builds, account);
   if (have[0]) return { uuid: have[0].uuid, created: false };
   if (!creator) return null;
-  const groups = (await creator.json<{ id: string; name: string }[]>("GET", "/user/tokens/permission_groups")).result ?? [];
-  const ids = BUILD_TOKEN_PERMISSIONS.map((n) => ({ n, id: groups.find((g) => g.name === n)?.id }));
-  const missing = ids.filter((x) => !x.id).map((x) => x.n);
-  if (missing.length) throw new Error(`Cloudflare offers no permission group called ${missing.join(", ")}; a build token cannot be made with them`);
-  const token = (await creator.json<{ id: string; value: string }>("POST", "/user/tokens", {
-    name, policies: [{ effect: "allow", resources: { [`com.cloudflare.api.account.${account}`]: "*" }, permission_groups: ids.map((x) => ({ id: x.id })) }],
-  })).result;
+  const token = await createAccountToken(creator, account, name, BUILD_TOKEN_PERMISSIONS);
   const made = (await builds.json<{ build_token_uuid: string }>("POST", `/accounts/${account}/builds/tokens`, { build_token_name: name, build_token_secret: token.value, cloudflare_token_id: token.id })).result;
   return { uuid: made.build_token_uuid, created: true };
 }

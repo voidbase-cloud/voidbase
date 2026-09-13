@@ -273,7 +273,7 @@ export interface Observability {
  * own (/api/plugins/install, remove, update); what the contract fixes is the answer /api/plugins gives about it.
  */
 export interface Installer {
-  info(env: Bindings): { mode: "filesystem" | "repository" | "fixed"; repository?: string; branch?: string; hint?: string };
+  info(env: Bindings): { mode: "filesystem" | "declaration" | "repository" | "fixed"; repository?: string; branch?: string; hint?: string };
 }
 
 /**

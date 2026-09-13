@@ -262,7 +262,7 @@ export type Source = "voidbase" | "repository" | "instance";
  * project's: on an instance whose installer changes pb_plugins on disk, the instance holds it; on one built from a
  * repository, or committing to one, the repository declares it.
  */
-export function sourceOf(origin: string | undefined, mode: "filesystem" | "repository" | "fixed"): Source {
+export function sourceOf(origin: string | undefined, mode: "filesystem" | "declaration" | "repository" | "fixed"): Source {
   if (origin === "shipped") return "voidbase";
-  return mode === "filesystem" ? "instance" : "repository";
+  return mode === "filesystem" || mode === "declaration" ? "instance" : "repository";
 }

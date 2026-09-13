@@ -207,7 +207,7 @@ variables` (workerd 1.20260903.1). A collection is still at most 97 user fields 
 The 100 KB statement, the 2 MB row and the 10 GB per object apply as well (D1 allows 10 GB per database).
 
 **What stays the same.** The REST API, the panel, hooks, `pb_migrations`, the backups (an archive is the same file
-whichever side holds the data, which is what makes `voidbase migrate` the migration path), the realtime hub (its own
+whichever side holds the data, which is what makes `voidbase sync --from <url> --to <url>` the migration path), the realtime hub (its own
 object), the queue, R2, the Bun runtime (`src/node/d1.ts`, untouched) and every deploy without the knob.
 
 **Costs, roughly, from Cloudflare's published rates.** D1 bills rows read and written (about $0.001 per million reads
@@ -225,7 +225,7 @@ not the object, and invalidate as before.
 
 **Migration path.** Two steps, both existing commands: deploy the durable-backed Worker (under a new name, or the same
 name with the knob flipped, which rebinds the Worker away from its D1 and leaves the D1 database on the account,
-untouched), then `voidbase migrate <old-url> <new-url>` moves the data through the backups API. A same-name flip that
+untouched), then `voidbase sync --from <old-url> --to <new-url>` moves the data through the backups API. A same-name flip that
 imports the D1 into the object on the first boot was not built: it would mean keeping D1 bound for one deploy and
 copying every table inside a request, and the two-step path is the command the roadmap already promised.
 

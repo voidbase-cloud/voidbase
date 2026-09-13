@@ -1852,7 +1852,7 @@ stock land together or not at all.
 official plugin": two kinds of archive, each verified after it is written, each restorable on its own terms, a
 schedule with retention, and a copy in a bucket the instance's account does not own. Everything below is the same
 routes PocketBase has (list, create, upload, download, delete, restore) plus `verify`; the panel's Backups page and
-`voidbase migrate` keep working unchanged.
+`voidbase sync --from --to`, which moves data through them, keep working unchanged.
 
 **Three archive kinds.** `POST /api/backups` takes `{ kind?: "full" | "data" | "schema", name? }`. The default is
 `full`, the kind the archives always were (every table and every file) with three entries added:
@@ -2012,7 +2012,7 @@ nothing, claims no URL and detaches nothing on removal: a preview stays on worke
 says, because the production hostnames are production's.
 
 **`after`.** Seeds the preview from production, then comments on the pull request. The seed is a backup taken on
-production and restored on the preview through the backups API over HTTP, the way `voidbase migrate` moves data:
+production and restored on the preview through the backups API over HTTP, the way `voidbase sync --from --to` moves data:
 `VOIDBASE_PREVIEW_SEED=schema` (the default) takes a `schema` archive, the kind added for this (the non-system
 collections' definitions, views included, and a manifest, no rows and no files; restoring one creates the
 collections the instance lacks and updates the ones it has, and never touches a system collection), `data` takes a

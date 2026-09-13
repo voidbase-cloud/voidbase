@@ -180,8 +180,14 @@ contract, and `@voidbase-cloud/sdk/i18n` is what reads them. Content translation
 are the `translations` plugin's, and a locale in the route is the adapter's `locales` option
 ([plugins.md](plugins.md), [adapter.md](adapter.md)).
 
-`voidbase migrate <from-url> <to-url>` moves an instance's data to another running instance, whichever way each one
-runs (the executable, the npm package, Cloudflare) and in either direction. It is a backup taken on the source and
+`voidbase migrate` is PocketBase's: `up` applies the pending files in `pb_migrations`, `down [n]` reverts the last n
+through their own `down` functions, `create <name>` writes an empty migration, `collections` writes one that imports
+every collection as it is now, and `history-sync` forgets applied migrations whose files are gone. It runs against
+`pb_data` (`--dir`) without starting a server.
+
+`voidbase sync --from <from-url> --to <to-url>` moves an instance's data to another running instance, whichever way
+each one runs (the executable, the npm package, Cloudflare) and in either direction. Until migrate became
+PocketBase's, this was `voidbase migrate <from-url> <to-url>`. It is a backup taken on the source and
 restored on the target through the backups API over HTTP, so it works from the executable and needs nothing but the
 two URLs and a superuser on each side (`--from-email` / `--from-password`, `--to-email` / `--to-password`, or
 `--from-token` / `--to-token`). Every step is printed. The target's collections, records, files, settings and

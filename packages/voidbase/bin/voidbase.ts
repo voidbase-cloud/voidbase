@@ -127,7 +127,10 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      pb_data first), a global install reinstalls, a project's dependency is bumped
                                      and installed. --check changes nothing and exits 1 when behind, 2 when it
                                      could not find out, which is what a pipeline reads
-  migrate <from-url> <to-url> --from-email a@b --from-password p --to-email a@b --to-password p [--keep] [--dry-run]
+  migrate [up | down [n] | create <name> | collections | history-sync]
+                                     PocketBase's migrate, over pb_migrations and pb_data (--dir, --migrationsDir)
+  sync --from <url> --to <url> --from-email a@b --from-password p --to-email a@b --to-password p [--keep] [--dry-run]
+                                     the data of one running instance into another (was: migrate <from> <to>)
                                      move an instance's data to another running instance, whichever way each runs
                                      (executable, npm package, Cloudflare) and in either direction: a backup taken
                                      on the source and restored on the target through the backups API. The target's
@@ -419,17 +422,51 @@ switch (cmd) {
     break;
   }
   case "migrate": {
-    // Between two running instances, over HTTP only (src/node/migrate.ts): a backup on the source, restored on the
-    // target. Works from the executable too, since nothing here needs the toolchain.
-    const from = sub, to = rest[0];
-    if (!from || !to) { console.error("usage: voidbase migrate <from-url> <to-url> --from-email a@b --from-password p --to-email a@b --to-password p [--from-token t] [--to-token t] [--keep] [--dry-run]"); process.exit(1); }
-    const { migrate } = await import("../src/node/migrate");
-    const side = (which: "from" | "to") => { const E = `VOIDBASE_MIGRATE_${which.toUpperCase()}_`; return { url: which === "from" ? from : to, email: flags[`${which}-email`] ?? process.env[`${E}EMAIL`], password: flags[`${which}-password`] ?? process.env[`${E}PASSWORD`], token: flags[`${which}-token`] ?? process.env[`${E}TOKEN`] }; };
-    let step = 0;
-    try {
-      const r = await migrate({ from: side("from"), to: side("to"), keep: "keep" in flags, dryRun: "dry-run" in flags, timeoutMs: flags.timeout ? Number(flags.timeout) * 1000 : undefined, log: (l) => console.log(l.startsWith("  ") || l.startsWith("dry run") ? l : `${++step}. ${l}`) });
-      if (!r.dryRun) console.log(`\nmigrated ${from} -> ${to} (${r.collections.length} collections)`);
-    } catch (err) { console.error(`\nmigration failed: ${err instanceof Error ? err.message : String(err)}`); process.exit(1); }
+    // PocketBase's migrate: up, down [n], create <name>, collections, history-sync, over pb_migrations and pb_data. It
+    // used to move data between two running instances, which is what sync does now (voidbase sync --from --to).
+    if (sub && /^https?:\/\//.test(sub)) { console.error(`voidbase migrate is PocketBase's now (up, down, create, collections, history-sync). Moving data between two instances is sync:\n  voidbase sync --from ${sub} --to ${rest[0] ?? "<to-url>"} --from-email a@b --from-password p --to-email a@b --to-password p`); process.exit(1); }
+    const action = sub ?? "up";
+    const migrationsDir = resolve(flags.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations");
+    const stamp = () => Math.floor(Date.now() / 1000);
+    if (action === "create") {
+      const slug = (rest[0] ?? "").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+      if (!slug) { console.error("usage: voidbase migrate create <name>"); process.exit(1); }
+      const file = `${migrationsDir}/${stamp()}_${slug}.js`;
+      mkdirSync(migrationsDir, { recursive: true });
+      writeFileSync(file, `/// <reference path="../pb_data/types.d.ts" />\nmigrate((app) => {\n  // add up queries...\n}, (app) => {\n  // add down queries...\n})\n`);
+      console.log(`Successfully created file "${file}"`); break;
+    }
+    if (!["up", "down", "collections", "history-sync"].includes(action)) { console.error("usage: voidbase migrate [up | down [n] | create <name> | collections | history-sync] [--dir pb_data] [--migrationsDir pb_migrations]"); process.exit(1); }
+    // the data directory opened the way serve opens it, without serving; the migrations module reads its directory
+    // while loading, which openLocal sets first
+    const { openLocal } = await import("../src/node/serve");
+    const { env } = await openLocal({ ...serveOpts(), quiet: true });
+    // the app module installs the record and collection services $app calls into (app.save, app.delete,
+    // findCollectionByNameOrId), as it does for `voidbase serve`; a migration is PocketBase code and uses them
+    await import("../src/server/app");
+    const { ensureBootstrapped } = await import("../src/server/bootstrap");
+    const { hookGlobals } = await import("../src/server/hooks");
+    const M = await import("../src/server/hooks/migrations");
+    if (action === "up") {
+      let applied: string[] = [];
+      await ensureBootstrapped(env.DB, async (db) => { applied = await M.applyPendingMigrations(db, hookGlobals(), env as never); });
+      console.log(applied.length ? `Applied ${applied.length} migration(s): ${applied.join(", ")}` : "No new migrations to apply."); break;
+    }
+    await ensureBootstrapped(env.DB);
+    if (action === "down") {
+      const n = Number(rest[0] ?? 1);
+      if (!Number.isInteger(n) || n < 1) { console.error("usage: voidbase migrate down [n]   (n: how many applied migrations to revert, default 1)"); process.exit(1); }
+      const reverted = await M.revertMigrations(env.DB, hookGlobals(), n, env as never);
+      console.log(reverted.length ? `Reverted ${reverted.length} migration(s): ${reverted.join(", ")}` : "No applied migrations to revert."); break;
+    }
+    if (action === "history-sync") {
+      const gone = await M.syncMigrationsHistory(env.DB);
+      console.log(gone.length ? `Removed ${gone.length} applied migration(s) with no file: ${gone.join(", ")}` : "The migrations history already matches pb_migrations."); break;
+    }
+    const file = `${migrationsDir}/${stamp()}_collections_snapshot.js`;
+    mkdirSync(migrationsDir, { recursive: true });
+    writeFileSync(file, await M.collectionsSnapshot(env.DB));
+    console.log(`Successfully created file "${file}"`);
     break;
   }
   case "secrets": {
@@ -741,6 +778,20 @@ switch (cmd) {
   case "build": await run(toolchain("vite-plus", "vp"), ["build"]); break;
   case "preview": await run(toolchain("vite-plus", "vp"), ["preview", "--port", flags.port ?? "5181", "--host", flags.host ?? "127.0.0.1"]); break;
   case "sync": {
+    // --from <url> --to <url>: the data of one running instance into another, over HTTP only (src/node/migrate.ts): a
+    // backup on the source, restored on the target. It was `voidbase migrate <from> <to>` until migrate became
+    // PocketBase's. Works from the executable too, since nothing here needs the toolchain.
+    if (flags.from || flags.to) {
+      if (!flags.from || !flags.to) { console.error("usage: voidbase sync --from <url> --to <url> --from-email a@b --from-password p --to-email a@b --to-password p [--from-token t] [--to-token t] [--keep] [--dry-run]"); process.exit(1); }
+      const { migrate } = await import("../src/node/migrate");
+      const side = (which: "from" | "to") => { const E = `VOIDBASE_SYNC_${which.toUpperCase()}_`; return { url: which === "from" ? flags.from! : flags.to!, email: flags[`${which}-email`] ?? process.env[`${E}EMAIL`], password: flags[`${which}-password`] ?? process.env[`${E}PASSWORD`], token: flags[`${which}-token`] ?? process.env[`${E}TOKEN`] }; };
+      let step = 0;
+      try {
+        const r = await migrate({ from: side("from"), to: side("to"), keep: "keep" in flags, dryRun: "dry-run" in flags, timeoutMs: flags.timeout ? Number(flags.timeout) * 1000 : undefined, log: (l) => console.log(l.startsWith("  ") || l.startsWith("dry run") ? l : `${++step}. ${l}`) });
+        if (!r.dryRun) console.log(`\nsynced the data of ${flags.from} into ${flags.to} (${r.collections.length} collections)`);
+      } catch (err) { console.error(`\nsync failed: ${err instanceof Error ? err.message : String(err)}`); process.exit(1); }
+      break;
+    }
     // the instance and its pipeline in one go (src/node/sync.ts): deploy, then connect the repository to Workers Builds
     const { sync } = await import("../src/node/sync");
     await sync({ dir: sub, name: flags.name, account: flags.account, domain: flags.domain, dryRun: !!flags["dry-run"], build: !flags["no-build"], ci: flags["no-ci"] ? false : flags.ci ? true : undefined, repo: flags.repo, branch: flags.branch, previews: flags["no-previews"] ? false : flags.previews ? true : undefined, preview: flags.preview });

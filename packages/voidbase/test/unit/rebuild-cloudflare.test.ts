@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { d1 } from "../../src/node/d1";
 import { cloudflareRebuilds, FOLD_SECONDS, rebuildsOnCloudflare } from "../../src/server/rebuild/cloudflare";
 import { declareAdd, declareUpdate, readDeclaration } from "../../src/server/rebuild/declaration";
-import { readState, RELEASE_PREFIX, runRebuild, type StepApi } from "../../src/server/rebuild/run";
+import { readState, RELEASE_PREFIX, releaseModuleKey, runRebuild, type StepApi } from "../../src/server/rebuild/run";
 
 const dirs: string[] = []; const servers: { stop(force?: boolean): void }[] = [];
 afterAll(() => { for (const s of servers) s.stop(true); for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -82,7 +82,7 @@ function instance() {
     "assets/_virtual_voidbase-plugins-abc.js": "var installed = [];\nvar disabled = [];\nvar projectConfig = {};\nexport { installed as n, projectConfig as r, disabled as t };\n",
     "provided/voidbase/kernel.js": "export const serve = () => {};\n",
   };
-  for (const [path, body] of Object.entries(release)) storage.objects.set(`${RELEASE_PREFIX}worker/${path}`, enc.encode(body));
+  for (const [path, body] of Object.entries(release)) storage.objects.set(releaseModuleKey(path), enc.encode(body));
   storage.objects.set(`${RELEASE_PREFIX}manifest.json`, enc.encode(JSON.stringify({ version: "0.9.0-test", mainModule: "index.js", compatibilityDate: "2026-09-01", compatibilityFlags: ["nodejs_compat"], modules: Object.keys(release).map((path) => ({ path, type: "esm" })) })));
   const env = {
     DB: d1(new Database(":memory:")), STORAGE: storage as unknown as R2Bucket,
@@ -163,4 +163,11 @@ describe("a vanilla instance on Cloudflare rebuilds itself", () => {
     expect((await readState(env.DB)).current).toBe(1);
     await expect(Promise.resolve().then(() => rebuilds.rollback(9))).rejects.toThrow("there is no version 9 to roll back to");
   });
+});
+
+test("a release module named after a [...path] route is kept under a key Cloudflare accepts", () => {
+  const key = releaseModuleKey("assets/_...path_-D-GHDzWl.js");
+  expect(key.startsWith(RELEASE_PREFIX + "worker/")).toBe(true);
+  expect(key).not.toContain("..");
+  expect(releaseModuleKey("assets/_...path_-D-GHDzWl.js")).toBe(key);
 });

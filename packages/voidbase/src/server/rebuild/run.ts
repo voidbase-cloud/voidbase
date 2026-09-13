@@ -19,6 +19,12 @@ import { deployVersion, uploadVersion } from "../../cloud/worker-versions";
 
 /** where the instance keeps the release it was provisioned with, and each run's work */
 export const RELEASE_PREFIX = "_voidbase/release/";
+/**
+ * Where one module of the release copy is kept. Its dots are escaped: Cloudflare refuses an R2 upload whose path holds
+ * "..." (403, as a path traversal), and Vite names a chunk after a `[...path]` route file. Provisioning writes with this
+ * key (src/cloud/rest.ts) and the assemble step reads with it.
+ */
+export const releaseModuleKey = (path: string): string => `${RELEASE_PREFIX}worker/${path.replace(/\./g, "%2E")}`;
 export const runPrefix = (run: number) => `_voidbase/rebuilds/${run}/`;
 
 export interface RebuildEnv {
@@ -72,7 +78,7 @@ export async function runRebuild(env: RebuildEnv, runId: number, step: StepApi, 
       const d = JSON.parse(new TextDecoder().decode(await bytesOf(env.STORAGE, `${prefix}declaration.json`))) as Declaration;
       const manifest = JSON.parse(new TextDecoder().decode(await bytesOf(env.STORAGE, `${RELEASE_PREFIX}manifest.json`))) as ReleaseManifest;
       const release = new Map<string, ModuleFile>();
-      for (const m of manifest.modules) release.set(m.path, { type: m.type, bytes: await bytesOf(env.STORAGE, `${RELEASE_PREFIX}worker/${m.path}`) });
+      for (const m of manifest.modules) release.set(m.path, { type: m.type, bytes: await bytesOf(env.STORAGE, releaseModuleKey(m.path)) });
       const plugins = [];
       for (const [plugin, entry] of Object.entries(d.plugins)) {
         plugins.push({ name: plugin, version: entry.version, marketplace: entry.marketplace, files: pluginFilesFrom(await untarGz(await bytesOf(env.STORAGE, `${prefix}plugins/${plugin}.tgz`)), entry.source.directory) });

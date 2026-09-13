@@ -212,8 +212,9 @@ export async function provisionInstance(cf: CfApi, o: ProvisionOptions): Promise
   // the release an instance rebuilds itself from, in its own bucket: every rebuild assembles from these (src/server/rebuild/run.ts)
   if (m.rebuild) {
     const { putObject } = await import("./worker-versions");
+    const { releaseModuleKey } = await import("../server/rebuild/run");
     await putObject(cf, o.account, res.bucket, "_voidbase/release/manifest.json", new TextEncoder().encode(JSON.stringify(m)), "application/json");
-    for (const mod of m.modules) await putObject(cf, o.account, res.bucket, `_voidbase/release/worker/${mod.path}`, await o.release.read(`worker/${mod.path}`));
+    for (const mod of m.modules) await putObject(cf, o.account, res.bucket, releaseModuleKey(mod.path), await o.release.read(`worker/${mod.path}`));
     log(`release ${m.version} kept in ${res.bucket} for the instance's own rebuilds${o.rebuildToken ? "" : " (no rebuild token: set CLOUDFLARE_TOKEN_CREATOR so the instance can upload itself)"}`);
   }
 

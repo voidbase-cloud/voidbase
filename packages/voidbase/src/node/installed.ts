@@ -6,6 +6,7 @@
 // turned off here too, and an installed plugin with a shipped plugin's name takes its place: that is what keeps an
 // instance free of our own plugins, not only of our marketplace. Nothing in this file runs a plugin.
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { githubToken } from "./github-token";
@@ -46,15 +47,23 @@ export { FILES_ENTRIES };
  * provides (./provided.ts) and a relative one has to stay inside the plugin. Returns the bare imports, or throws with
  * every problem at once; a plugin without main.js imports nothing.
  */
+/**
+ * The imports one JavaScript file makes, read without running it: with Bun's transpiler where this runs on Bun, and with
+ * TypeScript's scanner where it does not, which is a Worker build: Vite loads the project's config, and this file with it,
+ * under Node. TypeScript is required only there, so an instance starting on Bun never loads it.
+ */
+const importsIn = (source: string): string[] => typeof Bun !== "undefined"
+  ? new Bun.Transpiler({ loader: "js" }).scanImports(source).map((i) => i.path)
+  : (createRequire(import.meta.url)("typescript") as typeof import("typescript")).preProcessFile(source, true, true).importedFiles.map((f) => f.fileName);
+
 export function filesPluginImports(name: string, dir: string): string[] {
   const main = join(dir, "main.js");
   if (!existsSync(main)) return [];
   const walkJs = (d: string): string[] => (existsSync(d) ? readdirSync(d).sort().flatMap((n) => { const f = join(d, n); return statSync(f).isDirectory() ? walkJs(f) : f.endsWith(".js") ? [f] : []; }) : []);
-  const scan = new Bun.Transpiler({ loader: "js" });
   const bare = new Set<string>(); const problems: string[] = [];
   for (const file of [main, ...walkJs(join(dir, "lib"))]) {
     const at = relative(dir, file).replace(/\\/g, "/");
-    for (const { path } of scan.scanImports(readFileSync(file, "utf8"))) {
+    for (const path of importsIn(readFileSync(file, "utf8"))) {
       if (path.startsWith(".")) { if (!resolve(dirname(file), path).startsWith(resolve(dir) + "/")) problems.push(`${at} imports ${path}, which is outside the plugin`); continue; }
       if (!PROVIDED_RE.test(path)) { problems.push(`${at} imports ${path}, which an instance does not provide`); continue; }
       const why = refusalFor(path);

@@ -31,6 +31,8 @@ export interface RebuildRun {
   steps: RebuildStep[];
   /** the version it assembled */
   version?: number;
+  /** the voidbase version it builds on: the one in place, unless an update asked for another (src/node/core.ts) */
+  core?: string;
   /** the declaration as it stood when the run read it */
   declared?: Record<string, Declared>;
   disabled?: string[];
@@ -41,6 +43,8 @@ export interface RebuildRun {
 
 export interface InstanceVersion {
   number: number; at: string; plugins: Record<string, Declared>; disabled: string[]; from: number | null; run: number;
+  /** locally: the voidbase version this version runs on, which a rollback brings back with it */
+  core?: string;
   /** on Cloudflare: the Worker version it was uploaded as, which a rollback deploys again */
   workerVersion?: string;
   /** on Cloudflare: the declaration it was built from, which a rollback puts back */
@@ -54,7 +58,7 @@ export interface RebuildState { runs: RebuildRun[]; versions: InstanceVersion[];
 
 export interface Rebuilds {
   /** a change to the declaration: folds into a waiting run, or queues the next */
-  queue(reason: string): RebuildRun | Promise<RebuildRun>;
+  queue(reason: string, opts?: { core?: string }): RebuildRun | Promise<RebuildRun>;
   /** a change is still being made (a plugin downloading): nothing starts until the returned release is called */
   hold(): () => void;
   /** resume the failed run from the step that failed, or null when the last run did not fail */

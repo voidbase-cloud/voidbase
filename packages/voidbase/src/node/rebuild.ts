@@ -18,6 +18,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RebuildRun, RebuildState, Rebuilds, StepName } from "../server/rebuilds";
+import { type CoreRecord, writeCoreRecord } from "./core";
 import { lockPath, pluginsDirOf, readLock, verifyInstalled } from "./installed";
 
 export const STEPS: StepName[] = ["declare", "fetch", "assemble", "upload", "restart"];
@@ -34,16 +35,26 @@ export interface RebuilderOptions {
   now?: () => Date;
   /** the files of the declaration checked against its lock (verifyInstalled unless a test says otherwise) */
   verify?: (root: string) => Promise<unknown>;
+  /**
+   * the core a version runs on (src/node/core.ts): the voidbase serving now, how it runs, whether a version of it is
+   * already on this machine, and how to bring one in. Without it versions pin no core and run whatever starts them.
+   */
+  core?: { current: string; self?: CoreRecord; has(version: string): boolean; fetch(version: string): Promise<void> };
 }
 
 /** copy a declaration (voidbase.lock and pb_plugins) from one directory into another, replacing what is there */
-function copyDeclaration(from: string, to: string): void {
+function copyDeclaration(from: string, to: string, withCore = false): void {
   mkdirSync(to, { recursive: true });
   rmSync(join(to, "pb_plugins"), { recursive: true, force: true });
   rmSync(join(to, "voidbase.lock"), { force: true });
+  // the core a version runs on goes with it into pb_data/active, and never into the project root
+  if (withCore) { rmSync(join(to, "core.json"), { force: true }); if (existsSync(join(from, "core.json"))) cpSync(join(from, "core.json"), join(to, "core.json")); }
   if (existsSync(pluginsDirOf(from))) cpSync(pluginsDirOf(from), join(to, "pb_plugins"), { recursive: true });
   if (existsSync(lockPath(from))) cpSync(lockPath(from), join(to, "voidbase.lock"));
 }
+
+/** the voidbase version a version directory runs on, when it pins one */
+const coreOf = (dir: string): string | undefined => { try { return (JSON.parse(readFileSync(join(dir, "core.json"), "utf8")) as { version?: string }).version; } catch { return undefined; } };
 
 export function createRebuilder(o: RebuilderOptions): Rebuilds {
   const statePath = join(o.dataDir, "rebuilds.json");
@@ -65,20 +76,28 @@ export function createRebuilder(o: RebuilderOptions): Rebuilds {
       const lock = readLock(o.root);
       run.declared = Object.fromEntries(Object.entries(lock.plugins).map(([n, e]) => [n, { version: e.version, commit: e.source.commit }]));
       run.disabled = [...lock.disabled];
+      // a rebuild for any other reason keeps the core in place; an update named its own when it was queued
+      if (o.core) run.core ??= coreOf(activeDir) ?? o.core.current;
     } else if (name === "fetch") {
       await (o.verify ?? verifyInstalled)(o.root);
+      if (o.core) {
+        // the voidbase serving now is recorded the first time, so a rollback can come back to it
+        if (o.core.self && !o.core.has(o.core.self.version)) writeCoreRecord(o.dataDir, o.core.self);
+        if (run.core && !o.core.has(run.core)) await o.core.fetch(run.core);
+      }
     } else if (name === "assemble") {
       const n = (s.versions.at(-1)?.number ?? 0) + 1;
       const partial = `${versionDir(n)}.partial`;
       rmSync(partial, { recursive: true, force: true });
       copyDeclaration(o.root, partial);
+      if (run.core) writeFileSync(join(partial, "core.json"), `${JSON.stringify({ version: run.core })}\n`);
       rmSync(versionDir(n), { recursive: true, force: true });
       renameSync(partial, versionDir(n));
-      s.versions.push({ number: n, at: now(), plugins: run.declared ?? {}, disabled: run.disabled ?? [], from: s.current, run: run.id });
+      s.versions.push({ number: n, at: now(), plugins: run.declared ?? {}, disabled: run.disabled ?? [], from: s.current, run: run.id, ...(run.core ? { core: run.core } : {}) });
       run.version = n;
     } else if (name === "upload") {
       if (run.version === undefined) throw new Error("no version was assembled for this run");
-      copyDeclaration(versionDir(run.version), activeDir);
+      copyDeclaration(versionDir(run.version), activeDir, true);
       s.current = run.version;
     }
   }
@@ -138,11 +157,12 @@ export function createRebuilder(o: RebuilderOptions): Rebuilds {
         if (holds === 0 && !running && read().runs.some((r) => r.status === "queued")) schedule();
       };
     },
-    queue(reason) {
+    queue(reason, opts) {
       const s = read();
       const waiting = s.runs.find((r) => r.status === "queued");
-      if (waiting) { waiting.reasons.push(reason); save(s); if (!running) schedule(); return waiting; }
+      if (waiting) { waiting.reasons.push(reason); if (opts?.core) waiting.core = opts.core; save(s); if (!running) schedule(); return waiting; }
       const run = fresh((s.runs.at(-1)?.id ?? 0) + 1, [reason]);
+      if (opts?.core) run.core = opts.core;
       s.runs.push(run); save(s);
       if (!running) schedule();
       return run;

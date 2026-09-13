@@ -161,7 +161,17 @@ export async function voidbase(opts: ServeOptions = {}) {
     if (!process.env.VOIDBASE_PROJECT_BAKED) {
       const { createRebuilder, setRebuilder } = await import("./rebuild");
       const { restartProcess } = await import("./restart");
-      setRebuilder(createRebuilder({ root: process.env.VOIDBASE_DECLARATION_DIR!, dataDir: dir, restart: () => restartProcess(stop) }));
+      // the core a version runs on: this process, recorded as it runs, and a newer one fetched into pb_data/cores when an
+      // update asks for it (src/node/core.ts)
+      const core = await import("./core");
+      const emb = await embedded();
+      const running = emb?.version ?? (JSON.parse(readFileSync(`${PKG}/package.json`, "utf8")) as { version: string }).version;
+      const self = { version: running, argv: emb ? [process.execPath] : [process.execPath, resolve(PKG, "bin/voidbase.ts")] };
+      const rebuilder = createRebuilder({ root: process.env.VOIDBASE_DECLARATION_DIR!, dataDir: dir, restart: () => restartProcess(stop), core: { current: running, self, has: (v) => !!core.coreRecord(dir, v), fetch: async (v) => { await core.fetchCore({ dataDir: dir, version: v, shape: emb ? "executable" : "package", log: (l) => console.log(`voidbase: ${l}`) }); } } });
+      setRebuilder(rebuilder);
+      // voidbase update and voidbase rollback against this running instance: a request file and a signal
+      core.writeServeInfo(dir, { pid: process.pid, http: `http://127.0.0.1:${port}`, version: running });
+      process.on("SIGUSR2", () => { const request = core.takeRequest(dir); if (!request) return; try { if ("update" in request) rebuilder.queue(`update voidbase ${running} -> ${request.update}`, { core: request.update }); else rebuilder.rollback(request.rollback); } catch (err) { console.error(`voidbase: ${err instanceof Error ? err.message : err}`); } });
     }
     return { server, env, stop };
   };

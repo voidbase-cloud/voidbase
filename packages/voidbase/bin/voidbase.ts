@@ -97,6 +97,9 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
 
   plugins [ls]                       what this project runs: the plugins voidbase ships (and which are turned off or
                                      replaced) and the ones installed from a marketplace, with their versions
+  plugins search [query] [--marketplace url]
+                                     the plugins the marketplaces list that match: official or community, and the
+                                     commit approved for each one's latest version
   plugins add <name>[@version] [--marketplace url] [--force]
                                      install a plugin from the marketplaces the project uses (voidbase.lock, or
                                      VOIDBASE_PLUGIN_MARKETPLACES): the bundle goes into pb_plugins/<name>, verified
@@ -555,9 +558,23 @@ switch (cmd) {
     if (!root) { console.error(`no local instance called ${flags.name} (voidbase local ls)`); process.exit(1); }
     const voidbaseVersion = await currentVersion();
     const restart = "\nAn instance loads plugins when it starts: restart it, or deploy (voidbase deploy, or push).";
-    const usage = "usage: voidbase plugins [ls] | add <name>[@version] [--marketplace url] [--force] | remove <name> [--yes] | enable <name> | update [name]";
+    const usage = "usage: voidbase plugins [ls] | search [query] [--marketplace url] | add <name>[@version] [--marketplace url] [--force] | remove <name> [--yes] | enable <name> | update [name]";
     try {
       switch (sub ?? "ls") {
+        case "search": {
+          // what the marketplaces list, the way `voidbase templates` shows templates: the project's marketplaces
+          // (voidbase.lock) unless --marketplace names one
+          const { searchPlugins } = await import("../src/node/plugin-search");
+          const marketplaces = flags.marketplace ? [flags.marketplace] : I.listPlugins(root).marketplaces;
+          const query = [rest[0], ...rest.slice(1)].filter(Boolean).join(" ");
+          const { plugins, problems } = await searchPlugins(query, marketplaces);
+          for (const p of problems) console.error(p);
+          if (!plugins.length) { console.log(`no plugins${query ? ` matching "${query}"` : ""} on ${marketplaces.join(", ")}`); if (problems.length) process.exit(1); break; }
+          const w = Math.max(...plugins.map((p) => p.name.length));
+          for (const p of plugins) console.log(`${p.name.padEnd(w)}  ${p.version.padEnd(12)} ${p.standing.padEnd(9)}  approved ${p.commit ? p.commit.slice(0, 12) : "(no commit recorded)"}  ${p.title}: ${p.summary}  (${p.repository}${marketplaces.length > 1 ? `, ${p.marketplace}` : ""})`);
+          console.log(`\ninstall one: voidbase plugins add <name>`);
+          break;
+        }
         case "ls": case "list": {
           const l = I.listPlugins(root);
           console.log(`shipped:      ${l.shipped.map((p) => `${p.name}${p.state === "active" ? "" : ` (${p.state})`}`).join(", ")}`);
@@ -611,14 +628,16 @@ switch (cmd) {
     }
     // What is on the account, without a project: an instance is a Worker voidbase tagged as one when it deployed.
     const { deployTarget } = await import("../src/node/deploy-cf");
-    const { listVoidbaseWorkers } = await import("../src/cloud/rest");
     // an explicit name keeps the declared-target guard out of the way: this command deploys nothing
     const { api, account } = await deployTarget({ account: flags.account, name: "voidbase", log: () => undefined });
-    const found = await listVoidbaseWorkers(api, account.id);
-    if (!found.length) { console.log(`no voidbase instances on account ${account.name} (${account.id})`); break; }
-    console.log(`${found.length} instance(s) on ${account.name}:`);
-    for (const w of found.sort((a, b) => a.name.localeCompare(b.name)))
-      console.log(`  ${w.name.padEnd(32)} ${w.release ? `release ${w.release}` : ""}${w.modified_on ? `  updated ${w.modified_on.slice(0, 10)}` : ""}`);
+    // each Worker is asked what it is (src/node/instances.ts): a voidbase instance says so, and nothing else answers
+    const { probeWorkers } = await import("../src/node/instances");
+    const { instances, subdomain, asked } = await probeWorkers(api, account.id);
+    if (!subdomain) { console.log(`account ${account.name} (${account.id}) has no workers.dev subdomain, so no Worker can be asked what it is`); break; }
+    if (!instances.length) { console.log(`no voidbase instances among the ${asked} Worker(s) on account ${account.name} (${account.id})`); break; }
+    console.log(`${instances.length} voidbase instance(s) among the ${asked} Worker(s) on ${account.name}:`);
+    for (const i of instances.sort((a, b) => a.name.localeCompare(b.name)))
+      console.log(`  ${i.name.padEnd(32)} ${i.version.padEnd(16)} ${i.plugins.length} plugins  ${i.url}`);
     break;
   }
   case "destroy": {

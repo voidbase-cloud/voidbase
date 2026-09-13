@@ -160,6 +160,10 @@ app.get("/api/health", async (c) => {
       realIP: realIPWith(settings, c),
     };
   }
+  // Every caller, not only a superuser, is told this is voidbase, its version and the plugins it loaded: the CLI tells
+  // a voidbase Worker from any other by asking it, and the answer comes from the running build, so it cannot be out
+  // of date with what runs. PocketBase's clients read `message` and `code` and ignore the extra field.
+  data.voidbase = { version: VERSION, plugins: whatLoaded(kernel).plugins.map((plugin) => plugin.name) };
   return c.json({ message: "API is healthy.", code: 200, data });
 });
 

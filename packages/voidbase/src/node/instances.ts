@@ -4,7 +4,12 @@
 // gets that since this change), and anything else simply does not, so it is not listed.
 import { workersSubdomain, type CfApi } from "../cloud/rest";
 
-export interface FoundInstance { name: string; url: string; version: string; plugins: string[] }
+/**
+ * `kind` is what the Worker's tags say it was made from: `vanilla` when it carries `voidbase-release:<version>` (an
+ * instance provisioned from a release), `extended` when it carries none (a project deployed with voidbase deploy),
+ * and `unknown` when the tags could not be read, rather than a guess.
+ */
+export interface FoundInstance { name: string; url: string; version: string; plugins: string[]; kind: "vanilla" | "extended" | "unknown" }
 
 /** what a health answer says about voidbase, or null when it is not a voidbase answer */
 export function voidbaseOf(body: unknown): { version: string; plugins: string[] } | null {
@@ -27,7 +32,14 @@ export async function probeWorkers(api: CfApi, account: string, fetchImpl: typeo
     try {
       const res = await fetchImpl(`${url}/api/health`, { signal: AbortSignal.timeout(timeoutMs) });
       const found = res.ok ? voidbaseOf(await res.json()) : null;
-      return found ? { name, url, ...found } : null;
+      if (!found) return null;
+      // what it was made from is on the Worker, not in its answer: the tag a release upload sets, or none
+      let kind: FoundInstance["kind"] = "unknown";
+      try {
+        const settings = await api.json<{ tags?: string[] | null }>("GET", `/accounts/${account}/workers/scripts/${name}/settings`);
+        kind = (settings.result?.tags ?? []).some((t) => t.startsWith("voidbase-release:")) ? "vanilla" : "extended";
+      } catch { kind = "unknown"; }
+      return { name, url, ...found, kind };
     } catch { return null; }
   }));
   return { instances: answers.filter((a): a is FoundInstance => a !== null), subdomain, asked: names.length };

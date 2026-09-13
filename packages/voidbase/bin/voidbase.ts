@@ -700,7 +700,7 @@ switch (cmd) {
     if (!instances.length) { console.log(`no voidbase instances among the ${asked} Worker(s) on account ${account.name} (${account.id})`); break; }
     console.log(`${instances.length} voidbase instance(s) among the ${asked} Worker(s) on ${account.name}:`);
     for (const i of instances.sort((a, b) => a.name.localeCompare(b.name)))
-      console.log(`  ${i.name.padEnd(32)} ${i.version.padEnd(16)} ${i.plugins.length} plugins  ${i.url}`);
+      console.log(`  ${i.name.padEnd(32)} ${i.kind.padEnd(9)} ${i.version.padEnd(16)} ${i.plugins.length} plugins  ${i.url}`);
     break;
   }
   case "destroy": {

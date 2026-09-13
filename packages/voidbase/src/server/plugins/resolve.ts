@@ -38,6 +38,8 @@ export interface Resolution {
   problems: string[];
   /** core interfaces nothing provides: not a refusal, but the instance has to say so */
   missingCore: InterfaceName[];
+  /** plugins added although a capability they require has no provider here: loaded, and not applied until one is */
+  waiting: { plugin: string; missing: InterfaceName[] }[];
 }
 
 /** the migration order the manifest promises: after everything this plugin requires, and stable among equals */
@@ -108,11 +110,13 @@ export function resolve(plugins: Plugin[], voidbaseVersion: string, core: Interf
     }
   }
 
-  // everything required is provided by somebody
+  // A requirement nobody here provides is not a refusal. The plugin was added on purpose, and the instance does not
+  // go looking for a provider on anybody's behalf: cordis holds a plugin back until every service it injects exists,
+  // so it loads, does nothing, and says what it waits for. Installing a provider later is what wakes it.
+  const waiting: { plugin: string; missing: InterfaceName[] }[] = [];
   for (const p of plugins) {
-    for (const i of p.manifest.requires ?? []) {
-      if (!providers.has(i)) problems.push(`${p.manifest.name} requires "${i}" and nothing installed provides it`);
-    }
+    const missing = (p.manifest.requires ?? []).filter((i) => !providers.has(i));
+    if (missing.length) waiting.push({ plugin: p.manifest.name, missing });
   }
 
   // A core plugin is the tier that exists because the instance is not usable without it, so an instance missing
@@ -123,7 +127,7 @@ export function resolve(plugins: Plugin[], voidbaseVersion: string, core: Interf
   const { order, cycles } = sort(plugins, providers, owners);
   for (const c of cycles) problems.push(`these plugins depend on each other in a circle, which cannot be loaded: ${c.join(" -> ")}`);
 
-  return { order, providers, problems, missingCore };
+  return { order, providers, problems, missingCore, waiting };
 }
 
 /**

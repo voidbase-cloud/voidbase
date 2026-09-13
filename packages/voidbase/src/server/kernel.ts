@@ -133,13 +133,15 @@ export interface Loaded {
   missingCore: string[];
   /** where each plugin came from: "shipped", or the marketplace and version it was installed from */
   origins: Record<string, string>;
+  /** plugins loaded without a provider for something they require, and what they wait for (resolve.ts) */
+  waiting: { plugin: string; missing: string[] }[];
   /** shipped plugins the project turned off in voidbase.lock */
   disabled: string[];
 }
 
 const loaded = new WeakMap<Kernel, Loaded>();
 export const whatLoaded = (kernel: Kernel): Loaded =>
-  loaded.get(kernel) ?? { names: [], providers: {}, tiers: {}, plugins: [], missingCore: [], origins: {}, disabled: [] };
+  loaded.get(kernel) ?? { names: [], providers: {}, tiers: {}, plugins: [], missingCore: [], origins: {}, disabled: [], waiting: [] };
 
 // The plugin objects behind those names, for whatever has to ask one of them a question rather than read the data
 // about it: /api/plugins asks each loaded plugin what it says about itself, and the answer has to come from the
@@ -182,7 +184,7 @@ export function using<T>(ctx: Kernel, iface: string): T {
  * times in a row teaches you four things slowly.
  */
 export async function load(kernel: Kernel, plugins: Plugin[], voidbaseVersion: string, extra: { origins?: Record<string, string>; disabled?: string[] } = {}): Promise<Loaded> {
-  const { order, providers, problems, missingCore } = resolve(plugins, voidbaseVersion);
+  const { order, providers, problems, missingCore, waiting } = resolve(plugins, voidbaseVersion);
   if (problems.length) {
     throw new Error(`voidbase: these plugins cannot be loaded together:\n  - ${problems.join("\n  - ")}`);
   }
@@ -206,11 +208,13 @@ export async function load(kernel: Kernel, plugins: Plugin[], voidbaseVersion: s
     missingCore,
     origins: extra.origins ?? Object.fromEntries(order.map((p) => [p.manifest.name, "shipped"])),
     disabled: extra.disabled ?? [],
+    waiting,
   };
   loaded.set(kernel, result);
   objects.set(kernel, new Map(order.map((p) => [p.manifest.name, p])));
   owned = new Set(order.flatMap((p) => p.manifest.collections ?? []));
   logger.info("voidbase: plugins loaded", { plugins: result.names });
+  if (waiting.length) logger.warn("voidbase: plugins are added and wait for a capability nothing here provides", { waiting });
   if (missingCore.length) {
     logger.warn("voidbase: no plugin provides a core interface; the instance is running without it", { missing: missingCore });
   }

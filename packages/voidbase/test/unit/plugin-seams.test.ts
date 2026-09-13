@@ -183,7 +183,7 @@ describe("/api/plugins is what the plugins that loaded say about themselves", ()
 
   // `source` on each plugin and `files` came after the snapshot, on purpose (16.5); the rest is held to it
   const beforeSources = (a: Record<string, unknown>) => {
-    const { files: _files, ...rest } = a;
+    const { files: _files, waiting: _waiting, ...rest } = a;
     return { ...rest, plugins: (rest.plugins as { source?: string }[]).map(({ source: _source, ...p }) => p) };
   };
 
@@ -203,7 +203,10 @@ describe("/api/plugins is what the plugins that loaded say about themselves", ()
   });
 
   test("and the snapshot is that answer: app.ts's own expression, over the same plugins and bindings", async () => {
-    expect(JSON.stringify(await oldAnswer(await instance()))).toBe(snapshot);
+    // `waiting` joined the graph half after the snapshot (a plugin added without a provider, 3.7): the historic
+    // expression copies the graph, so it carries the field, and the comparison leaves it out as it leaves out `files`
+    const { waiting: _waiting, ...historic } = (await oldAnswer(await instance())) as Record<string, unknown>;
+    expect(JSON.stringify(historic)).toBe(snapshot);
     // the field a snapshot of some other construction gets wrong: this one is built with the platform's filesystem
     expect((JSON.parse(snapshot) as { installer: unknown }).installer).toEqual(installerInfo(env));
   });

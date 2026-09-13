@@ -465,8 +465,10 @@ describe("the plugin without and with a key", () => {
     expect(kernel.bootstraps.map((b) => b.plugin)).toEqual(["stripe", "polar"]);
   });
 
-  test("alone it does not load: the loader says payments@1 is missing", async () => {
-    await expect(load(createKernel(new Hono() as never), [polarWith()], "0.9.0")).rejects.toThrow(/polar requires "payments@1"/);
+  test("alone it loads and waits: the instance says payments@1 is missing, and polar does nothing until it is provided", async () => {
+    const loaded = await load(createKernel(new Hono() as never), [polarWith()], "0.9.0");
+    expect(loaded.names).toContain("polar");
+    expect(loaded.waiting).toEqual([{ plugin: "polar", missing: ["payments@1"] }]);
   });
 
   test("without the token: no route, every call refuses naming the knob, and the collections are not created", async () => {

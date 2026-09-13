@@ -45,9 +45,10 @@ describe("the four failures the loader owns", () => {
     expect(problems.join()).toContain("ambiguous");
   });
 
-  test("a required interface nothing provides names the interface and who wanted it", () => {
-    const problems = problemsOf([plugin({ name: "checkout", requires: ["payments@1"] })]);
-    expect(problems.join()).toContain('checkout requires "payments@1"');
+  test("a required interface nothing provides is not a refusal: the plugin waits, and says what for and who wanted it", () => {
+    const r = resolve([plugin({ name: "checkout", requires: ["payments@1"] })], "0.9.0");
+    expect(r.problems).toEqual([]);
+    expect(r.waiting).toEqual([{ plugin: "checkout", missing: ["payments@1"] }]);
   });
 
   test("a cycle is refused, and the circle is printed", () => {
@@ -72,8 +73,21 @@ describe("the four failures the loader owns", () => {
     ])).toEqual([]);
   });
 
-  test("building on a capability nobody installed still says so", () => {
-    expect(problemsOf([plugin({ name: "audit-report", requires: ["password-audit@1" as never] })]).join()).toContain('audit-report requires "password-audit@1" and nothing installed provides it');
+  test("a plugin whose capability nothing here provides is added anyway, and says what it waits for", () => {
+    const r = resolve([plugin({ name: "audit-report", requires: ["password-audit@1" as never] })], "0.9.0");
+    expect(r.problems).toEqual([]);
+    expect(r.waiting).toEqual([{ plugin: "audit-report", missing: ["password-audit@1"] }]);
+    expect(r.order.map((p) => p.manifest.name)).toEqual(["audit-report"]);
+  });
+
+  test("the instance boots with it: loaded, listed as waiting, and not applied until a provider exists", async () => {
+    let applied = false;
+    const shop: Plugin = { manifest: { name: "shop", version: "1.0.0", tier: "community", voidbase: "*", requires: ["payments@1"] }, apply() { applied = true; } };
+    const kernel = createKernel(new Hono() as never);
+    const loaded = await load(kernel, [shop], "0.9.0");
+    expect(loaded.names).toContain("shop");
+    expect(loaded.waiting).toEqual([{ plugin: "shop", missing: ["payments@1"] }]);
+    expect(applied).toBe(false);
   });
 
   test("a plugin that does not fit this voidbase is refused at install", () => {
@@ -167,11 +181,14 @@ describe("the kernel refuses a graph it cannot load", () => {
       { manifest: { name: "stripe", version: "1.0.0", tier: "community" as const, voidbase: "*", provides: ["payments@1" as const] }, apply: () => { applied++; } },
       { manifest: { name: "polar", version: "1.0.0", tier: "community" as const, voidbase: "*", provides: ["payments@1" as const] }, apply: () => { applied++; } },
       { manifest: { name: "lost", version: "1.0.0", tier: "community" as const, voidbase: "*", requires: ["mail@1" as const] }, apply: () => { applied++; } },
+      { manifest: { name: "notes", version: "1.0.0", tier: "community" as const, voidbase: "*", extends: { orders: [{ name: "note", type: "text" }] } }, apply: () => { applied++; } },
     ];
     const err = await load(kernelFor(), bad, "0.9.0").then(() => null, (e: Error) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err!.message).toContain("both provide");
-    expect(err!.message).toContain('lost requires "mail@1"');
+    expect(err!.message).toContain('notes extends the collection "orders", which no installed plugin owns');
+    // a plugin waiting for a capability is not among the refusals
+    expect(err!.message).not.toContain("lost");
     expect(applied).toBe(0);
   });
 

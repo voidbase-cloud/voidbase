@@ -47,7 +47,10 @@ export interface InstanceVersion {
   declaration?: unknown;
 }
 
-export interface RebuildState { runs: RebuildRun[]; versions: InstanceVersion[]; current: number | null }
+/** the scheduled comparison of what is deployed with what the panel declares (voidbase-stories: "Noticing drift") */
+export interface Drift { checkedAt: string; declared: string; deployed: string | null; drifted: boolean; detail?: string }
+
+export interface RebuildState { runs: RebuildRun[]; versions: InstanceVersion[]; current: number | null; drift?: Drift }
 
 export interface Rebuilds {
   /** a change to the declaration: folds into a waiting run, or queues the next */

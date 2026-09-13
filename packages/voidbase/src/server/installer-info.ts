@@ -17,6 +17,7 @@ import type { Bindings } from "./types";
 
 export interface Listed { installed: { name: string; version: string; marketplace: string }[]; disabled: string[]; marketplaces: string[] }
 export type Removed = "removed" | "already-removed";
+export interface Declared { plugins: Record<string, { version: string; marketplace: string; source: { repository: string; commit: string; directory?: string } }>; disabled: string[]; marketplaces: string[] }
 
 /** what the Bun platform provides: the project on disk (src/platform/node/plugins.ts); null on Workers, where a vanilla instance that rebuilds itself has the same over D1 (src/server/plugins/installer.ts) */
 export interface FilesystemInstaller {
@@ -29,6 +30,8 @@ export interface FilesystemInstaller {
   rebuild?: (reason: string) => boolean | Promise<boolean>;
   /** a change is being made: the rebuild it will queue waits for it (src/server/rebuilds.ts, hold) */
   hold?: () => () => void;
+  /** what the instance declares, with each plugin's commit: voidbase.lock on Bun, D1 on a Worker that rebuilds itself (voidbase wrap reads it) */
+  declaration?: () => Promise<Declared>;
 }
 
 /** the three places an instance's plugins can live; the installer's routes read it to know what a change is */

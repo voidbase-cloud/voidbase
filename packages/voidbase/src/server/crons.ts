@@ -17,10 +17,14 @@ import { s3Bucket } from "./storage/s3";
 import type { AppEnv } from "./types";
 import { resolveSecretBindings } from "./secrets-store";
 import { bindDatabase } from "./durable-d1";
+import { checkDrift } from "./rebuild/drift";
+import { rebuildsOnCloudflare } from "./rebuild/cloudflare";
 
 export interface CronJob { id: string; expr: string; fn: (env: AppEnv["Bindings"]) => Promise<unknown> | unknown }
 
 const BUILTIN: CronJob[] = [
+  // voidbase: a vanilla instance on Cloudflare compares what it runs with what its panel declares, and says so; it builds nothing
+  { id: "__vbRebuildDrift__", expr: "0 * * * *", fn: async (env) => { if (rebuildsOnCloudflare(env as never)) await checkDrift(env as never); } },
   { id: "__pbDBOptimize__", expr: "0 0 * * *", fn: async () => undefined /* D1 maintains itself */ },
   { id: "__pbMFACleanup__", expr: "0 * * * *", fn: async (env) => { await run(env.DB, "DELETE FROM `_mfas` WHERE created < ?", [nowString(new Date(Date.now() - 24 * 3600_000))]); } },
   { id: "__pbOTPCleanup__", expr: "0 * * * *", fn: async (env) => { await run(env.DB, "DELETE FROM `_otps` WHERE created < ?", [nowString(new Date(Date.now() - 24 * 3600_000))]); } },

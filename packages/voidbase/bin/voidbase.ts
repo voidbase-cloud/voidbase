@@ -805,6 +805,16 @@ switch (cmd) {
     break;
   }
   case "templates": await listTemplates(); break;
+  case "wrap": {
+    // wrap <url>: an extended project around an instance, its plugins and their configuration carried over (src/node/wrap.ts)
+    const url = sub;
+    const email = flags.email ?? process.env.VOIDBASE_SUPERUSER_EMAIL, password = flags.password ?? process.env.VOIDBASE_SUPERUSER_PASSWORD;
+    if (!url || !email || !password) { console.error("usage: voidbase wrap <url> [--dir .] --email a@b --password p   (an extended project around the instance: its plugins written into pb_plugins with their configuration)"); process.exit(1); }
+    const { wrapInstance } = await import("../src/node/wrap");
+    try { await wrapInstance({ url, email, password, dir: resolve(flags.dir ?? "."), log: (l) => console.log(l) }); }
+    catch (err) { console.error(`\nwrap failed: ${err instanceof Error ? err.message : String(err)}`); process.exit(1); }
+    break;
+  }
   case "init": {
     const dir = resolve(sub ?? ".");
     // --template starts from somebody's working project instead of an empty directory. It writes the whole thing,

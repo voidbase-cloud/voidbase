@@ -106,7 +106,7 @@ export const disabled: string[] = loaded.disabled;
 export const projectConfig = projectConfigOf(resolve(process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins"));
 
 // ---- the installer's view of the project on disk (src/server/installer-info.ts) --------------------------------
-import { addPlugin, listPlugins, projectConfigOf, removePlugin, updatePlugins } from "../../node/installed";
+import { addPlugin, listPlugins, projectConfigOf, readLock, removePlugin, updatePlugins } from "../../node/installed";
 import type { FilesystemInstaller } from "../../server/installer-info";
 import { currentRebuilder } from "../../node/rebuild";
 // the declaration: the project's pb_plugins and voidbase.lock, which the installer changes. Once a vanilla instance has
@@ -128,6 +128,7 @@ export const filesystem: FilesystemInstaller | null = process.env.VOIDBASE_PROJE
   update: (name, o) => updatePlugins(projectRoot, name, o),
   rebuild: (reason) => { const r = currentRebuilder(); if (!r) return false; r.queue(reason); return true; },
   hold: () => currentRebuilder()?.hold() ?? (() => {}),
+  declaration: async () => { const l = readLock(projectRoot); return { plugins: l.plugins, disabled: l.disabled, marketplaces: l.marketplaces }; },
 };
 
 /** this instance's rebuilds, once it has started (src/node/serve.ts); null before and in a process that serves nothing */

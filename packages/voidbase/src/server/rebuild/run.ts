@@ -13,7 +13,7 @@
 // injected step API so the Bun suite runs it with no Workflows runtime; ./workflow.ts is the Workflow around it.
 import type { RebuildRun, RebuildState, StepName } from "../rebuilds";
 import { assemble, integrityOfFiles, pluginFilesFrom, untarGz, type ModuleFile } from "./assemble";
-import { fetchCommit, readDeclaration, readValue, writeDeclaration, writeValue, type Declaration, type FetchOptions } from "./declaration";
+import { declarationHash, fetchCommit, readDeclaration, readValue, writeDeclaration, writeValue, type Declaration, type FetchOptions } from "./declaration";
 import { CfApi } from "../../cloud/rest";
 import { deployVersion, uploadVersion } from "../../cloud/worker-versions";
 
@@ -88,7 +88,7 @@ export async function runRebuild(env: RebuildEnv, runId: number, step: StepApi, 
       const modules = new Map<string, ModuleFile>();
       for (const m of index.modules) modules.set(m.path, { type: m.type, bytes: await bytesOf(env.STORAGE, `${prefix}modules/${m.path}`) });
       const d = JSON.parse(new TextDecoder().decode(await bytesOf(env.STORAGE, `${prefix}declaration.json`))) as Declaration;
-      const versionId = await uploadVersion(cf(), account!, script!, modules, { mainModule: index.mainModule, compatibilityDate: index.compatibilityDate, compatibilityFlags: index.compatibilityFlags, message: `rebuild ${run.id}: ${run.reasons.join(", ")}`, tag: `rebuild-${run.version}` });
+      const versionId = await uploadVersion(cf(), account!, script!, modules, { mainModule: index.mainModule, compatibilityDate: index.compatibilityDate, compatibilityFlags: index.compatibilityFlags, message: `rebuild ${run.id}: ${run.reasons.join(", ")}`, tag: `rebuild-${run.version}-${await declarationHash(d)}` });
       s.versions = s.versions.filter((v) => v.number !== run.version);
       s.versions.push({ number: run.version, at: now(), plugins: run.declared ?? {}, disabled: run.disabled ?? [], from: s.current, run: run.id, workerVersion: versionId, declaration: d });
     } else if (name === "restart") {

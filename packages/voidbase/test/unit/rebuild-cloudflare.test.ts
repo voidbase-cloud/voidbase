@@ -122,7 +122,7 @@ describe("a vanilla instance on Cloudflare rebuilds itself", () => {
     expect(run?.steps.map((s) => `${s.name}:${s.status}`)).toEqual(["declare:done", "fetch:done", "assemble:done", "upload:done", "restart:done"]);
     expect(cf.uploads).toHaveLength(1);
     expect(cf.uploads[0]!.form).toEqual(expect.arrayContaining(["metadata", "index.js", "plugins/hello/main.js", "plugins/hello/lib/v.js", "assets/_virtual_voidbase-plugins-abc.js"]));
-    expect(cf.uploads[0]!.metadata).toMatchObject({ main_module: "index.js", keep_assets: true, compatibility_flags: ["nodejs_compat"], annotations: { "workers/tag": "rebuild-1" } });
+    expect(cf.uploads[0]!.metadata).toMatchObject({ main_module: "index.js", keep_assets: true, compatibility_flags: ["nodejs_compat"], annotations: { "workers/tag": expect.stringMatching(/^rebuild-1-[0-9a-f]{12}$/) } });
     expect(cf.uploads[0]!.metadata.keep_bindings).toEqual(expect.arrayContaining(["secret_text", "d1", "r2_bucket", "workflow"]));
     const chunk = new TextDecoder().decode(storage.objects.get("_voidbase/rebuilds/1/modules/assets/_virtual_voidbase-plugins-abc.js")!);
     expect(chunk).toContain('import m0 from "../plugins/hello/main.js";');

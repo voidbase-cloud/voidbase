@@ -121,6 +121,7 @@ function declarationInstaller(env: Bindings, voidbaseVersion: string): Filesyste
     remove: (name) => declareRemove(env.DB, name),
     update: (name, o) => declareUpdate(env.DB, name, { voidbaseVersion: o.voidbaseVersion || voidbaseVersion }),
     rebuild: async (reason) => { await cloudflareRebuilds(env as never).queue(reason); return true; },
+    declaration: async () => { const d = await readDeclaration(env.DB); return { plugins: d.plugins, disabled: d.disabled, marketplaces: d.marketplaces }; },
   };
 }
 
@@ -143,6 +144,16 @@ function mountRoutes(app: Hono<AppEnv>, voidbaseVersion: string, filesystem: Fil
     const marketplaces = [...new Set([...listed, ...(extra && MARKETPLACE.test(extra) ? [extra] : [])])];
     const available = await Promise.all(marketplaces.map(async (marketplace) => { try { const { index } = await fetchIndex(marketplace); return { marketplace, plugins: index.plugins.map((p) => ({ name: p.name, title: p.title, summary: p.summary, latest: p.latest, repository: p.repository })) }; } catch (err) { return { marketplace, plugins: [], error: err instanceof Error ? err.message : String(err) }; } }));
     return c.json({ installer: installerInfo(c.env, filesystem), available });
+  });
+  // what this instance declares, with each plugin's commit: how `voidbase wrap` puts the same plugins into a project
+  // (voidbase-stories e-cloud-first.feature, "Wrapping the instance in a project")
+  app.get("/api/plugins/declaration", async (c) => {
+    requireSuperuser(c);
+    const info = installerInfo(c.env, filesystem); const fs = fsOf(c);
+    if (fs?.declaration) return c.json({ mode: info.mode, ...(await fs.declaration()) });
+    const repo = repoOf(c.env);
+    if (repo) { const lock = await lockOf(repo); return c.json({ mode: info.mode, plugins: lock.plugins, disabled: lock.disabled ?? [], marketplaces: lock.marketplaces ?? [OFFICIAL] }); }
+    return c.json({ mode: info.mode, plugins: {}, disabled: [], marketplaces: [OFFICIAL] });
   });
   // Rebuilds (src/server/rebuilds.ts): the one running or last run, step by step, the versions the instance was, and
   // the two things a person does about them. An instance that does not rebuild itself answers that it does not.

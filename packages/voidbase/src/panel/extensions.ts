@@ -96,6 +96,9 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
     var failed = last && last.status === "failed" ? last.steps.filter(function (s) { return s.status === "failed"; })[0] : null;
     return t.div({ className: "m-b-base rebuilds" },
       t.div({ className: "txt-lg m-b-sm" }, "Rebuilds"),
+      r.drift && r.drift.drifted
+        ? t.div({ className: "alert alert-warning m-b-sm rebuild-drift" }, "What this instance runs no longer matches what this page declares (checked " + r.drift.checkedAt + ")" + (r.drift.detail ? ": " + r.drift.detail : "") + ". A rebuild puts the two back together.")
+        : "",
       last
         ? t.div({ className: "panel m-b-sm rebuild", "data-run": String(last.id), "data-status": last.status },
           t.div({ className: "m-b-sm rebuild-summary" }, "Rebuild " + last.id + " " + RUN[last.status] + ", for: " + last.reasons.join(", ") + (last.version ? ". Version " + last.version + "." : ".")),

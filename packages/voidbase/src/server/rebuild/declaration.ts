@@ -33,6 +33,17 @@ export async function writeValue(db: D1Database, key: string, value: unknown): P
   await runSql(db, `INSERT INTO ${TABLE} (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [key, JSON.stringify(value)]);
 }
 export const readDeclaration = (db: D1Database): Promise<Declaration> => readValue(db, "declaration", emptyDeclaration());
+
+/**
+ * What a declaration amounts to, as twelve hex characters: each plugin's name, version and commit, and the removed
+ * shipped names, in a fixed order. A version is uploaded tagged with it, so a deployment can be compared with what the
+ * panel declares now (./drift.ts).
+ */
+export async function declarationHash(d: Declaration): Promise<string> {
+  const canonical = JSON.stringify({ plugins: Object.keys(d.plugins).sort().map((n) => [n, d.plugins[n]!.version, d.plugins[n]!.source.commit]), disabled: [...d.disabled].sort() });
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical)));
+  return [...digest.slice(0, 6)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 export const writeDeclaration = (db: D1Database, d: Declaration): Promise<void> => writeValue(db, "declaration", d);
 
 export interface FetchOptions { fetchImpl?: typeof fetch; tarballBase?: string }

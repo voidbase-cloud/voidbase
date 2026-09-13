@@ -59,9 +59,21 @@ describe("the four failures the loader owns", () => {
     expect(problems.join()).toContain("a -> b -> a");
   });
 
-  test("an interface this voidbase does not define is a typo, and is refused", () => {
+  test("a near-miss of an interface this voidbase defines is a typo, and is refused with the name it meant", () => {
     const problems = problemsOf([plugin({ name: "x", requires: ["payjments@1" as never] })]);
-    expect(problems.join()).toContain('names the interface "payjments@1", which this voidbase does not define');
+    expect(problems.join()).toContain('names the interface "payjments@1", which this voidbase does not define: did it mean "payments@1"?');
+  });
+
+  test("a capability outside core's list is somebody else's to define: its provider and a plugin building on it load", () => {
+    expect(problemsOf([
+      plugin({ name: "password-audit", provides: ["password-audit@1" as never], requires: ["auth@1"] }),
+      plugin({ name: "audit-report", requires: ["password-audit@1" as never] }),
+      plugin({ name: "auth", provides: ["auth@1"] }),
+    ])).toEqual([]);
+  });
+
+  test("building on a capability nobody installed still says so", () => {
+    expect(problemsOf([plugin({ name: "audit-report", requires: ["password-audit@1" as never] })]).join()).toContain('audit-report requires "password-audit@1" and nothing installed provides it');
   });
 
   test("a plugin that does not fit this voidbase is refused at install", () => {

@@ -57,13 +57,16 @@ export function resolve(plugins: Plugin[], voidbaseVersion: string, core: Interf
     byName.set(p.manifest.name, p);
   }
 
-  // an interface nobody defines is a typo, and a typo in a manifest is a plugin that never loads for a reason
-  // nobody can see. src/server/interfaces is the list; a name outside it is refused rather than resolved to
-  // nothing.
+  // Interfaces are semi-open. src/server/interfaces is the list core defines, and it is the authority for what those
+  // names mean; a capability outside it is somebody else's to define, and a plugin that provides or requires one is
+  // loaded, so an idea can stay open until core settles it, or forever. What is still refused is a near-miss of a
+  // name core defines (`payjments@1`): that is a typo, and a typo in a manifest is a plugin that never loads, or never
+  // meets its provider, for a reason nobody can see.
   const known = new Set<string>(KNOWN);
   for (const p of plugins) {
     for (const i of [...(p.manifest.provides ?? []), ...(p.manifest.requires ?? [])]) {
-      if (!known.has(i)) problems.push(`${p.manifest.name} names the interface "${i}", which this voidbase does not define`);
+      const meant = known.has(i) ? undefined : nearMiss(i, KNOWN);
+      if (meant) problems.push(`${p.manifest.name} names the interface "${i}", which this voidbase does not define: did it mean "${meant}"?`);
     }
   }
 
@@ -276,3 +279,17 @@ export function removalCost(plugins: PluginFacts[], name: string, core: Interfac
 
 /** the refusal a caller prints or answers with: what stops working, then the exact way to say it was meant */
 export const refusal = (cost: RemovalCost, goAhead: string): string => `${cost.reason} ${goAhead}`;
+
+/** the interface core defines that `name` is one or two edits away from, when it is not that name itself */
+function nearMiss(name: string, known: readonly string[]): string | undefined {
+  const distance = (a: string, b: string): number => {
+    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const row = [i];
+      for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j]! + 1, row[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = row;
+    }
+    return prev[b.length]!;
+  };
+  return known.find((k) => k !== name && distance(k, name) <= 2);
+}

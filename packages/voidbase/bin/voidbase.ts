@@ -115,6 +115,8 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   plugins update [name]              bring installed plugins to the latest their own marketplace serves
                                      (--dir <project> or --name <local instance> picks the project; default: here)
 
+  update --cloudflare <name> [--account id]
+                                     rebuild an instance on Cloudflare onto this voidbase, as a new version of its Worker
   instances [--local | --cloudflare [--account id]]
                                      list instances: the ones this machine keeps (--local, the default) or the voidbase
                                      instances on the Cloudflare account the token reaches (--cloudflare)
@@ -298,6 +300,24 @@ switch (cmd) {
   case undefined: case "help": case "--help": console.log(HELP); break;
   case "version": case "--version": console.log(await currentVersion()); break;
   case "update": {
+    // --cloudflare <name>: an instance on Cloudflare rebuilt onto this voidbase as a new version of its Worker
+    // (src/node/cloud-update.ts). The release is built here and uploaded the way the site uploads one.
+    if (flags.cloudflare) {
+      const name = typeof flags.cloudflare === "string" && flags.cloudflare !== "1" ? flags.cloudflare : sub;
+      if (!name) { console.error("usage: voidbase update --cloudflare <name> [--account id]"); process.exit(1); }
+      const { deployTarget } = await import("../src/node/deploy-cf");
+      const { updatePlan, workerTags } = await import("../src/node/cloud-update");
+      const { api, account } = await deployTarget({ account: flags.account, name, log: () => undefined });
+      const plan = updatePlan(name, await workerTags(api, account.id, name));
+      if (!plan.ok) { console.error(plan.reason); process.exit(1); }
+      const { buildRelease, releaseFromDir } = await import("../src/node/bundle");
+      const { provisionInstance } = await import("../src/cloud/rest");
+      console.log(`updating ${name} on ${account.name}: building the release`);
+      const built = await buildRelease({ log: (l) => console.log(`  ${l}`) });
+      const r = await provisionInstance(api, { account: account.id, name, release: releaseFromDir(built.dir), inheritSecrets: ["VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD"], applyDoMigrations: false, tags: plan.keepTags, log: (l) => console.log(`  ${l}`) });
+      console.log(`\nupdated ${name}: ${plan.from} -> ${r.release}, a new version of the Worker${r.url ? ` (${r.url})` : ""}`);
+      break;
+    }
     // One command, four shapes. The executable replaces itself from a GitHub release; everything else is a package
     // and comes from the registry. --check answers without changing anything, and its exit code is what a pipeline
     // reads: 0 up to date, 1 behind, 2 could not tell.

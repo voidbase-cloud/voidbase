@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { d1 } from "../../src/node/d1";
 import { cloudflareRebuilds, FOLD_SECONDS, rebuildsOnCloudflare } from "../../src/server/rebuild/cloudflare";
 import { declareAdd, declareUpdate, readDeclaration } from "../../src/server/rebuild/declaration";
-import { readState, RELEASE_PREFIX, releaseModuleKey, runRebuild, type StepApi } from "../../src/server/rebuild/run";
+import { readState, RELEASE_PREFIX, releaseModuleKey, runModuleKey, runRebuild, type StepApi } from "../../src/server/rebuild/run";
 
 const dirs: string[] = []; const servers: { stop(force?: boolean): void }[] = [];
 afterAll(() => { for (const s of servers) s.stop(true); for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -124,7 +124,7 @@ describe("a vanilla instance on Cloudflare rebuilds itself", () => {
     expect(cf.uploads[0]!.form).toEqual(expect.arrayContaining(["metadata", "index.js", "plugins/hello/main.js", "plugins/hello/lib/v.js", "assets/_virtual_voidbase-plugins-abc.js"]));
     expect(cf.uploads[0]!.metadata).toMatchObject({ main_module: "index.js", keep_assets: true, compatibility_flags: ["nodejs_compat"], annotations: { "workers/tag": expect.stringMatching(/^rebuild-1-[0-9a-f]{12}$/) } });
     expect(cf.uploads[0]!.metadata.keep_bindings).toEqual(expect.arrayContaining(["secret_text", "d1", "r2_bucket", "workflow"]));
-    const chunk = new TextDecoder().decode(storage.objects.get("_voidbase/rebuilds/1/modules/assets/_virtual_voidbase-plugins-abc.js")!);
+    const chunk = new TextDecoder().decode(storage.objects.get(runModuleKey("_voidbase/rebuilds/1/", "assets/_virtual_voidbase-plugins-abc.js"))!);
     expect(chunk).toContain('import m0 from "../plugins/hello/main.js";');
     expect(cf.deployments).toEqual([{ version: "v-1", force: false }]);
     const s = await readState(env.DB);
@@ -170,4 +170,5 @@ test("a release module named after a [...path] route is kept under a key Cloudfl
   expect(key.startsWith(RELEASE_PREFIX + "worker/")).toBe(true);
   expect(key).not.toContain("..");
   expect(releaseModuleKey("assets/_...path_-D-GHDzWl.js")).toBe(key);
+  expect(runModuleKey("_voidbase/rebuilds/1/", "assets/_...path_-D9V4m4Je.js")).not.toContain("..");
 });

@@ -25,6 +25,8 @@ export const RELEASE_PREFIX = "_voidbase/release/";
  * key (src/cloud/rest.ts) and the assemble step reads with it.
  */
 export const releaseModuleKey = (path: string): string => `${RELEASE_PREFIX}worker/${path.replace(/\./g, "%2E")}`;
+/** where a run keeps a module it assembled: escaped the same way, since destroying the instance deletes these through the REST API too */
+export const runModuleKey = (prefix: string, path: string): string => `${prefix}modules/${path.replace(/\./g, "%2E")}`;
 export const runPrefix = (run: number) => `_voidbase/rebuilds/${run}/`;
 
 export interface RebuildEnv {
@@ -85,14 +87,14 @@ export async function runRebuild(env: RebuildEnv, runId: number, step: StepApi, 
       }
       const next = assemble({ release, plugins, disabled: d.disabled });
       const modules: { path: string; type: ModuleFile["type"] }[] = [];
-      for (const [path, m] of next) { await env.STORAGE.put(`${prefix}modules/${path}`, m.bytes); modules.push({ path, type: m.type }); }
+      for (const [path, m] of next) { await env.STORAGE.put(runModuleKey(prefix, path), m.bytes); modules.push({ path, type: m.type }); }
       await env.STORAGE.put(`${prefix}modules.json`, JSON.stringify({ mainModule: manifest.mainModule, compatibilityDate: manifest.compatibilityDate, compatibilityFlags: manifest.compatibilityFlags, release: manifest.version, modules }));
       run.version = (s.versions.at(-1)?.number ?? 0) + 1;
     } else if (name === "upload") {
       if (run.version === undefined) throw new Error("no version was assembled for this run");
       const index = JSON.parse(new TextDecoder().decode(await bytesOf(env.STORAGE, `${prefix}modules.json`))) as { mainModule: string; compatibilityDate: string; compatibilityFlags: string[]; modules: { path: string; type: ModuleFile["type"] }[] };
       const modules = new Map<string, ModuleFile>();
-      for (const m of index.modules) modules.set(m.path, { type: m.type, bytes: await bytesOf(env.STORAGE, `${prefix}modules/${m.path}`) });
+      for (const m of index.modules) modules.set(m.path, { type: m.type, bytes: await bytesOf(env.STORAGE, runModuleKey(prefix, m.path)) });
       const d = JSON.parse(new TextDecoder().decode(await bytesOf(env.STORAGE, `${prefix}declaration.json`))) as Declaration;
       const versionId = await uploadVersion(cf(), account!, script!, modules, { mainModule: index.mainModule, compatibilityDate: index.compatibilityDate, compatibilityFlags: index.compatibilityFlags, message: `rebuild ${run.id}: ${run.reasons.join(", ")}`, tag: `rebuild-${run.version}-${await declarationHash(d)}` });
       s.versions = s.versions.filter((v) => v.number !== run.version);

@@ -29,7 +29,7 @@ export const SHIPPED_FACTS: Record<ShippedName, { tier: Tier; provides?: Interfa
   backups: { tier: "core", provides: ["backups@1"] },
   installer: { tier: "core", provides: ["installer@1"] },
   openapi: { tier: "core", provides: ["openapi@1"] },
-  mcp: { tier: "official" },
+  mcp: { tier: "official", provides: ["mcp@1"] },
   seo: { tier: "official" },
   mail: { tier: "core", provides: ["mail@1"] },
   ai: { tier: "official" },

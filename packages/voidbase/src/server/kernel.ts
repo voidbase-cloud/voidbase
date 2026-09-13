@@ -178,6 +178,17 @@ export function using<T>(ctx: Kernel, iface: string): T {
 }
 
 /**
+ * The implementation behind an interface a plugin builds on without requiring it, or undefined when nothing provides
+ * it. cordis refuses a plugin's own context a service it did not inject ("cannot get property ... without inject"), so
+ * an optional one is read from the root context the kernel shares. Asked per request, it also sees a provider that
+ * loaded after the plugin asking: the ai plugin chats without tools on an instance with no mcp@1.
+ */
+export function lookup<T>(ctx: Kernel, iface: string): T | undefined {
+  const root = ((ctx as unknown as { root?: unknown }).root ?? ctx) as Record<string, unknown>;
+  try { return root[iface] as T | undefined; } catch { return undefined; }
+}
+
+/**
  * Check the graph, then apply it in order.
  *
  * Nothing is applied if anything is wrong, and everything wrong is reported at once: an install that fails four

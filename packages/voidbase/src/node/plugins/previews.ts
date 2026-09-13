@@ -18,15 +18,15 @@
 // CI, WORKERS_CI, WORKERS_CI_BUILD_UUID, WORKERS_CI_COMMIT_SHA and WORKERS_CI_BRANCH), so `voidbase sync --previews`
 // stores the repository on the trigger.
 import { destroyInstance, workersSubdomain, type CfApi, type DestroyResult } from "../../cloud/rest";
-import { PREVIEW_OF_VAR, PREVIEW_VAR, previewPrefix, previewWorkerName, previews, type PreviewShape } from "../../server/plugins/previews";
+import { PREVIEW_OF_VAR, PREVIEW_VAR, previewPrefix, previewWorkerName, type PreviewShape } from "../../server/plugins/previews-names";
 import { PREVIEW_HEADER, PREVIEW_PARAM } from "../../server/records/preview";
 import { VERSION } from "../../server/version";
 import type { DeployContext, DeployPlugin } from "../deploy-plugin";
 import { call, canBackup, listBackups, normalizeUrl, short, signIn } from "../migrate";
 import { repoFromGit } from "../sync";
 
-export { branchHash, branchSlug, previewPrefix, previewWorkerName } from "../../server/plugins/previews";
-export type { PreviewShape } from "../../server/plugins/previews";
+export { branchHash, branchSlug, previewPrefix, previewWorkerName } from "../../server/plugins/previews-names";
+export type { PreviewShape } from "../../server/plugins/previews-names";
 
 /** the knob: the same name as the var it bakes; `--preview <branch>` is its flag form, WORKERS_CI_BRANCH its CI source */
 export const PREVIEW_KNOB = PREVIEW_VAR;
@@ -339,7 +339,8 @@ export async function flaggedTarget(o: { env: Record<string, string | undefined>
 
 export const previewsDeploy: DeployPlugin = {
   name: "previews",
-  manifest: previews.manifest,
+  // a deploy step of the CLI's, keeping the previews plugin's name: the plugin itself is installed, not shipped
+  manifest: { name: "previews", version: VERSION, tier: "official", voidbase: "*" },
   deploy: {
     async before(ctx) {
       const branch = branchOf(ctx); if (!branch) return;

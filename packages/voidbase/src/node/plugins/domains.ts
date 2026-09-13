@@ -11,8 +11,9 @@
 // instance (the previews plugin, which runs first and bakes VOIDBASE_PREVIEW into ctx.vars) is left on workers.dev:
 // the production hostnames are never attached to a preview, whatever the environment says.
 import { attachCustomDomain, listCustomDomains, type CfApi, type CustomDomain } from "../../cloud/rest";
-import { CANONICAL_DOMAIN_VAR, DOMAINS_VAR, domains } from "../../server/plugins/domains";
-import { PREVIEW_VAR } from "../../server/plugins/previews";
+import { CANONICAL_DOMAIN_VAR, DOMAINS_VAR } from "../../server/plugins/domains-names";
+import { PREVIEW_VAR } from "../../server/plugins/previews-names";
+import { VERSION } from "../../server/version";
 import type { RedirectEntry } from "../cloud-init";
 import type { DeployContext, DeployPlugin } from "../deploy-plugin";
 import { applyZoneRedirects, clearZoneRedirects } from "../zone-redirects";
@@ -71,7 +72,8 @@ const isPreview = (ctx: DeployContext): boolean => !!ctx.vars[PREVIEW_VAR];
 
 export const domainsDeploy: DeployPlugin = {
   name: "domains",
-  manifest: domains.manifest,
+  // a deploy step of the CLI's, keeping the domains plugin's name: the plugin itself is installed, not shipped
+  manifest: { name: "domains", version: VERSION, tier: "official", voidbase: "*" },
   deploy: {
     async before(ctx) {
       const hosts = hostnamesOf(ctx.env); if (!hosts.length) return;

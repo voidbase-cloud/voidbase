@@ -9,6 +9,8 @@ import { createKernel, load } from "../../src/server/kernel";
 import { aiRoute, aiWith, DEFAULT_MODEL, NOT_BOUND, RATE, toolCallsOf } from "../../src/server/plugins/ai";
 import { auth, provider } from "../../src/server/plugins/auth";
 import { openapiWith } from "../../src/server/plugins/openapi";
+// mcp provides mcp@1, which the ai plugin builds its tools on
+import { mcpWith } from "../../src/server/plugins/mcp";
 import type { AppEnv, AuthRecord, Bindings } from "../../src/server/types";
 
 // the collections cache is per isolate, and other files in the same test process fill it; a test here must not
@@ -61,7 +63,7 @@ async function appWith(opts: { ai?: ReturnType<typeof fakeAI>; now?: () => numbe
   app.get("/api/health", (c) => c.json({ code: 200, message: "API is healthy.", data: {} }));
   const kernel = createKernel(app);
   const source = { collections: async () => COLLECTIONS, appName: async () => "Shop" };
-  await load(kernel, [auth, openapiWith(source), aiWith(source, "0.9.0", opts.now ?? Date.now)], "0.9.0");
+  await load(kernel, [auth, openapiWith(source), mcpWith(source, "0.9.0"), aiWith(source, "0.9.0", opts.now ?? Date.now)], "0.9.0");
   provideAuthLookup(() => provider);
   const env = { DB: {} as D1Database, STORAGE: {} as R2Bucket, ...(opts.ai ? { AI: opts.ai } : {}), ...(opts.model ? { VOIDBASE_AI: opts.model } : {}) } as unknown as Bindings;
   const chat = async (body: unknown, token = "", headers: Record<string, string> = {}) => {

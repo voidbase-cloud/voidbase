@@ -16,10 +16,9 @@
 import { env as voidEnv } from "@voidbase-cloud/voidbase/platform";
 import type { Plugin } from "@voidbase-cloud/voidbase/plugins";
 
-/** the hostnames attached, comma separated, the first canonical: baked by the deploy plugin (and the deploy knob's name) */
-export const DOMAINS_VAR = "VOIDBASE_DOMAINS";
-/** the canonical hostname, the one every other attached hostname redirects to and the URL the deploy reports */
-export const CANONICAL_DOMAIN_VAR = "VOIDBASE_CANONICAL_DOMAIN";
+// the names voidbase deploy shares with this plugin are the core's (/plugins/domains-names)
+export { CANONICAL_DOMAIN_VAR, DOMAINS_VAR } from "@voidbase-cloud/voidbase/plugins/domains-names";
+import { CANONICAL_DOMAIN_VAR, DOMAINS_VAR } from "@voidbase-cloud/voidbase/plugins/domains-names";
 
 export interface DomainsInfo { hostnames: string[]; canonical: string | null }
 

@@ -40,10 +40,6 @@
   "scripts": {
     "check": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {
-    "@voidbase-cloud/plugin-mcp": "workspace:*",
-    "@voidbase-cloud/plugin-openapi": "workspace:*"
-  },
   "peerDependencies": {
     "@voidbase-cloud/voidbase": "workspace:^",
     "hono": "^4.11.9"

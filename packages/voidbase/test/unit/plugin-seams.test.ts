@@ -183,6 +183,8 @@ describe("/api/plugins is what the plugins that loaded say about themselves", ()
   const snapshot = readFileSync(resolvePath(import.meta.dir, "../fixtures/plugins-answer.json"), "utf8").trim();
 
   // `source` on each plugin and `files` came after the snapshot, on purpose (16.5); the rest is held to it
+  // mcp@1 came after it as well: mcp provides it since the ai plugin builds its tools on it rather than importing mcp,
+  // and the fixture carries that one provider and that one provides
   const beforeSources = (a: Record<string, unknown>) => {
     const { files: _files, waiting: _waiting, ...rest } = a;
     return { ...rest, plugins: (rest.plugins as { source?: string; config?: unknown }[]).map(({ source: _source, config: _config, ...p }) => p) };

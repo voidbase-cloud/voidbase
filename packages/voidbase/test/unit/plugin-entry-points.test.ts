@@ -17,7 +17,7 @@ const exportsMap = pkg.exports as Record<string, Target>;
 const fileOf = (t: Target): string => (typeof t === "string" ? t : t.default);
 
 const expected: Record<string, string[]> = {
-  "./kernel": ["createKernel", "load", "serve", "using", "whatLoaded", "onBootstrap", "runBootstraps"],
+  "./kernel": ["createKernel", "load", "serve", "using", "lookup", "whatLoaded", "onBootstrap", "runBootstraps"],
   "./plugins": ["checkManifest"],
   // the slots the core and a plugin hand each other things through. A plugin package cannot import the application
   // that loads it, so these are how it reaches what the request carries: auth-slot to ask who is signed in,
@@ -48,6 +48,10 @@ const expected: Record<string, string[]> = {
   "./plugins/seo-paths": ["SEO_API", "SEO_FILES", "SEO_PNG_VAR", "seoPngOn", "seoRedirectLines"],
   "./plugins/seo-locales": ["alternatesOf", "localizedUrl"],
   "./plugins/mail-binding": ["MAIL_BINDING", "MAIL_DOMAIN_VAR"],
+  // not plugins: the names the previews and domains plugins share with `voidbase deploy` and `voidbase previews`, which
+  // stay in the core once the plugins are installed rather than shipped (tier 3)
+  "./plugins/previews-names": ["PREVIEW_VAR", "PREVIEW_OF_VAR", "previewWorkerName", "previewPrefix", "branchSlug", "branchHash"],
+  "./plugins/domains-names": ["DOMAINS_VAR", "CANONICAL_DOMAIN_VAR"],
   "./plugins/ai": ["ai", "aiWith", "aiRoute"],
   "./plugins/observability": ["observability", "observabilityWith", "observabilityReport", "sampler"],
   // not a plugin either: the names the observability plugin and `voidbase deploy` agree on, so that

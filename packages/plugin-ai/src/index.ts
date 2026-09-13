@@ -35,16 +35,34 @@
 // hardening plugin's rules are keyed by settings, not by a route a plugin registers, and Workers AI is metered.
 import { env as voidEnv } from "@voidbase-cloud/voidbase/platform";
 import type { Context, Hono } from "hono";
-import { all, ApiError, badRequest, collectionId, createRecord, deleteRecord, findCollection, ident, loadCollections, notFound, one, requireAuth, rowToValues, updateRecord, VERSION } from "@voidbase-cloud/voidbase/sdk";
+import { all, ApiError, badRequest, collectionId, createRecord, deleteRecord, findCollection, ident, loadCollections, notFound, one, requireAuth, rowToValues, updateRecord, VERSION, listCollections, loadSettings } from "@voidbase-cloud/voidbase/sdk";
 import type { RealtimeClient } from "@voidbase-cloud/voidbase/interfaces";
-import { onBootstrap, type Kernel } from "@voidbase-cloud/voidbase/kernel";
+import { lookup, onBootstrap, type Kernel } from "@voidbase-cloud/voidbase/kernel";
 import type { AppEnv, AuthRecord, Bindings, RecordContext, Row } from "@voidbase-cloud/voidbase/types";
 import { ensureCollections } from "@voidbase-cloud/voidbase/plugins/collections";
 import type { Plugin } from "@voidbase-cloud/voidbase/plugins";
-import { defaultSource, documentFor, runTool, toolsOf, type Document, type Tool } from "@voidbase-cloud/plugin-mcp";
-import type { OpenApiSource } from "@voidbase-cloud/plugin-openapi";
+// The API's tools come from whoever provides mcp@1, looked up per request: an instance without mcp still chats, with no
+// tools. ai imports no other plugin, not even for its types (voidbase-stories plugin-repos.feature), so what it uses of
+// mcp@1 is described here: a tool as mcp lists it for the caller, and a document passed back as it came.
+type Document = Record<string, unknown>;
+interface Tool { name: string; description: string; inputSchema: Record<string, unknown> }
+interface McpTools {
+  documentFor(source: OpenApiSource, c: Context<AppEnv>, version: string): Promise<Document>;
+  runTool(app: Hono<AppEnv>, c: Context<AppEnv>, doc: Document, tool: Tool, args: Record<string, unknown>): Promise<{ text: string }>;
+  toolsOf(doc: Document): Tool[];
+}
+import type { OpenApiSource } from "@voidbase-cloud/voidbase/plugins/openapi";
 
 import { AI_BINDING, AI_VAR, DEFAULT_MODEL, aiModelOf } from "@voidbase-cloud/voidbase/plugins/ai-binding";
+/** the instance's own collections and settings: what the shipped ai plugin reads */
+const defaultSource: OpenApiSource = {
+  collections: (env) => listCollections(env.DB),
+  appName: async (env) => String((await loadSettings(env.DB)).meta.appName ?? ""),
+};
+
+/** what runs a tool when no plugin provides mcp@1; never called, since there are then no tools to call */
+const noTool: McpTools["runTool"] = async () => { throw new Error("no plugin provides mcp@1, so there are no tools to run"); };
+
 export { AI_BINDING, AI_VAR, DEFAULT_MODEL, aiModelOf };
 
 /** the model these bindings name: the knob's value, or the default when the binding is there and the knob says only that */
@@ -302,7 +320,7 @@ function parseMaxSteps(v: unknown): number | undefined | string {
   return v;
 }
 
-interface Loop { model: string; messages: Message[]; tools: Tool[]; doc: Document | null; maxSteps: number }
+interface Loop { model: string; messages: Message[]; tools: Tool[]; doc: Document | null; runTool: McpTools["runTool"]; maxSteps: number }
 interface LoopResult { content: string; steps: ChatStep[]; tokens: number; /** maxSteps was reached and `content` says so */ stopped: boolean }
 
 /** the function-calling loop: ask, run what the model calls in process, feed the answers back, until it answers or maxSteps is reached */
@@ -324,7 +342,7 @@ async function runLoop(app: Hono<AppEnv>, c: Context<AppEnv>, loop: Loop): Promi
       let result: string;
       if (!tool) result = JSON.stringify({ error: `There is no tool called ${JSON.stringify(call.name)} for this caller.` });
       else {
-        try { result = (await runTool(app, c, doc!, tool, call.arguments)).text; }
+        try { result = (await loop.runTool(app, c, doc!, tool, call.arguments)).text; }
         catch (err) { result = JSON.stringify({ error: err instanceof Error ? err.message : String(err) }); }
       }
       messages.push({ role: "tool", name: call.name, content: result });
@@ -341,7 +359,7 @@ const waitUntilOf = (c: Context<AppEnv>): WaitUntil | undefined => {
   try { const ctx = c.executionCtx; return (p) => ctx.waitUntil(p); } catch { return undefined; }
 };
 
-function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource, now: () => number, rowsFactory: AiRowsFactory) {
+function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource, now: () => number, rowsFactory: AiRowsFactory, mcpOf: () => McpTools | undefined) {
   const windows: Windows = new Map();
   const rowsFor = (c: Context<AppEnv>) => rowsFactory(c.env, c.get("realtime"), waitUntilOf(c));
   const readJson = async (c: Context<AppEnv>): Promise<Record<string, unknown>> => {
@@ -361,10 +379,11 @@ function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource, 
     c.header("Retry-After", String(Math.ceil(RATE.periodMs / 1000)));
     return c.json({ message: `Too many requests: ${RATE.limit} per minute per caller.` }, 429);
   };
-  const toolsFor = async (c: Context<AppEnv>, useTools: boolean): Promise<{ doc: Document | null; tools: Tool[]; appName: string }> => {
-    const doc: Document | null = useTools ? await documentFor(source, c, version) : null;
+  const toolsFor = async (c: Context<AppEnv>, useTools: boolean): Promise<{ doc: Document | null; tools: Tool[]; appName: string; runTool: McpTools["runTool"] }> => {
+    const mcp = useTools ? mcpOf() : undefined;
+    const doc: Document | null = mcp ? await mcp.documentFor(source, c, version) : null;
     const appName = (await source.appName(c.env).catch(() => "")).trim();
-    return { doc, tools: doc ? toolsOf(doc) : [], appName };
+    return { doc, tools: doc && mcp ? mcp.toolsOf(doc) : [], appName, runTool: mcp?.runTool ?? noTool };
   };
 
   app.post("/api/ai/chat", async (c: Context<AppEnv>) => {
@@ -378,9 +397,9 @@ function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource, 
     if (typeof parsed === "string") return c.json({ message: parsed }, 400);
     const model = parsed.model?.trim() || aiModel(c.env);
     // the caller's tools: the MCP list for this token, none when the request turned them off
-    const { doc, tools, appName } = await toolsFor(c, parsed.tools ?? true);
+    const { doc, tools, appName, runTool } = await toolsFor(c, parsed.tools ?? true);
     const messages: Message[] = [{ role: "system", content: systemPrompt(appName, c.get("auth"), tools.length) }, ...parsed.messages];
-    const { content, steps } = await runLoop(app, c, { model, messages, tools, doc, maxSteps: parsed.maxSteps ?? DEFAULT_MAX_STEPS });
+    const { content, steps } = await runLoop(app, c, { model, messages, tools, doc, runTool, maxSteps: parsed.maxSteps ?? DEFAULT_MAX_STEPS });
     const answer: ChatResponse = { message: { role: "assistant", content }, steps, model };
     return c.json(answer);
   });
@@ -442,7 +461,7 @@ function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource, 
     if (body.stream !== undefined && typeof body.stream !== "boolean") throw badRequest("stream must be a boolean.");
     const model = str(conversation.model).trim() || aiModel(c.env);
     const useTools = conversation.tools !== false;
-    const { doc, tools, appName } = await toolsFor(c, useTools);
+    const { doc, tools, appName, runTool } = await toolsFor(c, useTools);
     // the user's message is stored first, so a subscriber sees it before the answer and the history includes it
     await rows.create(AI_MESSAGES, { conversation: id, role: "user", content });
     const history = await rows.messages(id, HISTORY);
@@ -457,7 +476,7 @@ function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource, 
       if (!str(conversation.title)) patch.title = titleOf(str(history.find((m) => m.role === "user")?.content ?? content));
       return { message, conversation: await rows.update(AI_CONVERSATIONS, id, patch) };
     };
-    const loopInput: Loop = { model, messages, tools, doc, maxSteps: maxSteps ?? DEFAULT_MAX_STEPS };
+    const loopInput: Loop = { model, messages, tools, doc, runTool, maxSteps: maxSteps ?? DEFAULT_MAX_STEPS };
 
     if (body.stream !== true) {
       const { content: text, steps, tokens } = await runLoop(app, c, loopInput);
@@ -504,7 +523,7 @@ export const aiWith = (source: Partial<OpenApiSource> = {}, version: string = VE
     apply(ctx: Kernel) {
       // the collections exist only where the binding does: an instance without VOIDBASE_AI never sees them
       onBootstrap(ctx, async (env) => { if (env.AI) await ensureCollections(plugin, env.DB, await conversationDefinitions(env.DB)); });
-      mountRoutes(ctx.app, version, { ...defaultSource, ...source }, now, rows);
+      mountRoutes(ctx.app, version, { ...defaultSource, ...source }, now, rows, () => lookup<McpTools>(ctx, "mcp@1"));
     },
   };
   return plugin;

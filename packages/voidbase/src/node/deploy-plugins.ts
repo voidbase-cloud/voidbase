@@ -15,7 +15,7 @@ import type { DeployContext, DeployPhase, DeployPlugin } from "./deploy-plugin";
 /** a shipped name to the function that loads its deploy half; the import is lazy on purpose */
 export type DeployRegistry = Partial<Record<string, () => Promise<DeployPlugin>>>;
 
-/** the shipped plugins that have a deploy-time half (src/node/plugins/<name>.ts) */
+/** the deploy steps the CLI carries, by the name of the plugin they act for (src/node/plugins/<name>.ts) */
 export const SHIPPED_DEPLOY: DeployRegistry = {
   previews: () => import("./plugins/previews").then((m) => m.previewsDeploy),
   domains: () => import("./plugins/domains").then((m) => m.domainsDeploy),
@@ -51,7 +51,9 @@ export async function discoverDeployPlugins(pluginsDir: string, o: { registry?: 
   const { installed, disabled } = existsSync(lockPath(root)) ? await verifyInstalled(root) : { installed: [], disabled: [] as string[] };
   const shadowed = new Set(installed.map((p) => p.name));
   const out: DiscoveredDeployPlugin[] = [];
-  for (const name of o.shipped ?? SHIPPED) {
+  // the deploy steps the CLI carries (previews and domains act on the account whichever plugins an instance runs), in
+  // the registry's order unless a test names the order
+  for (const name of o.shipped ?? Object.keys(registry)) {
     const load = registry[name];
     if (!load || disabled.includes(name) || shadowed.has(name)) continue;
     out.push({ name, origin: "shipped", plugin: shaped(await load(), name, `the shipped plugin ${name}'s deploy module`) });

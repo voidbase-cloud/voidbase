@@ -14,7 +14,7 @@ import { STORE_KEYS_VAR } from "../server/secrets-store";
 import { AUTH_COOKIE_KNOB, authCookieRefusal } from "../server/auth-cookie";
 import { deleteWorkerSecrets, loadSecrets, putStoreSecrets, readSecretsValues, SECRETS_DIR, STORE_KNOB, storeBindings, storeSecretName, storeSecrets, workerSecretNames, type LoadedSecrets, putWorkerSecrets } from "./secrets";
 import { CfApi, destroyInstance, ensureD1, ensureQueue, ensureR2, findQueue, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists, listVoidbaseWorkers } from "../cloud/rest";
-import { PREVIEW_OF_VAR, PREVIEW_VAR, previewWorkerName } from "../server/plugins/previews";
+import { PREVIEW_OF_VAR, PREVIEW_VAR, previewWorkerName } from "../server/plugins/previews-names";
 import { ensureFlags, ensureFlagshipApp, FLAGS_BINDING, FLAGS_VAR } from "./flagship";
 import { MAIL_BINDING, MAIL_DOMAIN_VAR } from "../server/plugins/mail-binding";
 import { AI_BINDING, AI_VAR, aiModelOf } from "../server/plugins/ai-binding";

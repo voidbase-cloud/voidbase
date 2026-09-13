@@ -18,6 +18,8 @@ import { createKernel, load, runBootstraps } from "../../src/server/kernel";
 import { AI_CONVERSATIONS, AI_MESSAGES, aiRoute, aiWith, DEFAULT_MODEL, deltasOf, HISTORY, NOT_BOUND, RATE, TITLE_LENGTH, titleOf, type AiCollection, type AiRows } from "../../src/server/plugins/ai";
 import { auth, provider } from "../../src/server/plugins/auth";
 import { openapiWith } from "../../src/server/plugins/openapi";
+// mcp provides mcp@1, which the ai plugin builds its tools on
+import { mcpWith } from "../../src/server/plugins/mcp";
 import { ensureSettingsRow, invalidateSettings } from "../../src/server/settings";
 import type { AppEnv, AuthRecord, Bindings, Row } from "../../src/server/types";
 
@@ -91,7 +93,7 @@ async function appWith(opts: { ai?: ReturnType<typeof fakeAI>; rows?: AiRows; no
   const kernel = createKernel(app);
   const source = { collections: async () => COLLECTIONS, appName: async () => "Shop" };
   const { rows, tables, log } = opts.rows ? { rows: opts.rows, tables: undefined, log: undefined } : memoryRows();
-  await load(kernel, [auth, openapiWith(source), aiWith(source, "0.9.0", opts.now ?? Date.now, () => rows)], "0.9.0");
+  await load(kernel, [auth, openapiWith(source), mcpWith(source, "0.9.0"), aiWith(source, "0.9.0", opts.now ?? Date.now, () => rows)], "0.9.0");
   provideAuthLookup(() => provider);
   const env = { DB: {} as D1Database, STORAGE: {} as R2Bucket, ...(opts.ai ? { AI: opts.ai } : {}) } as unknown as Bindings;
   const call = async (method: string, path: string, body?: unknown, token = "") => {
@@ -335,7 +337,7 @@ describe("on an instance: the collections, the rows through the records service,
     app.onError((err, c) => (err instanceof ApiError ? c.json({ message: err.message, data: (err as ApiError & { data?: unknown }).data }, err.status as 400) : c.json({ message: String(err) }, 500)));
     const kernel = createKernel(app);
     const source = { collections: (env: Bindings) => listCollections(env.DB), appName: async () => "Shop" };
-    await load(kernel, [auth, openapiWith(source), aiWith(source, "0.9.0", () => Date.UTC(2026, 8, 11))], "0.9.0");
+    await load(kernel, [auth, openapiWith(source), mcpWith(source, "0.9.0"), aiWith(source, "0.9.0", () => Date.UTC(2026, 8, 11))], "0.9.0");
     provideAuthLookup(() => provider);
     const storage = { list: async () => ({ objects: [], truncated: false }) } as unknown as R2Bucket;
     const bare = { DB: db, STORAGE: storage } as Bindings;

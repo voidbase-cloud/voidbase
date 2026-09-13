@@ -19,12 +19,14 @@
 import type { Context, ExecutionContext, Hono } from "hono";
 import { listCollections, loadSettings, VERSION } from "@voidbase-cloud/voidbase/sdk";
 
-import type { Kernel } from "@voidbase-cloud/voidbase/kernel";
+import { serve, type Kernel } from "@voidbase-cloud/voidbase/kernel";
 
 import type { AppEnv, Bindings } from "@voidbase-cloud/voidbase/types";
 
 import type { Plugin } from "@voidbase-cloud/voidbase/plugins";
-import { buildDocument, callerOf, type OpenApiSource } from "@voidbase-cloud/plugin-openapi";
+// openapi is a tier 1 plugin the core imports, so what it builds is reached through the core's entry for it: a plugin
+// imports what an instance provides and no other plugin (voidbase-stories plugin-repos.feature)
+import { buildDocument, callerOf, type OpenApiSource } from "@voidbase-cloud/voidbase/plugins/openapi";
 
 /** the instance's own collections and settings: what the shipped mcp and ai plugins read */
 export const defaultSource: OpenApiSource = {
@@ -215,9 +217,21 @@ function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource) 
 
 /** the plugin over a source of its own: tests hand in collections and a name without a database */
 export const mcpWith = (source: Partial<OpenApiSource> = {}, version: string = VERSION): Plugin => ({
-  manifest: { name: "mcp", version: "0.1.0", tier: "official", voidbase: "*" },
-  apply(ctx: Kernel) { mountRoutes(ctx.app, version, { ...defaultSource, ...source }); },
+  manifest: { name: "mcp", version: "0.1.0", tier: "official", voidbase: "*", provides: ["mcp@1"] },
+  apply(ctx: Kernel) {
+    mountRoutes(ctx.app, version, { ...defaultSource, ...source });
+    // mcp@1, an interface of mcp's own (a tier 3 plugin may define one): the tools of an instance's API for a caller,
+    // which the ai plugin builds its chat on without importing this plugin
+    serve<McpTools>(ctx, "mcp@1", { documentFor, runTool, toolsOf });
+  },
 });
+
+/** what mcp@1 hands a plugin that builds on it */
+export interface McpTools {
+  documentFor: typeof documentFor;
+  runTool: typeof runTool;
+  toolsOf: typeof toolsOf;
+}
 
 /** the shipped plugin: the instance's own collections and settings */
 export const mcp: Plugin = mcpWith();

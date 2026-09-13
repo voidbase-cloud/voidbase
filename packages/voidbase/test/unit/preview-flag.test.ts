@@ -19,7 +19,6 @@ import { systemCollections } from "../../src/server/collections/system";
 import { ApiError } from "../../src/server/errors";
 import { $app, hookStore, installedServices, installServices, type AppServices, type HookStore } from "../../src/server/hooks/runtime";
 import type { RealtimeClient } from "../../src/server/interfaces";
-import { flaggedBranches, previewsInfo, removeFlagged } from "../support/plugins/previews";
 import { addPreviewField, hasPreviewField, PREVIEW_FIELD, PREVIEW_HEADER, previewOf, visibleInPreview } from "../../src/server/records/preview";
 import { createRecord, deleteRecord, fetchRecord, listRecords, updateRecord, viewRecord, type ListQuery, type RecordContext } from "../../src/server/records/service";
 import { parseSubscription } from "../../src/server/realtime";
@@ -27,7 +26,6 @@ import type { Settings } from "../../src/server/settings";
 import type { AuthRecord, Bindings, Row } from "../../src/server/types";
 
 const ROOT = resolve(import.meta.dir, "../..");
-const PREVIEW_OF_VAR = "VOIDBASE_PREVIEW_OF", PREVIEW_VAR = "VOIDBASE_PREVIEW";
 
 /** an R2 that holds nothing: the removal asks it to clean up after the rows it deleted */
 const storage = { list: async () => ({ objects: [], truncated: false }), delete: async () => undefined } as unknown as R2Bucket;
@@ -234,36 +232,6 @@ describe("the honest limit", () => {
     await createRecord((await ctx("feature/login")), await fresh("posts"), { title: "Draft" }, {});
     expect((await updateRecord((await ctx()), await fresh("posts"), "paaaaaaaaaaaaa1", { title: "Edited" }, {})).title).toBe("Edited");
     await deleteRecord((await ctx()), await fresh("posts"), "paaaaaaaaaaaaa1");
-  });
-});
-
-describe("cleaning up", () => {
-  test("a removal takes the branch's rows and leaves every other row where it was", async () => {
-    const { ctx, env, fresh } = await instance();
-    const mine = String((await createRecord((await ctx("feature/login")), await fresh("posts"), { title: "Mine" }, {})).id);
-    await createRecord((await ctx("feature/login")), await fresh("comments"), { body: "mine too", post: mine }, {});
-    await createRecord((await ctx("feature/search")), await fresh("posts"), { title: "Theirs" }, {});
-    expect(await flaggedBranches(env.DB, await listCollections(env.DB))).toEqual([
-      { branch: "feature/login", rows: 2, collections: ["comments", "posts"] },
-      { branch: "feature/search", rows: 1, collections: ["posts"] },
-    ]);
-    const out = await removeFlagged(env, "feature/login");
-    expect(out).toEqual({ branch: "feature/login", rows: 2, deleted: { comments: 1, posts: 1 } });
-    expect(await flaggedBranches(env.DB, await listCollections(env.DB))).toEqual([{ branch: "feature/search", rows: 1, collections: ["posts"] }]);
-    expect(ids(await listRecords((await ctx()), await fresh("posts"), query()))).toEqual(["paaaaaaaaaaaaa1"]);
-    expect(ids(await listRecords((await ctx()), await fresh("comments"), query()))).toEqual(["caaaaaaaaaaaaa1"]);
-    expect((await listRecords((await ctx("feature/login")), await fresh("posts"), query())).totalItems).toBe(1);
-    // a branch nobody wrote for takes nothing away
-    expect(await removeFlagged(env, "feature/never")).toEqual({ branch: "feature/never", rows: 0, deleted: {} });
-  });
-
-  test("what /api/plugins reports: the shape, and in flagged mode the branches with rows", async () => {
-    const { ctx, env, fresh } = await instance();
-    expect(previewsInfo({})).toEqual({ shape: "flagged" });
-    expect(previewsInfo({ [PREVIEW_VAR]: "feature/x", [PREVIEW_OF_VAR]: "shop" })).toEqual({ shape: "instance", of: "shop", branch: "feature/x" });
-    expect(await flaggedBranches(env.DB, await listCollections(env.DB))).toEqual([]);
-    await createRecord((await ctx("feature/login")), await fresh("posts"), { title: "Draft" }, {});
-    expect(await flaggedBranches(env.DB, await listCollections(env.DB))).toEqual([{ branch: "feature/login", rows: 1, collections: ["posts"] }]);
   });
 });
 

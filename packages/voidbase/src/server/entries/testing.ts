@@ -6,6 +6,7 @@
 // module that declares it, so a test's `ApiError` or `load` is the instance's own. An instance never hands this entry to
 // a plugin at runtime (src/node/refusals.ts): it is test support, Bun only, and it opens SQLite.
 export { provideAuthLookup } from "../auth-slot";
+export { provideRecordContext } from "../record-slot";
 export { createKernel, load, runAfterRead, runBootstraps } from "../kernel";
 export type { Plugin, PluginManifest } from "../plugins/manifest";
 export { ApiError } from "../errors";
@@ -18,6 +19,15 @@ export { observability } from "../plugins/observability";
 export { openapiWith } from "../plugins/openapi";
 
 // a database: bun:sqlite as D1, the system collections, and the services over them
+import { readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+/** the core's own schema, db/migrations, applied to a bun:sqlite database, the way an instance's first start lays it down */
+export function migrateDatabase(sqlite: { run(sql: string): unknown }): void {
+  const dir = resolve(import.meta.dir, "../../../db/migrations");
+  for (const file of readdirSync(dir).filter((x) => x.endsWith(".sql")).sort()) {
+    for (const s of readFileSync(`${dir}/${file}`, "utf8").split("--> statement-breakpoint")) if (s.trim()) sqlite.run(s);
+  }
+}
 export { d1 } from "../../node/d1";
 export { insertCollection } from "../bootstrap";
 export type { Field } from "../collections/fields";

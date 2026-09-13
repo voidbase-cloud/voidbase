@@ -9,14 +9,13 @@
 // like the others, because `using` answers undefined when nothing provides an interface and this one is read on
 // every request.
 //
-// The snapshot in test/fixtures/plugins-answer.json is the answer GET /api/plugins gave before the plugins
-// described themselves. It pins one construction and one set of bindings: app.ts's own twenty plugins in app.ts's
-// order, its own installer — `installer(VERSION, undefined, ...)`, so the filesystem is the platform's and the
-// field reads {"mode":"filesystem"}, not the {"mode":"fixed"} that a null filesystem answers — and the `env`
-// below, whose database throws. The bytes are JSON.stringify of app.ts's expression at c14edb2, which `oldAnswer`
-// rebuilds here from the same still-exported helpers, so the file is checked against it rather than trusted.
-// Regenerate it only when the answer is meant to change, and say in the changelog what moved: a diff here is a
-// change to what every instance reports about itself.
+// The snapshot in test/fixtures/plugins-answer.json is the answer GET /api/plugins gives on a default instance, byte for
+// byte: the plugins app.ts loads, in app.ts's order, its own installer — `installer(VERSION, undefined, ...)`, so the
+// filesystem is the platform's and the field reads {"mode":"filesystem"}, not the {"mode":"fixed"} that a null
+// filesystem answers — and the `env` below, whose database throws. It was regenerated when the tier 3 plugins (ai, mcp,
+// seo, translations, previews, domains) left the core for repositories of their own (11.3). Regenerate it only when
+// the answer is meant to change, and say in the changelog what moved: a diff here is a change to what every instance
+// reports about itself.
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
@@ -30,29 +29,23 @@ import { mailRoute } from "../../src/server/mail";
 import { provideRecordContext, recordContextBuilder, restoreRecordContext, type RecordContextBuilder } from "../../src/server/record-slot";
 import { realtimeOf, realtimeOff } from "../../src/server/realtime-slot";
 import type { RecordContext } from "../../src/server/records/service";
-import { ai, aiRoute } from "../support/plugins/ai";
 import { auth } from "../../src/server/plugins/auth";
 import { backups } from "../../src/server/plugins/backups";
-import { commerce, commerceInfo } from "../support/plugins/commerce";
-import { domains, domainsInfo } from "../support/plugins/domains";
+import { commerce } from "../support/plugins/commerce";
 import { hardening } from "../../src/server/plugins/hardening";
 import { installer } from "../../src/server/plugins/installer";
 import { lemonsqueezy } from "../support/plugins/lemonsqueezy";
 import { mail } from "../../src/server/plugins/mail";
 import type { Plugin } from "../../src/server/plugins/manifest";
-import { mcp } from "../support/plugins/mcp";
 import { observability } from "../../src/server/plugins/observability";
 import { openapi } from "../../src/server/plugins/openapi";
 import { polar } from "../support/plugins/polar";
-import { previews, previewsReport } from "../support/plugins/previews";
 import { realtime } from "../../src/server/plugins/realtime";
 import { pluginsReport, sourceOf } from "../../src/server/plugins/report";
 import { CORE } from "../../src/server/plugins/resolve";
-import { seo, seoWith } from "../support/plugins/seo";
 import { shippingFlat, shippingFlatInfo } from "../support/plugins/shipping-flat";
 import { stripe } from "../support/plugins/stripe";
 import { taxFlat, taxFlatInfo } from "../support/plugins/tax-flat";
-import { translations, translationsInfo } from "../support/plugins/translations";
 import { presenceEnabled } from "../../src/server/realtime/presence";
 import type { AppEnv, AuthRecord, Bindings } from "../../src/server/types";
 import { VERSION } from "../../src/server/version";
@@ -61,13 +54,13 @@ import { VERSION } from "../../src/server/version";
 const env = { DB: new Proxy({}, { get() { throw new Error("no database here"); } }), STORAGE: {} } as unknown as Bindings;
 
 /**
- * The twenty plugins a default instance loads, in app.ts's order and built the way app.ts builds them: the
+ * The plugins a default instance loads, in app.ts's order and built the way app.ts builds them: the
  * installer with no filesystem of its own, so it takes the platform's, which is what a Bun instance runs with and
  * what the snapshot pins.
  */
 const shipped = (kernel: Kernel): Plugin[] => [
   auth, observability, realtime, hardening, backups, installer(VERSION, undefined, () => whatLoaded(kernel).plugins),
-  openapi, mcp, seo, mail, ai, translations, stripe, polar, lemonsqueezy, taxFlat, shippingFlat, commerce, previews, domains,
+  openapi, mail, stripe, polar, lemonsqueezy, taxFlat, shippingFlat, commerce,
 ];
 
 /** a default instance, minus the names an installed plugin shadows, plus what it installed: app.ts's own filter */
@@ -75,11 +68,6 @@ async function instance(extra: Plugin[] = [], shadowed: string[] = []): Promise<
   const kernel = createKernel(new Hono<AppEnv>());
   await load(kernel, [...shipped(kernel).filter((p) => !shadowed.includes(p.manifest.name)), ...extra], VERSION);
   return kernel;
-}
-
-/** GET /api/plugins as app.ts built it at c14edb2, from the same modules' still-exported helpers */
-async function oldAnswer(kernel: Kernel): Promise<Record<string, unknown>> {
-  return { ...whatLoaded(kernel), installer: installerInfo(env), mail: await mailRoute(env), ai: await aiRoute(env), observability: (await using<Observability | undefined>(kernel, "observability@1")?.report(env)) ?? null, translations: translationsInfo(env), domains: domainsInfo(env), previews: await previewsReport(env), payments: using<Payments | undefined>(kernel, "payments@1")?.route(env) ?? { via: "none" }, commerce: { ...commerceInfo(env), tax: taxFlatInfo(env), shipping: shippingFlatInfo(env) } };
 }
 
 afterAll(() => { commerce.stopWatchingPayments(); });
@@ -121,45 +109,17 @@ describe("a plugin asks the core for the request's record context", () => {
   test("nothing the auth plugin mounts imports the app to get one, which a package cannot do to the package that loads it", () => {
     // The auth plugin mounts three modules: its own routes, the core's auth routes (auth.ts) and the passkey ones
     // (webauthn.ts). hooks/index.ts is left as it is, being the application's own use of its own module. Since 3.7
-    // the plugin is @voidbase-cloud/plugin-auth, read from its package the way seo is below.
-    //
-    // seo is no longer one of them: since 7.7 it is @voidbase-cloud/plugin-seo, and a package has no `../app` to
-    // import even if it wanted one. The property is the same and is read where the code now is -- the slot is how a
-    // plugin gets the request's record context -- which is why the file moved in this list rather than out of it.
+    // the plugin is @voidbase-cloud/plugin-auth, read from its package.
     const files: [string, string][] = [
       ["@voidbase-cloud/plugin-auth", readFileSync(resolvePath(import.meta.dir, "../../../plugin-auth/main.js"), "utf8")],
       ["auth.ts", source("auth.ts")],
       ["webauthn.ts", source("webauthn.ts")],
-      ["@voidbase-cloud/plugin-seo", readFileSync(resolvePath(import.meta.dir, "../../../plugin-seo/main.js"), "utf8")],
     ];
     for (const [name, text] of files) {
       expect(text, name).not.toContain('import("./app")');
       expect(text, name).not.toContain('import("../app")');
       expect(text, name).toContain('record-slot"');
     }
-  });
-
-  test("seo's lookup of the record behind a page goes through the slot, once per request", async () => {
-    const posts = {
-      id: "c_posts", name: "posts", type: "base", system: false, listRule: "", viewRule: "", createRule: null, updateRule: null, deleteRule: null,
-      indexes: [], options: {}, created: "", updated: "", fields: [{ id: "f_slug", name: "slug", type: "text" }],
-    } as unknown as Collection;
-    const asked: string[] = [];
-    provideRecordContext((c) => { asked.push(c.req.path); throw new Error("the slot was asked"); });
-
-    const app = new Hono<AppEnv>();
-    app.use("*", async (c, next) => { c.set("auth", null); await next(); });
-    app.onError((err, c) => c.json({ message: err instanceof Error ? err.message : String(err) }, 500));
-    const kernel = createKernel(app);
-    // every part of the source but `record`, which is the one that needs a context and is the one under test
-    await load(kernel, [auth, observability, seoWith({ collections: async () => [posts], appName: async () => "Shop" })], VERSION);
-
-    const call = () => app.request("http://shop.example/api/seo/meta?path=/blog/hello", {}, { VOIDBASE_SITEMAP: "posts:/blog/{slug}" } as unknown as Bindings);
-    expect(await (await call()).json()).toEqual({ message: "the slot was asked" });
-    expect(asked).toEqual(["/api/seo/meta"]);
-    // built per request, never held: the second request builds its own
-    await call();
-    expect(asked).toHaveLength(2);
   });
 
   test("and so do the core's auth routes, which that plugin mounts: auth-refresh builds one per request", async () => {
@@ -205,15 +165,6 @@ describe("/api/plugins is what the plugins that loaded say about themselves", ()
     expect(sourceOf("https://marketplace.voidbase.cloud 1.0.0", "fixed")).toBe("repository");
   });
 
-  test("and the snapshot is that answer: app.ts's own expression, over the same plugins and bindings", async () => {
-    // `waiting` joined the graph half after the snapshot (a plugin added without a provider, 3.7): the historic
-    // expression copies the graph, so it carries the field, and the comparison leaves it out as it leaves out `files`
-    const { waiting: _waiting, ...historic } = (await oldAnswer(await instance())) as Record<string, unknown>;
-    expect(JSON.stringify(historic)).toBe(snapshot);
-    // the field a snapshot of some other construction gets wrong: this one is built with the platform's filesystem
-    expect((JSON.parse(snapshot) as { installer: unknown }).installer).toEqual(installerInfo(env));
-  });
-
   test("a plugin installed over a shipped name answers for it: the swap is no longer cosmetic", async () => {
     const theirs: Plugin = {
       manifest: { name: "domains", version: "2.0.0", tier: "community", voidbase: "*" },
@@ -256,7 +207,6 @@ describe("/api/plugins is what the plugins that loaded say about themselves", ()
     // the graph half and every other plugin still answer, which is what the superuser opened the inventory for
     expect(answer.names).toContain("domains");
     expect(answer.installer).toEqual(installerInfo(env));
-    expect(answer.previews).toEqual(await previewsReport(env));
     expect(logged).toHaveBeenCalled();
     logged.mockRestore();
   });
@@ -329,14 +279,6 @@ describe("a field is in the answer only while a plugin answers for it", () => {
       expect(answer.names).toContain(name); // and the graph half says it is loaded either way
     });
   }
-
-  test("this is the change: the expression this replaced answered all five whatever was loaded", async () => {
-    for (const name of ["ai", "translations", "domains", "previews", "commerce"]) {
-      const off = await instance([], [name]);
-      expect(name in (await oldAnswer(off))).toBe(true); // app.ts called the shipped module, loaded or not
-      expect(name in (await pluginsReport(off, env))).toBe(false);
-    }
-  });
 
   test("and the module and the docs say so, rather than that the shape is unchanged", () => {
     const report = readFileSync(resolvePath(import.meta.dir, "../../src/server/plugins/report.ts"), "utf8");
@@ -439,7 +381,7 @@ describe("an info() is held at arm's length by its answer as well as by its call
     expect(r.status).toBe(200);
     const answer = (await r.json()) as { domains: { error: string }; previews: unknown };
     expect(answer.domains.error).toContain("domains described itself with something that cannot be sent as JSON");
-    expect(answer.previews).toEqual(await previewsReport(env)); // and every other plugin still answers
+    expect(answer.installer).toEqual(installerInfo(env)); // and every other plugin still answers
     logged.mockRestore();
   });
 
@@ -463,7 +405,7 @@ describe("an info() is held at arm's length by its answer as well as by its call
     const kernel = await instance([said("domains", () => new Promise<object>(() => {}))], ["domains"]);
     const answer = await pluginsReport(kernel, env, { timeoutMs: 25 });
     expect(answer.domains).toEqual({ error: "domains did not say what it is within 25ms" });
-    expect(answer.previews).toEqual(await previewsReport(env));
+    expect(answer.installer).toEqual(installerInfo(env));
     logged.mockRestore();
   });
 

@@ -16,24 +16,11 @@
         "void": "^0.10.13",
       },
     },
-    "packages/plugin-ai": {
-      "name": "@voidbase-cloud/plugin-ai",
-      "version": "0.9.0-beta.60",
-      "dependencies": {
-        "@voidbase-cloud/plugin-mcp": "workspace:*",
-        "@voidbase-cloud/plugin-openapi": "workspace:*",
-      },
-      "peerDependencies": {
-        "@voidbase-cloud/voidbase": "workspace:^",
-        "hono": "^4.11.9",
-      },
-    },
     "packages/plugin-auth": {
       "name": "@voidbase-cloud/plugin-auth",
       "version": "0.9.0-beta.60",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:^",
-        "hono": "^4.11.9",
       },
     },
     "packages/plugin-backups": {
@@ -45,14 +32,6 @@
     },
     "packages/plugin-commerce": {
       "name": "@voidbase-cloud/plugin-commerce",
-      "version": "0.9.0-beta.60",
-      "peerDependencies": {
-        "@voidbase-cloud/voidbase": "workspace:^",
-        "hono": "^4.11.9",
-      },
-    },
-    "packages/plugin-domains": {
-      "name": "@voidbase-cloud/plugin-domains",
       "version": "0.9.0-beta.60",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:^",
@@ -79,17 +58,6 @@
         "@voidbase-cloud/voidbase": "workspace:^",
       },
     },
-    "packages/plugin-mcp": {
-      "name": "@voidbase-cloud/plugin-mcp",
-      "version": "0.9.0-beta.60",
-      "dependencies": {
-        "@voidbase-cloud/plugin-openapi": "workspace:*",
-      },
-      "peerDependencies": {
-        "@voidbase-cloud/voidbase": "workspace:^",
-        "hono": "^4.11.9",
-      },
-    },
     "packages/plugin-observability": {
       "name": "@voidbase-cloud/plugin-observability",
       "version": "0.9.0-beta.60",
@@ -103,7 +71,6 @@
       "version": "0.9.0-beta.60",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:^",
-        "hono": "^4.11.9",
       },
     },
     "packages/plugin-polar": {
@@ -113,27 +80,11 @@
         "@voidbase-cloud/voidbase": "workspace:^",
       },
     },
-    "packages/plugin-previews": {
-      "name": "@voidbase-cloud/plugin-previews",
-      "version": "0.9.0-beta.60",
-      "peerDependencies": {
-        "@voidbase-cloud/voidbase": "workspace:^",
-        "hono": "^4.11.9",
-      },
-    },
     "packages/plugin-realtime": {
       "name": "@voidbase-cloud/plugin-realtime",
       "version": "0.9.0-beta.60",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:^",
-      },
-    },
-    "packages/plugin-seo": {
-      "name": "@voidbase-cloud/plugin-seo",
-      "version": "0.9.0-beta.60",
-      "peerDependencies": {
-        "@voidbase-cloud/voidbase": "workspace:^",
-        "hono": "^4.11.9",
       },
     },
     "packages/plugin-shipping-flat": {
@@ -155,14 +106,6 @@
       "version": "0.9.0-beta.60",
       "peerDependencies": {
         "@voidbase-cloud/voidbase": "workspace:^",
-      },
-    },
-    "packages/plugin-translations": {
-      "name": "@voidbase-cloud/plugin-translations",
-      "version": "0.9.0-beta.60",
-      "peerDependencies": {
-        "@voidbase-cloud/voidbase": "workspace:^",
-        "hono": "^4.11.9",
       },
     },
     "packages/release-fixture": {
@@ -196,25 +139,13 @@
         "@cloudflare/workers-types": "^4.20250903.0",
         "@resvg/resvg-wasm": "2.6.2",
         "@simplewebauthn/server": "^14.0.1",
-        "@voidbase-cloud/plugin-ai": "workspace:*",
         "@voidbase-cloud/plugin-auth": "workspace:*",
         "@voidbase-cloud/plugin-backups": "workspace:*",
-        "@voidbase-cloud/plugin-commerce": "workspace:*",
-        "@voidbase-cloud/plugin-domains": "workspace:*",
         "@voidbase-cloud/plugin-hardening": "workspace:*",
-        "@voidbase-cloud/plugin-lemonsqueezy": "workspace:*",
         "@voidbase-cloud/plugin-mail": "workspace:*",
-        "@voidbase-cloud/plugin-mcp": "workspace:*",
         "@voidbase-cloud/plugin-observability": "workspace:*",
         "@voidbase-cloud/plugin-openapi": "workspace:*",
-        "@voidbase-cloud/plugin-polar": "workspace:*",
-        "@voidbase-cloud/plugin-previews": "workspace:*",
         "@voidbase-cloud/plugin-realtime": "workspace:*",
-        "@voidbase-cloud/plugin-seo": "workspace:*",
-        "@voidbase-cloud/plugin-shipping-flat": "workspace:*",
-        "@voidbase-cloud/plugin-stripe": "workspace:*",
-        "@voidbase-cloud/plugin-tax-flat": "workspace:*",
-        "@voidbase-cloud/plugin-translations": "workspace:*",
         "bcryptjs": "^3.0.2",
         "cordis": "4.0.0-rc.9",
         "fflate": "^0.8.3",
@@ -776,15 +707,11 @@
 
     "@vitest/utils": ["@vitest/utils@2.1.9", "", { "dependencies": { "@vitest/pretty-format": "2.1.9", "loupe": "^3.1.2", "tinyrainbow": "^1.2.0" } }, "sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ=="],
 
-    "@voidbase-cloud/plugin-ai": ["@voidbase-cloud/plugin-ai@workspace:packages/plugin-ai"],
-
     "@voidbase-cloud/plugin-auth": ["@voidbase-cloud/plugin-auth@workspace:packages/plugin-auth"],
 
     "@voidbase-cloud/plugin-backups": ["@voidbase-cloud/plugin-backups@workspace:packages/plugin-backups"],
 
     "@voidbase-cloud/plugin-commerce": ["@voidbase-cloud/plugin-commerce@workspace:packages/plugin-commerce"],
-
-    "@voidbase-cloud/plugin-domains": ["@voidbase-cloud/plugin-domains@workspace:packages/plugin-domains"],
 
     "@voidbase-cloud/plugin-hardening": ["@voidbase-cloud/plugin-hardening@workspace:packages/plugin-hardening"],
 
@@ -792,27 +719,19 @@
 
     "@voidbase-cloud/plugin-mail": ["@voidbase-cloud/plugin-mail@workspace:packages/plugin-mail"],
 
-    "@voidbase-cloud/plugin-mcp": ["@voidbase-cloud/plugin-mcp@workspace:packages/plugin-mcp"],
-
     "@voidbase-cloud/plugin-observability": ["@voidbase-cloud/plugin-observability@workspace:packages/plugin-observability"],
 
     "@voidbase-cloud/plugin-openapi": ["@voidbase-cloud/plugin-openapi@workspace:packages/plugin-openapi"],
 
     "@voidbase-cloud/plugin-polar": ["@voidbase-cloud/plugin-polar@workspace:packages/plugin-polar"],
 
-    "@voidbase-cloud/plugin-previews": ["@voidbase-cloud/plugin-previews@workspace:packages/plugin-previews"],
-
     "@voidbase-cloud/plugin-realtime": ["@voidbase-cloud/plugin-realtime@workspace:packages/plugin-realtime"],
-
-    "@voidbase-cloud/plugin-seo": ["@voidbase-cloud/plugin-seo@workspace:packages/plugin-seo"],
 
     "@voidbase-cloud/plugin-shipping-flat": ["@voidbase-cloud/plugin-shipping-flat@workspace:packages/plugin-shipping-flat"],
 
     "@voidbase-cloud/plugin-stripe": ["@voidbase-cloud/plugin-stripe@workspace:packages/plugin-stripe"],
 
     "@voidbase-cloud/plugin-tax-flat": ["@voidbase-cloud/plugin-tax-flat@workspace:packages/plugin-tax-flat"],
-
-    "@voidbase-cloud/plugin-translations": ["@voidbase-cloud/plugin-translations@workspace:packages/plugin-translations"],
 
     "@voidbase-cloud/release-fixture": ["@voidbase-cloud/release-fixture@workspace:packages/release-fixture"],
 

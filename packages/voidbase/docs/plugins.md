@@ -193,6 +193,11 @@ so that its shape is the template for the nine extractions after it. What it set
 
 #### The leaf plugins (7.6)
 
+Since 11.3 the tier 3 plugins (ai, mcp, seo, translations, previews and domains) are not in this repository: each is
+`voidbase-cloud/voidbase-plugin-<name>`, released on its own and tested against the core's `@voidbase-cloud/voidbase/testing`
+entry. The core keeps what its CLI runs for two of them, the previews and domains deploy steps, and the names those
+share with the plugins (`/plugins/previews-names`, `/plugins/domains-names`). The history below is how they left.
+
 The nine plugins nothing else in the graph depends on, each its own package and its own commit, in the order they
 were taken — cheapest first, so that every commit is the template again and what is new in it is the one thing this
 column names.

@@ -10,8 +10,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { DeployContext } from "../../src/node/deploy-plugin";
 import { domainsDeploy } from "../../src/node/plugins/domains";
 import { commentOnPullRequest, flaggedAddress, flaggedPreview, GH_TOKEN_KNOB, githubOf, listFlagged, MARKER, previewComment, previewsDeploy, pruneDecision, pruneFlaggedMerged, pruneMerged, PRUNE_KNOB, removeFlaggedPreview, REPO_KNOB, SEED_KNOB, seedKindOf, seedPreview, SHAPE_KNOB, shapeOf, upsertPreviewComment, type FlaggedTarget, type GitHubTarget } from "../../src/node/plugins/previews";
-import { DOMAINS_VAR } from "../support/plugins/domains";
-import { branchHash, branchSlug, PREVIEW_HEADER, PREVIEW_OF_VAR, PREVIEW_VAR, previewPrefix, previews, previewsInfo, previewWorkerName } from "../support/plugins/previews";
+import { DOMAINS_VAR } from "../../src/server/plugins/domains-names";
+import { branchHash, branchSlug, PREVIEW_OF_VAR, PREVIEW_VAR, previewPrefix, previewWorkerName } from "../../src/server/plugins/previews-names";
+import { PREVIEW_HEADER } from "../../src/server/records/preview";
 import { VERSION } from "../../src/server/version";
 
 const ctxOf = (env: Record<string, string>, over: Partial<DeployContext> = {}): DeployContext => ({ name: "shop", account: { id: "acc" }, api: null, env, config: {}, vars: {}, url: null, log: () => undefined, local: false, dryRun: false, ...over });
@@ -222,15 +223,6 @@ describe("seeding", () => {
     expect(calls.filter((c) => c.startsWith("DELETE")).length).toBe(2);
     expect(lines).toEqual([`seeded ${prev} from ${prod} (schema: posts, users)`]);
   }, 20_000);
-});
-
-describe("the runtime half", () => {
-  test("is a shipped plugin that reports the baked vars and provides nothing else", () => {
-    expect(previews.manifest.name).toBe("previews"); expect(typeof previews.apply).toBe("function"); // /api/previews
-    expect(previewsInfo({ [PREVIEW_VAR]: "feature/x", [PREVIEW_OF_VAR]: "shop" })).toEqual({ shape: "instance", of: "shop", branch: "feature/x" });
-    // every other instance can serve a flagged preview, because a request carrying the header is all one takes
-    expect(previewsInfo({})).toEqual({ shape: "flagged" });
-  });
 });
 
 describe("the flagged shape", () => {

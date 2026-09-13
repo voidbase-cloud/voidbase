@@ -1,10 +1,11 @@
 // The domains plugin's pure parts: the knobs, the redirect a non-canonical hostname gets, the rule tags that keep the
-// plugin's set apart from a project's _redirects set on one zone, and what the runtime half reports.
+// plugin's set apart from a project's _redirects set on one zone. What the plugin reports at runtime is tested in
+// voidbase-cloud/voidbase-plugin-domains.
 import { describe, expect, test } from "bun:test";
 import { canonicalRedirect, DOMAINS_KNOB, domainsDeploy, hostnamesOf, LEGACY_KNOB, SCOPE, validateHostnames } from "../../src/node/plugins/domains";
 import { ownsRule, redirectRule, ruleTag } from "../../src/node/zone-redirects";
 import type { DeployContext } from "../../src/node/deploy-plugin";
-import { CANONICAL_DOMAIN_VAR, DOMAINS_VAR, domains, domainsInfo } from "../support/plugins/domains";
+import { CANONICAL_DOMAIN_VAR, DOMAINS_VAR } from "../../src/server/plugins/domains-names";
 
 const ctxOf = (env: Record<string, string>, over: Partial<DeployContext> = {}): DeployContext => ({ name: "site", account: { id: "acc" }, api: null, env, config: {}, vars: {}, url: null, log: () => undefined, local: false, dryRun: false, ...over });
 
@@ -53,14 +54,5 @@ describe("the canonical redirect", () => {
     expect(ownsRule("site", "domains", "voidbase:site:https://api.example.com/")).toBe(false);
     expect(ownsRule("site", undefined, "voidbase:other:https://api.example.com/")).toBe(false);
     expect(ownsRule("site", undefined, undefined)).toBe(false);
-  });
-});
-
-describe("the runtime half", () => {
-  test("is a shipped plugin that reports the baked vars and provides nothing else", () => {
-    expect(domains.manifest.name).toBe("domains"); expect(domains.apply).toBeUndefined();
-    expect(domainsInfo({ [DOMAINS_VAR]: "Example.com,www.example.com", [CANONICAL_DOMAIN_VAR]: "example.com" })).toEqual({ hostnames: ["example.com", "www.example.com"], canonical: "example.com" });
-    expect(domainsInfo({ [DOMAINS_VAR]: "api.example.com" })).toEqual({ hostnames: ["api.example.com"], canonical: "api.example.com" });
-    expect(domainsInfo({})).toEqual({ hostnames: [], canonical: null });
   });
 });

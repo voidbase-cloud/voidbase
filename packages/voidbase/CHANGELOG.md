@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.61](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.60...v0.9.0-beta.61) (2026-09-13)
+
+* feat(rebuild): drift noticed on a schedule, and voidbase wrap carries a declaration into a project
+
 ## [0.9.0-beta.60](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.59...v0.9.0-beta.60) (2026-09-13)
 
 * fix(release): the SDK builds when packed, and the smoke checks plugin packages as they are now

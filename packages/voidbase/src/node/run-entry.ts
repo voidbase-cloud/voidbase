@@ -22,7 +22,10 @@ export function installedVoidbase(dir: string): string | null {
 export async function runEntry(file: string, args: string[] = []): Promise<void> {
   const path = resolve(file);
   if (!existsSync(path)) throw new Error(`no entry file at ${path}`);
-  if (!installedVoidbase(dirname(path))) {
+  // the standalone executable cannot load a package out of node_modules, so it always hands the entry its own modules,
+  // even when a node_modules above the project holds a copy (as a folder of several projects often does)
+  const compiled = /[\\/]\$bunfs[\\/]|~BUN/.test(import.meta.path);
+  if (compiled || !installedVoidbase(dirname(path))) {
     const { PROVIDED } = await import("./provided");
     const modules: Record<string, () => Promise<object>> = { ...PROVIDED, "@voidbase-cloud/voidbase": () => import("./index") };
     Bun.plugin({

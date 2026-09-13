@@ -226,6 +226,9 @@ describe("a project on disk (Bun): the change is written in place, and the insta
     const { call } = await appWith({}, fs);
     // every plugin that ships is tier 1, so removing one is said on purpose
     expect((await call("POST", "/api/plugins/remove", { name: "openapi", force: true })).json.result).toBe("removed");
+    // removing what is not there says so, and is not a server error
+    const nothing = await call("POST", "/api/plugins/remove", { name: "nothing-here", force: true });
+    expect(nothing.status).toBe(400); expect(nothing.json.message).toContain("is not installed and does not ship with voidbase");
   });
 });
 

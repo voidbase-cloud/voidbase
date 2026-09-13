@@ -164,7 +164,7 @@ function mountRoutes(app: Hono<AppEnv>, voidbaseVersion: string, filesystem: Fil
     // instance answers what stops working rather than doing it, and `force: true` is the saying-so.
     const cost = force ? null : removalCost(graph(), name);
     if (cost) return c.json({ message: refusal(cost, 'To go ahead, send this again with "force": true.'), core: cost.core, provides: cost.provides, dependents: cost.dependents }, 409);
-    if (info.mode === "filesystem") { const r = filesystem!.remove(name, { force: true }); return c.json({ applied: "filesystem", result: r, message: r === "removed" ? `Removed ${name}. ${afterChange(`remove ${name}`)}` : `${name} was already removed.` }); }
+    if (info.mode === "filesystem") { let r: ReturnType<FilesystemInstaller["remove"]>; try { r = filesystem!.remove(name, { force: true }); } catch (err) { throw badRequest(err instanceof Error ? err.message : String(err)); } return c.json({ applied: "filesystem", result: r, message: r === "removed" ? `Removed ${name}. ${afterChange(`remove ${name}`)}` : `${name} was already removed.` }); }
     const unmerged = sideLoadedChange(c.env, false); if (unmerged.to === "refused") return c.json({ message: unmerged.message }, 409);
     const r = await onRepository(repoOf(c.env)!, { remove: name }, voidbaseVersion);
     return c.json({ applied: "repository", ...r, message: `Committed to ${info.repository}; its build deploys it.` });

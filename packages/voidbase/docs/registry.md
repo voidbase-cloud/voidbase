@@ -69,7 +69,9 @@ may change, a version record and its bundle never do once published (a change is
 
 ## The bundle
 
-One ES module. Its default export is the plugin: `{ manifest, apply(ctx) }` as `Plugin` in
+A bundle is the older of the two shapes: marketplaces built one from a repository until plugins became pb_ files
+loaded as they are, and the official marketplace now records commits instead (below). An instance still installs a
+bundle version it is served. One ES module. Its default export is the plugin: `{ manifest, apply(ctx) }` as `Plugin` in
 `@voidbase-cloud/voidbase/plugins` defines it. It may import from `@voidbase-cloud/voidbase/*` (the entry points an
 instance provides — not every name in `exports`: the application and the build-time tooling are refused by name,
 with the reason, both at load on Bun and when a Worker is built, `NOT_PROVIDED` in `src/node/provided.ts`) and from
@@ -80,14 +82,21 @@ never imports Node built-ins, because an instance may be a Worker. A bundle is e
 ## pb_ files at a commit
 
 A version need not be a bundle. One that names no `bundle`, `integrity` or `bytes` is **pb_ files**: the
-`manifest.json` and the `pb_hooks`, `pb_migrations` and `pb_public` directories of `source.repository` at
-`source.commit`, under `source.directory` when the repository holds more than one plugin (a path inside the
-repository, never absolute and never through `..`). Nothing is built and nothing is hosted: the marketplace lists the
-commit it approved, and an instance fetches that commit and loads the files as they are (`isFilesVersion` in
-`src/node/registry.ts`).
+`manifest.json`, the `pb_hooks`, `pb_migrations` and `pb_public` directories, and the plain JavaScript cordis applies
+(`main.js`, and the modules it imports from `lib/`) of `source.repository` at `source.commit`, under
+`source.directory` when the repository holds more than one plugin (a path inside the repository, never absolute and
+never through `..`; the voidbase monorepo lists each of its plugin packages this way). Nothing is built and nothing is
+hosted: the marketplace lists the commit it approved, and an instance fetches that commit and loads the files as they
+are (`isFilesVersion` in `src/node/registry.ts`).
+
+`main.js` is optional, for a plugin that does more than hooks: its default export is what the plugin does (`apply`,
+`info`), and the instance attaches `manifest.json` to that object when it loads it, so the plugin's own code reads the
+declaration it was loaded with. Before anything runs, its imports and those of `lib/` are read: a bare import has to be
+something an instance provides (`@voidbase-cloud/voidbase/*` or `hono`), and a relative one has to stay inside the
+plugin (`filesPluginImports` in `src/node/installed.ts`). Nothing is compiled, so there is no TypeScript to load.
 
 An instance fetches GitHub's tarball of the commit (`VOIDBASE_TARBALL_URL` points that at a mirror or a test server),
-keeps only those four entries in `pb_plugins/<name>/`, checks `manifest.json` names the listing's plugin and version,
+keeps only those entries in `pb_plugins/<name>/`, checks `manifest.json` names the listing's plugin and version,
 and records the lock entry with `"shape": "files"` and an `integrity` computed over the files themselves
 (`integrityOfDir`: every file by sorted path, each path beside its bytes), which is recomputed before anything loads.
 The plugin in the graph is its manifest; its `pb_hooks` are compiled like the project's own and run after them, with
@@ -99,10 +108,10 @@ provides loads and waits, like any other. An instance deployed from a repository
 ## What an instance does with it
 
 1. Reads the index and refuses it with every reason named if it is not a registry (`problemsWithIndex`).
-2. Picks a version (`latest` unless told otherwise), downloads the bundle, recomputes the integrity, and refuses a
-   mismatch.
+2. Picks a version (`latest` unless told otherwise). For a bundle it downloads the bundle, recomputes the integrity
+   and refuses a mismatch; for pb_ files it fetches the commit and hashes the files it keeps.
 3. Records, in `voidbase.lock`, the marketplace it came from, the version, the integrity and the source commit.
-4. Loads the bundle beside the plugins it ships and resolves the whole graph as it does for them: two providers of
+4. Loads the bundle or the files beside the plugins it ships and resolves the whole graph as it does for them: two providers of
    one interface, a cycle, a missing requirement or a version outside the range are refused before anything runs.
 
 1 and 2 are `src/node/registry.ts`; 3 and 4 are `src/node/installed.ts`, `src/platform/*/plugins.ts` and the

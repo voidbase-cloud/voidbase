@@ -30,29 +30,29 @@ import { mailRoute } from "../../src/server/mail";
 import { provideRecordContext, recordContextBuilder, restoreRecordContext, type RecordContextBuilder } from "../../src/server/record-slot";
 import { realtimeOf, realtimeOff } from "../../src/server/realtime-slot";
 import type { RecordContext } from "../../src/server/records/service";
-import { ai, aiRoute } from "../../src/server/plugins/ai";
+import { ai, aiRoute } from "../support/plugins/ai";
 import { auth } from "../../src/server/plugins/auth";
 import { backups } from "../../src/server/plugins/backups";
 import { commerce, commerceInfo } from "../support/plugins/commerce";
-import { domains, domainsInfo } from "../../src/server/plugins/domains";
+import { domains, domainsInfo } from "../support/plugins/domains";
 import { hardening } from "../../src/server/plugins/hardening";
 import { installer } from "../../src/server/plugins/installer";
 import { lemonsqueezy } from "../support/plugins/lemonsqueezy";
 import { mail } from "../../src/server/plugins/mail";
 import type { Plugin } from "../../src/server/plugins/manifest";
-import { mcp } from "../../src/server/plugins/mcp";
+import { mcp } from "../support/plugins/mcp";
 import { observability } from "../../src/server/plugins/observability";
 import { openapi } from "../../src/server/plugins/openapi";
 import { polar } from "../support/plugins/polar";
-import { previews, previewsReport } from "../../src/server/plugins/previews";
+import { previews, previewsReport } from "../support/plugins/previews";
 import { realtime } from "../../src/server/plugins/realtime";
 import { pluginsReport, sourceOf } from "../../src/server/plugins/report";
 import { CORE } from "../../src/server/plugins/resolve";
-import { seo, seoWith } from "../../src/server/plugins/seo";
+import { seo, seoWith } from "../support/plugins/seo";
 import { shippingFlat, shippingFlatInfo } from "../support/plugins/shipping-flat";
 import { stripe } from "../support/plugins/stripe";
 import { taxFlat, taxFlatInfo } from "../support/plugins/tax-flat";
-import { translations, translationsInfo } from "../../src/server/plugins/translations";
+import { translations, translationsInfo } from "../support/plugins/translations";
 import { presenceEnabled } from "../../src/server/realtime/presence";
 import type { AppEnv, AuthRecord, Bindings } from "../../src/server/types";
 import { VERSION } from "../../src/server/version";
@@ -130,7 +130,7 @@ describe("a plugin asks the core for the request's record context", () => {
       ["@voidbase-cloud/plugin-auth", readFileSync(resolvePath(import.meta.dir, "../../../plugin-auth/main.js"), "utf8")],
       ["auth.ts", source("auth.ts")],
       ["webauthn.ts", source("webauthn.ts")],
-      ["@voidbase-cloud/plugin-seo", readFileSync(resolvePath(import.meta.dir, "../../../plugin-seo/src/index.ts"), "utf8")],
+      ["@voidbase-cloud/plugin-seo", readFileSync(resolvePath(import.meta.dir, "../../../plugin-seo/main.js"), "utf8")],
     ];
     for (const [name, text] of files) {
       expect(text, name).not.toContain('import("./app")');

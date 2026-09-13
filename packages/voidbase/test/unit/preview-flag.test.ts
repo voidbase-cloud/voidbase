@@ -19,7 +19,7 @@ import { systemCollections } from "../../src/server/collections/system";
 import { ApiError } from "../../src/server/errors";
 import { $app, hookStore, installedServices, installServices, type AppServices, type HookStore } from "../../src/server/hooks/runtime";
 import type { RealtimeClient } from "../../src/server/interfaces";
-import { flaggedBranches, previewsInfo, removeFlagged } from "../../src/server/plugins/previews";
+import { flaggedBranches, previewsInfo, removeFlagged } from "../support/plugins/previews";
 import { addPreviewField, hasPreviewField, PREVIEW_FIELD, PREVIEW_HEADER, previewOf, visibleInPreview } from "../../src/server/records/preview";
 import { createRecord, deleteRecord, fetchRecord, listRecords, updateRecord, viewRecord, type ListQuery, type RecordContext } from "../../src/server/records/service";
 import { parseSubscription } from "../../src/server/realtime";

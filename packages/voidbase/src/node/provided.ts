@@ -58,28 +58,22 @@ const MODULES: Record<string, () => Promise<object>> = {
   "./src/server/entries/project-sync.ts": () => import("../server/entries/project-sync"),
   "./src/node/registry.ts": () => import("./registry"),
   // the plugins this package ships, which the official @voidbase-cloud/plugin-* packages re-export
-  "./src/server/plugins/ai.ts": () => import("../server/plugins/ai"),
   "./src/server/plugins/ai-binding.ts": () => import("../server/plugins/ai-binding"),
   "./src/server/plugins/auth.ts": () => import("../server/plugins/auth"),
   "./src/server/plugins/backups.ts": () => import("../server/plugins/backups"),
   "./src/server/plugins/collections.ts": () => import("../server/plugins/collections"),
-  "./src/server/plugins/domains.ts": () => import("../server/plugins/domains"),
   "./src/server/plugins/domains-names.ts": () => import("../server/plugins/domains-names"),
   "./src/server/plugins/hardening.ts": () => import("../server/plugins/hardening"),
   "./src/server/plugins/mail.ts": () => import("../server/plugins/mail"),
   "./src/server/plugins/mail-binding.ts": () => import("../server/plugins/mail-binding"),
-  "./src/server/plugins/mcp.ts": () => import("../server/plugins/mcp"),
   "./src/server/plugins/observability.ts": () => import("../server/plugins/observability"),
   "./src/server/plugins/observability-binding.ts": () => import("../server/plugins/observability-binding"),
   "./src/server/plugins/openapi.ts": () => import("../server/plugins/openapi"),
   "./src/server/plugins/payments-shared.ts": () => import("../server/plugins/payments-shared"),
-  "./src/server/plugins/previews.ts": () => import("../server/plugins/previews"),
   "./src/server/plugins/previews-names.ts": () => import("../server/plugins/previews-names"),
   "./src/server/plugins/realtime.ts": () => import("../server/plugins/realtime"),
-  "./src/server/plugins/seo.ts": () => import("../server/plugins/seo"),
   "./src/server/plugins/seo-paths.ts": () => import("../server/plugins/seo-paths"),
   "./src/server/plugins/seo-locales.ts": () => import("../server/plugins/seo-locales"),
-  "./src/server/plugins/translations.ts": () => import("../server/plugins/translations"),
 };
 
 

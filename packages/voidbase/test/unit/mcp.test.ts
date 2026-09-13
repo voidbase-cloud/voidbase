@@ -7,7 +7,7 @@ import type { Collection } from "../../src/server/collections/model";
 import { ApiError } from "../../src/server/errors";
 import { createKernel, load } from "../../src/server/kernel";
 import { auth, provider } from "../../src/server/plugins/auth";
-import { mcpWith, PROTOCOL_VERSIONS } from "../../src/server/plugins/mcp";
+import { mcpWith, PROTOCOL_VERSIONS } from "../support/plugins/mcp";
 import { openapiWith } from "../../src/server/plugins/openapi";
 import type { AppEnv, AuthRecord, Bindings } from "../../src/server/types";
 

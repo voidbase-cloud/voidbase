@@ -231,11 +231,12 @@ describe("what an instance checks before it loads anything", () => {
 
   test("the Worker's module imports every verified bundle by path", async () => {
     await addPlugin(root, "echo", opts(url(one)));
-    removePlugin(root, "seo");
+    // every plugin that ships is tier 1 now, so turning one off is said on purpose
+    removePlugin(root, "openapi", { force: true });
     const src = await pluginsModuleSource(join(root, "pb_plugins"));
     expect(src).toContain(`import p0 from ${JSON.stringify(join(root, "pb_plugins/echo/bundle.js"))};`);
     expect(src).toContain('export const installed = [{ plugin: p0, name: "echo", version: "0.1.0"');
-    expect(src).toContain('export const disabled = ["seo"];');
+    expect(src).toContain('export const disabled = ["openapi"];');
     expect(await pluginsModuleSource(join(mkdtempSync(join(tmpdir(), "empty-")), "pb_plugins"))).toContain("export const installed = [];");
   });
 });
@@ -246,12 +247,13 @@ describe("remove, enable, update", () => {
     expect(removePlugin(root, "echo")).toBe("removed");
     expect(existsSync(join(root, "pb_plugins/echo"))).toBe(false);
     expect(readLock(root).plugins.echo).toBeUndefined();
-    expect(removePlugin(root, "seo")).toBe("disabled");
-    expect(removePlugin(root, "seo")).toBe("already-disabled");
-    expect(pluginFacts(root).find((p) => p.name === "seo")).toBeUndefined();
-    expect(listPlugins(root).shipped.find((p) => p.name === "seo")?.state).toBe("disabled");
-    expect(enablePlugin(root, "seo")).toBe("enabled");
-    expect(enablePlugin(root, "seo")).toBe("not-disabled");
+    // every plugin that ships is tier 1 now, so turning one off is said on purpose
+    expect(removePlugin(root, "openapi", { force: true })).toBe("disabled");
+    expect(removePlugin(root, "openapi", { force: true })).toBe("already-disabled");
+    expect(pluginFacts(root).find((p) => p.name === "openapi")).toBeUndefined();
+    expect(listPlugins(root).shipped.find((p) => p.name === "openapi")?.state).toBe("disabled");
+    expect(enablePlugin(root, "openapi")).toBe("enabled");
+    expect(enablePlugin(root, "openapi")).toBe("not-disabled");
     expect(() => removePlugin(root, "nothing")).toThrow("nothing is not installed and does not ship with voidbase");
     expect(() => enablePlugin(root, "echo")).toThrow("echo does not ship with voidbase");
   });

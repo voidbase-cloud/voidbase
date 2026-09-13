@@ -15,11 +15,11 @@ import { createCollection } from "../../src/server/collections/service";
 import { systemCollections } from "../../src/server/collections/system";
 import { ApiError } from "../../src/server/errors";
 import { createKernel, load, runBootstraps } from "../../src/server/kernel";
-import { AI_CONVERSATIONS, AI_MESSAGES, aiRoute, aiWith, DEFAULT_MODEL, deltasOf, HISTORY, NOT_BOUND, RATE, TITLE_LENGTH, titleOf, type AiCollection, type AiRows } from "../../src/server/plugins/ai";
+import { AI_CONVERSATIONS, AI_MESSAGES, aiRoute, aiWith, DEFAULT_MODEL, deltasOf, HISTORY, NOT_BOUND, RATE, TITLE_LENGTH, titleOf, type AiCollection, type AiRows } from "../support/plugins/ai";
 import { auth, provider } from "../../src/server/plugins/auth";
 import { openapiWith } from "../../src/server/plugins/openapi";
 // mcp provides mcp@1, which the ai plugin builds its tools on
-import { mcpWith } from "../../src/server/plugins/mcp";
+import { mcpWith } from "../support/plugins/mcp";
 import { ensureSettingsRow, invalidateSettings } from "../../src/server/settings";
 import type { AppEnv, AuthRecord, Bindings, Row } from "../../src/server/types";
 

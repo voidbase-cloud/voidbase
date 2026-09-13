@@ -10,8 +10,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { DeployContext } from "../../src/node/deploy-plugin";
 import { domainsDeploy } from "../../src/node/plugins/domains";
 import { commentOnPullRequest, flaggedAddress, flaggedPreview, GH_TOKEN_KNOB, githubOf, listFlagged, MARKER, previewComment, previewsDeploy, pruneDecision, pruneFlaggedMerged, pruneMerged, PRUNE_KNOB, removeFlaggedPreview, REPO_KNOB, SEED_KNOB, seedKindOf, seedPreview, SHAPE_KNOB, shapeOf, upsertPreviewComment, type FlaggedTarget, type GitHubTarget } from "../../src/node/plugins/previews";
-import { DOMAINS_VAR } from "../../src/server/plugins/domains";
-import { branchHash, branchSlug, PREVIEW_HEADER, PREVIEW_OF_VAR, PREVIEW_VAR, previewPrefix, previews, previewsInfo, previewWorkerName } from "../../src/server/plugins/previews";
+import { DOMAINS_VAR } from "../support/plugins/domains";
+import { branchHash, branchSlug, PREVIEW_HEADER, PREVIEW_OF_VAR, PREVIEW_VAR, previewPrefix, previews, previewsInfo, previewWorkerName } from "../support/plugins/previews";
 import { VERSION } from "../../src/server/version";
 
 const ctxOf = (env: Record<string, string>, over: Partial<DeployContext> = {}): DeployContext => ({ name: "shop", account: { id: "acc" }, api: null, env, config: {}, vars: {}, url: null, log: () => undefined, local: false, dryRun: false, ...over });

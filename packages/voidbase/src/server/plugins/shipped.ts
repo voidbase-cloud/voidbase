@@ -2,7 +2,7 @@
 // importing what a shipped plugin does. app.ts loads the objects and checks its list is this one.
 import type { InterfaceName, Tier } from "./manifest";
 import type { PluginFacts } from "./resolve";
-export const SHIPPED = ["auth", "observability", "realtime", "hardening", "backups", "installer", "openapi", "mcp", "seo", "mail", "ai", "translations", "previews", "domains"] as const;
+export const SHIPPED = ["auth", "observability", "realtime", "hardening", "backups", "installer", "openapi", "mail"] as const;
 export type ShippedName = (typeof SHIPPED)[number];
 
 /**
@@ -12,7 +12,8 @@ export type ShippedName = (typeof SHIPPED)[number];
  * swapped: auth, observability, realtime, hardening, mail, installer, openapi and backups, whose manifests say
  * `core`. Tier 2, core defines the interface and the plugin is added by hand: the payment providers, tax-flat,
  * shipping-flat and commerce, `official`, which are packages of the monorepo the core does not import and so are not
- * in this list (3.7): an instance has one because someone installed it. Tier 3, core defines no interface: ai, mcp, seo, translations, previews
+ * in this list (3.7): an instance has one because someone installed it. Tier 3, core defines no interface: ai, mcp,
+ * seo, translations, previews and domains, `official` and installed by hand the same way (11.3). Tier 3, core defines no interface: ai, mcp, seo, translations, previews
  * and domains, `official` because they are ours (a community plugin is tier 3 as well).
  *
  * The same reason the list above is data. `voidbase plugins remove <name>` has to know whether it is about to take
@@ -29,13 +30,7 @@ export const SHIPPED_FACTS: Record<ShippedName, { tier: Tier; provides?: Interfa
   backups: { tier: "core", provides: ["backups@1"] },
   installer: { tier: "core", provides: ["installer@1"] },
   openapi: { tier: "core", provides: ["openapi@1"] },
-  mcp: { tier: "official", provides: ["mcp@1"] },
-  seo: { tier: "official" },
   mail: { tier: "core", provides: ["mail@1"] },
-  ai: { tier: "official" },
-  translations: { tier: "official" },
-  previews: { tier: "official" },
-  domains: { tier: "official" },
 };
 
 /** the shipped half of the plugin graph, in the shape the removal check reads */

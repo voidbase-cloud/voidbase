@@ -1,0 +1,9 @@
+{
+  "name": "mcp",
+  "version": "0.9.0-beta.58",
+  "tier": "official",
+  "voidbase": "*",
+  "provides": [
+    "mcp@1"
+  ]
+}

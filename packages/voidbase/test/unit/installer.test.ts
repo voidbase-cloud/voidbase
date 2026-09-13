@@ -181,7 +181,7 @@ describe("a project on disk (Bun): the change is written in place, and the insta
   // the project's lockfile lists MARKET, which has an address once the file's beforeAll has run
   beforeAll(() => writeFileSync(join(root, "voidbase.lock"), lockText({ ...emptyLock(), marketplaces: [MARKET] })));
   afterAll(() => rmSync(root, { recursive: true, force: true }));
-  const fs: FilesystemInstaller = { root, list: () => { const l = listPlugins(root); return { installed: l.installed, disabled: [], marketplaces: l.marketplaces }; }, add: (spec, o) => addPlugin(root, spec, o), remove: (n) => removePlugin(root, n), update: (n, o) => updatePlugins(root, n, o) };
+  const fs: FilesystemInstaller = { root, list: () => { const l = listPlugins(root); return { installed: l.installed, disabled: [], marketplaces: l.marketplaces }; }, add: (spec, o) => addPlugin(root, spec, o), remove: (n, o) => removePlugin(root, n, o), update: (n, o) => updatePlugins(root, n, o) };
   test("a marketplace the lockfile does not name is refused the same way, and nothing is written", async () => {
     const { call } = await appWith({}, fs); const lock = readFileSync(join(root, "voidbase.lock"), "utf8"); asked.length = 0;
     const r = await call("POST", "/api/plugins/install", { name: "echo", marketplace: OTHER });
@@ -215,7 +215,8 @@ describe("a project on disk (Bun): the change is written in place, and the insta
   });
   test("removing a shipped plugin turns it off", async () => {
     const { call } = await appWith({}, fs);
-    expect((await call("POST", "/api/plugins/remove", { name: "seo" })).json.result).toBe("disabled");
+    // every plugin that ships is tier 1, so turning one off is said on purpose
+    expect((await call("POST", "/api/plugins/remove", { name: "openapi", force: true })).json.result).toBe("disabled");
   });
 });
 

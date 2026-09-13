@@ -14,22 +14,18 @@
 // `@voidbase-cloud/voidbase/platform`, which is the same two files under the same condition, and `./manifest`
 // becomes `@voidbase-cloud/voidbase/plugins`. Nothing else about the plugin changed.
 import { env as voidEnv } from "@voidbase-cloud/voidbase/platform";
-import type { Plugin } from "@voidbase-cloud/voidbase/plugins";
-
 // the names voidbase deploy shares with this plugin are the core's (/plugins/domains-names)
 export { CANONICAL_DOMAIN_VAR, DOMAINS_VAR } from "@voidbase-cloud/voidbase/plugins/domains-names";
 import { CANONICAL_DOMAIN_VAR, DOMAINS_VAR } from "@voidbase-cloud/voidbase/plugins/domains-names";
-
-export interface DomainsInfo { hostnames: string[]; canonical: string | null }
-
 /** what GET /api/plugins says in its `domains` field: the vars the deploy baked, or nothing when it attached no hostname */
-export const domainsInfo = (env?: object): DomainsInfo => {
-  const read = (k: string) => String((env as Record<string, unknown> | undefined)?.[k] ?? (voidEnv as Record<string, unknown>)[k] ?? "").trim().toLowerCase();
+export const domainsInfo = (env) => {
+  const read = (k) => String(env?.[k] ?? voidEnv[k] ?? "").trim().toLowerCase();
   const hostnames = read(DOMAINS_VAR).split(",").map((h) => h.trim()).filter(Boolean);
   return { hostnames, canonical: read(CANONICAL_DOMAIN_VAR) || hostnames[0] || null };
 };
-
-export const domains: Plugin = {
-  manifest: { name: "domains", version: "0.1.0", tier: "official", voidbase: "*" },
+const domains = {
   info: (env) => domainsInfo(env),
 };
+
+// what the plugin does; its declaration is manifest.json beside this file, which the instance reads
+export default domains;

@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { canonicalRedirect, DOMAINS_KNOB, domainsDeploy, hostnamesOf, LEGACY_KNOB, SCOPE, validateHostnames } from "../../src/node/plugins/domains";
 import { ownsRule, redirectRule, ruleTag } from "../../src/node/zone-redirects";
 import type { DeployContext } from "../../src/node/deploy-plugin";
-import { CANONICAL_DOMAIN_VAR, DOMAINS_VAR, domains, domainsInfo } from "../../src/server/plugins/domains";
+import { CANONICAL_DOMAIN_VAR, DOMAINS_VAR, domains, domainsInfo } from "../support/plugins/domains";
 
 const ctxOf = (env: Record<string, string>, over: Partial<DeployContext> = {}): DeployContext => ({ name: "site", account: { id: "acc" }, api: null, env, config: {}, vars: {}, url: null, log: () => undefined, local: false, dryRun: false, ...over });
 

@@ -10,7 +10,7 @@ import { ApiError } from "../../src/server/errors";
 import { createKernel, load, runAfterRead } from "../../src/server/kernel";
 import { d1 } from "../../src/node/d1";
 import { auth, provider } from "../../src/server/plugins/auth";
-import { applyTranslations, configOf, dbSource, negotiateLocale, parseLocales, parseTranslatable, translations, translationsInfo, translationsWith, TRANSLATIONS_COLLECTION, type TranslationRow, type TranslationsSource } from "../../src/server/plugins/translations";
+import { applyTranslations, configOf, dbSource, negotiateLocale, parseLocales, parseTranslatable, translations, translationsInfo, translationsWith, TRANSLATIONS_COLLECTION, type TranslationRow, type TranslationsSource } from "../support/plugins/translations";
 import type { AppEnv, AuthRecord, Bindings } from "../../src/server/types";
 
 // the collections: two declared translatable, one that expands into a declared one, one the knob never names

@@ -29,14 +29,8 @@ import { auth as authPlugin } from "./plugins/auth";
 import { backups as backupsPlugin } from "./plugins/backups";
 import { installer as installerPlugin } from "./plugins/installer";
 import { openapi as openapiPlugin } from "./plugins/openapi";
-import { mcp as mcpPlugin } from "./plugins/mcp";
-import { seo as seoPlugin } from "./plugins/seo";
 import { mail as mailPlugin } from "./plugins/mail";
-import { ai as aiPlugin } from "./plugins/ai";
 import { observability as observabilityPlugin } from "./plugins/observability";
-import { translations as translationsPlugin } from "./plugins/translations";
-import { previews as previewsPlugin } from "./plugins/previews";
-import { domains as domainsPlugin } from "./plugins/domains";
 import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
 import { SHIPPED, SHIPPED_FACTS, type ShippedName } from "./plugins/shipped";
@@ -589,7 +583,7 @@ mountCronsApi(app);
 export const kernel = createKernel(app);
 // What ships, minus what the project turned off, minus what an installed plugin shadows by name; then what the
 // project installed (pb_plugins, verified against voidbase.lock by the platform module). One graph, resolved once.
-const shipped = [authPlugin, observabilityPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION, undefined, () => whatLoaded(kernel).plugins), openapiPlugin, mcpPlugin, seoPlugin, mailPlugin, aiPlugin, translationsPlugin, previewsPlugin, domainsPlugin];
+const shipped = [authPlugin, observabilityPlugin, realtimePlugin, hardeningPlugin, backupsPlugin, installerPlugin(VERSION, undefined, () => whatLoaded(kernel).plugins), openapiPlugin, mailPlugin];
 if (shipped.map((p) => p.manifest.name).join() !== SHIPPED.join()) throw new Error("voidbase: src/server/plugins/shipped.ts disagrees with the plugins app.ts loads");
 // and the facts the CLI reads out of that file without importing any of this: tier, provides, requires
 const factsOf = (f: { tier: string; provides?: readonly string[]; requires?: readonly string[] }) => JSON.stringify([f.tier, f.provides ?? [], f.requires ?? []]);

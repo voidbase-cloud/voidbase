@@ -6,11 +6,11 @@ import { provideAuthLookup } from "../../src/server/auth-slot";
 import { invalidateCollections, type Collection } from "../../src/server/collections/model";
 import { ApiError } from "../../src/server/errors";
 import { createKernel, load } from "../../src/server/kernel";
-import { aiRoute, aiWith, DEFAULT_MODEL, NOT_BOUND, RATE, toolCallsOf } from "../../src/server/plugins/ai";
+import { aiRoute, aiWith, DEFAULT_MODEL, NOT_BOUND, RATE, toolCallsOf } from "../support/plugins/ai";
 import { auth, provider } from "../../src/server/plugins/auth";
 import { openapiWith } from "../../src/server/plugins/openapi";
 // mcp provides mcp@1, which the ai plugin builds its tools on
-import { mcpWith } from "../../src/server/plugins/mcp";
+import { mcpWith } from "../support/plugins/mcp";
 import type { AppEnv, AuthRecord, Bindings } from "../../src/server/types";
 
 // the collections cache is per isolate, and other files in the same test process fill it; a test here must not

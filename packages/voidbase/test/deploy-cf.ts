@@ -297,7 +297,7 @@ try {
   // its resources its own, workers.dev on, the production hostnames left alone; then the account side against the
   // mock: the pull request comment, the listing, the removal with everything the preview owns, the prune
   {
-    const { previewWorkerName } = await import("../src/server/plugins/previews");
+    const { previewWorkerName } = await import("../src/server/plugins/previews-names");
     const { previewsDeploy, MARKER } = await import("../src/node/plugins/previews");
     const { CfApi } = await import("../src/cloud/rest");
     const api = new CfApi("cf-test-token", MOCK);

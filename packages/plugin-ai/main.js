@@ -34,62 +34,44 @@
 // GET /api/plugins reports `ai: { via: "none" }`. The rate cap is per caller, in memory, so per isolate: the
 // hardening plugin's rules are keyed by settings, not by a route a plugin registers, and Workers AI is metered.
 import { env as voidEnv } from "@voidbase-cloud/voidbase/platform";
-import type { Context, Hono } from "hono";
 import { all, ApiError, badRequest, collectionId, createRecord, deleteRecord, findCollection, ident, loadCollections, notFound, one, requireAuth, rowToValues, updateRecord, VERSION, listCollections, loadSettings } from "@voidbase-cloud/voidbase/sdk";
-import type { RealtimeClient } from "@voidbase-cloud/voidbase/interfaces";
-import { lookup, onBootstrap, type Kernel } from "@voidbase-cloud/voidbase/kernel";
-import type { AppEnv, AuthRecord, Bindings, RecordContext, Row } from "@voidbase-cloud/voidbase/types";
+import { lookup, onBootstrap } from "@voidbase-cloud/voidbase/kernel";
 import { ensureCollections } from "@voidbase-cloud/voidbase/plugins/collections";
-import type { Plugin } from "@voidbase-cloud/voidbase/plugins";
-// The API's tools come from whoever provides mcp@1, looked up per request: an instance without mcp still chats, with no
-// tools. ai imports no other plugin, not even for its types (voidbase-stories plugin-repos.feature), so what it uses of
-// mcp@1 is described here: a tool as mcp lists it for the caller, and a document passed back as it came.
-type Document = Record<string, unknown>;
-interface Tool { name: string; description: string; inputSchema: Record<string, unknown> }
-interface McpTools {
-  documentFor(source: OpenApiSource, c: Context<AppEnv>, version: string): Promise<Document>;
-  runTool(app: Hono<AppEnv>, c: Context<AppEnv>, doc: Document, tool: Tool, args: Record<string, unknown>): Promise<{ text: string }>;
-  toolsOf(doc: Document): Tool[];
-}
-import type { OpenApiSource } from "@voidbase-cloud/voidbase/plugins/openapi";
-
 import { AI_BINDING, AI_VAR, DEFAULT_MODEL, aiModelOf } from "@voidbase-cloud/voidbase/plugins/ai-binding";
 /** the instance's own collections and settings: what the shipped ai plugin reads */
-const defaultSource: OpenApiSource = {
+const defaultSource = {
   collections: (env) => listCollections(env.DB),
   appName: async (env) => String((await loadSettings(env.DB)).meta.appName ?? ""),
 };
-
 /** what runs a tool when no plugin provides mcp@1; never called, since there are then no tools to call */
-const noTool: McpTools["runTool"] = async () => { throw new Error("no plugin provides mcp@1, so there are no tools to run"); };
-
+const noTool = async () => { throw new Error("no plugin provides mcp@1, so there are no tools to run"); };
 export { AI_BINDING, AI_VAR, DEFAULT_MODEL, aiModelOf };
-
 /** the model these bindings name: the knob's value, or the default when the binding is there and the knob says only that */
-export const aiModel = (env: Bindings): string =>
-  aiModelOf(String((env as unknown as Record<string, unknown>)[AI_VAR] ?? (voidEnv as Record<string, unknown>)[AI_VAR] ?? "")) || (env.AI ? DEFAULT_MODEL : "");
-
+export const aiModel = (env) => aiModelOf(String(env[AI_VAR] ?? voidEnv[AI_VAR] ?? "")) || (env.AI ? DEFAULT_MODEL : "");
 export const AI_CONVERSATIONS = "ai_conversations";
 export const AI_MESSAGES = "ai_messages";
-export type AiCollection = typeof AI_CONVERSATIONS | typeof AI_MESSAGES;
-
 /** whether the two collections exist on this instance: they do once a request carried the binding through bootstrap */
-export async function hasConversations(env: Bindings): Promise<boolean> {
+export async function hasConversations(env) {
   // No database, no conversations, and no lookup: the collections cache is per isolate rather than per database, so
   // asking it without one would answer for whichever database filled it last (a test process with several instances
   // did exactly that in CI, 2026-09-11).
-  if (!env.DB) return false;
-  try { return !!(await findCollection(env.DB, AI_CONVERSATIONS)); } catch { return false; }
+  if (!env.DB)
+    return false;
+  try {
+    return !!(await findCollection(env.DB, AI_CONVERSATIONS));
+  }
+  catch {
+    return false;
+  }
 }
-
 /** what GET /api/plugins says in its `ai` field */
-export async function aiRoute(env: Bindings): Promise<{ via: "none" } | { via: "workers-ai"; model: string; conversations: boolean }> {
-  if (!env.AI) return { via: "none" };
+export async function aiRoute(env) {
+  if (!env.AI)
+    return { via: "none" };
   return { via: "workers-ai", model: aiModel(env), conversations: await hasConversations(env) };
 }
-
 export const NOT_BOUND = `Workers AI is not bound; deploy with ${AI_VAR}=1`;
-export const RATE = { limit: 30, periodMs: 60_000 } as const;
+export const RATE = { limit: 30, periodMs: 60_000 };
 export const DEFAULT_MAX_STEPS = 6;
 export const MAX_STEPS_CEILING = 20;
 /** how much of a tool's answer a step reports */
@@ -98,50 +80,58 @@ export const RESULT_SUMMARY = 500;
 export const HISTORY = 40;
 /** how much of the first user message becomes the title of a conversation made without one */
 export const TITLE_LENGTH = 60;
-export const MESSAGE_ROLES = ["user", "assistant", "tool", "system"] as const;
-
-// --- the shapes Workers AI answers and takes (pinned to @cloudflare/workers-types 4.20260702.1 and ai-utils) -------
-type Message = { role: string; content: string; name?: string };
-type ToolCall = { name: string; arguments: Record<string, unknown> };
-type AiOutput = { response?: string; tool_calls?: unknown[]; usage?: { total_tokens?: number } } | string;
-type AiTool = { type: "function"; function: { name: string; description: string; parameters: { type: "object"; properties: Record<string, unknown>; required: string[] } } };
-
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const str = (v: unknown): string => (v === null || v === undefined ? "" : String(v));
-
+export const MESSAGE_ROLES = ["user", "assistant", "tool", "system"];
+const isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+const str = (v) => (v === null || v === undefined ? "" : String(v));
 /** the tool list in Workers AI's OpenAI-style `tools` shape, from the MCP tool list */
-export const aiToolsOf = (tools: Tool[]): AiTool[] =>
-  tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: { type: "object", properties: isObject(t.inputSchema.properties) ? t.inputSchema.properties : {}, required: Array.isArray(t.inputSchema.required) ? (t.inputSchema.required as string[]) : [] } } }));
-
+export const aiToolsOf = (tools) => tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: { type: "object", properties: isObject(t.inputSchema.properties) ? t.inputSchema.properties : {}, required: Array.isArray(t.inputSchema.required) ? t.inputSchema.required : [] } } }));
 /** the calls a response carries, in the legacy `{ name, arguments }` shape or the OpenAI `{ function: { name, arguments } }` one */
-export function toolCallsOf(output: AiOutput): ToolCall[] {
-  if (!isObject(output) || !Array.isArray(output.tool_calls)) return [];
-  const calls: ToolCall[] = [];
+export function toolCallsOf(output) {
+  if (!isObject(output) || !Array.isArray(output.tool_calls))
+    return [];
+  const calls = [];
   for (const raw of output.tool_calls) {
-    if (!isObject(raw)) continue;
+    if (!isObject(raw))
+      continue;
     const fn = isObject(raw.function) ? raw.function : raw;
     const name = typeof fn.name === "string" ? fn.name : "";
-    if (!name) continue;
-    let args: unknown = fn.arguments;
-    if (typeof args === "string") { try { args = JSON.parse(args); } catch { args = {}; } }
+    if (!name)
+      continue;
+    let args = fn.arguments;
+    if (typeof args === "string") {
+      try {
+        args = JSON.parse(args);
+      }
+      catch {
+        args = {};
+      }
+    }
     calls.push({ name, arguments: isObject(args) ? args : {} });
   }
   return calls;
 }
-
-const responseOf = (output: AiOutput): string => (typeof output === "string" ? output : typeof output.response === "string" ? output.response : "");
-const tokensOf = (output: AiOutput): number => (isObject(output) && isObject(output.usage) && typeof output.usage.total_tokens === "number" ? output.usage.total_tokens : 0);
-
+const responseOf = (output) => (typeof output === "string" ? output : typeof output.response === "string" ? output.response : "");
+const tokensOf = (output) => (isObject(output) && isObject(output.usage) && typeof output.usage.total_tokens === "number" ? output.usage.total_tokens : 0);
 /**
  * The text deltas of a streamed call. Workers AI streams SSE: `data: {"response": "..."}` per chunk and
  * `data: [DONE]` at the end, which is how Cloudflare's workers-ai-provider reads it too. A plain answer (a string,
  * or an object with `response`) is one delta, so a binding that did not stream still answers.
  */
-export async function* deltasOf(output: unknown): AsyncGenerator<string> {
-  if (typeof output === "string") { if (output) yield output; return; }
-  if (!isObject(output)) return;
-  if (typeof output.getReader !== "function") { const text = responseOf(output as AiOutput); if (text) yield text; return; }
-  const reader = (output as unknown as ReadableStream<Uint8Array | string>).getReader();
+export async function* deltasOf(output) {
+  if (typeof output === "string") {
+    if (output)
+      yield output;
+    return;
+  }
+  if (!isObject(output))
+    return;
+  if (typeof output.getReader !== "function") {
+    const text = responseOf(output);
+    if (text)
+      yield text;
+    return;
+  }
+  const reader = output.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   try {
@@ -151,52 +141,65 @@ export async function* deltasOf(output: unknown): AsyncGenerator<string> {
       const lines = buffer.split("\n");
       buffer = done ? "" : (lines.pop() ?? "");
       for (const line of lines) {
-        if (!line.startsWith("data:")) continue;
+        if (!line.startsWith("data:"))
+          continue;
         const data = line.slice(5).trim();
-        if (!data || data === "[DONE]") continue;
-        try { const json: unknown = JSON.parse(data); if (isObject(json) && typeof json.response === "string" && json.response) yield json.response; } catch { /* not a chunk */ }
+        if (!data || data === "[DONE]")
+          continue;
+        try {
+          const json = JSON.parse(data);
+          if (isObject(json) && typeof json.response === "string" && json.response)
+            yield json.response;
+        }
+        catch { /* not a chunk */ }
       }
-      if (done) return;
+      if (done)
+        return;
     }
-  } finally { reader.releaseLock(); }
+  }
+  finally {
+    reader.releaseLock();
+  }
 }
-
 /** who the caller is, for the system prompt */
-export function describeCaller(auth: AuthRecord | null | undefined): string {
-  if (!auth) return "anonymous: nobody is signed in, so only the public API is reachable";
-  if (auth.collection.name === "_superusers") return `a superuser (${String(auth.row.id)}): every collection and every write is reachable`;
+export function describeCaller(auth) {
+  if (!auth)
+    return "anonymous: nobody is signed in, so only the public API is reachable";
+  if (auth.collection.name === "_superusers")
+    return `a superuser (${String(auth.row.id)}): every collection and every write is reachable`;
   return `a signed-in record of the ${auth.collection.name} collection (id ${String(auth.row.id)}): what its own token may call is reachable`;
 }
-
-export const systemPrompt = (appName: string, auth: AuthRecord | null | undefined, toolCount: number) =>
-  `You are the assistant of ${JSON.stringify(appName || "voidbase")}, a voidbase instance (a PocketBase-compatible backend of collections and records). ` +
+export const systemPrompt = (appName, auth, toolCount) => `You are the assistant of ${JSON.stringify(appName || "voidbase")}, a voidbase instance (a PocketBase-compatible backend of collections and records). ` +
   `The person asking is ${describeCaller(auth)}. ` +
   (toolCount ? `Use the tools for facts: they are this instance's own API as this caller may call it (${toolCount} tools), so list or get records before stating what they hold, and never invent an id, a field or a value. A tool's answer is the instance's answer; a non-2xx is a refusal to report, not to work around. ` : "") +
   `Answer briefly and plainly.`;
-
 /** the title a conversation gets from its first user message: one line, the first characters */
-export const titleOf = (content: string): string => content.replace(/\s+/g, " ").trim().slice(0, TITLE_LENGTH);
-
-// --- the rate cap: per caller, in memory, per isolate ----------------------------------------------------------------
-type Windows = Map<string, { start: number; count: number }>;
-const callerKey = (c: Context<AppEnv>) => {
+export const titleOf = (content) => content.replace(/\s+/g, " ").trim().slice(0, TITLE_LENGTH);
+const callerKey = (c) => {
   const auth = c.get("auth");
-  if (auth) return `${auth.collection.name}:${String(auth.row.id)}`;
+  if (auth)
+    return `${auth.collection.name}:${String(auth.row.id)}`;
   return `ip:${c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "anonymous"}`;
 };
-function allow(windows: Windows, key: string, now: number): boolean {
+function allow(windows, key, now) {
   const w = windows.get(key);
-  if (!w || now - w.start >= RATE.periodMs) { windows.set(key, { start: now, count: 1 }); if (windows.size > 10_000) for (const [k, v] of windows) if (now - v.start >= RATE.periodMs) windows.delete(k); return true; }
+  if (!w || now - w.start >= RATE.periodMs) {
+    windows.set(key, { start: now, count: 1 });
+    if (windows.size > 10_000)
+      for (const [k, v] of windows)
+        if (now - v.start >= RATE.periodMs)
+          windows.delete(k);
+    return true;
+  }
   w.count++;
   return w.count <= RATE.limit;
 }
-
 // --- the collections -------------------------------------------------------------------------------------------------
 /**
  * The two collections, as POST /api/collections would take them; `users` is the relation's target when it exists.
  * Reads are the owner's; creates and updates are superuser-only, which is what makes the routes below the way in.
  */
-export async function conversationDefinitions(db: D1Database): Promise<Record<string, unknown>[]> {
+export async function conversationDefinitions(db) {
   const users = (await findCollection(db, "users"))?.id ?? collectionId("auth", "users");
   const conversations = collectionId("base", AI_CONVERSATIONS);
   const own = "owner = @request.auth.id", ownConversation = "conversation.owner = @request.auth.id";
@@ -230,26 +233,8 @@ export async function conversationDefinitions(db: D1Database): Promise<Record<st
     },
   ];
 }
-
-// --- the rows --------------------------------------------------------------------------------------------------------
-/** where the conversations live: D1 through the records service, or whatever a test hands in */
-export interface AiRows {
-  /** one row by id, or null */
-  get(collection: AiCollection, id: string): Promise<Row | null>;
-  /** a user's conversations, newest first (by last message, then by creation): one page and the total */
-  conversations(user: string, page: number, perPage: number): Promise<{ items: Row[]; totalItems: number }>;
-  /** a conversation's messages oldest first; only the last `last` of them when given */
-  messages(conversation: string, last?: number): Promise<Row[]>;
-  create(collection: AiCollection, values: Row): Promise<Row>;
-  update(collection: AiCollection, id: string, values: Row): Promise<Row>;
-  /** a deleted conversation takes its messages with it, as the records service does with cascadeDelete */
-  delete(collection: AiCollection, id: string): Promise<void>;
-}
-export type WaitUntil = (p: Promise<unknown>) => void;
-export type AiRowsFactory = (env: Bindings, realtime?: RealtimeClient, waitUntil?: WaitUntil) => AiRows;
-
 /** a realtime client for writes with nobody watching: nothing is recorded */
-const idleRealtime: RealtimeClient = {
+const idleRealtime = {
   active: () => false,
   publish: async () => undefined,
   presence: async () => null,
@@ -257,28 +242,28 @@ const idleRealtime: RealtimeClient = {
   controlClient: async () => undefined,
   openSocket: async () => { throw new Error("voidbase: no realtime hub here"); },
 };
-
 /** the rows in D1, written through the records service as a superuser so hooks fire and realtime publishes */
-export function d1AiRows(env: Bindings, realtime?: RealtimeClient, waitUntil?: WaitUntil): AiRows {
-  let pending: Promise<RecordContext> | undefined;
-  const ctx = () => (pending ??= (async (): Promise<RecordContext> => ({
+export function d1AiRows(env, realtime, waitUntil) {
+  let pending;
+  const ctx = () => (pending ??= (async () => ({
     db: env.DB, storage: env.STORAGE, auth: null, superuser: true,
     request: { auth: null, method: "POST", query: {}, headers: {}, body: {}, context: "default" },
     collections: await loadCollections(env.DB),
     realtime: realtime ?? idleRealtime,
     ...(waitUntil ? { waitUntil } : {}),
   }))());
-  const collection = async (name: AiCollection) => {
+  const collection = async (name) => {
     const c = (await ctx()).collections.get(name);
-    if (!c) throw new ApiError(503, `the ai plugin's collection "${name}" does not exist yet; it is created on the first request that carries the Workers AI binding (${AI_VAR}=1)`);
+    if (!c)
+      throw new ApiError(503, `the ai plugin's collection "${name}" does not exist yet; it is created on the first request that carries the Workers AI binding (${AI_VAR}=1)`);
     return c;
   };
-  const values = async (name: AiCollection, rows: Row[]) => { const c = await collection(name); return rows.map((r) => rowToValues(c, r)); };
+  const values = async (name, rows) => { const c = await collection(name); return rows.map((r) => rowToValues(c, r)); };
   return {
     async get(name, id) { return (await values(name, await all(env.DB, `SELECT * FROM ${ident(name)} WHERE id = ? LIMIT 1`, [id])))[0] ?? null; },
     async conversations(user, page, perPage) {
       const items = await values(AI_CONVERSATIONS, await all(env.DB, `SELECT * FROM ${ident(AI_CONVERSATIONS)} WHERE ${ident("owner")} = ? ORDER BY ${ident("lastMessageAt")} DESC, created DESC, rowid DESC LIMIT ? OFFSET ?`, [user, perPage, (page - 1) * perPage]));
-      const total = await one<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM ${ident(AI_CONVERSATIONS)} WHERE ${ident("owner")} = ?`, [user]);
+      const total = await one(env.DB, `SELECT COUNT(*) AS n FROM ${ident(AI_CONVERSATIONS)} WHERE ${ident("owner")} = ?`, [user]);
       return { items, totalItems: Number(total?.n ?? 0) };
     },
     async messages(conversation, last) {
@@ -287,63 +272,72 @@ export function d1AiRows(env: Bindings, realtime?: RealtimeClient, waitUntil?: W
         : await all(env.DB, `SELECT * FROM ${ident(AI_MESSAGES)} WHERE conversation = ? ORDER BY created ASC, rowid ASC`, [conversation]);
       return values(AI_MESSAGES, rows);
     },
-    async create(name, v) { return (await createRecord(await ctx(), await collection(name), v, {})) as Row; },
-    async update(name, id, v) { return (await updateRecord(await ctx(), await collection(name), id, v, {})) as Row; },
+    async create(name, v) { return (await createRecord(await ctx(), await collection(name), v, {})); },
+    async update(name, id, v) { return (await updateRecord(await ctx(), await collection(name), id, v, {})); },
     async delete(name, id) { await deleteRecord(await ctx(), await collection(name), id); },
   };
 }
-
-// --- the loop --------------------------------------------------------------------------------------------------------
-export interface ChatRequest { messages: { role: string; content: string }[]; model?: string; tools?: boolean; maxSteps?: number; stream?: boolean }
-export interface ChatStep { tool: string; arguments: Record<string, unknown>; result: string }
-export interface ChatResponse { message: { role: "assistant"; content: string }; steps: ChatStep[]; model: string }
-
-const ROLES = new Set<string>(MESSAGE_ROLES);
-function parseChat(body: unknown): ChatRequest | string {
-  if (!isObject(body)) return "The body must be a JSON object.";
-  if (!Array.isArray(body.messages) || !body.messages.length) return "messages must be a non-empty array of { role, content }.";
-  const messages: ChatRequest["messages"] = [];
+const ROLES = new Set(MESSAGE_ROLES);
+function parseChat(body) {
+  if (!isObject(body))
+    return "The body must be a JSON object.";
+  if (!Array.isArray(body.messages) || !body.messages.length)
+    return "messages must be a non-empty array of { role, content }.";
+  const messages = [];
   for (const m of body.messages) {
-    if (!isObject(m) || typeof m.role !== "string" || !ROLES.has(m.role) || typeof m.content !== "string") return "Each message needs a role (user, assistant, system or tool) and a string content.";
+    if (!isObject(m) || typeof m.role !== "string" || !ROLES.has(m.role) || typeof m.content !== "string")
+      return "Each message needs a role (user, assistant, system or tool) and a string content.";
     messages.push({ role: m.role, content: m.content });
   }
-  if (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim())) return "model must be a Workers AI model name.";
-  if (body.tools !== undefined && typeof body.tools !== "boolean") return "tools must be a boolean.";
+  if (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim()))
+    return "model must be a Workers AI model name.";
+  if (body.tools !== undefined && typeof body.tools !== "boolean")
+    return "tools must be a boolean.";
   const steps = parseMaxSteps(body.maxSteps);
-  if (typeof steps === "string") return steps;
-  if (body.stream === true) return `stream is not supported here: Workers AI cannot stream a call that may answer with tool calls, so the answer is one JSON body. POST /api/ai/conversations/:id/messages streams the final answer of a stored conversation.`;
-  return { messages, model: body.model as string | undefined, tools: body.tools as boolean | undefined, maxSteps: steps };
+  if (typeof steps === "string")
+    return steps;
+  if (body.stream === true)
+    return `stream is not supported here: Workers AI cannot stream a call that may answer with tool calls, so the answer is one JSON body. POST /api/ai/conversations/:id/messages streams the final answer of a stored conversation.`;
+  return { messages, model: body.model, tools: body.tools, maxSteps: steps };
 }
-function parseMaxSteps(v: unknown): number | undefined | string {
-  if (v === undefined) return undefined;
-  if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > MAX_STEPS_CEILING) return `maxSteps must be an integer from 0 to ${MAX_STEPS_CEILING}.`;
+function parseMaxSteps(v) {
+  if (v === undefined)
+    return undefined;
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > MAX_STEPS_CEILING)
+    return `maxSteps must be an integer from 0 to ${MAX_STEPS_CEILING}.`;
   return v;
 }
-
-interface Loop { model: string; messages: Message[]; tools: Tool[]; doc: Document | null; runTool: McpTools["runTool"]; maxSteps: number }
-interface LoopResult { content: string; steps: ChatStep[]; tokens: number; /** maxSteps was reached and `content` says so */ stopped: boolean }
-
 /** the function-calling loop: ask, run what the model calls in process, feed the answers back, until it answers or maxSteps is reached */
-async function runLoop(app: Hono<AppEnv>, c: Context<AppEnv>, loop: Loop): Promise<LoopResult> {
+async function runLoop(app, c, loop) {
   const { messages, tools, doc } = loop;
   const aiTools = aiToolsOf(tools);
-  const steps: ChatStep[] = [];
+  const steps = [];
   let content = "", tokens = 0, stopped = false;
-  for (let step = 0; ; step++) {
-    const output = (await c.env.AI!.run(loop.model, { messages, ...(aiTools.length ? { tools: aiTools } : {}) })) as AiOutput;
+  for (let step = 0;; step++) {
+    const output = (await c.env.AI.run(loop.model, { messages, ...(aiTools.length ? { tools: aiTools } : {}) }));
     content = responseOf(output);
     tokens += tokensOf(output);
     const calls = aiTools.length ? toolCallsOf(output) : [];
-    if (!calls.length) break;
-    if (step >= loop.maxSteps) { stopped = true; content = content || `I stopped after ${loop.maxSteps} tool calls without a final answer; ask again with a higher maxSteps or a narrower question.`; break; }
+    if (!calls.length)
+      break;
+    if (step >= loop.maxSteps) {
+      stopped = true;
+      content = content || `I stopped after ${loop.maxSteps} tool calls without a final answer; ask again with a higher maxSteps or a narrower question.`;
+      break;
+    }
     for (const call of calls) {
       messages.push({ role: "assistant", content: JSON.stringify(call) });
       const tool = tools.find((t) => t.name === call.name);
-      let result: string;
-      if (!tool) result = JSON.stringify({ error: `There is no tool called ${JSON.stringify(call.name)} for this caller.` });
+      let result;
+      if (!tool)
+        result = JSON.stringify({ error: `There is no tool called ${JSON.stringify(call.name)} for this caller.` });
       else {
-        try { result = (await loop.runTool(app, c, doc!, tool, call.arguments)).text; }
-        catch (err) { result = JSON.stringify({ error: err instanceof Error ? err.message : String(err) }); }
+        try {
+          result = (await loop.runTool(app, c, doc, tool, call.arguments)).text;
+        }
+        catch (err) {
+          result = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+        }
       }
       messages.push({ role: "tool", name: call.name, content: result });
       steps.push({ tool: call.name, arguments: call.arguments, result: result.slice(0, RESULT_SUMMARY) });
@@ -351,75 +345,96 @@ async function runLoop(app: Hono<AppEnv>, c: Context<AppEnv>, loop: Loop): Promi
   }
   return { content, steps, tokens, stopped };
 }
-
 // --- the routes ------------------------------------------------------------------------------------------------------
 const MAX_PER_PAGE = 500, DEFAULT_PER_PAGE = 30;
-const sse = (event: unknown) => `data: ${JSON.stringify(event)}\n\n`;
-const waitUntilOf = (c: Context<AppEnv>): WaitUntil | undefined => {
-  try { const ctx = c.executionCtx; return (p) => ctx.waitUntil(p); } catch { return undefined; }
+const sse = (event) => `data: ${JSON.stringify(event)}\n\n`;
+const waitUntilOf = (c) => {
+  try {
+    const ctx = c.executionCtx;
+    return (p) => ctx.waitUntil(p);
+  }
+  catch {
+    return undefined;
+  }
 };
-
-function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource, now: () => number, rowsFactory: AiRowsFactory, mcpOf: () => McpTools | undefined) {
-  const windows: Windows = new Map();
-  const rowsFor = (c: Context<AppEnv>) => rowsFactory(c.env, c.get("realtime"), waitUntilOf(c));
-  const readJson = async (c: Context<AppEnv>): Promise<Record<string, unknown>> => {
-    let body: unknown;
-    try { body = await c.req.json(); } catch { throw badRequest("The body is not JSON."); }
-    if (!isObject(body)) throw badRequest("The body must be a JSON object.");
+function mountRoutes(app, version, source, now, rowsFactory, mcpOf) {
+  const windows = new Map();
+  const rowsFor = (c) => rowsFactory(c.env, c.get("realtime"), waitUntilOf(c));
+  const readJson = async (c) => {
+    let body;
+    try {
+      body = await c.req.json();
+    }
+    catch {
+      throw badRequest("The body is not JSON.");
+    }
+    if (!isObject(body))
+      throw badRequest("The body must be a JSON object.");
     return body;
   };
   /** the caller's own conversation, or 404: somebody else's is not distinguished from none */
-  const owned = async (rows: AiRows, id: string, auth: AuthRecord): Promise<Row> => {
+  const owned = async (rows, id, auth) => {
     const row = await rows.get(AI_CONVERSATIONS, id);
-    if (!row || str(row.owner) !== str(auth.row.id)) throw notFound(`There is no conversation ${JSON.stringify(id)} of yours.`);
+    if (!row || str(row.owner) !== str(auth.row.id))
+      throw notFound(`There is no conversation ${JSON.stringify(id)} of yours.`);
     return row;
   };
-  const capped = (c: Context<AppEnv>): Response | null => {
-    if (allow(windows, callerKey(c), now())) return null;
+  const capped = (c) => {
+    if (allow(windows, callerKey(c), now()))
+      return null;
     c.header("Retry-After", String(Math.ceil(RATE.periodMs / 1000)));
     return c.json({ message: `Too many requests: ${RATE.limit} per minute per caller.` }, 429);
   };
-  const toolsFor = async (c: Context<AppEnv>, useTools: boolean): Promise<{ doc: Document | null; tools: Tool[]; appName: string; runTool: McpTools["runTool"] }> => {
+  const toolsFor = async (c, useTools) => {
     const mcp = useTools ? mcpOf() : undefined;
-    const doc: Document | null = mcp ? await mcp.documentFor(source, c, version) : null;
+    const doc = mcp ? await mcp.documentFor(source, c, version) : null;
     const appName = (await source.appName(c.env).catch(() => "")).trim();
     return { doc, tools: doc && mcp ? mcp.toolsOf(doc) : [], appName, runTool: mcp?.runTool ?? noTool };
   };
-
-  app.post("/api/ai/chat", async (c: Context<AppEnv>) => {
+  app.post("/api/ai/chat", async (c) => {
     c.header("Cache-Control", "no-store");
-    if (!c.env.AI) return c.json({ message: NOT_BOUND }, 503);
+    if (!c.env.AI)
+      return c.json({ message: NOT_BOUND }, 503);
     const over = capped(c);
-    if (over) return over;
-    let body: unknown;
-    try { body = await c.req.json(); } catch { return c.json({ message: "The body is not JSON." }, 400); }
+    if (over)
+      return over;
+    let body;
+    try {
+      body = await c.req.json();
+    }
+    catch {
+      return c.json({ message: "The body is not JSON." }, 400);
+    }
     const parsed = parseChat(body);
-    if (typeof parsed === "string") return c.json({ message: parsed }, 400);
+    if (typeof parsed === "string")
+      return c.json({ message: parsed }, 400);
     const model = parsed.model?.trim() || aiModel(c.env);
     // the caller's tools: the MCP list for this token, none when the request turned them off
     const { doc, tools, appName, runTool } = await toolsFor(c, parsed.tools ?? true);
-    const messages: Message[] = [{ role: "system", content: systemPrompt(appName, c.get("auth"), tools.length) }, ...parsed.messages];
+    const messages = [{ role: "system", content: systemPrompt(appName, c.get("auth"), tools.length) }, ...parsed.messages];
     const { content, steps } = await runLoop(app, c, { model, messages, tools, doc, runTool, maxSteps: parsed.maxSteps ?? DEFAULT_MAX_STEPS });
-    const answer: ChatResponse = { message: { role: "assistant", content }, steps, model };
+    const answer = { message: { role: "assistant", content }, steps, model };
     return c.json(answer);
   });
-
   // a conversation of the signed-in caller: the routes are the only way to create and append, so the rows are the
   // plugin's and a subscriber on ai_messages sees each message as it is stored
-  app.post("/api/ai/conversations", async (c: Context<AppEnv>) => {
+  app.post("/api/ai/conversations", async (c) => {
     c.header("Cache-Control", "no-store");
     const auth = requireAuth(c);
-    if (!c.env.AI) return c.json({ message: NOT_BOUND }, 503);
+    if (!c.env.AI)
+      return c.json({ message: NOT_BOUND }, 503);
     const body = await readJson(c);
-    for (const k of ["title", "model", "system"] as const) if (body[k] !== undefined && typeof body[k] !== "string") throw badRequest(`${k} must be a string.`);
-    if (body.tools !== undefined && typeof body.tools !== "boolean") throw badRequest("tools must be a boolean.");
+    for (const k of ["title", "model", "system"])
+      if (body[k] !== undefined && typeof body[k] !== "string")
+        throw badRequest(`${k} must be a string.`);
+    if (body.tools !== undefined && typeof body.tools !== "boolean")
+      throw badRequest("tools must be a boolean.");
     const row = await rowsFor(c).create(AI_CONVERSATIONS, {
       owner: str(auth.row.id), user: auth.collection.name === "users" ? str(auth.row.id) : "", title: titleOf(str(body.title)), model: str(body.model).trim(), system: str(body.system), tools: body.tools ?? true, lastMessageAt: "",
     });
     return c.json(row);
   });
-
-  app.get("/api/ai/conversations", async (c: Context<AppEnv>) => {
+  app.get("/api/ai/conversations", async (c) => {
     c.header("Cache-Control", "no-store");
     const auth = requireAuth(c);
     const page = Math.max(1, Math.floor(Number(c.req.query("page") ?? 1) || 1));
@@ -427,83 +442,91 @@ function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource, 
     const { items, totalItems } = await rowsFor(c).conversations(str(auth.row.id), page, perPage);
     return c.json({ page, perPage, totalItems, totalPages: Math.ceil(totalItems / perPage), items });
   });
-
-  app.get("/api/ai/conversations/:id", async (c: Context<AppEnv>) => {
+  app.get("/api/ai/conversations/:id", async (c) => {
     c.header("Cache-Control", "no-store");
     const auth = requireAuth(c);
     const rows = rowsFor(c);
     const conversation = await owned(rows, c.req.param("id") ?? "", auth);
     return c.json({ ...conversation, messages: await rows.messages(str(conversation.id)) });
   });
-
-  app.delete("/api/ai/conversations/:id", async (c: Context<AppEnv>) => {
+  app.delete("/api/ai/conversations/:id", async (c) => {
     const auth = requireAuth(c);
     const rows = rowsFor(c);
     const conversation = await owned(rows, c.req.param("id") ?? "", auth);
     await rows.delete(AI_CONVERSATIONS, str(conversation.id));
     return c.body(null, 204);
   });
-
-  app.post("/api/ai/conversations/:id/messages", async (c: Context<AppEnv>) => {
+  app.post("/api/ai/conversations/:id/messages", async (c) => {
     c.header("Cache-Control", "no-store");
     const auth = requireAuth(c);
-    if (!c.env.AI) return c.json({ message: NOT_BOUND }, 503);
+    if (!c.env.AI)
+      return c.json({ message: NOT_BOUND }, 503);
     const over = capped(c);
-    if (over) return over;
+    if (over)
+      return over;
     const rows = rowsFor(c);
     const conversation = await owned(rows, c.req.param("id") ?? "", auth);
     const id = str(conversation.id);
     const body = await readJson(c);
     const content = typeof body.content === "string" ? body.content : "";
-    if (!content.trim()) throw badRequest("content must be a non-empty string.");
+    if (!content.trim())
+      throw badRequest("content must be a non-empty string.");
     const maxSteps = parseMaxSteps(body.maxSteps);
-    if (typeof maxSteps === "string") throw badRequest(maxSteps);
-    if (body.stream !== undefined && typeof body.stream !== "boolean") throw badRequest("stream must be a boolean.");
+    if (typeof maxSteps === "string")
+      throw badRequest(maxSteps);
+    if (body.stream !== undefined && typeof body.stream !== "boolean")
+      throw badRequest("stream must be a boolean.");
     const model = str(conversation.model).trim() || aiModel(c.env);
     const useTools = conversation.tools !== false;
     const { doc, tools, appName, runTool } = await toolsFor(c, useTools);
     // the user's message is stored first, so a subscriber sees it before the answer and the history includes it
     await rows.create(AI_MESSAGES, { conversation: id, role: "user", content });
     const history = await rows.messages(id, HISTORY);
-    const messages: Message[] = [
+    const messages = [
       { role: "system", content: systemPrompt(appName, auth, tools.length) },
       ...(str(conversation.system).trim() ? [{ role: "system", content: str(conversation.system) }] : []),
       ...history.filter((m) => m.role === "user" || m.role === "assistant" || m.role === "system").map((m) => ({ role: str(m.role), content: str(m.content) })),
     ];
-    const finish = async (text: string, steps: ChatStep[], tokens: number) => {
+    const finish = async (text, steps, tokens) => {
       const message = await rows.create(AI_MESSAGES, { conversation: id, role: "assistant", content: text, steps, ...(tokens ? { tokens } : {}) });
-      const patch: Row = { lastMessageAt: new Date(now()).toISOString() };
-      if (!str(conversation.title)) patch.title = titleOf(str(history.find((m) => m.role === "user")?.content ?? content));
+      const patch = { lastMessageAt: new Date(now()).toISOString() };
+      if (!str(conversation.title))
+        patch.title = titleOf(str(history.find((m) => m.role === "user")?.content ?? content));
       return { message, conversation: await rows.update(AI_CONVERSATIONS, id, patch) };
     };
-    const loopInput: Loop = { model, messages, tools, doc, runTool, maxSteps: maxSteps ?? DEFAULT_MAX_STEPS };
-
+    const loopInput = { model, messages, tools, doc, runTool, maxSteps: maxSteps ?? DEFAULT_MAX_STEPS };
     if (body.stream !== true) {
       const { content: text, steps, tokens } = await runLoop(app, c, loopInput);
       const { message, conversation: updated } = await finish(text, steps, tokens);
       return c.json({ message, steps, model, conversation: updated });
     }
-
     // streaming: the tool steps run first, then one last call with stream: true and no tools, as runWithTools does.
     // Without tools that last call is the only one; when maxSteps stopped the loop, its stop message is the answer.
-    const ran = tools.length ? await runLoop(app, c, loopInput) : { content: "", steps: [] as ChatStep[], tokens: 0, stopped: false };
+    const ran = tools.length ? await runLoop(app, c, loopInput) : { content: "", steps: [], tokens: 0, stopped: false };
     const waitUntil = waitUntilOf(c);
     const encoder = new TextEncoder();
-    const stream = new ReadableStream<Uint8Array>({
+    const stream = new ReadableStream({
       async start(controller) {
-        const write = (event: unknown) => controller.enqueue(encoder.encode(sse(event)));
+        const write = (event) => controller.enqueue(encoder.encode(sse(event)));
         try {
           let text = "";
-          if (ran.stopped) { text = ran.content; write({ delta: text }); }
+          if (ran.stopped) {
+            text = ran.content;
+            write({ delta: text });
+          }
           else {
-            const final = await c.env.AI!.run(model, { messages, stream: true });
-            for await (const delta of deltasOf(final)) { text += delta; write({ delta }); }
+            const final = await c.env.AI.run(model, { messages, stream: true });
+            for await (const delta of deltasOf(final)) {
+              text += delta;
+              write({ delta });
+            }
           }
           const stored = finish(text, ran.steps, ran.tokens);
           waitUntil?.(stored.catch(() => undefined));
           const { message, conversation: updated } = await stored;
           write({ done: true, message, steps: ran.steps, model, conversation: updated });
-        } catch (err) {
+        }
+        catch (err) {
           write({ error: err instanceof Error ? err.message : String(err) });
         }
         controller.close();
@@ -514,20 +537,21 @@ function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource, 
     return c.body(stream);
   });
 }
-
 /** the plugin over a source of its own: tests hand in collections, a name, a clock and rows without a database */
-export const aiWith = (source: Partial<OpenApiSource> = {}, version: string = VERSION, now: () => number = Date.now, rows: AiRowsFactory = d1AiRows): Plugin => {
-  const plugin: Plugin = {
-    manifest: { name: "ai", version: "0.2.0", tier: "official", voidbase: "*", collections: [AI_CONVERSATIONS, AI_MESSAGES] },
+export const aiWith = (source = {}, version = VERSION, now = Date.now, rows = d1AiRows) => {
+  const plugin = {
     info: (env) => aiRoute(env),
-    apply(ctx: Kernel) {
+    apply(ctx) {
       // the collections exist only where the binding does: an instance without VOIDBASE_AI never sees them
-      onBootstrap(ctx, async (env) => { if (env.AI) await ensureCollections(plugin, env.DB, await conversationDefinitions(env.DB)); });
-      mountRoutes(ctx.app, version, { ...defaultSource, ...source }, now, rows, () => lookup<McpTools>(ctx, "mcp@1"));
+      onBootstrap(ctx, async (env) => { if (env.AI)
+        await ensureCollections(plugin, env.DB, await conversationDefinitions(env.DB)); });
+      mountRoutes(ctx.app, version, { ...defaultSource, ...source }, now, rows, () => lookup(ctx, "mcp@1"));
     },
   };
   return plugin;
 };
-
 /** the shipped plugin: the instance's own collections, settings and rows */
-export const ai: Plugin = aiWith();
+const ai = aiWith();
+
+// what the plugin does; its declaration is manifest.json beside this file, which the instance reads
+export default ai;

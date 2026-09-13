@@ -9,7 +9,7 @@ import { ApiError } from "../../src/server/errors";
 import { createKernel, load } from "../../src/server/kernel";
 import { auth, provider } from "../../src/server/plugins/auth";
 import { observability } from "../../src/server/plugins/observability";
-import { buildMeta, etagOf, excerpt, locOf, matchPath, notModified, parseSeo, parseSitemap, seo, seoPngOn, SEO_PNG_VAR, seoRedirectLines, seoWith, shareCard, splitLocale, wrap, type MetaAnswer, type SeoSource } from "../../src/server/plugins/seo";
+import { buildMeta, etagOf, excerpt, locOf, matchPath, notModified, parseSeo, parseSitemap, seo, seoPngOn, SEO_PNG_VAR, seoRedirectLines, seoWith, shareCard, splitLocale, wrap, type MetaAnswer, type SeoSource } from "../support/plugins/seo";
 import { CARD_FONT_FAMILY } from "@voidbase-cloud/plugin-seo";
 import type { AppEnv, Bindings } from "../../src/server/types";
 import { VERSION } from "../../src/server/version";

@@ -28,6 +28,14 @@
         "hono": "^4.11.9",
       },
     },
+    "packages/plugin-auth": {
+      "name": "@voidbase-cloud/plugin-auth",
+      "version": "0.9.0-beta.58",
+      "peerDependencies": {
+        "@voidbase-cloud/voidbase": "workspace:^",
+        "hono": "^4.11.9",
+      },
+    },
     "packages/plugin-backups": {
       "name": "@voidbase-cloud/plugin-backups",
       "version": "0.9.0-beta.58",
@@ -181,6 +189,7 @@
         "@resvg/resvg-wasm": "2.6.2",
         "@simplewebauthn/server": "^14.0.1",
         "@voidbase-cloud/plugin-ai": "workspace:*",
+        "@voidbase-cloud/plugin-auth": "workspace:*",
         "@voidbase-cloud/plugin-backups": "workspace:*",
         "@voidbase-cloud/plugin-domains": "workspace:*",
         "@voidbase-cloud/plugin-hardening": "workspace:*",
@@ -759,6 +768,8 @@
     "@vitest/utils": ["@vitest/utils@2.1.9", "", { "dependencies": { "@vitest/pretty-format": "2.1.9", "loupe": "^3.1.2", "tinyrainbow": "^1.2.0" } }, "sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ=="],
 
     "@voidbase-cloud/plugin-ai": ["@voidbase-cloud/plugin-ai@workspace:packages/plugin-ai"],
+
+    "@voidbase-cloud/plugin-auth": ["@voidbase-cloud/plugin-auth@workspace:packages/plugin-auth"],
 
     "@voidbase-cloud/plugin-backups": ["@voidbase-cloud/plugin-backups@workspace:packages/plugin-backups"],
 

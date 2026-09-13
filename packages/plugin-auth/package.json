@@ -1,0 +1,47 @@
+{
+  "name": "@voidbase-cloud/plugin-auth",
+  "version": "0.9.0-beta.58",
+  "description": "The auth plugin of voidbase: provides auth@1, mounting password, OAuth2, OTP, MFA and passkey sign-in and answering who a request is",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/voidbase-cloud/voidbase.git",
+    "directory": "packages/plugin-auth"
+  },
+  "homepage": "https://github.com/voidbase-cloud/voidbase/tree/master/packages/plugin-auth#readme",
+  "bugs": {
+    "url": "https://github.com/voidbase-cloud/voidbase/issues"
+  },
+  "private": false,
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "tsconfig.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "voidbase",
+    "voidbase-plugin",
+    "auth",
+    "cloudflare-workers"
+  ],
+  "engines": {
+    "bun": ">=1.2"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@voidbase-cloud/voidbase": "workspace:^",
+    "hono": "^4.11.9"
+  }
+}

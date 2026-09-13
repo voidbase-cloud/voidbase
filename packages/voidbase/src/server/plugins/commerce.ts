@@ -39,8 +39,8 @@ import { findCollection, loadCollections } from "../collections/model";
 import { collectionId } from "../collections/service";
 import { all, ident } from "../db";
 import { ApiError, badRequest, forbidden, notFound } from "../errors";
-import type { CheckoutRequest, Payments, QuoteAddress, QuoteItem, RealtimeClient, Shipping, ShippingRate, Tax } from "../interfaces";
-import { onBootstrap, using, type Kernel } from "../kernel";
+import type { CheckoutRequest, Commerce, Payments, QuoteAddress, QuoteItem, RealtimeClient, Shipping, ShippingRate, Tax } from "../interfaces";
+import { onBootstrap, serve, using, type Kernel } from "../kernel";
 import { createRecord, deleteRecord, PreconditionFailed, updateRecord, type RecordContext } from "../records/service";
 import { rowToValues } from "../records/values";
 import { bufferedTransaction } from "../tx-d1";
@@ -1237,6 +1237,7 @@ export function commerceWith(overrides: Partial<CommerceDeps> = {}): Plugin & { 
   Object.assign(plugin, {
     manifest: {
       name: "commerce", version: "0.1.0", tier: "official" as const, voidbase: "*",
+      provides: ["commerce@1" as const],
       requires: ["payments@1" as const, "tax@1" as const, "shipping@1" as const],
       collections: [...COMMERCE_COLLECTIONS],
     },
@@ -1251,6 +1252,7 @@ export function commerceWith(overrides: Partial<CommerceDeps> = {}): Plugin & { 
       stop?.();
       stop = onPaymentWritten(kernel.app, onPayment);
       mountRoutes(kernel.app);
+      serve<Commerce>(kernel, "commerce@1", { info: (env) => commerceInfo(env) });
     },
   });
   return plugin;

@@ -20,7 +20,7 @@ export const realtime: Plugin = {
   manifest: {
     name: "realtime",
     version: "0.1.0",
-    tier: "official",
+    tier: "core",
     voidbase: "*",
     provides: ["realtime@1"],
   },

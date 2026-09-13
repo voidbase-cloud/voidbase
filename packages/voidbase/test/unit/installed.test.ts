@@ -157,11 +157,11 @@ describe("what an instance checks before it loads anything", () => {
 
   test("the Worker's module imports every verified bundle by path", async () => {
     await addPlugin(root, "echo", opts(url(one)));
-    removePlugin(root, "backups");
+    removePlugin(root, "seo");
     const src = await pluginsModuleSource(join(root, "pb_plugins"));
     expect(src).toContain(`import p0 from ${JSON.stringify(join(root, "pb_plugins/echo/bundle.js"))};`);
     expect(src).toContain('export const installed = [{ plugin: p0, name: "echo", version: "0.1.0"');
-    expect(src).toContain('export const disabled = ["backups"];');
+    expect(src).toContain('export const disabled = ["seo"];');
     expect(await pluginsModuleSource(join(mkdtempSync(join(tmpdir(), "empty-")), "pb_plugins"))).toContain("export const installed = [];");
   });
 });
@@ -172,12 +172,12 @@ describe("remove, enable, update", () => {
     expect(removePlugin(root, "echo")).toBe("removed");
     expect(existsSync(join(root, "pb_plugins/echo"))).toBe(false);
     expect(readLock(root).plugins.echo).toBeUndefined();
-    expect(removePlugin(root, "hardening")).toBe("disabled");
-    expect(removePlugin(root, "hardening")).toBe("already-disabled");
-    expect(pluginFacts(root).find((p) => p.name === "hardening")).toBeUndefined();
-    expect(listPlugins(root).shipped.find((p) => p.name === "hardening")?.state).toBe("disabled");
-    expect(enablePlugin(root, "hardening")).toBe("enabled");
-    expect(enablePlugin(root, "hardening")).toBe("not-disabled");
+    expect(removePlugin(root, "seo")).toBe("disabled");
+    expect(removePlugin(root, "seo")).toBe("already-disabled");
+    expect(pluginFacts(root).find((p) => p.name === "seo")).toBeUndefined();
+    expect(listPlugins(root).shipped.find((p) => p.name === "seo")?.state).toBe("disabled");
+    expect(enablePlugin(root, "seo")).toBe("enabled");
+    expect(enablePlugin(root, "seo")).toBe("not-disabled");
     expect(() => removePlugin(root, "nothing")).toThrow("nothing is not installed and does not ship with voidbase");
     expect(() => enablePlugin(root, "echo")).toThrow("echo does not ship with voidbase");
   });
@@ -200,14 +200,15 @@ describe("remove, enable, update", () => {
   test("a plugin another installed plugin requires is refused too, and the dependent is named", () => {
     // an installed plugin's manifest is the release.json beside its bundle, which is where its requires come from
     mkdirSync(join(root, "pb_plugins/receipts"), { recursive: true });
-    writeFileSync(join(root, "pb_plugins/receipts/release.json"), JSON.stringify({ version: "0.1.0", manifest: { name: "receipts", version: "0.1.0", tier: "community", voidbase: "*", requires: ["mail@1"] } }));
-    writeFileSync(join(root, "voidbase.lock"), JSON.stringify({ lockfileVersion: 1, marketplaces: [], disabled: [], plugins: { receipts: { version: "0.1.0", integrity: "sha256-x", marketplace: "http://m", source: { repository: "a/b", commit: "0123456" }, installedOn: "2026-09-11" } } }));
-    expect(pluginFacts(root).find((p) => p.name === "receipts")).toEqual({ name: "receipts", tier: "community", provides: [], requires: ["mail@1"] });
-    const cost = removalCostFor(root, "mail")!;
+    writeFileSync(join(root, "pb_plugins/receipts/release.json"), JSON.stringify({ version: "0.1.0", manifest: { name: "receipts", version: "0.1.0", tier: "community", voidbase: "*", requires: ["tax@1"] } }));
+    writeFileSync(join(root, "voidbase.lock"), JSON.stringify({ lockfileVersion: 1, marketplaces: [], disabled: ["commerce"], plugins: { receipts: { version: "0.1.0", integrity: "sha256-x", marketplace: "http://m", source: { repository: "a/b", commit: "0123456" }, installedOn: "2026-09-11" } } }));
+    // commerce, which requires tax@1 too, is turned off here, so receipts is the one dependent left to name
+    expect(pluginFacts(root).find((p) => p.name === "receipts")).toEqual({ name: "receipts", tier: "community", provides: [], requires: ["tax@1"] });
+    const cost = removalCostFor(root, "tax-flat")!;
     expect(cost.core).toBe(false);
     expect(cost.dependents).toEqual(["receipts"]);
-    expect(() => removePlugin(root, "mail")).toThrow("receipts requires mail@1, and only mail provides it");
-    expect(removePlugin(root, "mail", { force: true })).toBe("disabled");
+    expect(() => removePlugin(root, "tax-flat")).toThrow("receipts requires tax@1, and only tax-flat provides it");
+    expect(removePlugin(root, "tax-flat", { force: true })).toBe("disabled");
   });
 
   test("an installed plugin with a shipped plugin's name shadows it, which the listing says", async () => {

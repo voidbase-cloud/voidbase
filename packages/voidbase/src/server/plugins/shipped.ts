@@ -8,6 +8,12 @@ export type ShippedName = (typeof SHIPPED)[number];
 /**
  * What each shipped plugin declares beyond its name: its tier, and its place in the graph.
  *
+ * The tiers are decision 9's. Tier 1, core defines the interface and imports the plugin by default, and it can be
+ * swapped: auth, observability, realtime, hardening, mail, installer, openapi and backups, whose manifests say
+ * `core`. Tier 2, core defines the interface and the plugin is added by hand: the payment providers, tax-flat,
+ * shipping-flat and commerce, `official`. Tier 3, core defines no interface: ai, mcp, seo, translations, previews
+ * and domains, `official` because they are ours (a community plugin is tier 3 as well).
+ *
  * The same reason the list above is data. `voidbase plugins remove <name>` has to know whether it is about to take
  * the instance's auth away, or take something else's provider away, before it writes voidbase.lock — and it cannot
  * import sixteen plugins to find out, because importing a plugin is most of the way to running it. So the manifests'
@@ -17,14 +23,14 @@ export type ShippedName = (typeof SHIPPED)[number];
 export const SHIPPED_FACTS: Record<ShippedName, { tier: Tier; provides?: InterfaceName[]; requires?: InterfaceName[] }> = {
   auth: { tier: "core", provides: ["auth@1"] },
   observability: { tier: "core", provides: ["observability@1"] },
-  realtime: { tier: "official", provides: ["realtime@1"] },
-  hardening: { tier: "official", provides: ["hardening@1"] },
-  backups: { tier: "official" },
-  installer: { tier: "official" },
-  openapi: { tier: "official" },
+  realtime: { tier: "core", provides: ["realtime@1"] },
+  hardening: { tier: "core", provides: ["hardening@1"] },
+  backups: { tier: "core", provides: ["backups@1"] },
+  installer: { tier: "core", provides: ["installer@1"] },
+  openapi: { tier: "core", provides: ["openapi@1"] },
   mcp: { tier: "official" },
   seo: { tier: "official" },
-  mail: { tier: "official", provides: ["mail@1"] },
+  mail: { tier: "core", provides: ["mail@1"] },
   ai: { tier: "official" },
   translations: { tier: "official" },
   stripe: { tier: "official", provides: ["payments@1"] },
@@ -32,7 +38,7 @@ export const SHIPPED_FACTS: Record<ShippedName, { tier: Tier; provides?: Interfa
   lemonsqueezy: { tier: "official", requires: ["payments@1"] },
   "tax-flat": { tier: "official", provides: ["tax@1"] },
   "shipping-flat": { tier: "official", provides: ["shipping@1"] },
-  commerce: { tier: "official", requires: ["payments@1", "tax@1", "shipping@1"] },
+  commerce: { tier: "official", provides: ["commerce@1"], requires: ["payments@1", "tax@1", "shipping@1"] },
   previews: { tier: "official" },
   domains: { tier: "official" },
 };

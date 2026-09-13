@@ -215,7 +215,7 @@ describe("a project on disk (Bun): the change is written in place, and the insta
   });
   test("removing a shipped plugin turns it off", async () => {
     const { call } = await appWith({}, fs);
-    expect((await call("POST", "/api/plugins/remove", { name: "backups" })).json.result).toBe("disabled");
+    expect((await call("POST", "/api/plugins/remove", { name: "seo" })).json.result).toBe("disabled");
   });
 });
 

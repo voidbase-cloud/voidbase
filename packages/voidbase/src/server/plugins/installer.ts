@@ -26,7 +26,8 @@ import { badRequest } from "../errors";
 // answer to GET /api/plugins carries it whatever is loaded, so plugins/report.ts has to reach it without importing
 // this module, and lifting this plugin into a package of its own leaves that file where it is.
 import { installerInfo, repoOf, type FilesystemInstaller } from "../installer-info";
-import type { Kernel } from "../kernel";
+import { serve as fill, type Kernel } from "../kernel";
+import type { Installer } from "../interfaces";
 import { refusal, removalCost, type PluginFacts } from "./resolve";
 import { download, fetchIndex, pick, type PluginVersion } from "../../node/registry";
 import { commitPlugins, LOCKFILE, lockOf, type Lock, type PluginChange, type Repo } from "../project-sync";
@@ -148,7 +149,10 @@ function mountRoutes(app: Hono<AppEnv>, voidbaseVersion: string, filesystem: Fil
  * `() => whatLoaded(kernel).plugins`). Without one nothing is guarded, which is what a bare test app wants.
  */
 export const installer = (voidbaseVersion: string, filesystem: FilesystemInstaller | null = platformFilesystem, graph: () => PluginFacts[] = () => []): Plugin => ({
-  manifest: { name: "installer", version: "0.1.0", tier: "official", voidbase: "*" },
+  manifest: { name: "installer", version: "0.1.0", tier: "core", voidbase: "*", provides: ["installer@1"] },
   info: (env) => installerInfo(env, filesystem),
-  apply(ctx: Kernel) { mountRoutes(ctx.app, voidbaseVersion, filesystem, graph); },
+  apply(ctx: Kernel) {
+    mountRoutes(ctx.app, voidbaseVersion, filesystem, graph);
+    fill<Installer>(ctx, "installer@1", { info: (env) => installerInfo(env, filesystem) });
+  },
 });

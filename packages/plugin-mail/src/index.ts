@@ -63,7 +63,7 @@ export const mail: Plugin = {
   manifest: {
     name: "mail",
     version: "0.1.0",
-    tier: "official",
+    tier: "core",
     voidbase: "*",
     provides: ["mail@1"],
   },

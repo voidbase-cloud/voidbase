@@ -119,7 +119,7 @@ describe("sending through the binding", () => {
     const kernel = createKernel(new Hono() as never);
     const loaded = await load(kernel, [mail], "0.9.0");
     expect(loaded.providers["mail@1"]).toBe("mail");
-    expect(loaded.tiers.mail).toBe("official");
+    expect(loaded.tiers.mail).toBe("core");
     expect(using<Mail>(kernel, "mail@1")).toBe(cloudflareMail);
   });
 });

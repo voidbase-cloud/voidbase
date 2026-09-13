@@ -268,6 +268,38 @@ export interface Observability {
   report(env: Bindings): Promise<{ via: "analytics-engine" | "request-log"; sampling: number; logs: boolean }>;
 }
 
+/**
+ * `installer@1`: where this instance's plugins live and how a change to them is made. The routes are the provider's
+ * own (/api/plugins/install, remove, update); what the contract fixes is the answer /api/plugins gives about it.
+ */
+export interface Installer {
+  info(env: Bindings): { mode: "filesystem" | "repository" | "fixed"; repository?: string; branch?: string; hint?: string };
+}
+
+/**
+ * `openapi@1`: the API described. The provider serves GET /api/openapi.json and /api/docs; the contract is the
+ * document itself, built for one caller, which the MCP server and the typed client both read.
+ */
+export interface OpenApi {
+  document(input: { collections: unknown[]; caller: unknown; title: string; origin: string; version: string; routes?: unknown[]; pluginRoutes?: unknown[] }): Record<string, unknown>;
+}
+
+/**
+ * `backups@1`: PocketBase's backups API. The provider mounts it; the contract says where, because the admin panel and
+ * `voidbase sync` call it by that path whoever provides it.
+ */
+export interface Backups {
+  readonly base: "/api/backups";
+}
+
+/**
+ * `commerce@1`: the shop. The provider owns the shop's collections and routes; the contract is what an instance
+ * reports about it, which is whether the shop is on and what a new cart is priced in.
+ */
+export interface Commerce {
+  info(env?: object): { on: boolean; currency: string };
+}
+
 /** every interface this voidbase defines, and the type behind each */
 export interface Interfaces {
   "auth@1": Auth;
@@ -278,9 +310,13 @@ export interface Interfaces {
   "hardening@1": Hardening;
   "mail@1": Mail;
   "observability@1": Observability;
+  "installer@1": Installer;
+  "openapi@1": OpenApi;
+  "backups@1": Backups;
+  "commerce@1": Commerce;
 }
 
 export type Known = keyof Interfaces;
 
 /** the list, for the loader to check a manifest against something rather than accepting any string */
-export const KNOWN: Known[] = ["auth@1", "payments@1", "tax@1", "shipping@1", "realtime@1", "hardening@1", "mail@1", "observability@1"];
+export const KNOWN: Known[] = ["auth@1", "payments@1", "tax@1", "shipping@1", "realtime@1", "hardening@1", "mail@1", "observability@1", "installer@1", "openapi@1", "backups@1", "commerce@1"];

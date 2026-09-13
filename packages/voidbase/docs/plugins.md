@@ -207,7 +207,7 @@ column names.
 | `@voidbase-cloud/plugin-previews` | The first with routes of its own, so the first that imports `hono` -- the peer the template has declared since 7.5 stops being decoration here. The first to need `/sdk` (four core modules, one entry) and the two narrow entries `/records-preview` and `/records-files`. Its deploy-time half stays in the core, and takes the naming rule back through `/plugins/previews`: a preview the deploy names and the instance cannot recognise is a preview nobody can find. |
 | `@voidbase-cloud/plugin-translations` | The first that owns a collection, and so the first whose package imports an entry out of the core's own plugins directory: `ensureCollections` is `/plugins/collections`, not a plugin and not moving, and asking for it by that name is how a marketplace plugin declares its schema too. It also reads through the kernel's after-read seam, which is why a translation only ever appears on a record the caller could already see. |
 | `@voidbase-cloud/plugin-mail` | The first that needed an entry point published for it. `SEND_EMAIL` and `VOIDBASE_MAIL_DOMAIN` are data in a module of their own so that src/node/deploy-cf.ts can write the binding without importing what the plugin does; a sibling import carried that agreement while both lived in the core, and from a package it has to be a name -- `/plugins/mail-binding` -- or it is two copies of two strings. The mail itself did not move: the core builds every message and decides when it goes, and this plugin only answers for where one can leave from. |
-| `@voidbase-cloud/plugin-observability` | The only one of the nine at tier `core`, and the tier is a statement about what an instance is without the plugin rather than about where its code lives: the core depends on it, loads it through the kept entry, and holds a place in its middleware chain for the `sample` it provides. Its binding names needed the same entry mail's did, for the same reason. Last of the nine because it is the largest and because by then the move had been made eight times. |
+| `@voidbase-cloud/plugin-observability` | At tier `core` with the other tier 1 plugins (decision 9), and the tier is a statement about what an instance is without the plugin rather than about where its code lives: the core depends on it, loads it through the kept entry, and holds a place in its middleware chain for the `sample` it provides. Its binding names needed the same entry mail's did, for the same reason. Last of the nine because it is the largest and because by then the move had been made eight times. |
 
 ## What a plugin is
 
@@ -215,8 +215,8 @@ column names.
 import type { Plugin } from "./manifest";
 
 export const backups: Plugin = {
-  manifest: { name: "backups", version: "0.1.0", tier: "official", voidbase: "*" },
-  apply(ctx) { mountBackupsApi(ctx.app); },
+  manifest: { name: "backups", version: "0.1.0", tier: "core", voidbase: "*", provides: ["backups@1"] },
+  apply(ctx) { mountBackupsApi(ctx.app); serve(ctx, "backups@1", { base: "/api/backups" }); },
 };
 ```
 
@@ -296,8 +296,14 @@ the answers are then awaited one after another only to fix the order of the keys
 promises. A field's failure still names the plugin and the second it was given, because each call is raced on its
 own.
 
-The tiers are `core` (the instance is not usable without a provider; `CORE` in `resolve.ts` lists `auth@1` since
-auth left the core), `official` (ours, versioned with voidbase, opt-in) and `community`.
+There are three kinds of plugin (decision 9). Tier 1: core defines the interface and imports the plugin by default,
+and it can be swapped (auth, observability, realtime, hardening, mail, installer, openapi, backups). Tier 2: core
+defines the interface and the plugin is added by hand (stripe, polar, lemonsqueezy, tax-flat, shipping-flat,
+commerce). Tier 3: core defines no interface (ai, mcp, seo, translations, previews, domains, and anybody's). The
+manifest's names keep that parity: tier 1 plugins are `core`, tiers 2 and 3 of ours are `official`, and a tier 3
+plugin of somebody else's is `community`. `CORE` in `resolve.ts` is narrower: the interfaces an instance warns about
+running without (`auth@1`, `observability@1`). Interfaces are semi-open: a plugin may provide or require a capability
+outside core's list, and it loads.
 
 Removing a core plugin stays possible and is now deliberate rather than accidental. `voidbase plugins remove auth`
 refuses without `--yes` and prints what stops working: the core interface it provides, what the instance does
@@ -605,7 +611,7 @@ instance is a change to the repository's dependency, not a re-provision.
 
 ## Describing the API: openapi
 
-`openapi` is a shipped plugin (tier `official`, `src/server/plugins/openapi.ts`) that answers the roadmap's "a
+`openapi` is a shipped plugin (tier `core`, provides `openapi@1`, `src/server/plugins/openapi.ts`) that answers the roadmap's "a
 description of the API, generated and scoped". Every instance knows its own shape, the collections, their fields and
 the rules that decide who may read and write each one, and this puts that in a form other tools consume:
 
@@ -844,7 +850,7 @@ IHDR chunk), not a stand-in. Both states of `VOIDBASE_SEO_PNG` are tested there,
 
 ## Mail from the instance's domain: mail
 
-`mail` is a shipped plugin (tier `official`, `src/server/plugins/mail.ts`) that provides `mail@1`: outbound mail
+`mail` is a shipped plugin (tier `core`, `src/server/plugins/mail.ts`) that provides `mail@1`: outbound mail
 from the instance's own domain through Cloudflare's Email Service, with SMTP staying the fallback. It answers the
 roadmap's "Email from that domain": the domain the previous item put on the account is the one the mail can now
 leave from, with the SPF, DKIM and DMARC records Cloudflare writes when the domain is onboarded, so the deliverability

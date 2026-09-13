@@ -18,7 +18,8 @@ import { hookRouteDocs, isAuth, isMultiple, isSuperuser, listCollections, loadSe
 
 
 
-import type { Kernel } from "@voidbase-cloud/voidbase/kernel";
+import { serve, type Kernel } from "@voidbase-cloud/voidbase/kernel";
+import type { OpenApi } from "@voidbase-cloud/voidbase/interfaces";
 
 import type { AppEnv, AuthRecord, Bindings, Collection, Field } from "@voidbase-cloud/voidbase/types";
 
@@ -358,8 +359,11 @@ function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource) 
 
 /** the plugin over a source of its own: tests hand in collections and a name without a database */
 export const openapiWith = (source: Partial<OpenApiSource> = {}, version: string = VERSION): Plugin => ({
-  manifest: { name: "openapi", version: "0.1.0", tier: "official", voidbase: "*" },
-  apply(ctx: Kernel) { mountRoutes(ctx.app, version, { ...defaultSource, ...source }); },
+  manifest: { name: "openapi", version: "0.1.0", tier: "core", voidbase: "*", provides: ["openapi@1"] },
+  apply(ctx: Kernel) {
+    mountRoutes(ctx.app, version, { ...defaultSource, ...source });
+    serve<OpenApi>(ctx, "openapi@1", { document: (input) => buildDocument(input as DocumentInput) });
+  },
 });
 
 /** the shipped plugin: the instance's own collections and settings */

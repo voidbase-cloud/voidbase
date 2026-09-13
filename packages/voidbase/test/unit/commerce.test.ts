@@ -333,7 +333,7 @@ describe("the plugin and the two interfaces beside it", () => {
     for (const name of ["tax-flat", "shipping-flat", "commerce"] as const) expect(SHIPPED).toContain(name);
     expect(SHIPPED_FACTS["tax-flat"]).toEqual({ tier: "official", provides: ["tax@1"] });
     expect(SHIPPED_FACTS["shipping-flat"]).toEqual({ tier: "official", provides: ["shipping@1"] });
-    expect(SHIPPED_FACTS.commerce).toEqual({ tier: "official", requires: ["payments@1", "tax@1", "shipping@1"] });
+    expect(SHIPPED_FACTS.commerce).toEqual({ tier: "official", provides: ["commerce@1"], requires: ["payments@1", "tax@1", "shipping@1"] });
   });
 
   test("the knobs: the shop is off unless VOIDBASE_COMMERCE says otherwise, and every route says so", async () => {

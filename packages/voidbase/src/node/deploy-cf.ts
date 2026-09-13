@@ -13,7 +13,7 @@ import { loadEnv } from "./serve";
 import { STORE_KEYS_VAR } from "../server/secrets-store";
 import { AUTH_COOKIE_KNOB, authCookieRefusal } from "../server/auth-cookie";
 import { deleteWorkerSecrets, loadSecrets, putStoreSecrets, readSecretsValues, SECRETS_DIR, STORE_KNOB, storeBindings, storeSecretName, storeSecrets, workerSecretNames, type LoadedSecrets, putWorkerSecrets } from "./secrets";
-import { CfApi, destroyInstance, ensureD1, ensureQueue, ensureR2, findQueue, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists } from "../cloud/rest";
+import { CfApi, destroyInstance, ensureD1, ensureQueue, ensureR2, findQueue, findZone, rateLimitNamespace, resolveAccount, workersSubdomain, workerExists, listVoidbaseWorkers } from "../cloud/rest";
 import { PREVIEW_OF_VAR, PREVIEW_VAR, previewWorkerName } from "../server/plugins/previews";
 import { ensureFlags, ensureFlagshipApp, FLAGS_BINDING, FLAGS_VAR } from "./flagship";
 import { MAIL_BINDING, MAIL_DOMAIN_VAR } from "../server/plugins/mail-binding";
@@ -171,6 +171,18 @@ export function wranglerLoginToken(): string {
     const answer = JSON.parse(new TextDecoder().decode(r.stdout)) as { token?: unknown };
     return typeof answer.token === "string" ? answer.token : "";
   } catch { return ""; }
+}
+
+/**
+ * Whether a deploy that failed went live anyway: the Worker was written by this deploy (modified at or after it
+ * started, with a minute's allowance for clock skew) and it answers /api/health. A failure after the upload -- the
+ * cron trigger is the one measured, when the account has used all five a Workers Free plan allows -- used to exit 1
+ * with the instance up and working, and a pipeline reading the exit code rolled back something that was fine.
+ */
+export function deployWentLive(o: { startedAt: number; modifiedOn?: string | null; health: number }): boolean {
+  if (!o.modifiedOn) return false;
+  const modified = Date.parse(o.modifiedOn);
+  return Number.isFinite(modified) && modified >= o.startedAt - 60_000 && o.health === 200;
 }
 
 export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" | "log" | "preview"> = {}): Promise<DeployTarget> {
@@ -493,7 +505,25 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     if (retire.length) { await deleteWorkerSecrets(api, account.id, name, retire); log(`secrets: ${retire.join(", ")} retired from the Worker's own secrets; the store binds them now`); }
   } else if (secrets.length && (await workerExists(api, account.id, name))) await putWorkerSecrets(api, account.id, name, Object.fromEntries(secrets));
   else for (const [k, v] of secrets) await sh(["bun", wrangler, "secret", "put", k, "--name", name], v + "\n");
-  await sh([voidBin, "deploy", "--backend", "cloudflare"]);
+  // The cron triggers as they were before this deploy, so a deploy that goes live but cannot attach its own can put
+  // them back rather than leave a half-made change: Workers Free allows five across the whole account.
+  const schedulesPath = `/accounts/${account.id}/workers/scripts/${name}/schedules`;
+  const schedulesBefore = cron
+    ? await api.json<{ schedules?: { cron: string }[] }>("GET", schedulesPath, undefined, [10007]).then((r) => (r.result?.schedules ?? []).map((x) => ({ cron: x.cron }))).catch(() => [] as { cron: string }[])
+    : [];
+  const startedAt = Date.now();
+  try {
+    await sh([voidBin, "deploy", "--backend", "cloudflare"]);
+  } catch (err) {
+    const written = (await listVoidbaseWorkers(api, account.id).catch(() => [])).find((w) => w.name === name);
+    const health = url ? await fetch(`${url}/api/health`).then((r) => r.status).catch(() => 0) : 0;
+    if (!deployWentLive({ startedAt, modifiedOn: written?.modified_on, health })) throw err;
+    log(`\nthe Worker went live, but a step after the upload failed: ${err instanceof Error ? err.message : String(err)}`);
+    if (cron) {
+      const restored = await api.json("PUT", schedulesPath, schedulesBefore).then(() => true).catch(() => false);
+      log(`its cron trigger was not attached, most likely because the account has used all its cron triggers (Workers Free allows five). ${restored ? "The schedules are back to what they were before this deploy" : "Putting the schedules back failed; check them in the dashboard"}, and PocketBase's maintenance runs lazily in requests. --no-cron skips the trigger.`);
+    }
+  }
   if (hostRedirects.length) await applyZoneRedirects(api, account.id, name, hostRedirects, log);
   // the deploy plugins' `after`: the Worker is up, the account is theirs to act on
   await runDeployHooks("after", deployPlugins, hookCtx);

@@ -108,7 +108,11 @@ export const projectConfig = projectConfigOf(resolve(process.env.VOIDBASE_PLUGIN
 // ---- the installer's view of the project on disk (src/server/installer-info.ts) --------------------------------
 import { addPlugin, listPlugins, projectConfigOf, removePlugin, updatePlugins } from "../../node/installed";
 import type { FilesystemInstaller } from "../../server/installer-info";
-const projectRoot = rootOfPluginsDir(resolve(process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins"));
+import { currentRebuilder } from "../../node/rebuild";
+// the declaration: the project's pb_plugins and voidbase.lock, which the installer changes. Once a vanilla instance has
+// rebuilt itself it loads the version put in place under pb_data (src/node/rebuild.ts), and serve says where the
+// declaration is (VOIDBASE_DECLARATION_DIR)
+const projectRoot = process.env.VOIDBASE_DECLARATION_DIR ?? rootOfPluginsDir(resolve(process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins"));
 // null in a binary squashed from a project (src/node/baked-project.ts): its plugins were decided when it was built
 /** pb_public as the panel reads and uploads it (src/server/public-files.ts) */
 export { publicFiles } from "../../node/public-files";
@@ -122,4 +126,8 @@ export const filesystem: FilesystemInstaller | null = process.env.VOIDBASE_PROJE
   add: (spec, o) => addPlugin(projectRoot, spec, o),
   remove: (name, o) => removePlugin(projectRoot, name, o),
   update: (name, o) => updatePlugins(projectRoot, name, o),
+  rebuild: (reason) => { const r = currentRebuilder(); if (!r) return false; r.queue(reason); return true; },
 };
+
+/** this instance's rebuilds, once it has started (src/node/serve.ts); null before and in a process that serves nothing */
+export const rebuildsNow = (): import("../../server/rebuilds").Rebuilds | null => currentRebuilder();

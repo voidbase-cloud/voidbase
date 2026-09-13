@@ -12,3 +12,5 @@ export const publicFiles: import("../../server/public-files").PublicFiles | null
 export const migrationFiles: import("../../server/automigrate").MigrationFiles | null = null;
 /** nor pb_hooks: a change to one is committed with auto-merge on, or refused (src/server/auto-merge.ts) */
 export const hookFiles: import("../../server/public-files").PublicFiles | null = null;
+/** a Worker does not rebuild itself yet: the rebuild on Cloudflare is its own workflow (5.2) */
+export const rebuildsNow = (): import("../../server/rebuilds").Rebuilds | null => null;

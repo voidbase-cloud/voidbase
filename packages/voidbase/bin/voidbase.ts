@@ -6,6 +6,10 @@ import { existsSync, mkdirSync, writeFileSync, cpSync } from "node:fs";
 import { resolve } from "node:path";
 import { exportAll } from "../scripts/export";
 import { embedded, isExecutable } from "../src/node/embedded";
+import { recordStart } from "../src/node/restart";
+
+// how this process was started, before anything changes it: a local rebuild starts it again the same way (src/node/restart.ts)
+recordStart();
 
 // the version: the executable carries it, a checkout reads package.json
 async function currentVersion(): Promise<string> { return (await embedded())?.version ?? (JSON.parse(await Bun.file(resolve(import.meta.dir, "../package.json")).text()) as { version: string }).version; }

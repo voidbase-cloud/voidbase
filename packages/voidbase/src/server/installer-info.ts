@@ -21,6 +21,8 @@ export interface FilesystemInstaller {
   add(spec: string, o: { marketplace?: string; voidbaseVersion: string }): Promise<{ name: string; version: string; marketplace: string; previous?: string; unchanged?: boolean }>;
   remove(name: string, o?: { force?: boolean }): "removed" | "disabled" | "already-disabled";
   update(name: string | undefined, o: { voidbaseVersion: string }): Promise<{ updated: { name: string; from: string; to: string; marketplace: string }[]; current: string[] }>;
+  /** queue a rebuild of the instance onto the changed declaration (src/node/rebuild.ts); false when this process has no rebuilder */
+  rebuild?: (reason: string) => boolean;
 }
 
 /** the three places an instance's plugins can live; the installer's routes read it to know what a change is */

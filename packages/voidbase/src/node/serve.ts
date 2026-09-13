@@ -2,7 +2,7 @@
 // bun:sqlite, R2 on the filesystem, SMTP on node sockets and the cron scheduler on a timer.
 //   import { serve } from "@voidbase-cloud/voidbase";  serve({ http: "127.0.0.1:8090", dir: "pb_data", publicDir: "../sk/build" });
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { d1, openDatabase } from "./d1";
 import { fsBucket } from "./storage";
 import { assetsFetcher } from "./assets";
@@ -83,6 +83,10 @@ export async function openLocal(opts: ServeOptions) {
   process.env.VOIDBASE_HOOKS_DIR = projectFolder(opts.hooksDir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks", baked);
   process.env.VOIDBASE_MIGRATIONS_DIR = projectFolder(opts.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations", baked);
   process.env.VOIDBASE_PLUGINS_DIR = projectFolder(opts.pluginsDir ?? process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins", baked);
+  // the declaration is the project's pb_plugins and voidbase.lock; a vanilla instance that rebuilt itself runs the version
+  // it put in place under pb_data/active, and loads plugins from there (src/node/rebuild.ts)
+  process.env.VOIDBASE_DECLARATION_DIR = dirname(process.env.VOIDBASE_PLUGINS_DIR);
+  if (!baked && !opts.pluginsDir && existsSync(join(dir, "active", "voidbase.lock"))) process.env.VOIDBASE_PLUGINS_DIR = join(dir, "active", "pb_plugins");
   if (opts.automigrate !== undefined) process.env.VOIDBASE_AUTOMIGRATE = opts.automigrate ? "on" : "off";
   if (secrets.missing.length && !opts.quiet) console.warn(`voidbase: ${secrets.missing.length} declared value(s) missing and without a default (${process.env.VOIDBASE_SECRETS_DIR}/secrets.json): ${secrets.missing.join(", ")}`);
   if (secrets.undeclared.length && !opts.quiet) console.warn(`voidbase: ${process.env.VOIDBASE_SECRETS_DIR}/secrets.json holds ${secrets.undeclared.join(", ")}, which main.ts does not declare; a deploy stores only declared values`);
@@ -151,7 +155,15 @@ export async function voidbase(opts: ServeOptions = {}) {
     // bootstrap now (system collections, settings, superuser from env, pb_migrations) instead of on the first request
     await fetch(`http://127.0.0.1:${port}/api/health`).catch(() => undefined);
     await seedUser(port);
-    return { server, env, stop: () => { clearTimeout(timer); tunnel?.stop(); server.stop(true); } };
+    const stop = () => { clearTimeout(timer); tunnel?.stop(); server.stop(true); };
+    // an instance that holds its own files rebuilds itself: a plugin change queues a rebuild, which assembles the
+    // declaration as a new version and starts this process again onto it (src/node/rebuild.ts, src/node/restart.ts)
+    if (!process.env.VOIDBASE_PROJECT_BAKED) {
+      const { createRebuilder, setRebuilder } = await import("./rebuild");
+      const { restartProcess } = await import("./restart");
+      setRebuilder(createRebuilder({ root: process.env.VOIDBASE_DECLARATION_DIR!, dataDir: dir, restart: () => restartProcess(stop) }));
+    }
+    return { server, env, stop };
   };
   return { ...api, env, dir, start };
 }

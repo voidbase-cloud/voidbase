@@ -44,8 +44,9 @@ export function provideMailLookup(fn: () => Mail | undefined): void { lookup = f
 
 /** the provider's answer for these bindings and this sender: where it would carry the mail, or why it will not */
 function providerRoute(env: Bindings, from: string, provider = lookup()): { carrier: string | null; refused: string | null } {
-  const carrier = provider?.carrier(env) ?? null;
-  const refused = carrier && from ? provider!.refuses(from, env) : null;
+  // a provider is somebody else's code (a community mail@1): one that does not say where it carries is one with nothing to carry
+  const carrier = typeof provider?.carrier === "function" ? provider.carrier(env) ?? null : null;
+  const refused = carrier && from && typeof provider?.refuses === "function" ? provider.refuses(from, env) : null;
   return { carrier, refused };
 }
 

@@ -164,3 +164,11 @@ describe("the core's transport with the provider in place", () => {
     expect(binding.sent).toHaveLength(0);
   });
 });
+
+describe("a mail@1 provider that is somebody else's code", () => {
+  test("one that does not say where it carries (no carrier) leaves the core's route in place instead of throwing", () => {
+    const partial = { async send() {} } as unknown as Mail;
+    expect(routeMail(envWith(), "noreply@example.com", { enabled: false, host: "" }, partial)).toEqual({ via: "log" });
+    expect(routeMail(envWith(), "noreply@example.com", { enabled: true, host: "smtp.example.com" }, partial)).toEqual({ via: "smtp", host: "smtp.example.com" });
+  });
+});

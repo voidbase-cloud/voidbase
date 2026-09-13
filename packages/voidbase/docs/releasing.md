@@ -122,9 +122,10 @@ the first normal run after `hot off` is the one that goes back to the narrow rul
 
 ### N packages, and only the ones that moved
 
-The repository publishes **fifteen** packages: `@voidbase-cloud/voidbase` and the fourteen `@voidbase-cloud/plugin-*`
-packages the core depends on -- `-realtime` since 7.5, nine more since 7.6, and `-openapi`, `-mcp`, `-ai` and `-seo`
-since 7.7. 7.8 to 7.10 extract the rest, so the flow is written for N of them and not for fifteen.
+The repository publishes **twenty-one** packages: `@voidbase-cloud/voidbase`, the nineteen `@voidbase-cloud/plugin-*`
+packages the core depends on -- `-realtime` since 7.5, nine more since 7.6, `-openapi`, `-mcp`, `-ai` and `-seo`
+since 7.7, and `-stripe`, `-polar`, `-lemonsqueezy`, `-auth` and `-commerce` since 3.7 -- and `@voidbase-cloud/sdk`,
+which depends on none of them (11.1). The flow is written for N of them and not for any one count.
 
 **A release moves the core, what changed, and what depends on those -- not everything.** It used to move all of
 them: one version across the workspace, so a plugin nobody had touched was republished on every push to master, and

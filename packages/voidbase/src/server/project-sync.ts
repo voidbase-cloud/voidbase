@@ -51,6 +51,20 @@ export const pluginsMessage = (change: PluginChange): string =>
  * One commit on the branch: pb_plugins/<name>/{bundle.js,release.json} written or deleted and voidbase.lock updated
  * the way `voidbase plugins add|remove` would. Returns the commit and the lock it wrote.
  */
+/** files committed to the branch in one commit beside whatever is there: a migration automigrate wrote (./automigrate.ts) */
+export async function commitFiles(repo: Repo, files: { path: string; content: string }[], message: string): Promise<{ sha: string; url: string; branch: string }> {
+  const full = repo.fullName;
+  const head = await gh<{ object: { sha: string } }>(repo, "GET", `/repos/${full}/git/ref/heads/${repo.branch}`);
+  const headSha = head.data.object.sha;
+  const commit = await gh<{ tree: { sha: string } }>(repo, "GET", `/repos/${full}/git/commits/${headSha}`);
+  const tree: { path: string; mode: "100644"; type: "blob"; sha: string }[] = [];
+  for (const f of files) tree.push({ path: f.path, mode: "100644", type: "blob", sha: (await gh<{ sha: string }>(repo, "POST", `/repos/${full}/git/blobs`, { content: f.content, encoding: "utf-8" })).data.sha });
+  const newTree = await gh<{ sha: string }>(repo, "POST", `/repos/${full}/git/trees`, { base_tree: commit.data.tree.sha, tree });
+  const newCommit = await gh<{ sha: string; html_url?: string }>(repo, "POST", `/repos/${full}/git/commits`, { message, tree: newTree.data.sha, parents: [headSha] });
+  await gh(repo, "PATCH", `/repos/${full}/git/refs/heads/${repo.branch}`, { sha: newCommit.data.sha, force: false });
+  return { sha: newCommit.data.sha, url: newCommit.data.html_url ?? `https://github.com/${full}/commit/${newCommit.data.sha}`, branch: repo.branch };
+}
+
 export async function commitPlugins(repo: Repo, change: PluginChange, message = pluginsMessage(change)): Promise<Committed> {
   const full = repo.fullName;
   const head = await gh<{ object: { sha: string } }>(repo, "GET", `/repos/${full}/git/ref/heads/${repo.branch}`);

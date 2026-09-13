@@ -8,3 +8,5 @@ export { disabled, installed, projectConfig } from "virtual:voidbase-plugins";
 export const filesystem: import("../../server/installer-info").FilesystemInstaller | null = null;
 /** a Worker serves pb_public from the assets it was deployed with, which a request cannot write (src/server/public-files.ts) */
 export const publicFiles: import("../../server/public-files").PublicFiles | null = null;
+/** nor pb_migrations: automigrate commits to the repository, or keeps the change pending (src/server/automigrate.ts) */
+export const migrationFiles: import("../../server/automigrate").MigrationFiles | null = null;

@@ -13,6 +13,8 @@ import { embedded } from "./embedded";
 export interface ServeOptions { http?: string; dir?: string; hooksDir?: string; migrationsDir?: string; pluginsDir?: string;
   /** pb_secrets/: the declaration and the git-ignored values (VOIDBASE_SECRETS_DIR) */
   secretsDir?: string; publicDir?: string; quiet?: boolean;
+  /** write a migration for every collection change made in the admin panel (src/server/automigrate.ts); unset leaves VOIDBASE_AUTOMIGRATE as it is */
+  automigrate?: boolean;
   /** put the instance on the internet through a Cloudflare quick tunnel (cloudflared; src/node/tunnel.ts) */
   tunnel?: boolean;
   /**
@@ -81,6 +83,7 @@ export async function openLocal(opts: ServeOptions) {
   process.env.VOIDBASE_HOOKS_DIR = projectFolder(opts.hooksDir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks", baked);
   process.env.VOIDBASE_MIGRATIONS_DIR = projectFolder(opts.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations", baked);
   process.env.VOIDBASE_PLUGINS_DIR = projectFolder(opts.pluginsDir ?? process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins", baked);
+  if (opts.automigrate !== undefined) process.env.VOIDBASE_AUTOMIGRATE = opts.automigrate ? "on" : "off";
   if (secrets.missing.length && !opts.quiet) console.warn(`voidbase: ${secrets.missing.length} declared value(s) missing and without a default (${process.env.VOIDBASE_SECRETS_DIR}/secrets.json): ${secrets.missing.join(", ")}`);
   if (secrets.undeclared.length && !opts.quiet) console.warn(`voidbase: ${process.env.VOIDBASE_SECRETS_DIR}/secrets.json holds ${secrets.undeclared.join(", ")}, which main.ts does not declare; a deploy stores only declared values`);
   // pb_data/types.d.ts for editor support in pb_hooks (PocketBase's JSVM typings); a standalone executable carries
@@ -177,5 +180,6 @@ export async function serve(opts: ServeOptions = {}): Promise<VoidbaseServer> {
 export function parseServeArgs(argv: string[] = process.argv.slice(2)): ServeOptions {
   const flags: Record<string, string> = {};
   for (let i = 0; i < argv.length; i++) { const a = argv[i]!; if (a.startsWith("--")) { const [k, v] = a.slice(2).split("="); flags[k!] = v ?? (argv[i + 1] && !argv[i + 1]!.startsWith("--") ? argv[++i]! : "1"); } }
-  return { http: flags.http, dir: flags.dir, hooksDir: flags.hooksDir, migrationsDir: flags.migrationsDir, pluginsDir: flags.pluginsDir, publicDir: flags.publicDir, tunnel: !!flags.tunnel };
+  // an extended project's entry: automigrate stays off unless the flag turns it on, since the repository declares its schema
+  return { http: flags.http, dir: flags.dir, hooksDir: flags.hooksDir, migrationsDir: flags.migrationsDir, pluginsDir: flags.pluginsDir, publicDir: flags.publicDir, tunnel: !!flags.tunnel, automigrate: flags.automigrate === undefined ? undefined : !["off", "0", "false", "no"].includes(flags.automigrate) };
 }

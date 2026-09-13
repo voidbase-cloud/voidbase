@@ -79,11 +79,11 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
 
   app.routes.superuserOnly("#/plugins", function () {
     app.store.title = "Plugins";
-    var data = store({ loading: true, plugins: [], files: {}, installer: null, planes: {}, drafts: {}, saving: "", publicFiles: [], publicEditable: false, chosen: [] });
+    var data = store({ loading: true, plugins: [], files: {}, installer: null, planes: {}, drafts: {}, saving: "", publicFiles: [], publicEditable: false, chosen: [], pendingSchema: [] });
 
     function load() {
       data.loading = true;
-      return Promise.all([app.pb.send("/api/plugins", {}), app.pb.send("/api/plugins/config", {}), app.pb.send("/api/pb_public", {})]).then(function (answers) {
+      return Promise.all([app.pb.send("/api/plugins", {}), app.pb.send("/api/plugins/config", {}), app.pb.send("/api/pb_public", {}), app.pb.send("/api/automigrate", {})]).then(function (answers) {
         var drafts = {};
         Object.keys(answers[1] || {}).forEach(function (name) {
           drafts[name] = {};
@@ -94,6 +94,7 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
         data.installer = answers[0].installer || null;
         data.publicFiles = (answers[2] && answers[2].files) || [];
         data.publicEditable = !!(answers[2] && answers[2].editable === true);
+        data.pendingSchema = (answers[3] && Array.isArray(answers[3].pending)) ? answers[3].pending : [];
         data.planes = answers[1] || {};
         data.drafts = drafts;
       }).catch(function (err) { app.checkApiError(err); }).finally(function () { data.loading = false; });
@@ -135,6 +136,12 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
           if (data.loading) return t.div({ className: "txt-hint" }, "Loading plugins...");
           return t.div(null,
             t.p({ className: "plugins-mode m-b-base" }, modeLine(data.installer)),
+            data.pendingSchema.length
+              ? t.div({ className: "alert alert-warning m-b-base schema-not-in-repository" },
+                t.div(null, "These collection changes are not in the repository. Commit their migrations, or connect the instance to git so automigrate commits them:"),
+                t.ul(null, data.pendingSchema.map(function (p) { return t.li({ "data-migration": p.file }, p.collection + " " + p.change + ": pb_migrations/" + p.file); })),
+              )
+              : "",
             t.div({ className: "txt-lg m-b-sm" }, "What this instance runs"),
             t.table({ className: "table m-b-base" },
               t.thead(null, t.tr(null, t.th(null, "Plugin"), t.th(null, "Tier"), t.th(null, "Where it came from"), t.th(null, "Changed here"), t.th(null, "Provides"))),

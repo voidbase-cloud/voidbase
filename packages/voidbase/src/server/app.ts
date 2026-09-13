@@ -47,7 +47,8 @@ import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
 import { SHIPPED, SHIPPED_FACTS, type ShippedName } from "./plugins/shipped";
 import { pluginsReport } from "./plugins/report";
-import { disabled as disabledPlugins, installed as installedPlugins, projectConfig, publicFiles } from "#platform/plugins";
+import { disabled as disabledPlugins, installed as installedPlugins, migrationFiles, projectConfig, publicFiles } from "#platform/plugins";
+import { automigrateOn, pendingSchemaChanges, recordSchemaChange, type SchemaChange } from "./automigrate";
 import { installerInfo as whereFilesLive } from "./installer-info";
 import { publicPath } from "./public-files";
 import { configReport, declareConfig, environmentOf } from "./plugin-config";
@@ -265,24 +266,40 @@ app.get("/api/collections/:collection", async (c) => {
   return requestHookResult("onCollectionViewRequest", c, collection.name, { collection: new CollectionRef(collection) }, async (ev) => collectionToJSON((ev.collection as CollectionRef).data));
 });
 
+// automigrate (automigrate.ts): a schema change made here becomes a migration; a failure to record one is logged and
+// never undoes the change, and a change that is not in the repository says so on the answer
+async function schemaChanged(env: AppEnv["Bindings"], say: (message: string) => void, change: SchemaChange, before: object | null, after: object | null): Promise<void> {
+  try {
+    const r = await recordSchemaChange(env, migrationFiles, change, before, after);
+    if (r && !r.inRepository) say(`${r.file} is not in the repository`);
+  } catch (err) { console.error("voidbase: automigrate could not record the schema change", err); }
+}
+app.get("/api/automigrate", async (c) => {
+  requireSuperuser(c);
+  return c.json({ on: automigrateOn(c.env), repository: whereFilesLive(c.env).repository ?? null, pending: await pendingSchemaChanges(c.env.DB) });
+});
+
 app.post("/api/collections", async (c) => {
   requireSuperuser(c);
   const body = await readJSON(c, "Failed to load the collection type data due to invalid formatting.");
-  return requestHookResult("onCollectionCreateRequest", c, String(body.name ?? ""), { collection: new CollectionRef(body) }, async (ev) => collectionToJSON(await createCollection(c.env.DB, (ev.collection as CollectionRef).toRaw())));
+  return requestHookResult("onCollectionCreateRequest", c, String(body.name ?? ""), { collection: new CollectionRef(body) }, async (ev) => { const created = collectionToJSON(await createCollection(c.env.DB, (ev.collection as CollectionRef).toRaw())); await schemaChanged(c.env, (m) => c.header("X-Voidbase-Automigrate", m), "created", null, created); return created; });
 });
 
 app.patch("/api/collections/:collection", async (c) => {
   requireSuperuser(c);
   const collection = await mustFindCollection(c, c.req.param("collection"), true);
   const body = await readJSON(c);
-  return requestHookResult("onCollectionUpdateRequest", c, collection.name, { collection: new CollectionRef({ ...collectionToJSON(collection), ...body }) }, async (ev) => collectionToJSON(await updateCollection(c.env.DB, collection, (ev.collection as CollectionRef).toRaw())));
+  const before = collectionToJSON(collection);
+  return requestHookResult("onCollectionUpdateRequest", c, collection.name, { collection: new CollectionRef({ ...collectionToJSON(collection), ...body }) }, async (ev) => { const updated = collectionToJSON(await updateCollection(c.env.DB, collection, (ev.collection as CollectionRef).toRaw())); await schemaChanged(c.env, (m) => c.header("X-Voidbase-Automigrate", m), "updated", before, updated); return updated; });
 });
 
 app.delete("/api/collections/:collection", async (c) => {
   requireSuperuser(c);
   const collection = await mustFindCollection(c, c.req.param("collection"), true);
   return requestHook("onCollectionDeleteRequest", c, collection.name, { collection: new CollectionRef(collection) }, async () => {
+    const before = collectionToJSON(collection);
     await deleteCollection(c.env.DB, collection);
+    await schemaChanged(c.env, (m) => c.header("X-Voidbase-Automigrate", m), "deleted", before, null);
     try { await deletePrefix(c.env.STORAGE, `${collection.id}/`); } catch (err) { console.error("voidbase: file cleanup failed", err); }
     return c.body(null, 204);
   });

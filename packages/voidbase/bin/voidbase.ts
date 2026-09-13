@@ -19,16 +19,19 @@ const flags: Record<string, string> = {}; const positional: string[] = [];
 for (let i = 0; i < argv.length; i++) { const a = argv[i]!; if (a.startsWith("--")) { const [k, v] = a.slice(2).split("="); flags[k!] = v ?? (argv[i + 1] && !argv[i + 1]!.startsWith("--") ? argv[++i]! : "1"); } else positional.push(a); }
 const [cmd, sub, ...rest] = positional;
 const url = (flags.url ?? process.env.VOIDBASE_URL ?? "http://127.0.0.1:8090").replace(/\/$/, "");
-const serveOpts = () => ({ http: flags.http, dir: flags.dir, hooksDir: flags.hooksDir, migrationsDir: flags.migrationsDir, pluginsDir: flags.pluginsDir, secretsDir: flags.secretsDir, publicDir: flags.publicDir, tunnel: !!flags.tunnel });
+const serveOpts = () => ({ http: flags.http, dir: flags.dir, hooksDir: flags.hooksDir, migrationsDir: flags.migrationsDir, pluginsDir: flags.pluginsDir, secretsDir: flags.secretsDir, publicDir: flags.publicDir, tunnel: !!flags.tunnel, automigrate: flags.automigrate === undefined ? true : !["off", "0", "false", "no"].includes(String(flags.automigrate)) });
 const admin = () => { const [email, password] = (flags.admin ?? `${process.env.VOIDBASE_SUPERUSER_EMAIL ?? "admin@example.com"}:${process.env.VOIDBASE_SUPERUSER_PASSWORD ?? ""}`).split(":") as [string, string]; return { email, password }; };
 const HELP = `voidbase - PocketBase-compatible backend: a single Bun process locally, Cloudflare Workers via Void in production
 
-  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--pluginsDir pb_plugins] [--secretsDir pb_secrets] [--publicDir pb_public] [--dev] [--tunnel] [--entry index.ts]
+  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--pluginsDir pb_plugins] [--secretsDir pb_secrets] [--publicDir pb_public] [--dev] [--tunnel] [--entry index.ts] [--automigrate off]
                                      run the server like "pocketbase serve" (--dev restarts when hooks or migrations change;
                                      --tunnel puts it on the internet through a Cloudflare quick tunnel, a
                                      https://<words>.trycloudflare.com address, with cloudflared from VOIDBASE_CLOUDFLARED,
                                      PATH or a download into ~/.cache/voidbase; --entry runs your own main.ts, the
-                                     counterpart of a custom PocketBase build)
+                                     counterpart of a custom PocketBase build; --automigrate off stops writing a
+                                     pb_migrations file for every collection change made in the admin panel, which a
+                                     vanilla instance does unless told otherwise and an extended entry does only with
+                                     --automigrate)
   serve --workers [--name worker] [--no-queue] [--no-hub] [--database durable]
                                      the same instance on Cloudflare's local runtime (workerd): generates the project
                                      "voidbase deploy" would upload, under .cloud/<name>, and runs it with Void's dev

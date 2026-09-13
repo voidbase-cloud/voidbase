@@ -102,6 +102,8 @@ const projectRoot = rootOfPluginsDir(resolve(process.env.VOIDBASE_PLUGINS_DIR ??
 // null in a binary squashed from a project (src/node/baked-project.ts): its plugins were decided when it was built
 /** pb_public as the panel reads and uploads it (src/server/public-files.ts) */
 export { publicFiles } from "../../node/public-files";
+/** pb_migrations as automigrate writes into it (src/server/automigrate.ts) */
+export { migrationFiles } from "../../node/migration-files";
 export const filesystem: FilesystemInstaller | null = process.env.VOIDBASE_PROJECT_BAKED ? null : {
   root: projectRoot,
   list: () => { const l = listPlugins(projectRoot); return { installed: l.installed.map((p) => ({ name: p.name, version: p.version, marketplace: p.marketplace })), disabled: l.shipped.filter((p) => p.state !== "active").map((p) => p.name), marketplaces: l.marketplaces }; },

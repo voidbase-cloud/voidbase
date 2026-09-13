@@ -39,6 +39,7 @@ async function openPage(planes: Record<string, unknown>, installer: Record<strin
       if (path === "/api/plugins/config") return structuredClone(planes);
       if (path === "/api/pb_public" && !options.method) return structuredClone(pbPublic);
       if (path === "/api/pb_public") return { written: ["logo.svg"], message: "Uploaded logo.svg. The instance serves it now." };
+      if (path === "/api/automigrate") return { on: true, repository: null, pending: installer.pending ?? [] };
       return { message: "referrer_policy took effect." };
     } },
   };
@@ -73,6 +74,9 @@ test("the page knows what it may change item by item: vanilla changes what the i
   expect(text(find(extended, (e) => e.tag === "div" && e.props["data-plugin"] === "hardening")[0])).toContain("Read only: an extended instance is configured in its project");
   expect(find(extended, (e) => e.tag === "button")).toHaveLength(0);
 
+  // a schema change automigrate could not get into the repository is on the page
+  const pending = render((await openPage({}, { mode: "fixed", pending: [{ file: "1789000000_updated_vaults.js", collection: "vaults", change: "updated" }] })).page);
+  expect(find(pending, (e) => e.tag === "li" && !!e.props["data-migration"]).map(text)).toEqual(["vaults updated: pb_migrations/1789000000_updated_vaults.js"]);
   const fixed = render((await openPage({}, { mode: "fixed" })).page);
   expect(text(find(fixed, (e) => e.tag === "p")[0])).toStartWith("Extended: this instance was built with its plugins and files.");
 });

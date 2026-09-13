@@ -119,7 +119,9 @@ function mountRoutes(app: Hono<AppEnv>, voidbaseVersion: string, filesystem: Fil
     // Reading what another marketplace serves stays open to a superuser: it installs nothing, and an install from it is
     // still held to what the project trusts (requireTrusted). The /cloud panel reads one before its owner trusts it.
     const extra = normalMarketplace(c.req.query("marketplace"));
-    const marketplaces = [OFFICIAL, ...(extra && extra !== OFFICIAL && MARKETPLACE.test(extra) ? [extra] : [])];
+    // the marketplaces an install asks (the environment, then voidbase.lock) on an instance that holds its own plugins
+    const listed = filesystem ? filesystem.list().marketplaces : [OFFICIAL];
+    const marketplaces = [...new Set([...listed, ...(extra && MARKETPLACE.test(extra) ? [extra] : [])])];
     const available = await Promise.all(marketplaces.map(async (marketplace) => { try { const { index } = await fetchIndex(marketplace); return { marketplace, plugins: index.plugins.map((p) => ({ name: p.name, title: p.title, summary: p.summary, latest: p.latest, repository: p.repository })) }; } catch (err) { return { marketplace, plugins: [], error: err instanceof Error ? err.message : String(err) }; } }));
     return c.json({ installer: installerInfo(c.env, filesystem), available });
   });
@@ -147,11 +149,11 @@ function mountRoutes(app: Hono<AppEnv>, voidbaseVersion: string, filesystem: Fil
       try { const { index } = await fetchIndex(p.marketplace); const v = pick(index, p.name); if (v && v.version !== p.version) updates.push({ name: p.name, installed: p.version, latest: v.version, commit: v.source.commit, marketplace: p.marketplace }); }
       catch { /* a marketplace that does not answer has no update to offer */ }
     }
-    return c.json({ updates });
+    return c.json({ updates, installed: installed.map((p) => ({ name: p.name, version: p.version, marketplace: p.marketplace })) });
   });
   app.post("/api/plugins/install", async (c) => {
     const info = modeOf(c); const b = await readBody(c); const name = nameOf(b); const version = b.version ? String(b.version) : undefined; const marketplace = marketplaceOf(b);
-    if (info.mode === "filesystem") { try { if (marketplace) requireTrusted(marketplace, trustedOnDisk(filesystem!, name), { root: filesystem!.root }, name); const a = await filesystem!.add(version ? `${name}@${version}` : name, { marketplace, voidbaseVersion }); return c.json({ applied: "filesystem", ...a, message: a.unchanged ? `${a.name} ${a.version} is already installed.` : `Installed ${a.name} ${a.version} from ${a.marketplace}. ${afterChange(`install ${a.name} ${a.version}`)}` }); } catch (err) { throw badRequest(err instanceof Error ? err.message : String(err)); } }
+    if (info.mode === "filesystem") { try { if (marketplace) requireTrusted(marketplace, trustedOnDisk(filesystem!, name), { root: filesystem!.root }, name); const release = filesystem!.hold?.(); const a = await filesystem!.add(version ? `${name}@${version}` : name, { marketplace, voidbaseVersion }).finally(() => release?.()); return c.json({ applied: "filesystem", ...a, message: a.unchanged ? `${a.name} ${a.version} is already installed.` : `Installed ${a.name} ${a.version} from ${a.marketplace}. ${afterChange(`install ${a.name} ${a.version}`)}` }); } catch (err) { throw badRequest(err instanceof Error ? err.message : String(err)); } }
     const unmerged = sideLoadedChange(c.env, false); if (unmerged.to === "refused") return c.json({ message: unmerged.message }, 409);
     const r = await onRepository(repoOf(c.env)!, { add: { name, version, marketplace } }, voidbaseVersion);
     return c.json({ applied: "repository", ...r, message: r.unchanged ? `${name} is already installed at that version.` : `Committed to ${info.repository}; its build deploys it.` });
@@ -169,7 +171,7 @@ function mountRoutes(app: Hono<AppEnv>, voidbaseVersion: string, filesystem: Fil
   });
   app.post("/api/plugins/update", async (c) => {
     const info = modeOf(c); const b = await readBody(c); const name = b.name ? nameOf(b) : undefined;
-    if (info.mode === "filesystem") { try { const u = await filesystem!.update(name, { voidbaseVersion }); return c.json({ applied: "filesystem", ...u, message: u.updated.length ? `Updated ${u.updated.map((x) => `${x.name} ${x.from} -> ${x.to}`).join(", ")}. ${afterChange(`update ${u.updated.map((x) => x.name).join(", ")}`)}` : "Everything is up to date." }); } catch (err) { throw badRequest(err instanceof Error ? err.message : String(err)); } }
+    if (info.mode === "filesystem") { try { const release = filesystem!.hold?.(); const u = await filesystem!.update(name, { voidbaseVersion }).finally(() => release?.()); return c.json({ applied: "filesystem", ...u, message: u.updated.length ? `Updated ${u.updated.map((x) => `${x.name} ${x.from} -> ${x.to}`).join(", ")}. ${afterChange(`update ${u.updated.map((x) => x.name).join(", ")}`)}` : "Everything is up to date." }); } catch (err) { throw badRequest(err instanceof Error ? err.message : String(err)); } }
     const unmerged = sideLoadedChange(c.env, false); if (unmerged.to === "refused") return c.json({ message: unmerged.message }, 409);
     const r = await onRepository(repoOf(c.env)!, { update: name ?? "" }, voidbaseVersion);
     return c.json({ applied: "repository", ...r, message: r.unchanged ? "Everything is up to date." : `Committed to ${info.repository}; its build deploys it.` });

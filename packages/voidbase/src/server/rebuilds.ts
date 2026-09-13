@@ -44,6 +44,8 @@ export interface RebuildState { runs: RebuildRun[]; versions: InstanceVersion[];
 export interface Rebuilds {
   /** a change to the declaration: folds into a waiting run, or queues the next */
   queue(reason: string): RebuildRun;
+  /** a change is still being made (a plugin downloading): nothing starts until the returned release is called */
+  hold(): () => void;
   /** resume the failed run from the step that failed, or null when the last run did not fail */
   retry(): RebuildRun | null;
   /** put the instance back onto a version it already assembled */

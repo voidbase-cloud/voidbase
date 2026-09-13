@@ -127,6 +127,7 @@ export const filesystem: FilesystemInstaller | null = process.env.VOIDBASE_PROJE
   remove: (name, o) => removePlugin(projectRoot, name, o),
   update: (name, o) => updatePlugins(projectRoot, name, o),
   rebuild: (reason) => { const r = currentRebuilder(); if (!r) return false; r.queue(reason); return true; },
+  hold: () => currentRebuilder()?.hold() ?? (() => {}),
 };
 
 /** this instance's rebuilds, once it has started (src/node/serve.ts); null before and in a process that serves nothing */

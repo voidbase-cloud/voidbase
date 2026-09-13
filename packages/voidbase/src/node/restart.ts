@@ -11,7 +11,8 @@ export const DERIVED = ["VOIDBASE_SECRETS_DIR", "VOIDBASE_HOOKS_DIR", "VOIDBASE_
 
 export function recordStart(): void {
   if (process.env.VOIDBASE_RESTART_ARGV) return;
-  process.env.VOIDBASE_RESTART_ARGV = JSON.stringify(process.argv);
+  // argv[0] is "bun" inside the standalone executable, so the path of what runs is execPath's (bin/voidbase.ts does the same)
+  process.env.VOIDBASE_RESTART_ARGV = JSON.stringify([process.execPath, ...process.argv.slice(1)]);
   process.env.VOIDBASE_RESTART_ENV = JSON.stringify(Object.fromEntries(DERIVED.map((k) => [k, process.env[k] ?? null])));
 }
 

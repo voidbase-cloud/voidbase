@@ -118,12 +118,26 @@ export function createRebuilder(o: RebuilderOptions): Rebuilds {
     if (read().runs.some((r) => r.status === "queued")) await runOne();
   }
 
+  // changes still being made: an install downloading can take longer than the wait, and must still fold in
+  let holds = 0;
   const schedule = (delay = o.delayMs ?? 1500) => {
     if (timer) clearTimeout(timer);
+    timer = null;
+    if (holds > 0) return;
     timer = setTimeout(() => { timer = null; void runOne(); }, delay);
   };
 
   return {
+    hold() {
+      holds++;
+      if (timer) { clearTimeout(timer); timer = null; }
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true; holds--;
+        if (holds === 0 && !running && read().runs.some((r) => r.status === "queued")) schedule();
+      };
+    },
     queue(reason) {
       const s = read();
       const waiting = s.runs.find((r) => r.status === "queued");

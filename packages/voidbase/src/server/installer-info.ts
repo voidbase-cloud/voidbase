@@ -23,6 +23,8 @@ export interface FilesystemInstaller {
   update(name: string | undefined, o: { voidbaseVersion: string }): Promise<{ updated: { name: string; from: string; to: string; marketplace: string }[]; current: string[] }>;
   /** queue a rebuild of the instance onto the changed declaration (src/node/rebuild.ts); false when this process has no rebuilder */
   rebuild?: (reason: string) => boolean;
+  /** a change is being made: the rebuild it will queue waits for it (src/server/rebuilds.ts, hold) */
+  hold?: () => () => void;
 }
 
 /** the three places an instance's plugins can live; the installer's routes read it to know what a change is */

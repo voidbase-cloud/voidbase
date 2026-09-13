@@ -93,3 +93,16 @@ test("a restart starts the same command with the paths serve derives put back as
   expect(compiled?.cmd).toEqual(["/usr/local/bin/voidbase", "serve"]);
   expect(restartCommand({})).toBeNull();
 });
+
+test("while a change is still being made the rebuild waits, so installs slower than the wait still fold into one", async () => {
+  const { pin, rebuilds } = project();
+  let release = rebuilds.hold(); await Bun.sleep(60); pin({ backups: "0.1.0" }); rebuilds.queue("install backups"); release();
+  // the next install starts before the wait is over and takes longer than it: nothing runs meanwhile
+  release = rebuilds.hold(); await Bun.sleep(60);
+  expect(rebuilds.state().runs.map((r) => r.status)).toEqual(["queued"]);
+  pin({ backups: "0.1.0", mail: "0.1.0" }); rebuilds.queue("install mail"); release();
+  const s = await settled(rebuilds);
+  expect(s.runs).toHaveLength(1);
+  expect(s.runs[0]!.reasons).toEqual(["install backups", "install mail"]);
+  expect(Object.keys(s.runs[0]!.declared!).sort()).toEqual(["backups", "mail"]);
+});

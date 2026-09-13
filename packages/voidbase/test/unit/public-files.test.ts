@@ -4,6 +4,7 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { hookFiles } from "../../src/node/hook-files";
 import { publicFiles } from "../../src/node/public-files";
 import { publicPath } from "../../src/server/public-files";
 
@@ -26,4 +27,16 @@ test("an upload is written into the served folder beside what was there, and lis
   expect(readFileSync(join(dir, "pb_public/index.html"), "utf8")).toBe("<h1>new</h1>");
   expect(publicFiles!.list()).toEqual([{ path: "assets/logo.svg", size: 6 }, { path: "index.html", size: 12 }]);
   expect(() => publicFiles!.write("../escape.txt", new Uint8Array())).toThrow("is not a path inside pb_public");
+});
+
+test("pb_hooks takes an upload the same way, into the folder hooks load from", () => {
+  const was = process.env.VOIDBASE_HOOKS_DIR;
+  process.env.VOIDBASE_HOOKS_DIR = join(dir, "pb_hooks");
+  try {
+    const hook = new TextEncoder().encode('routerAdd("GET", "/api/hello", (e) => e.string(200, "hi"))');
+    hookFiles!.write("routes/hello.pb.js", hook);
+    expect(readFileSync(join(dir, "pb_hooks/routes/hello.pb.js"), "utf8")).toContain("/api/hello");
+    expect(hookFiles!.list()).toEqual([{ path: "routes/hello.pb.js", size: hook.length }]);
+    expect(() => hookFiles!.write("../escape.pb.js", new Uint8Array())).toThrow("is not a path inside pb_hooks");
+  } finally { if (was === undefined) delete process.env.VOIDBASE_HOOKS_DIR; else process.env.VOIDBASE_HOOKS_DIR = was; }
 });

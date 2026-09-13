@@ -22,6 +22,8 @@ import type { Context, Hono } from "hono";
 import { filesystem as platformFilesystem } from "#platform/plugins";
 import { requireSuperuser } from "../auth-slot";
 import { badRequest } from "../errors";
+// a connected repository alone opens nothing: auto-merge is the deliberate act that lets a change made here be committed
+import { sideLoadedChange } from "../auto-merge";
 // where this instance's plugins live is the core's own fact and lives in the core (../installer-info.ts): the
 // answer to GET /api/plugins carries it whatever is loaded, so plugins/report.ts has to reach it without importing
 // this module, and lifting this plugin into a package of its own leaves that file where it is.
@@ -122,6 +124,7 @@ function mountRoutes(app: Hono<AppEnv>, voidbaseVersion: string, filesystem: Fil
   app.post("/api/plugins/install", async (c) => {
     const info = modeOf(c); const b = await readBody(c); const name = nameOf(b); const version = b.version ? String(b.version) : undefined; const marketplace = marketplaceOf(b);
     if (info.mode === "filesystem") { try { if (marketplace) requireTrusted(marketplace, trustedOnDisk(filesystem!, name), { root: filesystem!.root }, name); const a = await filesystem!.add(version ? `${name}@${version}` : name, { marketplace, voidbaseVersion }); return c.json({ applied: "filesystem", ...a, message: a.unchanged ? `${a.name} ${a.version} is already installed.` : `Installed ${a.name} ${a.version} from ${a.marketplace}. ${restart}` }); } catch (err) { throw badRequest(err instanceof Error ? err.message : String(err)); } }
+    const unmerged = sideLoadedChange(c.env, false); if (unmerged.to === "refused") return c.json({ message: unmerged.message }, 409);
     const r = await onRepository(repoOf(c.env)!, { add: { name, version, marketplace } }, voidbaseVersion);
     return c.json({ applied: "repository", ...r, message: r.unchanged ? `${name} is already installed at that version.` : `Committed to ${info.repository}; its build deploys it.` });
   });
@@ -132,12 +135,14 @@ function mountRoutes(app: Hono<AppEnv>, voidbaseVersion: string, filesystem: Fil
     const cost = force ? null : removalCost(graph(), name);
     if (cost) return c.json({ message: refusal(cost, 'To go ahead, send this again with "force": true.'), core: cost.core, provides: cost.provides, dependents: cost.dependents }, 409);
     if (info.mode === "filesystem") { const r = filesystem!.remove(name, { force: true }); return c.json({ applied: "filesystem", result: r, message: r === "removed" ? `Removed ${name}. ${restart}` : r === "disabled" ? `${name} ships with voidbase; it is now turned off for this project. ${restart}` : `${name} was already turned off.` }); }
+    const unmerged = sideLoadedChange(c.env, false); if (unmerged.to === "refused") return c.json({ message: unmerged.message }, 409);
     const r = await onRepository(repoOf(c.env)!, { remove: name }, voidbaseVersion);
     return c.json({ applied: "repository", ...r, message: `Committed to ${info.repository}; its build deploys it.` });
   });
   app.post("/api/plugins/update", async (c) => {
     const info = modeOf(c); const b = await readBody(c); const name = b.name ? nameOf(b) : undefined;
     if (info.mode === "filesystem") { try { const u = await filesystem!.update(name, { voidbaseVersion }); return c.json({ applied: "filesystem", ...u, message: u.updated.length ? `Updated ${u.updated.map((x) => `${x.name} ${x.from} -> ${x.to}`).join(", ")}. ${restart}` : "Everything is up to date." }); } catch (err) { throw badRequest(err instanceof Error ? err.message : String(err)); } }
+    const unmerged = sideLoadedChange(c.env, false); if (unmerged.to === "refused") return c.json({ message: unmerged.message }, 409);
     const r = await onRepository(repoOf(c.env)!, { update: name ?? "" }, voidbaseVersion);
     return c.json({ applied: "repository", ...r, message: r.unchanged ? "Everything is up to date." : `Committed to ${info.repository}; its build deploys it.` });
   });

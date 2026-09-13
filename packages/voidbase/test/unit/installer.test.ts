@@ -86,7 +86,8 @@ describe("the installer says where an instance's plugins live", () => {
 });
 
 describe("a project instance: a change is one commit to its repository", () => {
-  const env = { VOIDBASE_PROJECT_REPO: "acme/shop", VOIDBASE_GH_TOKEN: "gh-test", GITHUB_API_BASE: "" } as Partial<Bindings> & { GITHUB_API_BASE: string };
+  // auto-merge on: connecting the repository is not on its own a reason to change its plugins from here (auto-merge.ts)
+  const env = { VOIDBASE_PROJECT_REPO: "acme/shop", VOIDBASE_GH_TOKEN: "gh-test", VOIDBASE_AUTO_MERGE: "on", GITHUB_API_BASE: "" } as Partial<Bindings> & { GITHUB_API_BASE: string };
   test("install: the bundle is downloaded and verified here, the files and the lock entry land in one commit", async () => {
     env.GITHUB_API_BASE = GH;
     const { call } = await appWith(env, null);
@@ -95,6 +96,14 @@ describe("a project instance: a change is one commit to its repository", () => {
     expect(files.get("pb_plugins/echo/bundle.js")).toBe(echo("0.1.0"));
     const lock = JSON.parse(files.get("voidbase.lock")!); expect(lock.plugins.echo.version).toBe("0.1.0"); expect(lock.plugins.echo.marketplace).toBe(MARKET);
     expect(commits.get(head)!.message).toBe("plugins: add echo 0.1.0");
+  });
+  test("with auto-merge off, a connected instance changes none of its plugins: 409 naming what to set, and GitHub is not asked", async () => {
+    const { call } = await appWith({ ...env, VOIDBASE_AUTO_MERGE: "off" } as Partial<Bindings>, null); const before = head; ghCalls.length = 0;
+    for (const [path, body] of [["/api/plugins/install", { name: "echo", marketplace: MARKET }], ["/api/plugins/update", { name: "echo" }], ["/api/plugins/remove", { name: "echo", force: true }]] as const) {
+      const r = await call("POST", path, body);
+      expect(r.status).toBe(409); expect(r.json.message).toContain("VOIDBASE_AUTO_MERGE=on"); expect(r.json.message).toContain("acme/shop");
+    }
+    expect(ghCalls).toEqual([]); expect(head).toBe(before);
   });
   test("install again at the same version: nothing to commit", async () => {
     const { call } = await appWith(env, null); const before = head;

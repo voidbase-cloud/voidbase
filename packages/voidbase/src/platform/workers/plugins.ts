@@ -10,3 +10,5 @@ export const filesystem: import("../../server/installer-info").FilesystemInstall
 export const publicFiles: import("../../server/public-files").PublicFiles | null = null;
 /** nor pb_migrations: automigrate commits to the repository, or keeps the change pending (src/server/automigrate.ts) */
 export const migrationFiles: import("../../server/automigrate").MigrationFiles | null = null;
+/** nor pb_hooks: a change to one is committed with auto-merge on, or refused (src/server/auto-merge.ts) */
+export const hookFiles: import("../../server/public-files").PublicFiles | null = null;

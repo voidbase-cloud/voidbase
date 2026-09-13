@@ -35,7 +35,7 @@ import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
 import { SHIPPED, SHIPPED_FACTS, type ShippedName } from "./plugins/shipped";
 import { pluginsReport } from "./plugins/report";
-import { disabled as disabledPlugins, installed as installedPlugins, migrationFiles, projectConfig, publicFiles } from "#platform/plugins";
+import { disabled as disabledPlugins, hookFiles, installed as installedPlugins, migrationFiles, projectConfig, publicFiles } from "#platform/plugins";
 import { automigrateOn, pendingSchemaChanges, recordSchemaChange, type SchemaChange } from "./automigrate";
 import { installerInfo as whereFilesLive } from "./installer-info";
 import { publicPath } from "./public-files";
@@ -640,6 +640,34 @@ app.post("/api/pb_public", async (c) => {
   }
   for (const t of targets) publicFiles!.write(t.path!, new Uint8Array(await t.file.arrayBuffer()));
   return c.json({ written, message: `Uploaded ${written.join(", ")}. The instance serves ${written.length === 1 ? "it" : "them"} now.` });
+});
+
+// pb_hooks, the third side-loaded folder (git-connection.feature, "Auto-merge opens the side-loaded files too"): the same
+// rule as pb_public. An instance that holds its own files writes the upload where hooks load from, and loads it on its
+// next start; one its project declares commits it with auto-merge on and refuses it, naming what to set, otherwise.
+const holdsHookFiles = (env: AppEnv["Bindings"]) => whereFilesLive(env).mode === "filesystem" && !!hookFiles;
+app.get("/api/pb_hooks", (c) => {
+  requireSuperuser(c);
+  const holds = holdsHookFiles(c.env); const where = sideLoadedChange(c.env, holds);
+  return c.json({ source: holds ? "instance" : "repository", editable: where.to !== "refused", ...(where.to === "refused" ? { refusal: where.message } : {}), files: hookFiles ? hookFiles.list() : [] });
+});
+app.post("/api/pb_hooks", async (c) => {
+  requireSuperuser(c);
+  const where = sideLoadedChange(c.env, holdsHookFiles(c.env));
+  if (where.to === "refused") throw new ApiError(409, where.message);
+  const form = await c.req.formData().catch(() => null);
+  const files = (form?.getAll("files") ?? []).filter((f): f is File => f instanceof File);
+  if (!files.length) throw badRequest('Send the hook files as multipart form fields called "files".');
+  const targets = files.map((f) => ({ file: f, path: publicPath(f.name) }));
+  const refused = targets.filter((t) => !t.path).map((t) => t.file.name);
+  if (refused.length) throw badRequest(`These are not paths inside pb_hooks: ${refused.map((n) => JSON.stringify(n)).join(", ")}.`);
+  const written = targets.map((t) => t.path!);
+  if (where.to === "repository") {
+    const committed = await commitFiles(where.repo, await Promise.all(targets.map(async (t) => ({ path: `pb_hooks/${t.path}`, content: new Uint8Array(await t.file.arrayBuffer()) }))), `chore(pb_hooks): ${written.join(", ")} from the admin panel`);
+    return c.json({ written, committed: committed.url, message: `Committed ${written.join(", ")} to ${where.repo.fullName} (${committed.branch}); its build deploys ${written.length === 1 ? "it" : "them"}.` });
+  }
+  for (const t of targets) hookFiles!.write(t.path!, new Uint8Array(await t.file.arrayBuffer()));
+  return c.json({ written, message: `Wrote ${written.join(", ")}. The instance loads hooks when it starts: restart it to load ${written.length === 1 ? "it" : "them"}.` });
 });
 
 // A plugin's configuration plane, field by field, and a change to it: runtime fields take effect at once, rebuild

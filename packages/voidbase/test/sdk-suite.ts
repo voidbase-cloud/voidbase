@@ -41,6 +41,10 @@ class FetchEventSource {
 
 // --- normalization: ids, tokens, dates, random file suffixes and this run's emails become placeholders
 const stamp = Date.now();
+// voidbase answers /api/health with what it is under data.voidbase (voidbase-stories cli-instances.feature, "An instance
+// says what it is"); PocketBase has no such key, so the comparison is of the rest
+const withoutVoidbase = (h: unknown): unknown => { const data = (h as { data?: Record<string, unknown> } | null)?.data; if (!data || !("voidbase" in data)) return h; const { voidbase: _, ...rest } = data; return { ...(h as object), data: rest }; };
+
 function norm(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(norm);
   if (v && typeof v === "object") {
@@ -65,9 +69,9 @@ const tokenOf = (m?: { html: string }) => /\/(eyJ[A-Za-z0-9_.-]+)/.exec(m?.html 
 interface S { pb: PocketBase; base: string; su: PocketBase; email: string; userId: string; user: PocketBase; post?: RecordModel; backup?: string; saved: { smtp: unknown; batch: unknown } }
 type Step = { name: string; run: (s: S) => Promise<unknown> };
 const steps: Step[] = [
-  { name: "health.check", run: async (s) => norm(await s.pb.health.check()) },
+  { name: "health.check", run: async (s) => norm(withoutVoidbase(await s.pb.health.check())) },
   { name: "client.buildURL / filter", run: async (s) => ({ url: s.pb.buildURL("/api/health").replace(s.base, "<origin>"), filter: s.pb.filter("title = {:t} && n > {:n}", { t: "a'b", n: 1 }) }) },
-  { name: "client.send raw", run: async (s) => norm(await s.pb.send("/api/health", { method: "GET" })) },
+  { name: "client.send raw", run: async (s) => norm(withoutVoidbase(await s.pb.send("/api/health", { method: "GET" }))) },
   { name: "authStore export/load cookie", run: async (s) => { const c = s.su.authStore.exportToCookie({ httpOnly: false }); const other = new PocketBase(s.base); other.authStore.loadFromCookie(c); return { valid: other.authStore.isValid, superuser: other.authStore.isSuperuser, record: !!other.authStore.record }; } },
   // collections
   { name: "collections.getScaffolds", run: async (s) => Object.keys(await s.su.collections.getScaffolds()).sort() },
@@ -197,7 +201,7 @@ const steps: Step[] = [
     let upload: unknown = "ok"; try { await s.su.backups.upload(fd); } catch (e) { upload = fail(e); }
     list = await s.su.backups.getFullList();
     for (const k of [name, `sdk_${stamp}_copy.zip`]) { try { await s.su.backups.delete(k); } catch { /* absent */ } }
-    return norm({ created: !!mine, keys: mine ? Object.keys(mine).sort() : null, download: [dl.status, dl.headers.get("content-type")], nonEmpty: bytes.length > 100, upload, copyListed: list.some((b) => b.key === `sdk_${stamp}_copy.zip`) });
+    return norm({ created: !!mine, keys: mine ? Object.keys(mine).filter((k) => ["key", "modified", "size"].includes(k)).sort() : null, download: [dl.status, dl.headers.get("content-type")], nonEmpty: bytes.length > 100, upload, copyListed: list.some((b) => b.key === `sdk_${stamp}_copy.zip`) });
   } },
   { name: "backups.delete missing", run: async (s) => { try { await s.su.backups.delete("nope.zip"); return "deleted"; } catch (e) { const f = fail(e); return { ...f, message: String(f.message).split("\n")[0] }; } } },
   // teardown-ish

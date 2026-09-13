@@ -10,11 +10,14 @@ const USER = { identity: "user@example.com", password: "changeme123" };
 type Case = { name: string; method?: string; path: string; body?: unknown; auth?: "super" | "user" | "bad" | "none"; bearer?: boolean; skip?: string; normalize?: (json: unknown) => unknown };
 // OAuth2 providers voidbase adds on top of PocketBase's catalog (the site signs in with Cloudflare)
 const VOIDBASE_PROVIDERS = new Set(["cloudflare"]);
+// voidbase answers /api/health with what it is under data.voidbase (voidbase-stories cli-instances.feature, "An instance
+// says what it is"); PocketBase has no such key, so the rest is what is compared
+const withoutVoidbase = (json: unknown): unknown => { const data = (json as { data?: Record<string, unknown> } | null)?.data; if (!data || !("voidbase" in data)) return json; const { voidbase: _, ...rest } = data; return { ...(json as object), data: rest }; };
 
 const cases: Case[] = [
-  { name: "health anon", path: "/api/health" },
-  { name: "health superuser", path: "/api/health", auth: "super" },
-  { name: "health bearer prefix", path: "/api/health", auth: "super", bearer: true },
+  { name: "health anon", path: "/api/health", normalize: withoutVoidbase },
+  { name: "health superuser", path: "/api/health", auth: "super", normalize: withoutVoidbase },
+  { name: "health bearer prefix", path: "/api/health", auth: "super", bearer: true, normalize: withoutVoidbase },
   { name: "login superuser", method: "POST", path: "/api/collections/_superusers/auth-with-password", body: SUPER },
   { name: "login wrong password", method: "POST", path: "/api/collections/_superusers/auth-with-password", body: { ...SUPER, password: "nope" } },
   { name: "login validation", method: "POST", path: "/api/collections/_superusers/auth-with-password", body: {} },

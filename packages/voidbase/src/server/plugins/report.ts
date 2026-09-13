@@ -240,7 +240,26 @@ export async function pluginsReport(kernel: Kernel, env: Bindings, opts: { timeo
       answer[key] = { error: message };
     }
   }
+  // Where each plugin and each side-loaded folder came from, which is what decides who may change it: voidbase
+  // ships it, the repository the instance is built from declares it, or the instance itself holds it. The panel
+  // reads this to know what it may offer to change (decision 12), and D2 reads it to see the project declares a plugin.
+  const mode = installerInfo(env).mode;
+  if (Array.isArray(answer.plugins)) answer.plugins = (answer.plugins as { name: string }[]).map((p) => ({ ...p, source: sourceOf(graph.origins[p.name], mode) }));
+  const files = sourceOf("", mode);
+  answer.files = { pb_hooks: files, pb_migrations: files, pb_public: files };
   for (const [key, value] of fields) if (value) answer[key] = await value;
   for (const [name, value] of rest) answer[name] = await value;
   return answer;
+}
+
+export type Source = "voidbase" | "repository" | "instance";
+
+/**
+ * Where a plugin (by its load origin) or a side-loaded file came from. Shipped means voidbase. Anything else is the
+ * project's: on an instance whose installer changes pb_plugins on disk, the instance holds it; on one built from a
+ * repository, or committing to one, the repository declares it.
+ */
+export function sourceOf(origin: string | undefined, mode: "filesystem" | "repository" | "fixed"): Source {
+  if (origin === "shipped") return "voidbase";
+  return mode === "filesystem" ? "instance" : "repository";
 }

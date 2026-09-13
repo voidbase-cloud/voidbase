@@ -46,7 +46,7 @@ import { openapi } from "../../src/server/plugins/openapi";
 import { polar } from "../../src/server/plugins/polar";
 import { previews, previewsReport } from "../../src/server/plugins/previews";
 import { realtime } from "../../src/server/plugins/realtime";
-import { pluginsReport } from "../../src/server/plugins/report";
+import { pluginsReport, sourceOf } from "../../src/server/plugins/report";
 import { CORE } from "../../src/server/plugins/resolve";
 import { seo, seoWith } from "../../src/server/plugins/seo";
 import { shippingFlat, shippingFlatInfo } from "../../src/server/plugins/shipping-flat";
@@ -181,8 +181,25 @@ describe("a plugin asks the core for the request's record context", () => {
 describe("/api/plugins is what the plugins that loaded say about themselves", () => {
   const snapshot = readFileSync(resolvePath(import.meta.dir, "../fixtures/plugins-answer.json"), "utf8").trim();
 
+  // `source` on each plugin and `files` came after the snapshot, on purpose (16.5); the rest is held to it
+  const beforeSources = (a: Record<string, unknown>) => {
+    const { files: _files, ...rest } = a;
+    return { ...rest, plugins: (rest.plugins as { source?: string }[]).map(({ source: _source, ...p }) => p) };
+  };
+
   test("a default instance answers byte for byte what it answered before, key order and all", async () => {
-    expect(JSON.stringify(await pluginsReport(await instance(), env))).toBe(snapshot);
+    expect(JSON.stringify(beforeSources(await pluginsReport(await instance(), env)))).toBe(snapshot);
+  });
+
+  test("the answer says where each plugin and each side-loaded folder came from", async () => {
+    const answer = await pluginsReport(await instance(), env);
+    const sources = new Set((answer.plugins as { source: string }[]).map((p) => p.source));
+    expect([...sources]).toEqual(["voidbase"]);
+    expect(Object.keys(answer.files as object)).toEqual(["pb_hooks", "pb_migrations", "pb_public"]);
+    expect(sourceOf("shipped", "repository")).toBe("voidbase");
+    expect(sourceOf("https://marketplace.voidbase.cloud 1.0.0", "filesystem")).toBe("instance");
+    expect(sourceOf("https://marketplace.voidbase.cloud 1.0.0", "repository")).toBe("repository");
+    expect(sourceOf("https://marketplace.voidbase.cloud 1.0.0", "fixed")).toBe("repository");
   });
 
   test("and the snapshot is that answer: app.ts's own expression, over the same plugins and bindings", async () => {
@@ -332,7 +349,7 @@ describe("a field is in the answer only while a plugin answers for it", () => {
     const answer = await pluginsReport(await instance([quiet("domains")], ["domains"]), env);
     expect("domains" in answer).toBe(false);
     expect(answer.names).toContain("domains");
-    expect(answer.plugins).toContainEqual({ name: "domains", tier: "community", core: false, provides: [], requires: [] });
+    expect(answer.plugins).toContainEqual({ name: "domains", tier: "community", core: false, provides: [], requires: [], source: "voidbase" });
   });
 
   test("installer, mail, payments and observability are there whatever is loaded: they are not a plugin's to take away", async () => {

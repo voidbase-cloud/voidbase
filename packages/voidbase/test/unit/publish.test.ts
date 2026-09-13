@@ -51,7 +51,7 @@ import {
   type Pkg,
   type Run,
 } from "../../../../scripts/publish";
-import { bumpVersion, lockstep, prependNotes, releaseSet } from "../../../../scripts/hot-release";
+import { bumpVersion, followSet, lockstep, prependNotes, releaseSet } from "../../../../scripts/hot-release";
 
 const PACKAGE = "@voidbase-cloud/voidbase";
 const PLUGIN = "@voidbase-cloud/plugin-realtime";
@@ -404,6 +404,12 @@ describe("the hot release bump, in lockstep", () => {
 
   // What a release moves, now that it does not move everything. Each case is a reason a package has to be
   // republished even though the release is not about it.
+  test("release-please moves only the core, so it cannot put every package on one version", () => {
+    const config = JSON.parse(readFileSync(resolve(ROOT, "release-please-config.json"), "utf8")) as { packages: Record<string, { "extra-files"?: unknown[] }> };
+    expect(Object.keys(config.packages)).toEqual(["packages/voidbase"]);
+    expect(config.packages["packages/voidbase"]!["extra-files"]).toBeUndefined();
+  });
+
   describe("the release set", () => {
     const core = () => pkg(CORE, "0.9.0-beta.10", { "@voidbase-cloud/plugin-a": "workspace:*", "@voidbase-cloud/plugin-b": "workspace:*" }, { path: "packages/voidbase" });
     const a = () => pkg("@voidbase-cloud/plugin-a", "0.9.0-beta.10", {}, { path: "packages/plugin-a" });
@@ -427,6 +433,13 @@ describe("the hot release bump, in lockstep", () => {
       // the other way round is not true: a does not depend on b, so touching b leaves a where it is
       const other = releaseSet([core(), a(), b()], ["packages/plugin-b/src/index.ts"], "0.9.0-beta.11");
       expect(other.has("@voidbase-cloud/plugin-a")).toBe(false);
+    });
+
+    test("the normal path's follow set is the release set without the core, which release-please already moved", () => {
+      // release-please tracks one package, so its release PR moves the core and nothing else; --follow moves the rest
+      expect([...followSet([core(), a(), b()], ["packages/voidbase/src/server/app.ts"], "0.9.0-beta.11")]).toEqual([]);
+      expect([...followSet([core(), a(), b()], ["packages/plugin-a/src/index.ts"], "0.9.0-beta.11")].sort()).toEqual(["@voidbase-cloud/plugin-a", "@voidbase-cloud/plugin-b"]);
+      expect(followSet([core(), a(), b()], ["packages/plugin-b/README.md"], "0.9.0-beta.11").has(CORE)).toBe(false);
     });
 
     test("a package whose peer range would no longer admit the core is in it, however untouched", () => {

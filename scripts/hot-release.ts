@@ -78,6 +78,17 @@ export function releaseSet(pkgs: Pkg[], changedPaths: string[], to: string): Set
   return out;
 }
 
+/**
+ * The release set without the core, for the normal path. release-please tracks one package, so its release PR moves
+ * the core and nothing else; this is what the same release has to move besides it, which `--follow` writes after
+ * the core's release is cut. Hot mode never needs it: it moves the whole set in its own commit.
+ */
+export function followSet(pkgs: Pkg[], changedPaths: string[], to: string): Set<string> {
+  const set = releaseSet(pkgs, changedPaths, to);
+  set.delete(CORE);
+  return set;
+}
+
 /** the version field, rewritten in place: the file keeps its formatting and everything else it says */
 export function bumpVersion(text: string, from: string, to: string): string {
   const exact = `"version": "${from}"`;
@@ -99,6 +110,39 @@ if (import.meta.main) {
   const repo = process.env.GITHUB_REPOSITORY ?? "voidbase-cloud/voidbase";
   const token = process.env.GH_TOKEN ?? "";
   const sh = async (cmd: string[], quiet = false) => { const p = Bun.spawn(cmd, { cwd: ROOT, stdout: "pipe", stderr: "pipe" }); const out = await new Response(p.stdout).text(); const err = await new Response(p.stderr).text(); if ((await p.exited) !== 0) throw new Error(`${cmd.slice(0, 3).join(" ")}: ${err.trim() || out.trim()}`); if (!quiet && out.trim()) console.log(out.trim()); return out.trim(); };
+  // --follow <version> --since <tag>: the normal path's half of what hot mode does in one go. release-please has
+  // already moved the core to <version> and cut its release; this moves every other package the release set names to
+  // the same version, commits that, and pushes. It tags nothing and creates no release: those are the core's. The
+  // subject starts `chore(master): release`, which is what ci.sh already skips, so the push starts no build.
+  const followAt = process.argv.indexOf("--follow");
+  if (followAt >= 0) {
+    const version = process.argv[followAt + 1] ?? "";
+    const sinceAt = process.argv.indexOf("--since");
+    const since = sinceAt >= 0 ? process.argv[sinceAt + 1] ?? "" : "";
+    if (!version) { console.error("--follow needs the version the core was released at"); process.exit(1); }
+    const pkgs = readWorkspace(ROOT);
+    const changed = since ? (await sh(["git", "diff", "--name-only", `${since}..HEAD`], true)).split("\n").filter(Boolean) : pkgs.map((p) => p.path);
+    const moving = pkgs.filter((p) => followSet(pkgs, changed, version).has(p.name) && p.version !== version);
+    if (!moving.length) { console.log(`follow ${version}: nothing besides the core changed since ${since || "the start"}`); process.exit(0); }
+    console.log(`follow ${version}: ${moving.map((p) => `${p.name} ${p.version} -> ${version}`).join(", ")}`);
+    if (dry) process.exit(0);
+    if (!token) { console.error("GH_TOKEN is not set: the package versions cannot be pushed"); process.exit(1); }
+    const files: string[] = [];
+    for (const p of moving) { const file = `${p.path}/package.json`; writeFileSync(`${ROOT}/${file}`, bumpVersion(readFileSync(`${ROOT}/${file}`, "utf8"), p.version, version)); files.push(file); }
+    if (syncLockfileFile(ROOT, moving.map((p) => ({ ...p, version }))).length) files.push("bun.lock");
+    const notes = `## ${version}\n\n* released with @voidbase-cloud/voidbase ${version}\n`;
+    for (const p of publishable(moving)) {
+      const file = `${p.path}/CHANGELOG.md`;
+      let current: string | null = null; try { current = readFileSync(`${ROOT}/${file}`, "utf8"); } catch { current = null; }
+      writeFileSync(`${ROOT}/${file}`, prependNotes(current, notes)); files.push(file);
+    }
+    await sh(["git", "config", "user.name", "voidbase release"]); await sh(["git", "config", "user.email", "release@voidbase.cloud"]);
+    await sh(["git", "add", ...files]);
+    await sh(["git", "commit", "-q", "--no-verify", "-m", `chore(master): release ${version} packages`]);
+    await sh(["git", "push", "--quiet", `https://x-access-token:${token}@github.com/${repo}.git`, "HEAD:master"], true);
+    console.log(`pushed the versions of ${moving.length} package(s) for ${version}`);
+    process.exit(0);
+  }
   const { from, to, packages } = lockstep(readWorkspace(ROOT));
   const lastTag = await sh(["git", "describe", "--tags", "--abbrev=0", "--match", "v*"], true).catch(() => "");
   // what this release moves: the core, what changed since the last tag, and whatever depends on those. With no tag

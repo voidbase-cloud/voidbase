@@ -55,6 +55,15 @@ if [ -z "$release_json" ] && [ -z "$DRY" ]; then echo; echo "no release $TAG: no
 echo "release $TAG: ${release_json:-none (dry run continues)}"
 has_asset() { printf '%s' "$release_json" | grep -qF "\"$1\""; }
 
+# A package publishes when it changed, and only then. Hot mode moved the whole release set in its own commit before
+# this ran. On the normal path release-please tracks one package, so its release PR moved the core and nothing else;
+# whatever else the release set names moves to the same version here, before anything is packed
+# (scripts/hot-release.ts --follow). Its commit starts `chore(master): release`, which starts no build.
+if [ -z "$HOT" ] && [ -z "$DRY" ] && [ -n "${GH_TOKEN:-}" ] && [ "$BRANCH" = master ]; then
+  PREV_TAG=$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null || true)
+  step versions bun scripts/hot-release.ts --follow "$VERSION" --since "$PREV_TAG" || exit 1
+fi
+
 # what npm is missing at this version, across every publishable package in the workspace (scripts/publish.ts). A
 # failed check counts as "missing", never as "published": the publish step is idempotent and would skip what is
 # already there, so erring towards running it is the safe direction.

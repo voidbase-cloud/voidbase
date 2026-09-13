@@ -94,10 +94,10 @@ changelog line of its own.
 
 Since 7.5 that rule reaches the extracted plugin packages too: a commit touching only `packages/plugin-*/**` is, to
 release-please, a commit touching no tracked package -- and after 7.6 there are ten of those directories, so this is
-now the ordinary shape of a plugin change rather than an edge case. The version still *moves* there when a release
-is cut -- the `extra-files` glob below writes it into every `packages/*/package.json` -- but a plugin package cannot
-be what cuts one. The fix while that matters is the same as for tooling: touch the core in the same commit. Hot
-mode, which is the mode in use during the beta, has no such rule and releases every push.
+now the ordinary shape of a plugin change rather than an edge case. The plugin still *moves* when a release is cut --
+`scripts/hot-release.ts --follow` writes the version into whatever the release set names (below) -- but a plugin
+package cannot be what cuts one. The fix while that matters is the same as for tooling: touch the core in the same
+commit. Hot mode, which is the mode in use during the beta, has no such rule and releases every push.
 
 This is a real change and not a side effect worth shrugging at. Until the move the configuration was keyed `"."`,
 and `"."` is release-please's root project path: `CommitSplit` (release-please 17.11.2,
@@ -282,33 +282,30 @@ a release that happened as one that failed. The loop skips what the mirror alrea
 it. What is not deliberate is silence -- the message is the only thing that says whether the mirror is down, the
 token expired or a name was refused -- so it is printed rather than dropped.
 
-**One version across the workspace** -- the owner's decision, and the reason a tarball can name a sibling at all.
-In hot mode `scripts/hot-release.ts` bumps every workspace package together and refuses a workspace whose
-publishable packages have drifted apart. On the normal path release-please does it from the one package it tracks:
+**A package moves when it changed, on both paths.** Hot mode moves the whole release set in its own commit
+(`releaseSet`, above). On the normal path release-please tracks one package, `packages/voidbase`, so its release pull
+request moves the core and nothing else; once that release is cut, `scripts/release.sh` runs
+`scripts/hot-release.ts --follow <version> --since <previous tag>` before anything is packed, which moves every other
+package the release set names to the same version, writes their changelogs and `bun.lock`, commits that as
+`chore(master): release <version> packages` (a subject ci.sh already skips) and pushes. It tags nothing and makes no
+release: those are the core's. `bun scripts/hot-release.ts --follow <version> --since <tag> --dry-run` prints what it
+would move.
 
-```json
-"extra-files": [{ "type": "json", "path": "/packages/*/package.json", "jsonpath": "$.version", "glob": true }]
-```
+This used to be the other way round. The configuration carried an `extra-files` glob,
+`"/packages/*/package.json"`, so the release pull request wrote one version into every package -- which put every
+package on npm on every normal release, changed or not. The glob is gone, and a unit test holds that release-please
+tracks the core alone (`test/unit/publish.test.ts`).
 
-A leading `/` makes the glob root-relative rather than package-relative (`BaseStrategy.extraFilePaths` and
-`addPath`, release-please 17.11.2), so the release pull request writes the new version into every
-`packages/*/package.json` and touches nothing else in them -- and a package added later is covered without editing
-the configuration.
+`bun.lock` still needs its own care, because it is JSONC and no release-please updater writes it. `--follow` and hot
+mode both write its workspace versions in step themselves, and the unit suite asserts the lockfile and the manifests
+agree (`lockfileDrift`), so a lockfile left behind is loud rather than silently repaired at pack time.
 
-What it cannot write is `bun.lock`, which is JSONC and has no updater. So the release pull request leaves the
-lockfile's workspace versions a release behind, and nothing else notices: `bun install --frozen-lockfile` checks
-clean and exits 0 with the manifests at 1.0.1 and the lockfile at 1.0.0 (measured, bun 1.3.14). That is exactly the
-state the second gate exists to catch, and a release repairs it at pack time rather than complaining -- so the unit
-suite asserts it instead (`lockfileDrift`, `test/unit/publish.test.ts`), loudly and for a penny. When it fails,
-`bun install` and a commit of `bun.lock` is the whole fix; merging the release pull request and pushing that commit
-is one step of the same release.
-
-release-please's own `linked-versions` plugin is the obvious answer and is the wrong one here. It collects the
-strategies in a group by `strategy.getComponent()`, and `BaseStrategy.getComponent()` returns `''` whenever
-`include-component-in-tag` is false (`build/src/strategies/base.js`, release-please 17.11.2); `LinkedVersions.preconfigure`
-skips every strategy with no component. This repository tags `vX.Y.Z` with no component in it, so the plugin would
-find zero group members and quietly do nothing, and turning the component on would rename every tag the executables'
-update path and `scripts/release.sh --tag` depend on. The glob moves the versions it needs to with the tag scheme intact.
+release-please's own `linked-versions` plugin was never the answer either. It collects the strategies in a group by
+`strategy.getComponent()`, and `BaseStrategy.getComponent()` returns `''` whenever `include-component-in-tag` is false
+(`build/src/strategies/base.js`, release-please 17.11.2); `LinkedVersions.preconfigure` skips every strategy with no
+component. This repository tags `vX.Y.Z` with no component in it, so the plugin would find zero group members and
+quietly do nothing, and turning the component on would rename every tag the executables' update path and
+`scripts/release.sh --tag` depend on.
 
 ## The public beta
 

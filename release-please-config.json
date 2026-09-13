@@ -60,15 +60,7 @@
   ],
   "packages": {
     "packages/voidbase": {
-      "package-name": "@voidbase-cloud/voidbase",
-      "extra-files": [
-        {
-          "type": "json",
-          "path": "/packages/*/package.json",
-          "jsonpath": "$.version",
-          "glob": true
-        }
-      ]
+      "package-name": "@voidbase-cloud/voidbase"
     }
   }
 }

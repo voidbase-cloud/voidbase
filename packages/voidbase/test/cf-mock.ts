@@ -14,6 +14,7 @@ interface Trigger { trigger_uuid: string; external_script_id: string; repo_conne
 interface Build { build_uuid: string; status: string; build_outcome?: string; created_on: string; trigger: { trigger_uuid: string; external_script_id: string }; build_trigger_metadata: { branch?: string; commit_hash?: string }; build_trigger_source: string }
 interface GhRelease { id: number; tag_name: string; html_url: string; body: string; upload_url: string; assets: { id: number; name: string; size: number }[] }
 const d1 = new Map<string, string>(); const d1Migrations = new Map<string, string[]>(); const d1Queries = new Map<string, string[]>();
+const accountTokens = new Map<string, { id: string; name: string }>(); let tokenNo = 0;
 const r2 = new Map<string, Set<string>>(); const queues = new Map<string, string>(); const consumers = new Map<string, Record<string, unknown>[]>();
 const scripts = new Map<string, Script>();
 const connections = new Map<string, Record<string, unknown>>(); const triggers = new Map<string, Trigger>(); const builds = new Map<string, Build>(); const buildEnv = new Map<string, Record<string, { value: string; is_secret: boolean }>>();
@@ -30,7 +31,7 @@ seedGh(); const zones = [{ id: "zone123", name: "example.com" }]; const sendingD
 const certPacks = new Map<string, { id: string; type: string; hosts: string[]; reads: number }[]>(); const rulesets = new Map<string, Record<string, unknown>[]>();
 const ok = (result: unknown, extra: Record<string, unknown> = {}, status = 200) => Response.json({ success: true, errors: [], messages: [], result, ...extra }, { status });
 const err = (status: number, code: number, message: string) => Response.json({ success: false, errors: [{ code, message }], messages: [], result: null }, { status });
-const reset = () => { calls.length = 0; ghPulls.clear(); ghComments.clear(); ghPullNo = 0; flagshipApps.clear(); storeSecrets.clear(); connections.clear(); triggers.clear(); builds.clear(); buildEnv.clear(); seedGh(); domains.clear(); certPacks.clear(); rulesets.clear(); sendingDomains.clear(); d1.clear(); d1Migrations.clear(); d1Queries.clear(); r2.clear(); queues.clear(); consumers.clear(); scripts.clear(); uploadedHashes.clear(); pendingSessions.clear(); };
+const reset = () => { calls.length = 0; accountTokens.clear(); ghPulls.clear(); ghComments.clear(); ghPullNo = 0; flagshipApps.clear(); storeSecrets.clear(); connections.clear(); triggers.clear(); builds.clear(); buildEnv.clear(); seedGh(); domains.clear(); certPacks.clear(); rulesets.clear(); sendingDomains.clear(); d1.clear(); d1Migrations.clear(); d1Queries.clear(); r2.clear(); queues.clear(); consumers.clear(); scripts.clear(); uploadedHashes.clear(); pendingSessions.clear(); };
 const storeSecrets = new Map<string, { id: string; name: string; value: string; scopes: string[] }[]>();
 const flagshipApps = new Map<string, { id: string; name: string; flags: Record<string, unknown>[] }>();
 const state = () => ({ certificatePacks: Object.fromEntries([...certPacks].map(([z, l]) => [z, l.map(({ id, hosts, reads }) => ({ id, hosts, status: reads >= 2 ? "active" : "pending_validation" }))])), rulesets: Object.fromEntries(rulesets), flagship: [...flagshipApps.values()], storeSecrets: Object.fromEntries([...storeSecrets].map(([k, v]) => [k, v.map(({ id, name, scopes }) => ({ id, name, scopes }))])), connections: [...connections.values()], triggers: [...triggers.values()], builds: [...builds.values()], buildEnv: Object.fromEntries(buildEnv), ghReleases: [...ghReleases.values()], ghPulls: [...ghPulls.values()], ghComments: [...ghComments.values()], domains: [...domains.values()], d1: [...d1.entries()], d1Migrations: Object.fromEntries(d1Migrations), d1Queries: Object.fromEntries(d1Queries), r2: Object.fromEntries([...r2.entries()].map(([k, v]) => [k, [...v]])), queues: [...queues.entries()], consumers: Object.fromEntries(consumers), scripts: Object.fromEntries(scripts), uploadedHashes: [...uploadedHashes] });
@@ -177,6 +178,10 @@ Bun.serve({ port, hostname: "127.0.0.1", maxRequestBodySize: 200 * 1024 * 1024, 
       if (sub === "schedules" && req.method === "PUT") { if (!s) return err(404, 10007, "script not found"); s.schedules = ((await req.json()) as { cron: string }[]).map((c) => c.cron); return ok({ schedules: s.schedules.map((cron) => ({ cron })) }); }
       if (sub === "subdomain" && req.method === "POST") { if (!s) return err(404, 10007, "script not found"); const body = (await req.json()) as { enabled: boolean }; s.subdomain = !!body.enabled; return ok({ enabled: s.subdomain }); }
       if (sub === "subdomain" && req.method === "GET") return ok({ enabled: s?.subdomain ?? false }); } }
+  // ---- account-owned API tokens (src/cloud/tokens.ts makes them; destroyInstance removes an instance's rebuild token)
+  if (p === `${A}/tokens` && req.method === "GET") return ok([...accountTokens.values()]);
+  if (p === `${A}/tokens` && req.method === "POST") { const { name } = (await req.json()) as { name: string }; const t = { id: `tok-${++tokenNo}`, name }; accountTokens.set(t.id, t); return ok({ ...t, value: `value-${t.id}` }); }
+  { const mt = p.match(new RegExp(`^${A}/tokens/([^/]+)$`)); if (mt && req.method === "DELETE") { if (!accountTokens.delete(mt[1]!)) return err(404, 1003, "token not found"); return ok({ id: mt[1] }); } }
   return err(404, 7000, `no route for ${req.method} ${p}`);
 } });
 console.log(`cloudflare api mock on http://127.0.0.1:${port} (token ${TOKEN}, account ${ACCOUNT})`);

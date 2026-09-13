@@ -21,7 +21,7 @@ export function parseRedirects(text: string): RedirectEntry[] {
   });
   return out;
 }
-export function writeCloudProject(out: string, mode: "package" | "internal" = "package", extra: { hooksDir?: string; migrationsDir?: string; pluginsDir?: string; entry?: string; queue?: string | false; hub?: boolean; database?: "d1" | "durable"; workflows?: { file: string; className: string }[]; seoPng?: boolean } = {}): { files: number; out: string } {
+export function writeCloudProject(out: string, mode: "package" | "internal" = "package", extra: { hooksDir?: string; migrationsDir?: string; pluginsDir?: string; entry?: string; entryRegisters?: boolean; queue?: string | false; hub?: boolean; database?: "d1" | "durable"; workflows?: { file: string; className: string }[]; seoPng?: boolean } = {}): { files: number; out: string } {
   const parentPkg = existsSync("package.json") ? (JSON.parse(readFileSync("package.json", "utf8")) as { dependencies?: Record<string, string> }) : {};
   const spec = parentPkg.dependencies?.["@voidbase-cloud/voidbase"] ?? parentPkg.dependencies?.voidbase ?? "^0.1.0";
   // The generated project pins the toolchain this package is built against. vite, vite-plus, void and the Workers
@@ -49,8 +49,10 @@ export function writeCloudProject(out: string, mode: "package" | "internal" = "p
   const durable = extra.database === "durable";
   // VOIDBASE_SEO_PNG: written into the generated vite.config.ts as `seoPng: true` so the build keeps resvg and the
   // card's font; absent (the default) the hooks plugin aliases #platform/raster to the stub and neither is bundled
-  // the project's main.ts (its register(app) function) is composed into the Worker exactly as in `bun main.ts`
-  const entry = extra.entry ? `\nimport { appApi } from "${P.api}";\nimport { register } from ${JSON.stringify(extra.entry)};\nregister(appApi());\n` : "";
+  // the project's entry point is composed into the Worker. One that exports register(app) is called with the app; one
+  // that loads voidbase itself (`await voidbase({...})` or `serve`) is imported as it is, and its import of the package
+  // resolves to the Worker's app API (src/server/library.ts), so the routes and hooks it registers are the Worker's
+  const entry = !extra.entry ? "" : extra.entryRegisters === false ? `\nimport ${JSON.stringify(extra.entry)};\n` : `\nimport { appApi } from "${P.api}";\nimport { register } from ${JSON.stringify(extra.entry)};\nregister(appApi());\n`;
   const hooksDir = JSON.stringify(extra.hooksDir ?? "../pb_hooks"); const migrationsDir = JSON.stringify(extra.migrationsDir ?? "../pb_migrations");
   const pluginsDir = JSON.stringify(extra.pluginsDir ?? "../pb_plugins");
   // the hooks' cronAdd expressions become the Worker's triggers (plus an hourly maintenance tick)

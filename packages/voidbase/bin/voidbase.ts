@@ -23,7 +23,7 @@ const serveOpts = () => ({ http: flags.http, dir: flags.dir, hooksDir: flags.hoo
 const admin = () => { const [email, password] = (flags.admin ?? `${process.env.VOIDBASE_SUPERUSER_EMAIL ?? "admin@example.com"}:${process.env.VOIDBASE_SUPERUSER_PASSWORD ?? ""}`).split(":") as [string, string]; return { email, password }; };
 const HELP = `voidbase - PocketBase-compatible backend: a single Bun process locally, Cloudflare Workers via Void in production
 
-  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--pluginsDir pb_plugins] [--secretsDir pb_secrets] [--publicDir pb_public] [--dev] [--tunnel] [--entry main.ts]
+  serve [--http 127.0.0.1:8090] [--dir pb_data] [--hooksDir pb_hooks] [--migrationsDir pb_migrations] [--pluginsDir pb_plugins] [--secretsDir pb_secrets] [--publicDir pb_public] [--dev] [--tunnel] [--entry index.ts]
                                      run the server like "pocketbase serve" (--dev restarts when hooks or migrations change;
                                      --tunnel puts it on the internet through a Cloudflare quick tunnel, a
                                      https://<words>.trycloudflare.com address, with cloudflared from VOIDBASE_CLOUDFLARED,
@@ -737,18 +737,21 @@ switch (cmd) {
     // --workers: the instance on Cloudflare's local runtime (src/node/serve-workers.ts); the toolchain comes with the npm package
     if (flags.workers) { await serveOnWorkers(); break; }
     // --entry main.ts: the project's own composition (pb's "custom" build), otherwise the stock server
-    if (!flags.dev) { if (flags.entry) { await run("bun", [resolve(flags.entry), ...process.argv.slice(3).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry")]); break; } const { serve } = await import("../src/node/serve"); await serve(serveOpts()); break; }
+    // run in this process, with the package mapped to this CLI's own modules when the project has not installed it, so
+    // the binary is extended with nothing else installed (src/node/run-entry.ts)
+    if (!flags.dev) { if (flags.entry) { const { runEntry } = await import("../src/node/run-entry"); await runEntry(flags.entry, process.argv.slice(3).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry")); break; } const { serve } = await import("../src/node/serve"); await serve(serveOpts()); break; }
     // --dev: run the server as a child and restart it when pb_hooks / pb_migrations change (like modd for PocketBase)
     const { watch } = await import("node:fs");
     const childArgs = process.argv.slice(2).filter((a) => a !== "--dev" && a !== "--tunnel");
     const entry = flags.entry ? resolve(flags.entry) : null;
     let child: ReturnType<typeof Bun.spawn> | null = null; let timer: ReturnType<typeof setTimeout> | null = null;
-    const entryArgs = childArgs.slice(1).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry");
     // --tunnel with --dev: the watcher holds the tunnel, so the address survives every restart; the child prints it
     const env: Record<string, string | undefined> = { ...process.env };
     let tunnel: import("../src/node/tunnel").Tunnel | null = null;
     if (flags.tunnel) { const { openTunnel } = await import("../src/node/tunnel"); tunnel = await openTunnel(Number((flags.http ?? "127.0.0.1:8090").split(":")[1] ?? 8090)); if (tunnel) env.VOIDBASE_TUNNEL_URL = tunnel.url; }
-    const start = () => { child = Bun.spawn(entry ? ["bun", entry, ...entryArgs] : ["bun", import.meta.path, ...childArgs], { stdio: ["inherit", "inherit", "inherit"], env }); };
+    // the child is this CLI again (the executable itself when compiled, which has no `bun` beside it), with --entry kept
+    const self = /[\\/]\$bunfs[\\/]|~BUN/.test(import.meta.path) ? [process.execPath] : [process.execPath, import.meta.path];
+    const start = () => { child = Bun.spawn([...self, ...childArgs], { stdio: ["inherit", "inherit", "inherit"], env }); };
     const restart = () => { if (timer) clearTimeout(timer); timer = setTimeout(() => { console.log("voidbase: hooks changed, restarting"); child?.kill(); start(); }, 300); };
     for (const d of [flags.hooksDir ?? "pb_hooks", flags.migrationsDir ?? "pb_migrations", ...(entry ? [entry] : [])]) { try { watch(resolve(d), { recursive: true }, restart); } catch { /* directory may not exist yet */ } }
     start();

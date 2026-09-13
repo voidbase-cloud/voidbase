@@ -283,6 +283,9 @@ export function pbHooksPlugin(options: { dir?: string; migrationsDir?: string; p
         if (provided && "file" in provided) return provided.file;
         if (provided && "from" in provided) return (await this.resolve(id, provided.from, { skipSelf: true }))?.id ?? null;
       }
+      // the project's own entry file loads voidbase by name: inside the Worker that is the Worker's app API
+      // (src/server/library.ts), never the Bun library that opens SQLite files
+      if (id === "@voidbase-cloud/voidbase") return join(here, "src/server/library.ts");
       return null;
     },
     async load(id) {

@@ -93,7 +93,7 @@ voidbase deploy --public-dir ../sk/build     # a build that lives elsewhere
 What it does, in order: resolves the account through the token, creates `<name>-db` (D1), `<name>-storage`
 (R2) and `<name>-jobs` (Queue) if they do not exist, writes the Void project inside the voidbase package
 (`node_modules/voidbase/.cloud/<name>`, nothing appears in your tree) with a `wrangler.jsonc` carrying the real
-ids and, when the directory has a `main.ts` exporting `register(app)`, composes it into the Worker; stores the
+ids and, when the directory has an entry point of its own, composes it into the Worker (a `main.ts` exporting `register(app)` is called with the app; an `index.ts` that loads voidbase itself is imported as it is, and its `voidbase()` is the Worker's app); stores the
 superuser as worker secrets (from `VOIDBASE_SUPERUSER_*` / `PB_SUPERUSER_*`, or a generated
 password saved in `pb_data/.superuser-credentials`; the local dev default `changeme123` never goes live) together
 with the secrets and vars `pb_secrets/` declares (below), syncs

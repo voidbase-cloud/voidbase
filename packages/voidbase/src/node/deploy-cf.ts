@@ -82,6 +82,22 @@ export interface DeployResult {
 
 // the Cloudflare calls live in src/cloud/rest.ts (shared with control planes); this module adds the deploy's own wording
 export { rateLimitNamespace } from "../cloud/rest";
+/**
+ * The project's entry point, the file a deploy composes into the Worker: the first of main.ts, main.js, index.ts and
+ * index.js that either exports register(app) or loads voidbase itself. An index.ts that calls `voidbase()` or
+ * `serve()` is what `bun index.ts` runs, so it is also what the Worker runs (src/server/library.ts).
+ */
+export function projectEntry(dir: string): { entry?: string; entryRegisters?: boolean } {
+  for (const f of ["main.ts", "main.js", "index.ts", "index.js"]) {
+    const file = resolve(dir, f);
+    if (!existsSync(file)) continue;
+    const src = readFileSync(file, "utf8");
+    if (/export\s+(async\s+)?function\s+register\b|export\s*\{[^}]*\bregister\b/.test(src)) return { entry: file, entryRegisters: true };
+    if (/from\s*["']@voidbase-cloud\/voidbase["']|import\(\s*["']@voidbase-cloud\/voidbase["']\s*\)/.test(src)) return { entry: file, entryRegisters: false };
+  }
+  return {};
+}
+
 export function parseRateLimit(spec: string | undefined): { limit: number; period: 10 | 60 } | null {
   const v = (spec ?? "").trim();
   if (!v || v === "0" || v === "off") return v ? null : { limit: 300, period: 10 };
@@ -285,8 +301,8 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   const installed = /[\\/]node_modules[\\/]/.test(PKG);
   const cloud = opts.dir ? resolve(opts.dir) : installed ? resolve(consumer, ".cloud", name) : resolve(PKG, ".cloud", name);
   const mode: "package" | "internal" = opts.dir || installed ? "package" : "internal";
-  const entry = ["main.ts", "main.js"].map((f) => resolve(consumer, f)).find((f) => existsSync(f) && /export\s+(async\s+)?function\s+register\b|export\s*\{[^}]*\bregister\b/.test(readFileSync(f, "utf8")));
-  if (entry) log(`composing ${entry} (register) into the Worker`);
+  const { entry, entryRegisters } = projectEntry(consumer);
+  if (entry) log(`composing ${entry} (${entryRegisters ? "register" : "its own voidbase"}) into the Worker`);
   // workflows/: the adapter's bundles (src/adapter/bundle.ts bundleWorkflow), each exported from the Worker under the
   // class the first line names and bound as WORKFLOW_<NAME>; a project may also write one by hand
   const workflowsDir = resolve(consumer, process.env.VOIDBASE_WORKFLOWS_DIR || "workflows");
@@ -302,7 +318,7 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   // ones that carry a deploy.js; their hooks run before the upload, after it, and on --remove
   const deployPlugins = await discoverDeployPlugins(pluginsDir);
   if (deployPlugins.length) log(`deploy plugins: ${deployPlugins.map((p) => `${p.name} (${p.origin})`).join(", ")}`);
-  writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), pluginsDir, entry, queue, hub, database, seoPng, workflows: workflows.map((w) => ({ file: w.file, className: w.className })) });
+  writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), pluginsDir, entry, entryRegisters, queue, hub, database, seoPng, workflows: workflows.map((w) => ({ file: w.file, className: w.className })) });
   log(seoPng ? `${SEO_PNG_VAR}=1: seo share cards are rasterised to PNG (resvg, about 1 MB gzipped in the Worker)` : `share cards are SVG (${SEO_PNG_VAR}=1 bundles resvg and serves them as PNG, about 1 MB gzipped more)`);
   if (!queue) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/queues`, { recursive: true, force: true }); }
   if (!cron) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/crons`, { recursive: true, force: true }); log("cron trigger disabled (VOIDBASE_DEPLOY_CRON=0 / --no-cron): maintenance runs lazily in requests"); }

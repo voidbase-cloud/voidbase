@@ -215,7 +215,7 @@ export async function provisionInstance(cf: CfApi, o: ProvisionOptions): Promise
     const { releaseModuleKey } = await import("../server/rebuild/run");
     await putObject(cf, o.account, res.bucket, "_voidbase/release/manifest.json", new TextEncoder().encode(JSON.stringify(m)), "application/json");
     for (const mod of m.modules) await putObject(cf, o.account, res.bucket, releaseModuleKey(mod.path), await o.release.read(`worker/${mod.path}`));
-    log(`release ${m.version} kept in ${res.bucket} for the instance's own rebuilds${o.rebuildToken ? "" : " (no rebuild token: set CLOUDFLARE_TOKEN_CREATOR so the instance can upload itself)"}`);
+    log(`release ${m.version} kept in ${res.bucket} for the instance's own rebuilds${o.rebuildToken ? "" : " (no rebuild token: give VOIDBASE_DEPLOY_CF_API_KEY Account > API Tokens > Edit so the instance can upload itself)"}`);
   }
 
   if (queue) {
@@ -301,6 +301,8 @@ export async function destroyInstance(cf: CfApi, o: { account: string; name: str
     return removed;
   });
   await attempt(`worker ${o.name}`, async () => { const r = await cf.raw("DELETE", `/accounts/${o.account}/workers/scripts/${o.name}?force=true`); const body = await r.text(); if (r.status === 404) return false; if (!r.ok) throw new Error(`HTTP ${r.status} ${body.slice(0, 200)}`); return true; });
+  // the token the instance rebuilt itself with (src/cloud/tokens.ts createRebuildToken): account-wide, so it must not outlive the instance
+  await attempt(`rebuild token of ${o.name}`, async () => { const list = await cf.json<{ id: string; name: string }[]>("GET", `/accounts/${o.account}/tokens`); const mine = (list.result ?? []).filter((t) => t.name === `voidbase rebuild: ${o.name}`); for (const t of mine) await cf.json("DELETE", `/accounts/${o.account}/tokens/${t.id}`); return mine.length > 0; });
   await attempt(`queue ${res.queue}`, async () => { const q = await findQueue(cf, o.account, res.queue); if (!q) return false; await cf.json("DELETE", `/accounts/${o.account}/queues/${q.id}`); return true; });
   await attempt(`D1 ${res.db}`, async () => { const d = await findD1(cf, o.account, res.db); if (!d) return false; await cf.json("DELETE", `/accounts/${o.account}/d1/database/${d.uuid}`); return true; });
   await attempt(`R2 ${res.bucket}`, async () => {

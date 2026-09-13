@@ -33,14 +33,14 @@ export async function createOnCloudflare(o: { api: CfApi; account: string; name:
   const built = await buildRelease({ log: (l) => log(`  ${l}`) });
   const password = randomPassword();
   // the token the instance rebuilds itself with (src/cloud/tokens.ts), when this machine holds a token that may create tokens
-  const creatorToken = process.env.CLOUDFLARE_TOKEN_CREATOR;
+  const { createRebuildToken, tokenCreatorFromEnv } = await import("../cloud/tokens");
+  const creatorToken = tokenCreatorFromEnv();
   let rebuildToken: string | undefined;
   if (creatorToken) {
     const { CfApi } = await import("../cloud/rest");
-    const { createRebuildToken } = await import("../cloud/tokens");
     rebuildToken = (await createRebuildToken(new CfApi(creatorToken), o.account, o.name)).value;
     log("  made the instance's rebuild token (Workers Scripts Write on this account: Cloudflare scopes a token to an account, not to one Worker)");
-  } else log("  no CLOUDFLARE_TOKEN_CREATOR: the instance is created without a rebuild token, so installing a plugin from its admin panel cannot rebuild it yet");
+  } else log("  no token that may create tokens (VOIDBASE_DEPLOY_CF_API_KEY with Account > API Tokens > Edit, or CLOUDFLARE_TOKEN_CREATOR): the instance is created without a rebuild token, so installing a plugin from its admin panel cannot rebuild it yet");
   const r = await provisionInstance(o.api, { account: o.account, name: o.name, release: releaseFromDir(built.dir), superuser: { email: o.email, password }, rebuildToken, applyDoMigrations: true, log: (l) => log(`  ${l}`) });
   return { url: r.url ?? null, release: r.release, email: o.email, password };
 }

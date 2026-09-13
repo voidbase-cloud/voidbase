@@ -1,6 +1,6 @@
-// Cloudflare API tokens made by voidbase itself, through a token that may create tokens (CLOUDFLARE_TOKEN_CREATOR: the
-// dashboard's "Create Additional Tokens" template, User > API Tokens > Edit). wrangler's login cannot do this: none of its
-// OAuth scopes reaches API tokens. Two are made:
+// Cloudflare API tokens made by voidbase itself: account-owned tokens, made through a token that may create them (the
+// account's deploy token, VOIDBASE_DEPLOY_CF_API_KEY, once it holds Account > API Tokens > Edit; or CLOUDFLARE_TOKEN_CREATOR
+// when that is set). wrangler's login cannot do this: none of its OAuth scopes reaches API tokens. Two are made:
 //   a build token      what Workers Builds runs a project's build with (./builds.ts ensureBuildToken)
 //   a rebuild token    what a vanilla instance uploads a new version of itself with (src/server/rebuild), kept as that
 //                      instance's secret VOIDBASE_REBUILD_TOKEN
@@ -10,12 +10,15 @@
 import type { CfApi } from "./rest";
 
 /** create an API token scoped to `account` with the permission groups named, through `creator`; returns its id and value */
+/** the token that makes tokens on this machine: CLOUDFLARE_TOKEN_CREATOR, else the deploy token (which needs Account > API Tokens > Edit) */
+export const tokenCreatorFromEnv = (env: Record<string, string | undefined> = process.env): string | undefined => env.CLOUDFLARE_TOKEN_CREATOR || env.VOIDBASE_DEPLOY_CF_API_KEY || undefined;
+
 export async function createAccountToken(creator: CfApi, account: string, name: string, permissions: string[]): Promise<{ id: string; value: string }> {
-  const groups = (await creator.json<{ id: string; name: string }[]>("GET", "/user/tokens/permission_groups")).result ?? [];
+  const groups = (await creator.json<{ id: string; name: string }[]>("GET", `/accounts/${account}/tokens/permission_groups`)).result ?? [];
   const ids = permissions.map((n) => ({ n, id: groups.find((g) => g.name === n)?.id }));
   const missing = ids.filter((x) => !x.id).map((x) => x.n);
   if (missing.length) throw new Error(`Cloudflare offers no permission group called ${missing.join(", ")}; the token "${name}" cannot be made with them`);
-  const token = (await creator.json<{ id: string; value: string }>("POST", "/user/tokens", {
+  const token = (await creator.json<{ id: string; value: string }>("POST", `/accounts/${account}/tokens`, {
     name, policies: [{ effect: "allow", resources: { [`com.cloudflare.api.account.${account}`]: "*" }, permission_groups: ids.map((x) => ({ id: x.id })) }],
   })).result;
   if (!token?.id || !token.value) throw new Error(`Cloudflare made the token "${name}" but did not hand it back`);

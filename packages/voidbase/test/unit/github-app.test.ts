@@ -58,8 +58,8 @@ describe("the build token builds run with", () => {
       calls.push({ method: req.method, path: u.pathname, auth: req.headers.get("authorization") ?? "", body });
       const ok = (result: unknown) => Response.json({ success: true, errors: [], messages: [], result });
       if (u.pathname === "/accounts/acc/builds/tokens" && req.method === "GET") return ok(existing ? [{ build_token_uuid: "bt-old", build_token_name: "dashboard" }] : []);
-      if (u.pathname === "/user/tokens/permission_groups") return ok([...BUILD_TOKEN_PERMISSIONS.map((name, i) => ({ id: `pg-${i}`, name })), { id: "pg-x", name: "Zone Read" }]);
-      if (u.pathname === "/user/tokens" && req.method === "POST") return ok({ id: "tok-1", value: "secret-value" });
+      if (/^\/accounts\/[^/]+\/tokens\/permission_groups$/.test(u.pathname)) return ok([...BUILD_TOKEN_PERMISSIONS.map((name, i) => ({ id: `pg-${i}`, name })), { id: "pg-x", name: "Zone Read" }]);
+      if (/^\/accounts\/[^/]+\/tokens$/.test(u.pathname) && req.method === "POST") return ok({ id: "tok-1", value: "secret-value" });
       if (u.pathname === "/accounts/acc/builds/tokens" && req.method === "POST") return ok({ build_token_uuid: "bt-new", build_token_name: "voidbase builds", cloudflare_token_id: "tok-1", owner_type: "user" });
       return Response.json({ success: false, errors: [{ code: 7003, message: "no route" }] }, { status: 404 });
     } });
@@ -77,7 +77,7 @@ describe("the build token builds run with", () => {
   test("without one, an account-scoped API token is created by the creator and registered with Workers Builds", async () => {
     const cf = cloudflare(false);
     expect(await ensureBuildToken(cf.builds, "acc", cf.creator)).toEqual({ uuid: "bt-new", created: true });
-    const created = cf.calls.find((c) => c.path === "/user/tokens")!;
+    const created = cf.calls.find((c) => /^\/accounts\/[^/]+\/tokens$/.test(c.path))!;
     expect(created.auth).toBe("Bearer creator-token");
     expect(created.body).toEqual({ name: "voidbase builds", policies: [{ effect: "allow", resources: { "com.cloudflare.api.account.acc": "*" }, permission_groups: BUILD_TOKEN_PERMISSIONS.map((_, i) => ({ id: `pg-${i}` })) }] });
     const registered = cf.calls.find((c) => c.path === "/accounts/acc/builds/tokens" && c.method === "POST")!;

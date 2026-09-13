@@ -151,9 +151,9 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
     } else { log(`\nci: the GitHub App does not cover ${repo}: ${cover.why}. Install it with one click, ${cover.link}, then run voidbase sync again.`); return; }
   }
   // the build token builds run with: the account's, or one made from a token that may create tokens
-  const creatorToken = process.env.CLOUDFLARE_TOKEN_CREATOR;
+  const creatorToken = (await import("../cloud/tokens")).tokenCreatorFromEnv();
   const made = await ensureBuildToken(cf, account.id, creatorToken ? new CfApi(creatorToken, API) : null);
-  if (!made) { log(`\nci: the account has no build token yet, and no CLOUDFLARE_TOKEN_CREATOR (a Cloudflare token with User > API Tokens > Edit) to make one. Set it, or one dashboard step: ${manual}`); return; }
+  if (!made) { log(`\nci: the account has no build token yet, and no token that may make one (VOIDBASE_DEPLOY_CF_API_KEY with Account > API Tokens > Edit, or CLOUDFLARE_TOKEN_CREATOR). Set it, or one dashboard step: ${manual}`); return; }
   if (made.created) log(`\nci: made the account's build token "voidbase builds"`);
   const buildToken = made.uuid;
 

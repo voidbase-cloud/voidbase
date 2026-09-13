@@ -6,7 +6,7 @@
 // connection it does not cover fails with code 8000008): ./github-app.ts adds the repository to an installation that
 // exists, and names the one click on github.com otherwise. And the account needs a build token, which builds run with:
 // `ensureBuildToken` makes one from an API token it creates, given a token that may create tokens
-// (CLOUDFLARE_TOKEN_CREATOR, User > API Tokens > Edit). Every endpoint here wants a *user* API token with "Workers
+// (VOIDBASE_DEPLOY_CF_API_KEY with Account > API Tokens > Edit, or CLOUDFLARE_TOKEN_CREATOR; src/cloud/tokens.ts). Every endpoint here wants a *user* API token with "Workers
 // Builds Configuration: Edit" and "Workers Scripts: Edit".
 import { CfError, type CfApi } from "./rest";
 import { createAccountToken } from "./tokens";

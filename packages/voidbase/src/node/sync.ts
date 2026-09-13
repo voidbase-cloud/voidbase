@@ -19,6 +19,7 @@
 // A brand-new project therefore is: fork voidbase-site (vb) or `voidbase init` (pb), push it to GitHub, fill in
 // the secrets.json, run `voidbase sync`. The first run says which dashboard step the API cannot do (install the
 // GitHub App for the repository and connect it, which also creates the build token); the second run finishes.
+import { syncDataUp } from "./sync-data";
 import { githubToken } from "./github-token";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -47,6 +48,11 @@ export interface SyncOptions extends Pick<DeployOptions, "name" | "account" | "d
    * default an existing one is kept as it is.
    */
   previews?: boolean;
+  /**
+   * take this machine's records up to the instance just deployed (src/node/sync-data.ts). Off by default: which data an
+   * instance on Cloudflare starts with is a choice, and a deploy on its own never carries any.
+   */
+  data?: boolean;
 }
 
 const sh = (cmd: string[], cwd: string): string => { const r = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe" }); return r.exitCode === 0 ? r.stdout.toString().trim() : ""; };
@@ -88,6 +94,13 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   let deployed: Awaited<ReturnType<typeof deployToCloudflare>>;
   try { deployed = await deployToCloudflare({ name: opts.name, account: opts.account, domain: opts.domain, dryRun: opts.dryRun, preview: opts.preview, log }); }
   finally { process.chdir(before); }
+
+  // 1b. the data, by choice: this machine's records up to the instance just deployed, or left here
+  if (opts.data) {
+    if (opts.dryRun) log("\ndata (dry run): would take this machine's records up to the deployed instance");
+    else if (!deployed.url) throw new Error("the instance deployed, but it has no address to take the data to (no workers.dev subdomain on the account)");
+    else await syncDataUp({ dataDir: resolve(pbDir, process.env.VOIDBASE_DATA_DIR || "pb_data"), url: deployed.url, log });
+  } else log("\ndata: left on this machine (voidbase sync --data takes it up)");
 
   // 2. the pipeline. A build deploys and nothing more (it has no Builds token and nothing to connect that the
   // connection did not already set up), unless --ci says otherwise.

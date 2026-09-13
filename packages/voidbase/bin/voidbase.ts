@@ -81,10 +81,13 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      remove every preview whose pull request is merged or closed (VOIDBASE_GH_TOKEN,
                                      VOIDBASE_PROJECT_REPO); the production build does this with VOIDBASE_PREVIEW_PRUNE=1
   deploy --void                      deploy to the Void platform instead (void auth login first)
-  sync [dir] [--repo owner/name] [--branch main] [--no-build] [--ci] [--no-ci] [--dry-run] [--previews | --no-previews]
+  sync down <url> [--dir pb_data] --email a@b --password p [--keep] [--dry-run]
+                                     bring a running instance, its data included, to this machine
+  sync [up] [dir] [--data | --no-data] [--repo owner/name] [--branch main] [--no-build] [--ci] [--no-ci] [--dry-run] [--previews | --no-previews]
                                      the instance and its pipeline: deploy (a Void app is built first and deployed from
                                      .voidbase/), then connect the GitHub repository to Cloudflare Workers Builds so a
-                                     push to the branch deploys and other branches build. Needs CLOUDFLARE_BUILDS_TOKEN
+                                     push to the branch deploys and other branches build. --data takes this machine's
+                                     records up too (off by default). Needs CLOUDFLARE_BUILDS_TOKEN
                                      (a local() key) for the pipeline part; in CI, sync is the deploy alone (--ci forces it).
                                      --previews adds the second trigger: every other branch builds and deploys a preview
   local new <name> [--dir path] [--port n] [--email a@b] [--password p]
@@ -792,9 +795,23 @@ switch (cmd) {
       } catch (err) { console.error(`\nsync failed: ${err instanceof Error ? err.message : String(err)}`); process.exit(1); }
       break;
     }
-    // the instance and its pipeline in one go (src/node/sync.ts): deploy, then connect the repository to Workers Builds
+    // sync down <url>: a running instance brought to this machine, its data included (src/node/sync-data.ts)
+    if (sub === "down") {
+      const url = rest[0];
+      const email = flags.email ?? process.env.VOIDBASE_SUPERUSER_EMAIL, password = flags.password ?? process.env.VOIDBASE_SUPERUSER_PASSWORD;
+      if (!url) { console.error("usage: voidbase sync down <url> [--dir pb_data] --email a@b --password p [--keep] [--dry-run]"); process.exit(1); }
+      if (!email || !password) { console.error("sync down signs in on the instance it brings down: --email and --password (or VOIDBASE_SUPERUSER_EMAIL and VOIDBASE_SUPERUSER_PASSWORD)"); process.exit(1); }
+      const { syncDown } = await import("../src/node/sync-data");
+      const dir = resolve(flags.dir ?? "pb_data");
+      try { await syncDown({ url, dataDir: dir, email, password, dryRun: "dry-run" in flags, keep: "keep" in flags, timeoutMs: flags.timeout ? Number(flags.timeout) * 1000 : undefined }); }
+      catch (err) { console.error(`\nsync down failed: ${err instanceof Error ? err.message : String(err)}`); process.exit(1); }
+      if (!("dry-run" in flags)) console.log(`\n${url} is on this machine now: voidbase serve --dir ${dir}`);
+      break;
+    }
+    // sync [up] [dir]: the instance and its pipeline in one go (src/node/sync.ts): deploy, the data if --data says so,
+    // then connect the repository to Workers Builds
     const { sync } = await import("../src/node/sync");
-    await sync({ dir: sub, name: flags.name, account: flags.account, domain: flags.domain, dryRun: !!flags["dry-run"], build: !flags["no-build"], ci: flags["no-ci"] ? false : flags.ci ? true : undefined, repo: flags.repo, branch: flags.branch, previews: flags["no-previews"] ? false : flags.previews ? true : undefined, preview: flags.preview });
+    await sync({ dir: sub === "up" ? rest[0] : sub, data: flags["no-data"] ? false : "data" in flags, name: flags.name, account: flags.account, domain: flags.domain, dryRun: !!flags["dry-run"], build: !flags["no-build"], ci: flags["no-ci"] ? false : flags.ci ? true : undefined, repo: flags.repo, branch: flags.branch, previews: flags["no-previews"] ? false : flags.previews ? true : undefined, preview: flags.preview });
     break;
   }
   case "deploy": {

@@ -173,14 +173,22 @@ export interface RecordOptions { expand?: string; fields?: string; requestKey?: 
 export interface RecordListOptions extends RecordOptions { page?: number; perPage?: number; sort?: string; filter?: string; skipTotal?: boolean }
 export interface RecordFullListOptions extends RecordListOptions { batch?: number }
 
-/** the SDK's RecordService with its record type fixed, and what a create may send */
+/** the relation names an expand string asks for: "author, editors.team" is "author" | "editors" */
+type ExpandNames<E extends string> = E extends \`\${infer Head},\${infer Rest}\` ? ExpandName<Head> | ExpandNames<Rest> : ExpandName<E>;
+type ExpandName<S extends string> = S extends \` \${infer R}\` ? ExpandName<R> : S extends \`\${infer R} \` ? ExpandName<R> : S extends \`\${infer Head}.\${string}\` ? Head : S;
+/** a record as a query with these options answers it: under expand, only the relations the query asked for */
+export type Queried<M, O> = O extends { expand: infer E extends string }
+  ? string extends E ? M : Omit<M, "expand"> & { expand?: Pick<NonNullable<M extends { expand?: infer X } ? X : never>, ExpandNames<E> & keyof NonNullable<M extends { expand?: infer X } ? X : never>> }
+  : Omit<M, "expand">;
+
+/** the SDK's RecordService with its record type fixed, what a create may send, and each answer typed by its query */
 export interface RecordService<M, C = RecordBody<M>> {
   readonly collectionIdOrName: string;
-  getList(page?: number, perPage?: number, options?: RecordListOptions): Promise<ListResult<M>>;
-  getFullList(options?: RecordFullListOptions): Promise<M[]>;
-  getFullList(batch?: number, options?: RecordListOptions): Promise<M[]>;
-  getFirstListItem(filter: string, options?: RecordListOptions): Promise<M>;
-  getOne(id: string, options?: RecordOptions): Promise<M>;
+  getList<const O extends RecordListOptions = {}>(page?: number, perPage?: number, options?: O): Promise<ListResult<Queried<M, O>>>;
+  getFullList<const O extends RecordFullListOptions = {}>(options?: O): Promise<Queried<M, O>[]>;
+  getFullList<const O extends RecordListOptions = {}>(batch?: number, options?: O): Promise<Queried<M, O>[]>;
+  getFirstListItem<const O extends RecordListOptions = {}>(filter: string, options?: O): Promise<Queried<M, O>>;
+  getOne<const O extends RecordOptions = {}>(id: string, options?: O): Promise<Queried<M, O>>;
   create(body?: C | FormData, options?: RecordOptions): Promise<M>;
   update(id: string, body?: RecordBody<M> | FormData, options?: RecordOptions): Promise<M>;
   delete(id: string, options?: RecordOptions): Promise<boolean>;

@@ -182,6 +182,13 @@ export async function main() {
   const tag: "a" | "b" | "c" | undefined = post.tags[0];
   const authorName: string | undefined = post.expand?.author?.name;
   const editorEmail: string | undefined = post.expand?.editors?.[0]?.email;
+  const onlyAuthor = await pb.collection("posts").getOne("abc", { expand: "author" });
+  const alsoName: string | undefined = onlyAuthor.expand?.author?.name;
+  // @ts-expect-error editors was not asked for, so it is not in this answer's expand
+  onlyAuthor.expand?.editors;
+  const plain = await pb.collection("posts").getOne("abc");
+  // @ts-expect-error nothing was expanded
+  plain.expand;
   const lon: number = post.where.lon;
   // @ts-expect-error a field the collection does not have
   post.nope;
@@ -209,7 +216,7 @@ export async function main() {
   const url: string = full.files.getURL(post, "x.png");
   const stop = await pb.collection("posts").subscribe("*", (e) => { const s: "draft" | "live" = e.record.status; void s; });
   await stop();
-  return [status, tag, authorName, editorEmail, lon, bad, name, verified, postTitle, k, total, url];
+  return [status, tag, authorName, editorEmail, alsoName, lon, bad, name, verified, postTitle, k, total, url];
 }
 `);
     const r = tsc(["voidbase.ts", "usage.ts"]);

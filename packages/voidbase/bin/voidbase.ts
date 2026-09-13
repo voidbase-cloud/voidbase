@@ -222,7 +222,8 @@ async function login(): Promise<string> {
 // `voidbase serve --workers` / `voidbase dev --workers`: the project `voidbase deploy` would generate, run on Cloudflare's
 // local runtime by Void's dev server; the process lives as long as that server does
 async function serveOnWorkers(): Promise<never> {
-  if (isExecutable()) { console.error(`"${cmd} --workers" needs the Cloudflare toolchain, which comes with the npm package, not the prebuilt executable:\n  bunx @voidbase-cloud/voidbase ${argv.join(" ")}`); process.exit(1); }
+  // the prebuilt executable carries the toolchain and hands the command to it (src/node/toolchain.ts)
+  if (isExecutable()) { const { runWithToolchain } = await import("../src/node/toolchain"); await runWithToolchain(argv); }
   const { serveWorkers } = await import("../src/node/serve-workers");
   const s = await serveWorkers({ ...serveOpts(), name: flags.name, queue: flags["no-queue"] ? false : undefined, hub: flags["no-hub"] ? false : undefined, database: flags.database });
   const bye = () => { void s.stop().then(() => process.exit(0)); };
@@ -240,7 +241,9 @@ async function listTemplates(): Promise<void> {
   for (const t of templates) console.log(`${t.name.padEnd(w)}  ${t.title}: ${t.summary}  (${t.repository}${marketplaces.length > 1 ? `, ${t.marketplace}` : ""})`);
   console.log(`\nstart one: voidbase init [dir] --template <name>   (or any public repository: --template owner/name)`);
 }
-if (cmd && TOOLCHAIN.has(cmd) && isExecutable()) { console.error(`"${cmd}" needs the Cloudflare toolchain, which comes with the npm package, not the prebuilt executable:\n  bunx @voidbase-cloud/voidbase ${argv.join(" ")}`); process.exit(1); }
+// A command that builds a Worker needs Void, Vite and wrangler. The prebuilt executable carries them, unpacks them once
+// and hands the command to the voidbase CLI inside, run by itself as Bun (src/node/toolchain.ts); it used to refuse.
+if (cmd && TOOLCHAIN.has(cmd) && isExecutable()) { const { runWithToolchain } = await import("../src/node/toolchain"); await runWithToolchain(argv); }
 // `voidbase deploy --remove [--preview <branch>]` and `voidbase previews remove <branch>`: the Worker (a preview with
 // everything it owns) after its deploy plugins undo their part. A destructive command says what it will do and waits,
 // unless the caller has already decided (--yes), and refuses when nobody can be asked.
@@ -819,7 +822,7 @@ switch (cmd) {
     // "cloud init" writes a Void project and needs the toolchain; every other verb is voidbase.cloud over plain
     // HTTP (src/node/cloud-cli.ts), which the prebuilt executable can do as well as the package
     if (sub === "init") {
-      if (isExecutable()) { console.error(`"cloud init" needs the Cloudflare toolchain, which comes with the npm package, not the prebuilt executable:\n  bunx @voidbase-cloud/voidbase ${argv.join(" ")}`); process.exit(1); }
+      if (isExecutable()) { const { runWithToolchain } = await import("../src/node/toolchain"); await runWithToolchain(argv); }
       const { writeCloudProject } = await import("../src/node/cloud-init");
       const r = writeCloudProject(resolve(rest[0] ?? "cloud"));
       console.log(`wrote ${r.files} files + db/migrations to ${rest[0] ?? "cloud"}\nnext: voidbase deploy   (or: cd ${rest[0] ?? "cloud"} && bun install && bun run panel:sync && void deploy)`);

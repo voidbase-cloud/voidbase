@@ -16,14 +16,17 @@ const freePort = () => { const s = Bun.serve({ port: 0, hostname: "127.0.0.1", f
 const tmp = mkdtempSync(join(tmpdir(), "vb-exe-")); const home = `${tmp}/home`; mkdirSync(home);
 // the archive name carries the package version, which is a prerelease while voidbase is in public beta:
 // voidbase_0.9.0-beta.1_linux_amd64.zip, not voidbase_0.9.0_linux_amd64.zip
-const built = await buildExecutables({ targets: ["host"], out: `${tmp}/release`, log: () => undefined });
+// serve and update are what this checks, so its own copy skips the toolchain (scripts/build-exe.ts --no-toolchain)
+const built = await buildExecutables({ targets: ["host"], out: `${tmp}/release`, log: () => undefined, toolchain: false });
 const T = TARGETS[hostTarget()]!; const exe = `${tmp}/${T.exe}`; copyFileSync(`${PKG}/dist/exe/${hostTarget()}/${T.exe}`, exe); chmodSync(exe, 0o755);
 check("release archive and checksums built for the host", built.archives.length === 1 && /^voidbase_\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?_/.test(built.archives[0]!.file) && readFileSync(`${tmp}/release/checksums.txt`, "utf8").includes(built.archives[0]!.file), JSON.stringify(built.archives));
 const run = (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawnSync([exe, ...args], { cwd: tmp, env: { ...process.env, HOME: home, XDG_CACHE_HOME: `${home}/.cache`, ...env }, stdout: "pipe", stderr: "pipe" }); return { code: p.exitCode, out: new TextDecoder().decode(p.stdout) + new TextDecoder().decode(p.stderr) }; };
 // the update talks to the mock server running in this process: spawn without blocking the event loop
 const runAsync = async (args: string[], env: Record<string, string> = {}) => { const p = Bun.spawn([exe, ...args], { cwd: tmp, env: { ...process.env, HOME: home, XDG_CACHE_HOME: `${home}/.cache`, ...env }, stdout: "pipe", stderr: "pipe" }); const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]); return { code, out: out + err }; };
 check("version prints the embedded version", run(["version"]).out.trim() === built.version, run(["version"]).out);
-check("toolchain commands point at the npm package", run(["deploy"]).code === 1 && /npm package/.test(run(["deploy"]).out));
+// this copy is built without the toolchain (it checks serve and update), so a command that needs one says so plainly;
+// the release's own executables carry it (scripts/build-exe.ts) and hand the command to it (src/node/toolchain.ts)
+check("a build without the toolchain says so, rather than pointing at npm", run(["deploy"]).code === 1 && /built without the Cloudflare toolchain/.test(run(["deploy"]).out), run(["deploy"]).out);
 
 // ---- serve
 const port = freePort(); const base = `http://127.0.0.1:${port}`;

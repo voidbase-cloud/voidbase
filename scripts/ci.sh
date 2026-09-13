@@ -22,6 +22,9 @@ BACKEND=$(ci_backend); export CI_BACKEND_NAME="$BACKEND"
 PORT="${CI_PORT:-5180}"; PB_PORT="${CI_PB_PORT:-8090}"; VB="http://127.0.0.1:$PORT"; PB="http://127.0.0.1:$PB_PORT"
 LOGS="$ROOT/.void/ci-logs"; rm -rf "$LOGS" "$CI_STEPS_TSV" .void/ci-plan.txt .void/ci-plan.json; mkdir -p "$LOGS"
 CI_CACHE_DIR="$(ci_cache_dir)"; export CI_CACHE_DIR; mkdir -p "$CI_CACHE_DIR"
+# Bun's download cache lives in the cached directory, so the seven toolchains scripts/build-exe.ts installs for the
+# executables (each target's native workerd, rolldown and vite-plus) come out of R2 rather than off npm on every build
+BUN_INSTALL_CACHE_DIR="$CI_CACHE_DIR/bun-install"; export BUN_INSTALL_CACHE_DIR; mkdir -p "$BUN_INSTALL_CACHE_DIR"
 started_pb=0; booted=0
 echo "voidbase ci on $BACKEND: $(git rev-parse --short HEAD 2>/dev/null || echo '?') $(git log -1 --format=%s 2>/dev/null | cut -c1-80), bun $(bun --version)"
 echo "cache: $CI_CACHE_DIR ($(du -sh "$CI_CACHE_DIR" 2>/dev/null | cut -f1 || echo empty))"

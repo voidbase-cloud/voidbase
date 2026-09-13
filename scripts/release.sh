@@ -36,7 +36,7 @@ if [ -z "${CI_NESTED:-}" ]; then
   finish() { local rc=$?; render_status --kind release || true; if [ "$rc" = 0 ]; then echo "RELEASE FLOW DONE"; else echo "RELEASE FLOW FAILED (exit $rc)"; fi; }
   trap finish EXIT
 fi
-echo "release flow on $BACKEND: $REPO, branch $BRANCH, package $VERSION${TAG:+, tag $TAG}${DRY:+, dry run}${HOT:+, hot mode (npm only)}"
+echo "release flow on $BACKEND: $REPO, branch $BRANCH, package $VERSION${TAG:+, tag $TAG}${DRY:+, dry run}${HOT:+, hot mode}"
 
 if [ -z "${CI_NESTED:-}" ]; then step install bun install --frozen-lockfile || exit 1; step cache-restore ./scripts/ci-cache.sh restore || true; fi
 
@@ -85,7 +85,8 @@ else step publish publish_npm || exit 1; [ -z "$DRY" ] && outputs "published=tru
 
 build_executables() {
   . scripts/ci-oracles.sh
-  XDG_CACHE_HOME="$CI_CACHE_DIR/xdg" bun run panel:sync || return 1
+  # hot mode runs this nested in ci.sh without the cache step, so the cache directory may be unset
+  XDG_CACHE_HOME="${CI_CACHE_DIR:-$ROOT/.void/cache}/xdg" bun run panel:sync || return 1
   bun scripts/build-exe.ts --targets all --out dist/release || return 1
   cat dist/release/checksums.txt
   (cd "$PKG_DIR" && STARTER_VB_DIR="$STARTER_DIR/pb" bun test/exe-smoke.ts) || return 1
@@ -98,8 +99,10 @@ build_executables() {
     bun scripts/gh-release.ts notes "$TAG" .void/release-notes.md || return 1
   fi
 }
+# Every release carries its executables, hot or not. They used to be left to a normal run, and during the beta every
+# release is a hot one, so no release had them: the binary could not be downloaded, and `voidbase update`, which
+# reads the archive and checksums.txt off the release, had nothing to update to.
 if has_asset checksums.txt && [ -z "$DRY" ]; then skip_step executables; echo "release $TAG already has its executables"
-elif [ -n "$HOT" ]; then skip_step executables "hot mode: npm only, a normal run adds them"; echo "release $TAG: executables left to a normal run (hot mode)"
 elif [ -z "${GH_TOKEN:-}" ]; then echo "release $TAG needs its executables but GH_TOKEN is not set"; exit 1
 else step executables build_executables || exit 1; [ -z "$DRY" ] && outputs "executables=true"; fi
 outputs "tag=$TAG"

@@ -6,9 +6,10 @@
 #   scripts/ci-cache.sh restore      the components missing locally
 #   scripts/ci-cache.sh save         the components whose content changed
 # Components are the directories of CI_CACHE_DIR: browsers, chrome-libs, debs (scripts/ci-browser.sh), oracles
-# (scripts/ci-oracles.sh), xdg (the panel, scripts/sync-panel.ts), archives (the reference PocketBase).
+# (scripts/ci-oracles.sh), xdg (the panel, scripts/sync-panel.ts), archives (the reference PocketBase), bun-install
+# (Bun's download cache: every target's native toolchain packages, which scripts/build-exe.ts installs for each).
 set -u
-COMPONENTS="browsers chrome-libs debs oracles xdg archives"
+COMPONENTS="browsers chrome-libs debs oracles xdg archives bun-install"
 DIR="${CI_CACHE_DIR:?CI_CACHE_DIR}"; mkdir -p "$DIR/.stamps"
 enabled() { [ -n "${CI_CACHE_TOKEN:-}" ] && [ -n "${CI_CACHE_ACCOUNT:-}" ] && [ -n "${CI_CACHE_BUCKET:-}" ]; }
 if command -v zstd >/dev/null 2>&1; then EXT="tar.zst"; TAR_C=(tar -I zstd -cf); TAR_X=(tar -I zstd -xf); else EXT="tar.gz"; TAR_C=(tar -czf); TAR_X=(tar -xzf); fi

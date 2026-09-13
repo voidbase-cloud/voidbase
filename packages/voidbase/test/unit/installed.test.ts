@@ -242,20 +242,33 @@ describe("what an instance checks before it loads anything", () => {
 });
 
 describe("remove, enable, update", () => {
-  test("removing an installed plugin deletes it; removing a shipped one turns it off, and enable turns it back on", async () => {
+  test("removing an installed plugin deletes it; removing a shipped one removes it too, and adding it back is on purpose", async () => {
     await addPlugin(root, "echo", opts(url(one)));
     expect(removePlugin(root, "echo")).toBe("removed");
     expect(existsSync(join(root, "pb_plugins/echo"))).toBe(false);
     expect(readLock(root).plugins.echo).toBeUndefined();
-    // every plugin that ships is tier 1 now, so turning one off is said on purpose
-    expect(removePlugin(root, "openapi", { force: true })).toBe("disabled");
-    expect(removePlugin(root, "openapi", { force: true })).toBe("already-disabled");
+    // every plugin that ships is tier 1 now, so removing one is said on purpose
+    expect(removePlugin(root, "openapi", { force: true })).toBe("removed");
+    expect(removePlugin(root, "openapi", { force: true })).toBe("already-removed");
     expect(pluginFacts(root).find((p) => p.name === "openapi")).toBeUndefined();
-    expect(listPlugins(root).shipped.find((p) => p.name === "openapi")?.state).toBe("disabled");
+    expect(listPlugins(root).shipped.find((p) => p.name === "openapi")?.state).toBe("removed");
     expect(enablePlugin(root, "openapi")).toBe("enabled");
     expect(enablePlugin(root, "openapi")).toBe("not-disabled");
     expect(() => removePlugin(root, "nothing")).toThrow("nothing is not installed and does not ship with voidbase");
     expect(() => enablePlugin(root, "echo")).toThrow("echo does not ship with voidbase");
+  });
+
+  test("removing a shipped name that was installed over it removes both: the core's copy does not come back", async () => {
+    const lock = readLock(root);
+    lock.plugins.backups = { version: "9.9.9", integrity: "sha256-x", marketplace: "https://m.example", source: { repository: "a/backups", commit: "c" }, installedOn: "2026-09-13" } as never;
+    writeFileSync(join(root, "voidbase.lock"), JSON.stringify(lock)); mkdirSync(join(root, "pb_plugins/backups"), { recursive: true }); writeFileSync(join(root, "pb_plugins/backups/config.json"), "{}");
+    expect(listPlugins(root).shipped.find((p) => p.name === "backups")?.state).toBe("shadowed");
+    expect(removePlugin(root, "backups", { force: true })).toBe("removed");
+    expect(readLock(root).plugins.backups).toBeUndefined();
+    expect(existsSync(join(root, "pb_plugins/backups"))).toBe(false);
+    expect(listPlugins(root).shipped.find((p) => p.name === "backups")?.state).toBe("removed");
+    expect(pluginFacts(root).find((p) => p.name === "backups")).toBeUndefined();
+    expect(enablePlugin(root, "backups")).toBe("enabled");
   });
 
   test("a core plugin is refused without --yes, and the refusal says what stops working", () => {
@@ -267,9 +280,9 @@ describe("remove, enable, update", () => {
     expect(() => removePlugin(root, "auth")).toThrow("runs with nobody signed in");
     expect(() => removePlugin(root, "auth")).toThrow("voidbase plugins remove auth --yes");
     expect(listPlugins(root).shipped.find((p) => p.name === "auth")?.state).toBe("active");
-    // and with it, the same removal goes through: a shipped plugin is turned off for this project
-    expect(removePlugin(root, "auth", { force: true })).toBe("disabled");
-    expect(listPlugins(root).shipped.find((p) => p.name === "auth")?.state).toBe("disabled");
+    // and with it, the same removal goes through: a shipped plugin is removed from this project
+    expect(removePlugin(root, "auth", { force: true })).toBe("removed");
+    expect(listPlugins(root).shipped.find((p) => p.name === "auth")?.state).toBe("removed");
     expect(removalCostFor(root, "auth")).toBeNull();
   });
 

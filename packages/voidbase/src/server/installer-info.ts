@@ -19,7 +19,7 @@ export interface FilesystemInstaller {
   root: string;
   list(): { installed: { name: string; version: string; marketplace: string }[]; disabled: string[]; marketplaces: string[] };
   add(spec: string, o: { marketplace?: string; voidbaseVersion: string }): Promise<{ name: string; version: string; marketplace: string; previous?: string; unchanged?: boolean }>;
-  remove(name: string, o?: { force?: boolean }): "removed" | "disabled" | "already-disabled";
+  remove(name: string, o?: { force?: boolean }): "removed" | "already-removed";
   update(name: string | undefined, o: { voidbaseVersion: string }): Promise<{ updated: { name: string; from: string; to: string; marketplace: string }[]; current: string[] }>;
   /** queue a rebuild of the instance onto the changed declaration (src/node/rebuild.ts); false when this process has no rebuilder */
   rebuild?: (reason: string) => boolean;

@@ -669,7 +669,7 @@ switch (cmd) {
           const yes = "yes" in flags;
           if (yes) { const cost = I.removalCostFor(root, rest[0]); if (cost) console.log(cost.reason); }
           const r = I.removePlugin(root, rest[0], { force: yes });
-          console.log(r === "removed" ? `removed ${rest[0]}${restart}` : r === "disabled" ? `${rest[0]} ships with voidbase; it is now turned off for this project (voidbase plugins enable ${rest[0]} turns it back on)${restart}` : `${rest[0]} is already turned off`);
+          console.log(r === "removed" ? `removed ${rest[0]}${restart}` : `${rest[0]} is already removed`);
           break;
         }
         case "enable": {

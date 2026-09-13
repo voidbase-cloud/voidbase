@@ -222,10 +222,10 @@ describe("a project on disk (Bun): the change is written in place, and the insta
     const gone = await call("POST", "/api/plugins/remove", { name: "echo" });
     expect(gone.json.result).toBe("removed"); expect(existsSync(join(root, "pb_plugins/echo"))).toBe(false);
   });
-  test("removing a shipped plugin turns it off", async () => {
+  test("removing a shipped plugin removes it", async () => {
     const { call } = await appWith({}, fs);
-    // every plugin that ships is tier 1, so turning one off is said on purpose
-    expect((await call("POST", "/api/plugins/remove", { name: "openapi", force: true })).json.result).toBe("disabled");
+    // every plugin that ships is tier 1, so removing one is said on purpose
+    expect((await call("POST", "/api/plugins/remove", { name: "openapi", force: true })).json.result).toBe("removed");
   });
 });
 
@@ -252,7 +252,7 @@ describe("removing a core plugin, or one something else requires, is a deliberat
   test('force: true is the saying-so, and the removal goes through', async () => {
     const { call } = await appWith({}, fs);
     const r = await call("POST", "/api/plugins/remove", { name: "auth", force: true });
-    expect(r.status).toBe(200); expect(r.json.result).toBe("disabled");
+    expect(r.status).toBe(200); expect(r.json.result).toBe("removed");
     expect(JSON.parse(readFileSync(join(root, "voidbase.lock"), "utf8")).disabled).toEqual(["auth"]);
   });
 

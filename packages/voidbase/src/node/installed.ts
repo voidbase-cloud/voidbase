@@ -105,7 +105,7 @@ export interface Lock {
   /** the marketplaces this project installs from; ours is a default that can be removed */
   marketplaces: string[];
   plugins: Record<string, LockEntry>;
-  /** shipped plugins turned off */
+  /** shipped plugins removed from this project (the field's name is lockfileVersion 1's) */
   disabled: string[];
 }
 
@@ -314,25 +314,26 @@ export const removalCostFor = (root: string, name: string): RemovalCost | null =
  * requirement, is refused here rather than in the caller: this function is what writes voidbase.lock, and a guard
  * anywhere else is a guard something can be written around. `force` is the caller's `--yes`.
  */
-export function removePlugin(root: string, name: string, o: { force?: boolean } = {}): "removed" | "disabled" | "already-disabled" {
+/**
+ * Removing a plugin removes it (voidbase-stories, voidbase/removing-a-plugin.feature): its files and configuration go,
+ * and a name that ships with voidbase is not loaded from the core either, whether the core's copy or one installed over
+ * it was the one running. What it provided goes with it. The lock keeps shipped names removed in `disabled`, its
+ * field since lockfileVersion 1; `plugins add <name>` puts one back.
+ */
+export function removePlugin(root: string, name: string, o: { force?: boolean } = {}): "removed" | "already-removed" {
   if (!o.force) {
     const cost = removalCostFor(root, name);
     if (cost) throw new Error(refusal(cost, `To go ahead: voidbase plugins remove ${name} --yes`));
   }
   const lock = readLock(root);
-  if (lock.plugins[name]) {
-    delete lock.plugins[name];
-    rmSync(join(pluginsDirOf(root), name), { recursive: true, force: true });
-    writeLock(root, lock);
-    return "removed";
-  }
-  if (isShipped(name)) {
-    if (lock.disabled.includes(name)) return "already-disabled";
-    lock.disabled.push(name);
-    writeLock(root, lock);
-    return "disabled";
-  }
-  throw new Error(`${name} is not installed and does not ship with voidbase`);
+  const shipped = isShipped(name);
+  if (!lock.plugins[name] && !shipped) throw new Error(`${name} is not installed and does not ship with voidbase`);
+  if (!lock.plugins[name] && lock.disabled.includes(name)) return "already-removed";
+  delete lock.plugins[name];
+  rmSync(join(pluginsDirOf(root), name), { recursive: true, force: true });
+  if (shipped && !lock.disabled.includes(name)) lock.disabled.push(name);
+  writeLock(root, lock);
+  return "removed";
 }
 
 /** a shipped plugin turned back on */
@@ -365,12 +366,12 @@ export async function updatePlugins(root: string, only: string | undefined, o: O
   return { updated, current };
 }
 
-export interface Listing { shipped: { name: string; state: "active" | "disabled" | "shadowed" }[]; installed: (LockEntry & { name: string })[]; marketplaces: string[] }
+export interface Listing { shipped: { name: string; state: "active" | "removed" | "shadowed" }[]; installed: (LockEntry & { name: string })[]; marketplaces: string[] }
 
 export function listPlugins(root: string, env: Record<string, string | undefined> = process.env): Listing {
   const lock = readLock(root);
   return {
-    shipped: SHIPPED.map((name) => ({ name, state: lock.plugins[name] ? "shadowed" : lock.disabled.includes(name) ? "disabled" : "active" })),
+    shipped: SHIPPED.map((name) => ({ name, state: lock.plugins[name] ? "shadowed" : lock.disabled.includes(name) ? "removed" : "active" })),
     installed: Object.entries(lock.plugins).map(([name, e]) => ({ name, ...e })),
     marketplaces: marketplacesFor(lock, env),
   };

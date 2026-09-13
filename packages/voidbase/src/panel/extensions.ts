@@ -79,11 +79,11 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
 
   app.routes.superuserOnly("#/plugins", function () {
     app.store.title = "Plugins";
-    var data = store({ loading: true, plugins: [], files: {}, installer: null, planes: {}, drafts: {}, saving: "" });
+    var data = store({ loading: true, plugins: [], files: {}, installer: null, planes: {}, drafts: {}, saving: "", publicFiles: [], publicEditable: false, chosen: [] });
 
     function load() {
       data.loading = true;
-      return Promise.all([app.pb.send("/api/plugins", {}), app.pb.send("/api/plugins/config", {})]).then(function (answers) {
+      return Promise.all([app.pb.send("/api/plugins", {}), app.pb.send("/api/plugins/config", {}), app.pb.send("/api/pb_public", {})]).then(function (answers) {
         var drafts = {};
         Object.keys(answers[1] || {}).forEach(function (name) {
           drafts[name] = {};
@@ -92,6 +92,8 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
         data.plugins = answers[0].plugins || [];
         data.files = answers[0].files || {};
         data.installer = answers[0].installer || null;
+        data.publicFiles = (answers[2] && answers[2].files) || [];
+        data.publicEditable = !!(answers[2] && answers[2].editable === true);
         data.planes = answers[1] || {};
         data.drafts = drafts;
       }).catch(function (err) { app.checkApiError(err); }).finally(function () { data.loading = false; });
@@ -107,6 +109,17 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
       data.saving = name;
       app.pb.send("/api/plugins/config/" + encodeURIComponent(name), { method: "PATCH", body: changes })
         .then(function (answer) { app.toasts.success(answer.message); return load(); })
+        .catch(function (err) { app.checkApiError(err); })
+        .finally(function () { data.saving = ""; });
+    }
+
+    function upload() {
+      if (!data.chosen.length) { app.toasts.info("Choose the files to upload first."); return; }
+      var form = new FormData();
+      data.chosen.forEach(function (file) { form.append("files", file); });
+      data.saving = "pb_public";
+      app.pb.send("/api/pb_public", { method: "POST", body: form })
+        .then(function (answer) { app.toasts.success(answer.message); data.chosen = []; return load(); })
         .catch(function (err) { app.checkApiError(err); })
         .finally(function () { data.saving = ""; });
     }
@@ -137,6 +150,16 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
                 return t.tr({ "data-folder": folder }, t.td(null, folder), t.td(null, SOURCE[source] || source || ""), t.td(null, MAY[source] || "No"));
               })),
             ),
+            t.div({ className: "txt-lg m-b-sm" }, "pb_public"),
+            data.publicEditable
+              ? t.div({ className: "flex gap-10 m-b-sm pb-public-upload" },
+                t.input({ type: "file", multiple: true, className: "pb-public-files", onchange: function (e) { data.chosen = Array.prototype.slice.call(e.target.files || []); } }),
+                t.button({ type: "button", className: "btn", disabled: function () { return data.saving === "pb_public"; }, onclick: upload }, "Upload to pb_public"),
+              )
+              : t.div({ className: "txt-hint m-b-sm" }, "These files come from the project's repository: change them there and commit."),
+            t.ul({ className: "pb-public-list m-b-base" }, data.publicFiles.length
+              ? data.publicFiles.map(function (f) { return t.li({ "data-public": f.path }, t.a({ href: "/" + f.path, target: "_blank", rel: "noopener noreferrer" }, f.path), " ", t.span({ className: "txt-hint" }, f.size + " bytes")); })
+              : t.li({ className: "txt-hint" }, "pb_public is empty.")),
             t.div({ className: "txt-lg m-b-sm" }, "Configuration"),
             Object.keys(data.planes).length
               ? Object.keys(data.planes).map(function (name) { return plane(name, data, save); })

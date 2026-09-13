@@ -47,7 +47,9 @@ import { realtime as realtimePlugin } from "./plugins/realtime";
 import { hardening as hardeningPlugin } from "./plugins/hardening";
 import { SHIPPED, SHIPPED_FACTS, type ShippedName } from "./plugins/shipped";
 import { pluginsReport } from "./plugins/report";
-import { disabled as disabledPlugins, installed as installedPlugins, projectConfig } from "#platform/plugins";
+import { disabled as disabledPlugins, installed as installedPlugins, projectConfig, publicFiles } from "#platform/plugins";
+import { installerInfo as whereFilesLive } from "./installer-info";
+import { publicPath } from "./public-files";
 import { configReport, declareConfig, environmentOf } from "./plugin-config";
 import { loadStoredConfig, setPluginConfig } from "./plugin-config-store";
 import type { Auth, Hardening, Mail, Observability, Realtime } from "./interfaces";
@@ -603,6 +605,29 @@ provideRecordContext(recordContextFor);
 // the superuser, like logs and settings: an inventory of what is installed is a map of the attack surface. What a
 // plugin says about itself comes from the plugin that loaded under that name, so that a plugin installed over a
 // shipped one answers for it rather than being described by the code it replaced (plugins/report.ts).
+// pb_public from the admin panel (public-files.ts): an instance that holds its own files lists and takes uploads, and
+// the fetcher serves an upload on the next request; on one its project declares, the files are listed and changed in git.
+app.get("/api/pb_public", (c) => {
+  requireSuperuser(c);
+  const holds = whereFilesLive(c.env).mode === "filesystem" && !!publicFiles;
+  return c.json({ source: holds ? "instance" : "repository", editable: holds, files: publicFiles ? publicFiles.list() : [] });
+});
+app.post("/api/pb_public", async (c) => {
+  requireSuperuser(c);
+  if (whereFilesLive(c.env).mode !== "filesystem" || !publicFiles) throw new ApiError(409, "This instance's pb_public is declared by its project: change the files in the repository, commit them, and let the build carry them.");
+  const form = await c.req.formData().catch(() => null);
+  const prefix = String(form?.get("path") ?? "").replace(/^\/+|\/+$/g, "");
+  const files = (form?.getAll("files") ?? []).filter((f): f is File => f instanceof File);
+  if (!files.length) throw badRequest('Send the assets as multipart form fields called "files".');
+  // every path is checked before anything is written, so a bad name leaves pb_public as it was
+  const targets = files.map((f) => ({ file: f, path: publicPath(prefix ? `${prefix}/${f.name}` : f.name) }));
+  const refused = targets.filter((t) => !t.path).map((t) => t.file.name);
+  if (refused.length) throw badRequest(`These are not paths inside pb_public: ${refused.map((n) => JSON.stringify(n)).join(", ")}.`);
+  for (const t of targets) publicFiles.write(t.path!, new Uint8Array(await t.file.arrayBuffer()));
+  const written = targets.map((t) => t.path!);
+  return c.json({ written, message: `Uploaded ${written.join(", ")}. The instance serves ${written.length === 1 ? "it" : "them"} now.` });
+});
+
 // A plugin's configuration plane, field by field, and a change to it: runtime fields take effect at once, rebuild
 // fields wait for the next rebuild, and a plugin the project configures is read only here (plugin-config.ts).
 app.get("/api/plugins/config", async (c) => {

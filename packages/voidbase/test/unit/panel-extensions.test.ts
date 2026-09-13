@@ -22,7 +22,7 @@ const find = (n: unknown, pick: (e: El) => boolean, out: El[] = []): El[] => {
 };
 const text = (n: unknown): string => (Array.isArray(n) ? n.map(text).join("") : n && typeof n === "object" && "tag" in n ? (n as El).children.map(text).join("") : n == null ? "" : String(n));
 
-async function openPage(planes: Record<string, unknown>, installer: Record<string, unknown> = { mode: "filesystem" }) {
+async function openPage(planes: Record<string, unknown>, installer: Record<string, unknown> = { mode: "filesystem" }, pbPublic: Record<string, unknown> = {}) {
   const routes: Record<string, () => unknown> = {}; const sent: { path: string; options: Record<string, unknown> }[] = []; const toasts: string[] = [];
   const app = {
     routes: { superuserOnly: (path: string, handler: () => unknown) => { routes[path] = handler; } },
@@ -37,6 +37,8 @@ async function openPage(planes: Record<string, unknown>, installer: Record<strin
       }
       // a fresh answer on every call, the way a response is
       if (path === "/api/plugins/config") return structuredClone(planes);
+      if (path === "/api/pb_public" && !options.method) return structuredClone(pbPublic);
+      if (path === "/api/pb_public") return { written: ["logo.svg"], message: "Uploaded logo.svg. The instance serves it now." };
       return { message: "referrer_policy took effect." };
     } },
   };
@@ -85,6 +87,24 @@ test("a plane the instance holds is editable, one the project declares is read o
   expect(text(planes[1])).toContain("Read only: the project declares it in pb_plugins/observability/config.json");
   expect(text(planes[1])).toContain("Waits for the next rebuild: 0.5.");
   expect(find(planes[1], (e) => e.tag === "button")).toHaveLength(0);
+});
+
+test("a vanilla instance uploads into pb_public from the page, and an extended one only lists it", async () => {
+  const { page, sent, toasts } = await openPage({}, { mode: "filesystem" }, { source: "instance", editable: true, files: [{ path: "index.html", size: 12 }] });
+  const shown = render(page);
+  expect(find(shown, (e) => e.tag === "li" && !!e.props["data-public"]).map(text)).toEqual(["index.html 12 bytes"]);
+  const chooser = find(shown, (e) => e.tag === "input" && e.props.type === "file")[0]!;
+  const logo = new File(["<svg/>"], "logo.svg");
+  (chooser.props.onchange as (e: unknown) => void)({ target: { files: [logo] } });
+  (find(shown, (e) => e.tag === "button" && text(e) === "Upload to pb_public")[0]!.props.onclick as () => void)();
+  await new Promise((r) => setTimeout(r, 0));
+  const posted = sent.find((s) => s.path === "/api/pb_public" && s.options.method === "POST")!;
+  expect((posted.options.body as FormData).getAll("files")).toEqual([logo]);
+  expect(toasts).toEqual(["Uploaded logo.svg. The instance serves it now."]);
+
+  const extended = render((await openPage({}, { mode: "repository", repository: "me/app" }, { source: "repository", editable: false, files: [{ path: "index.html", size: 12 }] })).page);
+  expect(find(extended, (e) => e.tag === "input" && e.props.type === "file")).toHaveLength(0);
+  expect(text(extended)).toContain("These files come from the project's repository: change them there and commit.");
 });
 
 test("saving sends only the fields that changed and says what the instance answered", async () => {

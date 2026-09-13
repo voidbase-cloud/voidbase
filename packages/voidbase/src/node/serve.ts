@@ -93,6 +93,8 @@ export async function openLocal(opts: ServeOptions) {
   // not the directory exists yet, and the fetcher looks on each request, so a pb_public made while the instance runs
   // is served without a restart, as PocketBase does
   const publicDir = projectFolder(opts.publicDir ?? "pb_public", baked);
+  // and where the admin panel's uploads go on an instance that holds its own files (src/node/public-files.ts)
+  process.env.VOIDBASE_PUBLIC_DIR = publicDir;
   // the panel: where it is, whether its entry is guarded, and whether /_/ is still served. Set before the app
   // module is imported, which is what lets it mount the guard on the path itself (src/server/app.ts)
   const panelPath = opts.panel ? normalizePanelPath(opts.panel.path ?? PANEL_DEFAULT_PATH) : PANEL_DEFAULT_PATH;

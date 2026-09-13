@@ -139,6 +139,14 @@ what moves:
 | anything that depends on those, transitively | `workspace:*` packs as the sibling's exact version, so a dependent left behind would name the old one while the core names the new one, and the install would hold two copies of a package that provides a service |
 | every package, when the core's **minor** turns | a plugin declares its peer as `workspace:^`, which packs as a caret on the core it was built beside; `^0.9.0-beta.56` admits every later 0.9 and stops at 0.10.0 |
 
+**A package that names the core in no dependency map keeps a version of its own** (decision 6). The SDK,
+`packages/sdk` (`@voidbase-cloud/sdk`), talks to an instance over HTTP and pins nothing of the core, so `ownVersion`
+in `scripts/hot-release.ts` leaves it out of the minor-turn rule above, and a release that touches it moves it to its
+own next version (`nextOwnVersion`: its prerelease counter, or its patch) rather than to the core's. A dry run shows it:
+`packages/sdk 0.6.0 -> 0.6.1` beside `0.9.0-beta.58 -> 0.9.0-beta.59` for the rest. A plugin is tied to the core by
+its `workspace:^` peer, which is why the peer map counts here although it is not a publish-order edge. The SDK's own
+suite is vitest's (`bun run --cwd packages/sdk test`); the root's `bun test` skips `packages/sdk` (`bunfig.toml`).
+
 Everything else keeps the version it has and is skipped by the publish loop, which asks the registry before it
 publishes anything. So the versions drift apart on purpose: `@voidbase-cloud/voidbase@0.9.0-beta.80` may well
 depend on `@voidbase-cloud/plugin-tax-flat@0.9.0-beta.57`, and that pair is the one that was built and tested

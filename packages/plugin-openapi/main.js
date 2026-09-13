@@ -1,63 +1,18 @@
-// The API, described: an OpenAPI 3.1 document generated from the collections this instance has, scoped to whoever
-// asks for it, and a page that reads it.
-//
-// Every instance knows its own shape: the collections, their fields, the rules that decide who may read and write
-// each one. This plugin puts that in a form other tools consume. The scoping is the part that matters: an API
-// description that lists what you may not call is a description that lies to you, so the document answers the
-// caller's own question.
-//   GET /api/openapi.json   the document, built at request time from the collections, for the caller's token:
-//                           nothing signed in, the public operations; a user's token, that user's; a superuser's,
-//                           everything, the superuser-only operations and the system routes included.
-//   GET /api/docs           Scalar's API reference over that document, loaded from a CDN, no build step.
-// A collection's operation appears by its rule: the empty rule is public and appears for everyone; a rule with text
-// needs a signed-in record to be judged against, so it appears for a signed-in caller with the rule quoted; a rule
-// that is null is locked, superusers only. The MCP server the roadmap names beside this (mcp.ts) derives its tools
-// from this document, so the two answer the same token the same way.
-import type { Context, Hono } from "hono";
 import { hookRouteDocs, isAuth, isMultiple, isSuperuser, listCollections, loadSettings, VERSION, isView } from "@voidbase-cloud/voidbase/sdk";
-
-
-
-import { serve, type Kernel } from "@voidbase-cloud/voidbase/kernel";
-import type { OpenApi } from "@voidbase-cloud/voidbase/interfaces";
-
-import type { AppEnv, AuthRecord, Bindings, Collection, Field } from "@voidbase-cloud/voidbase/types";
-
-import type { Plugin } from "@voidbase-cloud/voidbase/plugins";
-
-/** where the document's facts come from; the defaults read the instance, a test hands in what it likes */
-export interface OpenApiSource {
-  /** the collections this instance has */
-  collections(env: Bindings): Promise<Collection[]>;
-  /** the instance's name from its settings, or "" when it has none */
-  appName(env: Bindings): Promise<string>;
-}
-const defaultSource: OpenApiSource = {
+import { serve } from "@voidbase-cloud/voidbase/kernel";
+const defaultSource = {
   collections: (env) => listCollections(env.DB),
   appName: async (env) => String((await loadSettings(env.DB)).meta.appName ?? ""),
 };
-
 export const SCALAR_CDN = "https://cdn.jsdelivr.net/npm/@scalar/api-reference";
-
-// --- who is asking ------------------------------------------------------------------------------------------------
-export type Caller = { kind: "anonymous" } | { kind: "user" | "superuser"; collection: string };
-export const callerOf = (auth: AuthRecord | null | undefined): Caller =>
-  !auth ? { kind: "anonymous" } : { kind: isSuperuser(auth) ? "superuser" : "user", collection: auth.collection.name };
-
-type Access = "public" | "signed-in" | "superuser";
-const accessOf = (rule: string | null): Access => (rule === null ? "superuser" : rule.trim() === "" ? "public" : "signed-in");
-const may = (caller: Caller, access: Access): boolean =>
-  access === "public" || caller.kind === "superuser" || (access === "signed-in" && caller.kind === "user");
-const ruleNote = (rule: string | null): string =>
-  rule === null ? "Superusers only: the rule is locked." : rule.trim() === "" ? "Public: anyone may call this." : `Gated by the rule \`${rule.trim()}\`, judged against the signed-in record and the request.`;
-
-// --- schemas from fields ------------------------------------------------------------------------------------------
-type Schema = Record<string, unknown>;
-const str = (extra: Schema = {}): Schema => ({ type: "string", ...extra });
-const many = (f: Field, item: Schema): Schema => (isMultiple(f) ? { type: "array", items: item, ...(Number(f.maxSelect) > 0 ? { maxItems: Number(f.maxSelect) } : {}) } : item);
-
+export const callerOf = (auth) => !auth ? { kind: "anonymous" } : { kind: isSuperuser(auth) ? "superuser" : "user", collection: auth.collection.name };
+const accessOf = (rule) => (rule === null ? "superuser" : rule.trim() === "" ? "public" : "signed-in");
+const may = (caller, access) => access === "public" || caller.kind === "superuser" || (access === "signed-in" && caller.kind === "user");
+const ruleNote = (rule) => rule === null ? "Superusers only: the rule is locked." : rule.trim() === "" ? "Public: anyone may call this." : `Gated by the rule \`${rule.trim()}\`, judged against the signed-in record and the request.`;
+const str = (extra = {}) => ({ type: "string", ...extra });
+const many = (f, item) => (isMultiple(f) ? { type: "array", items: item, ...(Number(f.maxSelect) > 0 ? { maxItems: Number(f.maxSelect) } : {}) } : item);
 /** the JSON schema of one field's value, as a record answers it */
-export function fieldSchema(f: Field, byId: Map<string, Collection>): Schema {
+export function fieldSchema(f, byId) {
   const help = f.help ? { description: String(f.help) } : {};
   switch (f.type) {
     case "text": return str({ ...help, ...(f.primaryKey ? { description: "15-character id" } : {}) });
@@ -68,62 +23,72 @@ export function fieldSchema(f: Field, byId: Map<string, Collection>): Schema {
     case "autodate": return str({ readOnly: true, description: "set by the instance", ...help });
     case "number": return { type: f.onlyInt ? "integer" : "number", ...(f.min != null ? { minimum: Number(f.min) } : {}), ...(f.max != null ? { maximum: Number(f.max) } : {}), ...help };
     case "bool": return { type: "boolean", ...help };
-    case "select": return many(f, str({ enum: Array.isArray(f.values) ? (f.values as string[]) : [], ...help }));
+    case "select": return many(f, str({ enum: Array.isArray(f.values) ? f.values : [], ...help }));
     case "json": return { description: "any JSON value", ...help };
     case "file": return many(f, str({ description: "file name; send the file itself as multipart/form-data", ...help }));
-    case "relation": { const target = byId.get(String(f.collectionId ?? "")); return many(f, str({ description: `id of a ${target ? target.name : "related"} record`, ...(target ? { "x-collection": target.name } : {}), ...help })); }
+    case "relation": {
+      const target = byId.get(String(f.collectionId ?? ""));
+      return many(f, str({ description: `id of a ${target ? target.name : "related"} record`, ...(target ? { "x-collection": target.name } : {}), ...help }));
+    }
     case "password": return str({ format: "password", writeOnly: true, ...help });
     case "geoPoint": return { type: "object", properties: { lon: { type: "number" }, lat: { type: "number" } }, required: ["lon", "lat"], ...help };
   }
 }
-
-const fields = (c: Collection): Field[] => c.fields as Field[];
-const hasField = (c: Collection, name: string) => fields(c).some((f) => f.name === name);
-
+const fields = (c) => c.fields;
+const hasField = (c, name) => fields(c).some((f) => f.name === name);
 /** what a record of the collection looks like in a response: hidden fields dropped, ids and names added. Every
  * field is answered, zero-valued when unset, so all of them are required; only expand comes when asked for. A
  * relation names its target in x-collection, which is what the typed client (voidbase types) reads. */
-function recordSchema(c: Collection, byId: Map<string, Collection>): Schema {
-  const properties: Record<string, Schema> = { id: str({ description: "15-character id" }), collectionId: str({ readOnly: true }), collectionName: str({ readOnly: true, enum: [c.name] }) };
-  for (const f of fields(c)) { if (f.hidden || f.name === "id") continue; properties[f.name] = fieldSchema(f, byId); }
-  for (const name of ["created", "updated"]) if (!hasField(c, name)) properties[name] = str({ readOnly: true, description: "set by the instance" });
+function recordSchema(c, byId) {
+  const properties = { id: str({ description: "15-character id" }), collectionId: str({ readOnly: true }), collectionName: str({ readOnly: true, enum: [c.name] }) };
+  for (const f of fields(c)) {
+    if (f.hidden || f.name === "id")
+      continue;
+    properties[f.name] = fieldSchema(f, byId);
+  }
+  for (const name of ["created", "updated"])
+    if (!hasField(c, name))
+      properties[name] = str({ readOnly: true, description: "set by the instance" });
   const required = Object.keys(properties);
   properties.expand = { type: "object", description: "the related records named by ?expand", additionalProperties: true };
   return { type: "object", properties, required };
 }
-
 /** what a request may send to create or update a record of the collection */
-function bodySchema(c: Collection, byId: Map<string, Collection>, mode: "create" | "update"): Schema {
-  const properties: Record<string, Schema> = {};
-  const required: string[] = [];
-  if (mode === "create") properties.id = str({ description: "15-character id, generated when omitted", pattern: "^[a-z0-9]{15}$" });
+function bodySchema(c, byId, mode) {
+  const properties = {};
+  const required = [];
+  if (mode === "create")
+    properties.id = str({ description: "15-character id, generated when omitted", pattern: "^[a-z0-9]{15}$" });
   for (const f of fields(c)) {
-    if (f.name === "id" || f.type === "autodate") continue;
-    if (f.hidden && f.type !== "password") continue;
+    if (f.name === "id" || f.type === "autodate")
+      continue;
+    if (f.hidden && f.type !== "password")
+      continue;
     properties[f.name] = fieldSchema(f, byId);
-    if (f.required && mode === "create" && f.type !== "password") required.push(f.name);
+    if (f.required && mode === "create" && f.type !== "password")
+      required.push(f.name);
   }
   if (isAuth(c)) {
     properties.password = str({ format: "password", writeOnly: true });
     properties.passwordConfirm = str({ format: "password", writeOnly: true });
-    if (mode === "create") required.push("password", "passwordConfirm");
-    else properties.oldPassword = str({ format: "password", writeOnly: true, description: "required when password changes" });
+    if (mode === "create")
+      required.push("password", "passwordConfirm");
+    else
+      properties.oldPassword = str({ format: "password", writeOnly: true, description: "required when password changes" });
   }
   return { type: "object", properties, ...(required.length ? { required } : {}) };
 }
-
-const listSchema = (c: Collection): Schema => ({
+const listSchema = (c) => ({
   type: "object",
   properties: { page: { type: "integer" }, perPage: { type: "integer" }, totalItems: { type: "integer", description: "-1 when skipTotal was asked for" }, totalPages: { type: "integer" }, items: { type: "array", items: { $ref: `#/components/schemas/${c.name}` } } },
   required: ["page", "perPage", "totalItems", "totalPages", "items"],
 });
-
 // --- the operations ------------------------------------------------------------------------------------------------
-const ref = (name: string): Schema => ({ $ref: `#/components/schemas/${name}` });
-const json = (schema: Schema): Schema => ({ content: { "application/json": { schema } } });
-const errors: Record<string, Schema> = { "400": { description: "Bad request: the body failed validation, or the rule refused the request", ...json(ref("Error")) }, "401": { description: "No usable token", ...json(ref("Error")) }, "403": { description: "The token may not do this", ...json(ref("Error")) }, "404": { description: "Not found", ...json(ref("Error")) } };
-const query = (name: string, description: string, schema: Schema = { type: "string" }): Schema => ({ name, in: "query", description, schema });
-const path = (name: string, description: string): Schema => ({ name, in: "path", required: true, description, schema: { type: "string" } });
+const ref = (name) => ({ $ref: `#/components/schemas/${name}` });
+const json = (schema) => ({ content: { "application/json": { schema } } });
+const errors = { "400": { description: "Bad request: the body failed validation, or the rule refused the request", ...json(ref("Error")) }, "401": { description: "No usable token", ...json(ref("Error")) }, "403": { description: "The token may not do this", ...json(ref("Error")) }, "404": { description: "Not found", ...json(ref("Error")) } };
+const query = (name, description, schema = { type: "string" }) => ({ name, in: "query", description, schema });
+const path = (name, description) => ({ name, in: "path", required: true, description, schema: { type: "string" } });
 const LIST_QUERY = [
   query("page", "1-based page", { type: "integer", minimum: 1, default: 1 }),
   query("perPage", "records per page", { type: "integer", minimum: 1, maximum: 1000, default: 30 }),
@@ -134,7 +99,7 @@ const LIST_QUERY = [
   query("skipTotal", "1 to skip counting: totalItems and totalPages answer -1", { type: "boolean" }),
 ];
 const VIEW_QUERY = [query("expand", "comma-separated relation fields to embed"), query("fields", "comma-separated fields to keep in the answer")];
-const canUpdateSchema: Schema = {
+const canUpdateSchema = {
   type: "object",
   properties: {
     allowed: { type: "boolean", description: "whether the update rule admits this token for this record" },
@@ -143,15 +108,13 @@ const canUpdateSchema: Schema = {
   },
   required: ["allowed", "fields", "reason"],
 };
-
-type Operation = Schema;
-const op = (tag: string, summary: string, description: string, extra: Schema): Operation => ({ tags: [tag], summary, description, ...extra });
-
-function collectionPaths(c: Collection, caller: Caller, byId: Map<string, Collection>, paths: Record<string, Record<string, Operation>>) {
+const op = (tag, summary, description, extra) => ({ tags: [tag], summary, description, ...extra });
+function collectionPaths(c, caller, byId, paths) {
   const base = `/api/collections/${c.name}/records`;
-  const add = (p: string, method: string, o: Operation) => { (paths[p] ??= {})[method] = o; };
-  const gated = (rule: string | null, method: string, p: string, summary: string, extra: Schema) => {
-    if (!may(caller, accessOf(rule))) return;
+  const add = (p, method, o) => { (paths[p] ??= {})[method] = o; };
+  const gated = (rule, method, p, summary, extra) => {
+    if (!may(caller, accessOf(rule)))
+      return;
     add(p, method, op(c.name, summary, ruleNote(rule), extra));
   };
   gated(c.listRule, "get", base, `List ${c.name} records`, { parameters: LIST_QUERY, responses: { "200": { description: "A page of records", ...json(ref(`${c.name}List`)) }, "400": errors["400"], "403": errors["403"] } });
@@ -180,11 +143,10 @@ function collectionPaths(c: Collection, caller: Caller, byId: Map<string, Collec
     }
   }
 }
-
-function superuserPaths(paths: Record<string, Record<string, Operation>>) {
+function superuserPaths(paths) {
   const tag = "system";
-  const add = (p: string, method: string, o: Operation) => { (paths[p] ??= {})[method] = o; };
-  const object = (description: string): Schema => ({ description, ...json({ type: "object", additionalProperties: true }) });
+  const add = (p, method, o) => { (paths[p] ??= {})[method] = o; };
+  const object = (description) => ({ description, ...json({ type: "object", additionalProperties: true }) });
   const collectionBody = { required: true, ...json({ type: "object", description: "a collection in PocketBase's JSON: name, type, fields, indexes, the five rules and the type's options", additionalProperties: true }) };
   add("/api/collections", "get", op(tag, "List collections", "Superusers only.", { parameters: [query("page", "1-based page", { type: "integer" }), query("perPage", "collections per page", { type: "integer" }), query("sort", "name, type, system, created, updated, id"), query("filter", "over name, type, system, created, updated, id")], responses: { "200": object("A page of collections"), "401": errors["401"], "403": errors["403"] } }));
   add("/api/collections", "post", op(tag, "Create a collection", "Superusers only. The table is created with it.", { requestBody: collectionBody, responses: { "200": object("The collection"), "400": errors["400"], "403": errors["403"] } }));
@@ -204,54 +166,53 @@ function superuserPaths(paths: Record<string, Record<string, Operation>>) {
   add("/api/backups/{key}/restore", "post", op(tag, "Restore a backup", "Superusers only. A full or legacy archive replaces the instance's data; a data archive replaces the rows and files of the collections it holds on the existing schema (createMissing creates the ones the instance lacks). Refused when the archive was written by a newer voidbase.", { parameters: [path("key", "the backup file name")], requestBody: { ...json({ type: "object", properties: { createMissing: { type: "boolean" } } }) }, responses: { "204": { description: "Started" }, "400": errors["400"], "403": errors["403"], "404": errors["404"] } }));
   add("/api/plugins", "get", op(tag, "What this instance loaded", "Superusers only: the plugins, their tiers and origins, the interfaces and who provides them, any core interface nobody provides, and where the plugins live.", { responses: { "200": object("The inventory"), "403": errors["403"] } }));
 }
-
-// --- the document ---------------------------------------------------------------------------------------------------
-export interface DocumentInput {
-  collections: Collection[]; caller: Caller; title: string; origin: string; version: string;
-  /** routes the instance's own code added: pb_hooks and a project's entry file (core's hookRouteDocs) */
-  routes?: { method: string; path: string; superuser: boolean; response?: Schema }[];
-  /** routes plugins added, by method and path; described to a superuser, who may call them all */
-  pluginRoutes?: { method: string; path: string }[];
-}
-
 /** the OpenAPI 3.1 document for these collections as this caller sees them */
-export function buildDocument(input: DocumentInput): Record<string, unknown> {
+export function buildDocument(input) {
   const { collections, caller } = input;
   const byId = new Map(collections.map((c) => [c.id, c]));
-  const paths: Record<string, Record<string, Operation>> = {};
-  const schemas: Record<string, Schema> = {
+  const paths = {};
+  const schemas = {
     Error: { type: "object", properties: { status: { type: "integer" }, message: str(), data: { type: "object", additionalProperties: true } }, required: ["status", "message", "data"] },
   };
   paths["/api/health"] = { get: op("system", "Is the API up", "Public. A superuser's token adds canBackup, possibleProxyHeader and realIP under data.", { security: [], responses: { "200": { description: "Healthy", ...json({ type: "object", properties: { code: { type: "integer" }, message: str(), data: { type: "object", additionalProperties: true } }, required: ["code", "message", "data"] }) } } }) };
-  const tags: Schema[] = [{ name: "system", description: "the instance itself" }];
+  const tags = [{ name: "system", description: "the instance itself" }];
   for (const c of collections) {
     const before = Object.keys(paths).length;
     collectionPaths(c, caller, byId, paths);
-    if (Object.keys(paths).length === before) continue;
+    if (Object.keys(paths).length === before)
+      continue;
     tags.push({ name: c.name, description: `${c.type} collection${c.system ? ", system" : ""}` });
     schemas[c.name] = recordSchema(c, byId);
     schemas[`${c.name}List`] = listSchema(c);
-    if (!isView(c)) { schemas[`${c.name}Create`] = bodySchema(c, byId, "create"); schemas[`${c.name}Update`] = bodySchema(c, byId, "update"); }
-    if (isAuth(c)) schemas[`${c.name}Auth`] = { type: "object", properties: { token: str(), record: ref(c.name) }, required: ["token", "record"] };
+    if (!isView(c)) {
+      schemas[`${c.name}Create`] = bodySchema(c, byId, "create");
+      schemas[`${c.name}Update`] = bodySchema(c, byId, "update");
+    }
+    if (isAuth(c))
+      schemas[`${c.name}Auth`] = { type: "object", properties: { token: str(), record: ref(c.name) }, required: ["token", "record"] };
   }
-  if (caller.kind === "superuser") superuserPaths(paths);
+  if (caller.kind === "superuser")
+    superuserPaths(paths);
   // the instance's own routes: everyone's, unless a superuser's guard is on one; what each answers is what its source
   // says, and any JSON object where the source did not say
   const own = (input.routes ?? []).filter((r) => !r.superuser || caller.kind === "superuser");
-  if (own.length) tags.push({ name: "hooks", description: "routes this instance's own code adds" });
+  if (own.length)
+    tags.push({ name: "hooks", description: "routes this instance's own code adds" });
   for (const r of own) {
     const method = r.method === "ALL" ? "get" : r.method.toLowerCase();
-    if (paths[r.path]?.[method]) continue;
-    const parameters = [...r.path.matchAll(/\{(\w+)\}/g)].map((m) => path(m[1]!, "a path parameter"));
+    if (paths[r.path]?.[method])
+      continue;
+    const parameters = [...r.path.matchAll(/\{(\w+)\}/g)].map((m) => path(m[1], "a path parameter"));
     const answer = r.response && Object.keys(r.response).length ? r.response : { type: "object", additionalProperties: true };
     (paths[r.path] ??= {})[method] = op("hooks", `${r.method} ${r.path}`, r.superuser ? "Superusers only. Added by this instance's own code." : "Added by this instance's own code.", { ...(parameters.length ? { parameters } : {}), responses: { "200": { description: "What the route answers", ...json(answer) } } });
   }
   // what plugins added, for a superuser: by method and path, since a plugin's route says nothing about its answer
   if (caller.kind === "superuser") {
     const added = (input.pluginRoutes ?? []).filter((r) => !paths[r.path]?.[r.method.toLowerCase()]);
-    if (added.length) tags.push({ name: "plugins", description: "routes the instance's plugins add" });
+    if (added.length)
+      tags.push({ name: "plugins", description: "routes the instance's plugins add" });
     for (const r of added) {
-      const parameters = [...r.path.matchAll(/\{(\w+)\}/g)].map((m) => path(m[1]!, "a path parameter"));
+      const parameters = [...r.path.matchAll(/\{(\w+)\}/g)].map((m) => path(m[1], "a path parameter"));
       (paths[r.path] ??= {})[r.method.toLowerCase()] = op("plugins", `${r.method} ${r.path}`, "Added by a plugin.", { ...(parameters.length ? { parameters } : {}), responses: { "200": { description: "What the route answers", ...json({ type: "object", additionalProperties: true }) } } });
     }
   }
@@ -271,7 +232,6 @@ export function buildDocument(input: DocumentInput): Record<string, unknown> {
     security: caller.kind === "anonymous" ? [] : [{ token: [] }],
   };
 }
-
 // --- the page --------------------------------------------------------------------------------------------------------
 // Scalar over the document. The browser cannot put a token on the navigation that opens this page, so the page
 // fetches the document itself with the token it has: one pasted here (kept in sessionStorage), else the panel's
@@ -302,69 +262,71 @@ const DOCS_PAGE = `<!doctype html>
 (function () {
   var KEY = "voidbase:openapi:token";
   function tokenOf() {
-    try { var t = sessionStorage.getItem(KEY); if (t) return t; } catch (e) {}
-    try { var pb = JSON.parse(localStorage.getItem("pocketbase_auth") || "null"); if (pb && pb.token) return String(pb.token); } catch (e) {}
-    return "";
+  try { var t = sessionStorage.getItem(KEY); if (t) return t; } catch (e) {}
+  try { var pb = JSON.parse(localStorage.getItem("pocketbase_auth") || "null"); if (pb && pb.token) return String(pb.token); } catch (e) {}
+  return "";
   }
   document.getElementById("token-form").addEventListener("submit", function (ev) {
-    ev.preventDefault();
-    var t = document.getElementById("token").value.trim();
-    try { if (t) sessionStorage.setItem(KEY, t); else sessionStorage.removeItem(KEY); } catch (e) {}
-    location.reload();
+  ev.preventDefault();
+  var t = document.getElementById("token").value.trim();
+  try { if (t) sessionStorage.setItem(KEY, t); else sessionStorage.removeItem(KEY); } catch (e) {}
+  location.reload();
   });
   document.getElementById("forget").addEventListener("click", function () { try { sessionStorage.removeItem(KEY); } catch (e) {} location.reload(); });
   var token = tokenOf();
   fetch("/api/openapi.json", { headers: token ? { authorization: token } : {} })
-    .then(function (r) { return r.json(); })
-    .then(function (spec) {
-      var scope = spec.info && spec.info["x-voidbase"] ? spec.info["x-voidbase"] : { scope: "anonymous" };
-      document.getElementById("who").textContent = scope.scope === "anonymous" ? "the public API (no token)" : scope.scope === "superuser" ? "everything (a superuser token)" : "what a " + scope.collection + " record may call (a user token)";
-      var config = { content: spec };
-      if (token) config.authentication = { preferredSecurityScheme: "token", securitySchemes: { token: { value: token } } };
-      window.Scalar.createApiReference("#app", config);
-    })
-    .catch(function (err) { document.getElementById("app").textContent = "Could not load /api/openapi.json: " + err; });
+  .then(function (r) { return r.json(); })
+  .then(function (spec) {
+    var scope = spec.info && spec.info["x-voidbase"] ? spec.info["x-voidbase"] : { scope: "anonymous" };
+    document.getElementById("who").textContent = scope.scope === "anonymous" ? "the public API (no token)" : scope.scope === "superuser" ? "everything (a superuser token)" : "what a " + scope.collection + " record may call (a user token)";
+    var config = { content: spec };
+    if (token) config.authentication = { preferredSecurityScheme: "token", securitySchemes: { token: { value: token } } };
+    window.Scalar.createApiReference("#app", config);
+  })
+  .catch(function (err) { document.getElementById("app").textContent = "Could not load /api/openapi.json: " + err; });
 })();
 </script>
 </body>
 </html>
 `;
-
 /** the core's own routes, which the document already describes one collection at a time, or deliberately leaves out */
 const CORE_PREFIXES = ["/api/collections", "/api/settings", "/api/logs", "/api/backups", "/api/files", "/api/realtime", "/api/batch", "/api/crons", "/api/health", "/api/openapi.json", "/api/docs", "/api/sql", "/api/oauth2-redirect"];
-
 /** the routes registered on the app that are neither the core's own nor a catch-all, in OpenAPI's path form */
-function pluginRoutesOf(app: Hono<AppEnv>): { method: string; path: string }[] {
-  const seen = new Set<string>();
+function pluginRoutesOf(app) {
+  const seen = new Set();
   return (app.routes ?? []).flatMap((r) => {
-    if (!r.path.startsWith("/api/") || r.path.includes("*") || !/^(GET|POST|PUT|PATCH|DELETE)$/.test(r.method)) return [];
-    if (CORE_PREFIXES.some((p) => r.path === p || r.path.startsWith(`${p}/`))) return [];
-    const path = r.path.replace(/:(\w+)/g, "{$1}"); const k = `${r.method} ${path}`;
-    if (seen.has(k)) return []; seen.add(k);
+    if (!r.path.startsWith("/api/") || r.path.includes("*") || !/^(GET|POST|PUT|PATCH|DELETE)$/.test(r.method))
+      return [];
+    if (CORE_PREFIXES.some((p) => r.path === p || r.path.startsWith(`${p}/`)))
+      return [];
+    const path = r.path.replace(/:(\w+)/g, "{$1}");
+    const k = `${r.method} ${path}`;
+    if (seen.has(k))
+      return [];
+    seen.add(k);
     return [{ method: r.method, path }];
   });
 }
-
 // --- the plugin --------------------------------------------------------------------------------------------------------
-function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource) {
-  app.get("/api/openapi.json", async (c: Context<AppEnv>) => {
+function mountRoutes(app, version, source) {
+  app.get("/api/openapi.json", async (c) => {
     const collections = await source.collections(c.env);
     const name = (await source.appName(c.env).catch(() => "")).trim();
     const doc = buildDocument({ collections, caller: callerOf(c.get("auth")), title: name || "voidbase", origin: new URL(c.req.url).origin, version, routes: hookRouteDocs(), pluginRoutes: pluginRoutesOf(app) });
     c.header("Cache-Control", "no-store");
     return c.json(doc);
   });
-  app.get("/api/docs", (c: Context<AppEnv>) => { c.header("Cache-Control", "no-store"); return c.html(DOCS_PAGE); });
+  app.get("/api/docs", (c) => { c.header("Cache-Control", "no-store"); return c.html(DOCS_PAGE); });
 }
-
 /** the plugin over a source of its own: tests hand in collections and a name without a database */
-export const openapiWith = (source: Partial<OpenApiSource> = {}, version: string = VERSION): Plugin => ({
-  manifest: { name: "openapi", version: "0.1.0", tier: "core", voidbase: "*", provides: ["openapi@1"] },
-  apply(ctx: Kernel) {
+export const openapiWith = (source = {}, version = VERSION) => ({
+  apply(ctx) {
     mountRoutes(ctx.app, version, { ...defaultSource, ...source });
-    serve<OpenApi>(ctx, "openapi@1", { document: (input) => buildDocument(input as DocumentInput) });
+    serve(ctx, "openapi@1", { document: (input) => buildDocument(input) });
   },
 });
-
 /** the shipped plugin: the instance's own collections and settings */
-export const openapi: Plugin = openapiWith();
+const openapi = openapiWith();
+
+// what the plugin does; its declaration is manifest.json beside this file, which the instance reads
+export default openapi;

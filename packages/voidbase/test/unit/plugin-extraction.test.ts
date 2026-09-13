@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pbHooksPlugin } from "../../hooks-plugin";
 import corePkg from "../../package.json" with { type: "json" };
-import { providedImport } from "../../src/node/installed";
+import { filesPluginImports, providedImport } from "../../src/node/installed";
 import { PROVIDED, refusalFor } from "../../src/node/provided";
 import { loadInstalled } from "../../src/platform/node/plugins";
 import { integrityOf } from "../../src/node/registry";
@@ -29,6 +29,12 @@ const packages = readWorkspace(ROOT).filter((p) => p.name.startsWith("@voidbase-
 /** the module specifiers a source file imports or re-exports */
 const specifiersOf = (source: string): string[] => [...source.matchAll(/(?:^|[\s;}])(?:import|export)\s*(?:[^"';]*?\sfrom\s*)?["']([^"']+)["']/gm)].map((m) => m[1]!);
 const filesOf = (dir: string): string[] => [...new Bun.Glob("**/*.ts").scanSync({ cwd: dir })].map((f) => join(dir, f));
+/**
+ * A package that is a pb_ files plugin (manifest.json beside main.js, loaded as it is: voidbase-stories
+ * plugin-repos.feature) is its main.js and the modules under lib/; a package not yet turned into one is its src/.
+ */
+const isFilesPackage = (dir: string): boolean => existsSync(join(dir, "manifest.json")) && existsSync(join(dir, "main.js"));
+const codeOf = (dir: string): string[] => (isFilesPackage(dir) ? [join(dir, "main.js"), ...(existsSync(join(dir, "lib")) ? [...new Bun.Glob("**/*.js").scanSync({ cwd: join(dir, "lib") })].map((f) => join(dir, "lib", f)) : [])] : filesOf(join(dir, "src")));
 /** the package a specifier belongs to: `hono/streaming` is `hono`, `@voidbase-cloud/voidbase/kernel` is the core */
 const packageOf = (spec: string): string => (spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0]!);
 /** the repository's own import graph, built once: `git ls-files` is not free and every package below asks it */
@@ -64,7 +70,7 @@ describe("the workspace's extracted plugin packages", () => {
     // which instances it loads into.
     test(`${pkg.name} reaches the core only through entries an instance provides, and declares what else it imports`, () => {
       const names = new Set(packages.map((q) => q.name));
-      const files = filesOf(join(pkg.dir, "src"));
+      const files = codeOf(pkg.dir);
       expect(files.length).toBeGreaterThan(0);
       const declared = { ...pkg.manifest.dependencies, ...pkg.manifest.peerDependencies, ...pkg.manifest.optionalDependencies };
       const outside: string[] = [];
@@ -118,7 +124,7 @@ describe("the workspace's extracted plugin packages", () => {
     for (const flavour of ["workerd", "bun"] as const) {
       test(`${pkg.name} does not import its way back into the core's loading modules (${flavour})`, () => {
         const entry = tree.workspaceFile(pkg.name, flavour);
-        expect(entry, `${pkg.name} does not resolve to a tracked file`).toBe(`${pkg.path}/src/index.ts`);
+        expect(entry, `${pkg.name} does not resolve to a tracked file`).toBe(isFilesPackage(pkg.dir) ? `${pkg.path}/main.js` : `${pkg.path}/src/index.ts`);
         const closure = tree.closure([entry!], flavour);
         // it really did resolve into the core rather than stopping at the package boundary
         expect([...closure].some((f) => f.startsWith("packages/voidbase/src/")), "the closure never reached the core").toBe(true);
@@ -199,6 +205,18 @@ describe("the workspace's extracted plugin packages", () => {
       expect(NEVER_MIRROR.some((re) => re.test(CORE))).toBe(false);
     });
 
+    test(`${pkg.name} is a pb_ files plugin, loadable as it is, at its own version`, () => {
+      if (!isFilesPackage(pkg.dir)) return;
+      const declared = JSON.parse(readFileSync(join(pkg.dir, "manifest.json"), "utf8")) as { name: string; version: string };
+      expect(declared.name).toBe(shipped);
+      // a version belongs to its package (voidbase-stories publishing.feature), and the manifest is what a registry lists
+      expect(declared.version).toBe(pkg.version);
+      expect(existsSync(join(pkg.dir, "src")), `${pkg.path} still has a src/ to compile`).toBe(false);
+      expect(existsSync(join(pkg.dir, "main.d.ts"))).toBe(true);
+      // what an instance checks before it loads an installed one: every import provided, nothing outside the plugin
+      expect(() => filesPluginImports(shipped, pkg.dir)).not.toThrow();
+    });
+
     test(`${CORE}${entry.slice(1)} is the package, re-exported`, async () => {
       const target = (corePkg.exports as Record<string, string>)[entry];
       expect(target, `${entry} is published`).toBeDefined();
@@ -206,14 +224,36 @@ describe("the workspace's extracted plugin packages", () => {
       const viaCore = (await import(`${CORE}${entry.slice(1)}`)) as Record<string, unknown>;
       const viaPackage = (await import(pkg.name)) as Record<string, unknown>;
       // the same object, not a copy with the same shape: one plugin, one `realtime@1` registration
-      expect(Object.keys(viaCore).sort()).toEqual(Object.keys(viaPackage).sort());
-      for (const k of Object.keys(viaPackage)) expect(viaCore[k], k).toBe(viaPackage[k]);
+      if (!isFilesPackage(pkg.dir)) expect(Object.keys(viaCore).sort()).toEqual(Object.keys(viaPackage).sort());
+      for (const k of Object.keys(viaPackage)) {
+        if (k === "default") continue;
+        // a pb_ files package's factory (`observabilityWith`) returns what the plugin does; the core's entry wraps it so
+        // that what it returns carries the package's manifest, which is the one export allowed to differ
+        if (isFilesPackage(pkg.dir) && /With$/.test(k) && typeof viaCore[k] === "function" && viaCore[k] !== viaPackage[k]) {
+          expect((viaCore[k] as () => { manifest: unknown }).call(null).manifest, k).toEqual(JSON.parse(readFileSync(join(pkg.dir, "manifest.json"), "utf8")));
+          continue;
+        }
+        expect(viaCore[k], k).toBe(viaPackage[k]);
+      }
       // exactly one of the package's exports is the plugin, and its manifest carries the name the entry promises.
       // realtime exported nothing else, so the first export was the plugin; a package with knobs, an `info()` or a
       // `<name>With()` beside it exports several, and an ES namespace orders its keys alphabetically, so "the first
       // one" would have been whichever constant sorts first.
       const isPlugin = (v: unknown): v is { manifest: { name: string } } =>
         typeof v === "object" && v !== null && typeof (v as { manifest?: { name?: unknown } }).manifest?.name === "string";
+      if (isFilesPackage(pkg.dir)) {
+        // a pb_ files package exports what the plugin does and keeps its declaration in manifest.json: the core's entry
+        // is every export of the package, the same objects, and the one plugin that puts the two together
+        const extra = Object.keys(viaCore).filter((k) => !(k in viaPackage));
+        const plugins = extra.map((k) => viaCore[k]).filter(isPlugin);
+        expect(plugins.map((p) => p.manifest.name)).toEqual([shipped]);
+        expect(plugins[0]!.manifest).toEqual(JSON.parse(readFileSync(join(pkg.dir, "manifest.json"), "utf8")));
+        const behaviour = (viaPackage as { default?: { apply?: unknown } }).default;
+        expect(typeof behaviour?.apply).toBe("function");
+        expect((plugins[0] as { apply?: unknown }).apply).toBe(behaviour!.apply);
+        expect(SHIPPED).toContain(shipped);
+        return;
+      }
       const plugins = Object.values(viaPackage).filter(isPlugin);
       expect(plugins.map((p) => p.manifest.name)).toEqual([shipped]);
       expect(SHIPPED).toContain(shipped);

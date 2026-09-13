@@ -1,0 +1,16 @@
+{
+  "name": "auth",
+  "version": "0.9.0-beta.58",
+  "tier": "core",
+  "voidbase": "*",
+  "provides": [
+    "auth@1"
+  ],
+  "collections": [
+    "_superusers",
+    "_externalAuths",
+    "_authOrigins",
+    "_otps",
+    "_mfas"
+  ]
+}

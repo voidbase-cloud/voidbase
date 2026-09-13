@@ -1,0 +1,9 @@
+{
+  "name": "realtime",
+  "version": "0.9.0-beta.58",
+  "tier": "core",
+  "voidbase": "*",
+  "provides": [
+    "realtime@1"
+  ]
+}

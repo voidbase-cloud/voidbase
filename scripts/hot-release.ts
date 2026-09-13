@@ -11,7 +11,7 @@
 // builds the executables) sees a consistent history. The commit carries `[CI Skip]` so the push it makes does not
 // start another build. GH_TOKEN pushes and creates the release; scripts/release.sh --hot --tag v<version> then
 // publishes every package to npm in the same build (scripts/ci.sh).
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { CORE, dependsOn, ROOT, publishable, readWorkspace, syncLockfileFile, type Pkg } from "./publish";
 
 export function nextPrerelease(version: string): string {
@@ -123,6 +123,18 @@ export function bumpVersion(text: string, from: string, to: string): string {
   return `${text.slice(0, m.index)}"version": "${to}"${text.slice(m.index + m[0].length)}`;
 }
 
+/**
+ * A plugin package that is a pb_ files plugin declares its version twice, in package.json and in manifest.json, and
+ * a registry lists the manifest's: the two move together, in the same release commit. Returns the file it wrote, or
+ * nothing for a package without a manifest.json.
+ */
+export function bumpManifest(root: string, path: string, from: string, to: string): string | null {
+  const file = `${path}/manifest.json`;
+  if (!existsSync(`${root}/${file}`)) return null;
+  writeFileSync(`${root}/${file}`, bumpVersion(readFileSync(`${root}/${file}`, "utf8"), from, to));
+  return file;
+}
+
 /** the notes at the top of a package's changelog, or a changelog if it has none yet */
 export function prependNotes(changelog: string | null, notes: string): string {
   if (changelog === null) return `# Changelog\n\n${notes}`;
@@ -154,6 +166,7 @@ if (import.meta.main) {
     if (!token) { console.error("GH_TOKEN is not set: the package versions cannot be pushed"); process.exit(1); }
     const files: string[] = [];
     for (const p of moving) { const file = `${p.path}/package.json`; writeFileSync(`${ROOT}/${file}`, bumpVersion(readFileSync(`${ROOT}/${file}`, "utf8"), p.version, versionFor(p, version))); files.push(file); }
+    for (const p of moving) { const m = bumpManifest(ROOT, p.path, p.version, versionFor(p, version)); if (m) files.push(m); }
     if (syncLockfileFile(ROOT, moving.map((p) => ({ ...p, version: versionFor(p, version) }))).length) files.push("bun.lock");
     for (const p of publishable(moving)) {
       const file = `${p.path}/CHANGELOG.md`;
@@ -184,6 +197,7 @@ if (import.meta.main) {
   if (!token) { console.error("GH_TOKEN is not set: the release cannot be pushed"); process.exit(1); }
   const staged: string[] = [];
   for (const p of releasing) { const file = `${p.path}/package.json`; writeFileSync(`${ROOT}/${file}`, bumpVersion(readFileSync(`${ROOT}/${file}`, "utf8"), p.version, versionFor(p, to))); staged.push(file); }
+  for (const p of releasing) { const m = bumpManifest(ROOT, p.path, p.version, versionFor(p, to)); if (m) staged.push(m); }
   // bun.lock records where each workspace package is, and `bun pm pack` resolves `workspace:` specs out of it: the
   // release commit carries the new versions there too, or the next pack names the release this one replaces
   const moved = syncLockfileFile(ROOT, releasing.map((p) => ({ ...p, version: versionFor(p, to) })));

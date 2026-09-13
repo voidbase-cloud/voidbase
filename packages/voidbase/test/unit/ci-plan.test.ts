@@ -124,7 +124,7 @@ describe("ci plan: the import graph of this repository", () => {
     // of every runtime a check exercises. A bare import used to resolve to nothing, which would have left the
     // plugin outside every file set: it could change under a suite and the suite would still count as verified.
     // Resolved through the package's own `exports` instead (Tree.workspaceFile).
-    const k = keysWith("packages/plugin-realtime/src/index.ts");
+    const k = keysWith("packages/plugin-realtime/main.js");
     expect(CONFORMANCE.every((s) => k.includes(`suite:${s}`) && k.includes(`bun:${s}`))).toBe(true);
     expect(k).toContain("step:typecheck"); expect(k).toContain("step:unit"); expect(k).toContain("step:exe-smoke"); expect(k).toContain("step:adapter");
     // the entry the core still publishes is on the same graph, one hop before it
@@ -134,7 +134,7 @@ describe("ci plan: the import graph of this repository", () => {
   });
   test("the workspace's own package names resolve; anything else is still a dependency to stop at", () => {
     const t = new Tree();
-    expect(t.workspaceFile("@voidbase-cloud/plugin-realtime", "workerd")).toBe("packages/plugin-realtime/src/index.ts");
+    expect(t.workspaceFile("@voidbase-cloud/plugin-realtime", "workerd")).toBe("packages/plugin-realtime/main.js");
     expect(t.workspaceFile("@voidbase-cloud/voidbase/kernel", "workerd")).toBe(p("src/server/kernel.ts"));
     // a conditional entry answers with the flavour's own half
     expect(t.workspaceFile("@voidbase-cloud/voidbase/platform", "workerd")).toBe(p("src/platform/workers/index.ts"));

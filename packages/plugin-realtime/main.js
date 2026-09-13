@@ -12,19 +12,12 @@
 // still ships `@voidbase-cloud/voidbase/plugins/realtime`, as a re-export of this package, and always will:
 // marketplace bundles are immutable and import that name.
 import { realtimeFor } from "@voidbase-cloud/voidbase/realtime-client";
-import type { Realtime } from "@voidbase-cloud/voidbase/interfaces";
-import { serve, type Kernel } from "@voidbase-cloud/voidbase/kernel";
-import type { Plugin } from "@voidbase-cloud/voidbase/plugins";
-
-export const realtime: Plugin = {
-  manifest: {
-    name: "realtime",
-    version: "0.1.0",
-    tier: "core",
-    voidbase: "*",
-    provides: ["realtime@1"],
-  },
-  apply(ctx: Kernel) {
-    serve<Realtime>(ctx, "realtime@1", { for: realtimeFor });
+import { serve } from "@voidbase-cloud/voidbase/kernel";
+const realtime = {
+  apply(ctx) {
+    serve(ctx, "realtime@1", { for: realtimeFor });
   },
 };
+
+// what the plugin does; its declaration is manifest.json beside this file, which the instance reads
+export default realtime;

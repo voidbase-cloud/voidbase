@@ -127,7 +127,7 @@ describe("a plugin asks the core for the request's record context", () => {
     // import even if it wanted one. The property is the same and is read where the code now is -- the slot is how a
     // plugin gets the request's record context -- which is why the file moved in this list rather than out of it.
     const files: [string, string][] = [
-      ["@voidbase-cloud/plugin-auth", readFileSync(resolvePath(import.meta.dir, "../../../plugin-auth/src/index.ts"), "utf8")],
+      ["@voidbase-cloud/plugin-auth", readFileSync(resolvePath(import.meta.dir, "../../../plugin-auth/main.js"), "utf8")],
       ["auth.ts", source("auth.ts")],
       ["webauthn.ts", source("webauthn.ts")],
       ["@voidbase-cloud/plugin-seo", readFileSync(resolvePath(import.meta.dir, "../../../plugin-seo/src/index.ts"), "utf8")],

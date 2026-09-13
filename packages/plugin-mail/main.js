@@ -25,52 +25,43 @@
 // published as `/plugins/mail-binding` so that the agreement survives the plugin leaving the core.
 import { EmailMessage } from "@voidbase-cloud/voidbase/platform/email";
 import { env as voidEnv } from "@voidbase-cloud/voidbase/platform";
-import type { Mail } from "@voidbase-cloud/voidbase/interfaces";
-import { serve, type Kernel } from "@voidbase-cloud/voidbase/kernel";
+import { serve } from "@voidbase-cloud/voidbase/kernel";
 import { buildMime, mailRoute } from "@voidbase-cloud/voidbase/mail";
-import type { Bindings } from "@voidbase-cloud/voidbase/types";
-import type { Plugin } from "@voidbase-cloud/voidbase/plugins";
-
 import { MAIL_BINDING, MAIL_DOMAIN_VAR } from "@voidbase-cloud/voidbase/plugins/mail-binding";
 export { MAIL_BINDING, MAIL_DOMAIN_VAR };
-
 /** the sending domain these bindings carry, lowercased, or empty when the deploy named none */
-export const mailDomain = (env: Bindings): string =>
-  String((env as unknown as Record<string, unknown>)[MAIL_DOMAIN_VAR] ?? (voidEnv as Record<string, unknown>)[MAIL_DOMAIN_VAR] ?? "").trim().toLowerCase();
-
-const domainOf = (address: string) => address.trim().toLowerCase().split("@")[1] ?? "";
-
-export const cloudflareMail: Mail = {
+export const mailDomain = (env) => String(env[MAIL_DOMAIN_VAR] ?? voidEnv[MAIL_DOMAIN_VAR] ?? "").trim().toLowerCase();
+const domainOf = (address) => address.trim().toLowerCase().split("@")[1] ?? "";
+export const cloudflareMail = {
   carrier(env) {
     const domain = mailDomain(env);
     return env.SEND_EMAIL && domain ? `Cloudflare Email Service, from ${domain}` : null;
   },
   refuses(from, env) {
     const domain = mailDomain(env);
-    if (domainOf(from) === domain) return null;
+    if (domainOf(from) === domain)
+      return null;
     return `mail from ${from} cannot leave through Cloudflare Email Service: this instance sends from ${domain} (${MAIL_DOMAIN_VAR}). Use an address there, or enable SMTP in the settings for other senders`;
   },
   async send(env, m, text) {
-    if (!env.SEND_EMAIL) throw new Error(`voidbase: no ${MAIL_BINDING} binding on this Worker`);
+    if (!env.SEND_EMAIL)
+      throw new Error(`voidbase: no ${MAIL_BINDING} binding on this Worker`);
     const refused = cloudflareMail.refuses(m.from.address, env);
-    if (refused) throw new Error(refused);
+    if (refused)
+      throw new Error(refused);
     const mime = buildMime(m, text);
-    for (const rcpt of mime.rcpts) await env.SEND_EMAIL.send(new EmailMessage(mime.from, rcpt, mime.data));
+    for (const rcpt of mime.rcpts)
+      await env.SEND_EMAIL.send(new EmailMessage(mime.from, rcpt, mime.data));
   },
 };
-
-export const mail: Plugin = {
-  manifest: {
-    name: "mail",
-    version: "0.1.0",
-    tier: "core",
-    voidbase: "*",
-    provides: ["mail@1"],
-  },
+const mail = {
   // where this instance's own mail goes with these bindings: this carrier when it takes the sender, else what the
   // core falls back to. The core owns the transport, and whoever provides mail@1 answers for where it ends up.
   info: (env) => mailRoute(env),
-  apply(ctx: Kernel) {
-    serve<Mail>(ctx, "mail@1", cloudflareMail);
+  apply(ctx) {
+    serve(ctx, "mail@1", cloudflareMail);
   },
 };
+
+// what the plugin does; its declaration is manifest.json beside this file, which the instance reads
+export default mail;

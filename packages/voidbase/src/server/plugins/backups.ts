@@ -12,4 +12,13 @@
 // app.ts loads the plugin through this file rather than reaching past it to the package, which is the point: the
 // path a marketplace bundle takes is the path every instance takes. It is a re-export and not an alias, so the
 // `backups` a bundle imports here is the same object the core loaded -- one plugin, one set of routes.
+//
+// Since the plugin packages became pb_ files plugins, the package is `manifest.json` beside `main.js`, loaded as it
+// is: `main.js` exports what the plugin does and the manifest stays a file, the way an instance reads any installed
+// plugin. This entry puts the two together into the one plugin object app.ts loads and a bundle imports by name.
+import behaviour from "@voidbase-cloud/plugin-backups";
+import declared from "@voidbase-cloud/plugin-backups/manifest.json" with { type: "json" };
+import type { Plugin, PluginManifest } from "./manifest";
+
 export * from "@voidbase-cloud/plugin-backups";
+export const backups: Plugin = { ...behaviour, manifest: declared as PluginManifest };

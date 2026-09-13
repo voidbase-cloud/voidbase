@@ -1,0 +1,17 @@
+{
+  "name": "observability",
+  "version": "0.9.0-beta.58",
+  "tier": "core",
+  "voidbase": "*",
+  "provides": [
+    "observability@1"
+  ],
+  "config": {
+    "sample_rate": {
+      "type": "number",
+      "applies": "rebuild",
+      "knob": "VOIDBASE_OBSERVABILITY_SAMPLE",
+      "description": "The share of requests the Worker's own logs keep, from 0 to 1."
+    }
+  }
+}

@@ -20,20 +20,13 @@
 // for exactly this plugin -- `mountBackupsApi` and nothing else of the module behind it, which also writes the
 // archives the scheduled job and the restore read.
 import { mountBackupsApi } from "@voidbase-cloud/voidbase/backups-api";
-import { serve, type Kernel } from "@voidbase-cloud/voidbase/kernel";
-import type { Backups } from "@voidbase-cloud/voidbase/interfaces";
-import type { Plugin } from "@voidbase-cloud/voidbase/plugins";
-
-export const backups: Plugin = {
-  manifest: {
-    name: "backups",
-    version: "0.1.0",
-    tier: "core",
-    voidbase: "*",
-    provides: ["backups@1"],
-  },
-  apply(ctx: Kernel) {
+import { serve } from "@voidbase-cloud/voidbase/kernel";
+const backups = {
+  apply(ctx) {
     mountBackupsApi(ctx.app);
-    serve<Backups>(ctx, "backups@1", { base: "/api/backups" });
+    serve(ctx, "backups@1", { base: "/api/backups" });
   },
 };
+
+// what the plugin does; its declaration is manifest.json beside this file, which the instance reads
+export default backups;

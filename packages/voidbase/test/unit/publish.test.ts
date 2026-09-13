@@ -90,7 +90,11 @@ function reexportedPlugins(): string[] {
     if (!file) continue;
     const name = `@voidbase-cloud/plugin-${entry.slice("./plugins/".length)}`;
     const code = readFileSync(join(ROOT, "packages/voidbase", file), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("//"));
-    if (code.length === 1 && code[0]!.includes(`from "${name}"`)) out.push(name);
+    if (code.length === 1 && code[0]!.includes(`from "${name}"`)) { out.push(name); continue; }
+    // a pb_ files package's entry re-exports the package and puts its behaviour and its manifest.json together, and
+    // imports nothing else
+    const imports = code.filter((l) => l.startsWith("import "));
+    if (code.includes(`export * from "${name}";`) && imports.every((l) => l.includes(`"${name}"`) || l.includes(`"${name}/manifest.json"`) || l.includes('"./manifest"'))) out.push(name);
   }
   return out.sort();
 }

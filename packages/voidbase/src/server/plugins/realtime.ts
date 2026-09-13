@@ -10,4 +10,13 @@
 // waiting for somebody's bundle to find it. And it is a re-export and not an alias, so the `realtime` a bundle
 // imports here is the same object the core loaded -- one plugin, one `realtime@1` registration, not a second copy
 // of each.
-export { realtime } from "@voidbase-cloud/plugin-realtime";
+//
+// Since the plugin packages became pb_ files plugins, the package is `manifest.json` beside `main.js`, loaded as it
+// is: `main.js` exports what the plugin does and the manifest stays a file, the way an instance reads any installed
+// plugin. This entry puts the two together into the one plugin object app.ts loads and a bundle imports by name.
+import behaviour from "@voidbase-cloud/plugin-realtime";
+import declared from "@voidbase-cloud/plugin-realtime/manifest.json" with { type: "json" };
+import type { Plugin, PluginManifest } from "./manifest";
+
+export * from "@voidbase-cloud/plugin-realtime";
+export const realtime: Plugin = { ...behaviour, manifest: declared as PluginManifest };

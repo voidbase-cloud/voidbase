@@ -1,0 +1,9 @@
+{
+  "name": "backups",
+  "version": "0.9.0-beta.58",
+  "tier": "core",
+  "voidbase": "*",
+  "provides": [
+    "backups@1"
+  ]
+}

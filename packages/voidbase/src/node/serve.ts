@@ -73,9 +73,14 @@ export async function openLocal(opts: ServeOptions) {
   loadEnv();
   const dir = resolve(opts.dir ?? "pb_data");
   mkdirSync(dir, { recursive: true });
-  process.env.VOIDBASE_HOOKS_DIR = resolve(opts.hooksDir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks");
-  process.env.VOIDBASE_MIGRATIONS_DIR = resolve(opts.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations");
-  process.env.VOIDBASE_PLUGINS_DIR = resolve(opts.pluginsDir ?? process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins");
+  // a binary squashed from an extended project carries its pb_ folders; each is used when it is not on disk here
+  const { bakedProjectDir, projectFolder } = await import("./baked-project");
+  const baked = await bakedProjectDir();
+  // a squashed instance's plugins were decided when it was built: the installer does not change them (src/platform/node/plugins.ts)
+  if (baked) process.env.VOIDBASE_PROJECT_BAKED = baked;
+  process.env.VOIDBASE_HOOKS_DIR = projectFolder(opts.hooksDir ?? process.env.VOIDBASE_HOOKS_DIR ?? "pb_hooks", baked);
+  process.env.VOIDBASE_MIGRATIONS_DIR = projectFolder(opts.migrationsDir ?? process.env.VOIDBASE_MIGRATIONS_DIR ?? "pb_migrations", baked);
+  process.env.VOIDBASE_PLUGINS_DIR = projectFolder(opts.pluginsDir ?? process.env.VOIDBASE_PLUGINS_DIR ?? "pb_plugins", baked);
   if (secrets.missing.length && !opts.quiet) console.warn(`voidbase: ${secrets.missing.length} declared value(s) missing and without a default (${process.env.VOIDBASE_SECRETS_DIR}/secrets.json): ${secrets.missing.join(", ")}`);
   if (secrets.undeclared.length && !opts.quiet) console.warn(`voidbase: ${process.env.VOIDBASE_SECRETS_DIR}/secrets.json holds ${secrets.undeclared.join(", ")}, which main.ts does not declare; a deploy stores only declared values`);
   // pb_data/types.d.ts for editor support in pb_hooks (PocketBase's JSVM typings); a standalone executable carries
@@ -87,7 +92,7 @@ export async function openLocal(opts: ServeOptions) {
   // PocketBase serves ./pb_public at / (--publicDir); a build there is a full static host. The route is there whether or
   // not the directory exists yet, and the fetcher looks on each request, so a pb_public made while the instance runs
   // is served without a restart, as PocketBase does
-  const publicDir = resolve(opts.publicDir ?? "pb_public");
+  const publicDir = projectFolder(opts.publicDir ?? "pb_public", baked);
   // the panel: where it is, whether its entry is guarded, and whether /_/ is still served. Set before the app
   // module is imported, which is what lets it mount the guard on the path itself (src/server/app.ts)
   const panelPath = opts.panel ? normalizePanelPath(opts.panel.path ?? PANEL_DEFAULT_PATH) : PANEL_DEFAULT_PATH;

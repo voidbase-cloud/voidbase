@@ -3,18 +3,26 @@
 // itself; one that has only the voidbase binary has no node_modules to resolve it from, so the name, and every entry
 // point the package publishes, is mapped to the modules this process is made of. That is what lets the binary be
 // extended with nothing installed, and it is the same library the npm package is.
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
-/** whether `dir` can resolve the package on its own (an npm project), rather than needing this process's copy */
-function resolvesItself(dir: string): boolean {
-  try { Bun.resolveSync("@voidbase-cloud/voidbase", dir); return true; } catch { return false; }
+/**
+ * The voidbase a project installed, found the way the bundler finds it (node_modules in the directory or above), or
+ * null when it has none and needs this process's copy. Not Bun.resolveSync: with no node_modules at all, Bun
+ * auto-installs, and would answer with a published version from its global cache.
+ */
+export function installedVoidbase(dir: string): string | null {
+  for (let d = resolve(dir); ; d = dirname(d)) {
+    const pkg = join(d, "node_modules", "@voidbase-cloud", "voidbase");
+    if (existsSync(join(pkg, "package.json"))) return realpathSync(pkg);
+    if (dirname(d) === d) return null;
+  }
 }
 
 export async function runEntry(file: string, args: string[] = []): Promise<void> {
   const path = resolve(file);
   if (!existsSync(path)) throw new Error(`no entry file at ${path}`);
-  if (!resolvesItself(dirname(path))) {
+  if (!installedVoidbase(dirname(path))) {
     const { PROVIDED } = await import("./provided");
     const modules: Record<string, () => Promise<object>> = { ...PROVIDED, "@voidbase-cloud/voidbase": () => import("./index") };
     Bun.plugin({

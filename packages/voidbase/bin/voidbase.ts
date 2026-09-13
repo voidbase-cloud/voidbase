@@ -53,6 +53,9 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   templates [--marketplace url]      the templates the marketplace lists: name, title, summary, repository
   dev [--port 5180]                  start the Void dev server (vp dev)
   build | preview [--port 5181]      production build / run the built Worker locally (vp build / vp preview)
+  build --compile [index.ts] [--outfile name]
+                                     the extended project squashed into one binary: its entry, voidbase, and its pb_
+                                     folders, plugins and voidbase.lock inside, to hand to someone like the voidbase binary
   deploy [--name worker] [--account id] [--domain example.com,api.example.com] [--public-dir pb_public] [--dry-run] [--no-queue] [--no-hub] [--no-cron] [--database durable]
          [--analytics] [--rate-limit 300/10] [--preview <branch>]
                                      go live on your Cloudflare account with VOIDBASE_DEPLOY_CF_API_KEY: creates the D1
@@ -801,7 +804,18 @@ switch (cmd) {
   }
 
   case "dev": if (flags.workers) { await serveOnWorkers(); break; } await run(toolchain("vite-plus", "vp"), ["dev", "--port", flags.port ?? "5180", "--host", flags.host ?? "127.0.0.1"]); break;
-  case "build": await run(toolchain("vite-plus", "vp"), ["build"]); break;
+  case "build": {
+    // --compile: the extended project squashed into one binary, its pb_ folders and plugins inside (src/node/compile-project.ts)
+    if (flags.compile) {
+      const { compileProject } = await import("../src/node/compile-project");
+      try {
+        const r = await compileProject({ entry: flags.compile !== "1" ? flags.compile : sub, outfile: flags.outfile });
+        console.log(`${r.outfile}: ${(r.bytes / 1024 / 1024).toFixed(0)} MB, ${r.files} project file(s) inside`);
+      } catch (err) { console.error(err instanceof Error ? err.message : String(err)); process.exit(1); }
+      break;
+    }
+    await run(toolchain("vite-plus", "vp"), ["build"]); break;
+  }
   case "preview": await run(toolchain("vite-plus", "vp"), ["preview", "--port", flags.port ?? "5181", "--host", flags.host ?? "127.0.0.1"]); break;
   case "sync": {
     // --from <url> --to <url>: the data of one running instance into another, over HTTP only (src/node/migrate.ts): a

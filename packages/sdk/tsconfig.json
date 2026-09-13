@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "declaration": true,
+    "declarationDir": "./dist",
+    "moduleResolution": "node",
+    "sourceMap": true,
+    "target": "es2021",
+    "lib": ["dom", "es2021", "es2022.error"],
+    "module": "esnext",
+    "strict": true,
+    "esModuleInterop": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@voidbase-cloud/sdk": ["./src/index.ts"],
+    },
+  },
+  "include": ["./src", "./tests"]
+}

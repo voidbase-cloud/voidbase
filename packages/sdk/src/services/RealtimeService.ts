@@ -1,0 +1,549 @@
+import { ClientResponseError } from "@/ClientResponseError";
+import { BaseService } from "@/services/BaseService";
+import { SendOptions, normalizeUnknownQueryParams } from "@/tools/options";
+
+interface promiseCallbacks {
+    resolve: Function;
+    reject: Function;
+}
+
+type Subscriptions = { [key: string]: Array<EventListener> };
+
+export type UnsubscribeFunc = () => Promise<void>;
+
+export class RealtimeService extends BaseService {
+    clientId: string = "";
+
+    private eventSource: EventSource | null = null;
+    private subscriptions: Subscriptions = {};
+    private lastSentSubscriptions: Array<string> = [];
+    private connectTimeoutId: any;
+    private maxConnectTimeout: number = 15000;
+    private reconnectTimeoutId: any;
+    private reconnectAttempts: number = 0;
+    private maxReconnectAttempts: number = Infinity;
+    private predefinedReconnectIntervals: Array<number> = [
+        200, 300, 500, 1000, 1200, 1500, 2000,
+    ];
+    private pendingConnects: Array<promiseCallbacks> = [];
+    private pendingSubmits: Array<promiseCallbacks> = [];
+    private isProcessingPendingSubmits: boolean = false;
+
+    /**
+     * Returns whether the realtime connection has been established.
+     */
+    get isConnected(): boolean {
+        return !!this.eventSource && !!this.clientId && !this.pendingConnects.length;
+    }
+
+    /**
+     * An optional hook that is invoked when the realtime client disconnects
+     * either when unsubscribing from all subscriptions or when the
+     * connection was interrupted or closed by the server.
+     *
+     * The received argument could be used to determine whether the disconnect
+     * is a result from unsubscribing (`activeSubscriptions.length == 0`)
+     * or because of network/server error (`activeSubscriptions.length > 0`).
+     *
+     * If you want to listen for the opposite, aka. when the client connection is established,
+     * subscribe to the `PB_CONNECT` event.
+     */
+    onDisconnect?: (activeSubscriptions: Array<string>) => void;
+
+    /**
+     * Register the subscription listener.
+     *
+     * You can subscribe multiple times to the same topic.
+     *
+     * If the SSE connection is not started yet,
+     * this method will also initialize it.
+     */
+    async subscribe(
+        topic: string,
+        callback: (data: any) => void,
+        options?: SendOptions,
+    ): Promise<UnsubscribeFunc> {
+        if (!topic) {
+            throw new Error("topic must be set.");
+        }
+
+        let key = topic;
+
+        // serialize and append the topic options (if any)
+        if (options) {
+            options = Object.assign({}, options); // shallow copy
+            normalizeUnknownQueryParams(options);
+            const serialized =
+                "options=" +
+                encodeURIComponent(
+                    JSON.stringify({ query: options.query, headers: options.headers }),
+                );
+            key += (key.includes("?") ? "&" : "?") + serialized;
+        }
+
+        const listener = function (e: Event) {
+            const msgEvent = e as MessageEvent;
+
+            let data;
+            try {
+                data = JSON.parse(msgEvent?.data);
+            } catch {}
+
+            callback(data || {});
+        };
+
+        // store the listener
+        if (!this.subscriptions[key]) {
+            this.subscriptions[key] = [];
+        }
+        this.subscriptions[key].push(listener);
+
+        if (!this.isConnected) {
+            // initialize sse connection
+            await this.connect();
+        } else if (this.subscriptions[key].length === 1) {
+            // send the updated subscriptions (if it is the first for the key)
+            await this.submitSubscriptions();
+        } else {
+            // only register the listener
+            this.eventSource?.addEventListener(key, listener);
+        }
+
+        return async (): Promise<void> => {
+            return this.unsubscribeByTopicAndListener(topic, listener);
+        };
+    }
+
+    /**
+     * Unsubscribe from all subscription listeners with the specified topic.
+     *
+     * If `topic` is not provided, then this method will unsubscribe
+     * from all active subscriptions.
+     *
+     * This method is no-op if there are no active subscriptions.
+     *
+     * The related sse connection will be autoclosed if after the
+     * unsubscribe operation there are no active subscriptions left.
+     */
+    async unsubscribe(topic?: string): Promise<void> {
+        if (!topic) {
+            // remove all subscriptions
+            this.subscriptions = {};
+        } else {
+            // remove all listeners related to the topic
+            const subs = this.getSubscriptionsByTopic(topic);
+            for (let key in subs) {
+                if (!this.hasSubscriptionListeners(key)) {
+                    continue; // already unsubscribed
+                }
+
+                for (let listener of this.subscriptions[key]) {
+                    this.eventSource?.removeEventListener(key, listener);
+                }
+                delete this.subscriptions[key];
+            }
+        }
+
+        await this.submitSubscriptions();
+    }
+
+    /**
+     * Unsubscribe from all subscription listeners starting with the specified topic prefix.
+     *
+     * This method is no-op if there are no active subscriptions with the specified topic prefix.
+     *
+     * The related sse connection will be autoclosed if after the
+     * unsubscribe operation there are no active subscriptions left.
+     */
+    async unsubscribeByPrefix(keyPrefix: string): Promise<void> {
+        let hasAtleastOneTopic = false;
+        for (let key in this.subscriptions) {
+            // "?" so that it can be used as end delimiter for the prefix
+            if (!(key + "?").startsWith(keyPrefix)) {
+                continue;
+            }
+
+            hasAtleastOneTopic = true;
+            for (let listener of this.subscriptions[key]) {
+                this.eventSource?.removeEventListener(key, listener);
+            }
+            delete this.subscriptions[key];
+        }
+
+        if (!hasAtleastOneTopic) {
+            return; // nothing to unsubscribe from
+        }
+
+        await this.submitSubscriptions();
+    }
+
+    /**
+     * Unsubscribe from all subscriptions matching the specified topic and listener function.
+     *
+     * This method is no-op if there are no active subscription with
+     * the specified topic and listener.
+     *
+     * The related sse connection will be autoclosed if after the
+     * unsubscribe operation there are no active subscriptions left.
+     */
+    async unsubscribeByTopicAndListener(
+        topic: string,
+        listener: EventListener,
+    ): Promise<void> {
+        const subs = this.getSubscriptionsByTopic(topic);
+        for (let key in subs) {
+            if (
+                !Array.isArray(this.subscriptions[key]) ||
+                !this.subscriptions[key].length
+            ) {
+                continue; // already unsubscribed
+            }
+
+            let exist = false;
+            for (let i = this.subscriptions[key].length - 1; i >= 0; i--) {
+                if (this.subscriptions[key][i] !== listener) {
+                    continue;
+                }
+
+                exist = true; // has at least one matching listener
+                delete this.subscriptions[key][i]; // removes the function reference
+                this.subscriptions[key].splice(i, 1); // reindex the array
+                this.eventSource?.removeEventListener(key, listener);
+            }
+            if (!exist) {
+                continue;
+            }
+
+            // remove the key from the subscriptions list if there are no other listeners
+            if (!this.subscriptions[key].length) {
+                delete this.subscriptions[key];
+            }
+        }
+
+        await this.submitSubscriptions();
+    }
+
+    private hasSubscriptionListeners(keyToCheck?: string): boolean {
+        this.subscriptions = this.subscriptions || {};
+
+        // check the specified key
+        if (keyToCheck) {
+            return !!this.subscriptions[keyToCheck]?.length;
+        }
+
+        // check for at least one non-empty subscription
+        for (let key in this.subscriptions) {
+            if (!!this.subscriptions[key]?.length) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private async submitSubscriptions(): Promise<void> {
+        return new Promise((resolve, reject) => {
+            this.pendingSubmits.push({ resolve, reject });
+
+            if (this.pendingSubmits.length == 1) {
+                queueMicrotask(() => this.finalizePendingSubscriptions());
+            }
+        });
+    }
+
+    private async finalizePendingSubscriptions() {
+        if (this.isProcessingPendingSubmits || !this.pendingSubmits.length) {
+            return;
+        }
+
+        // clone and reset the list to allow next items to queue
+        const pending = this.pendingSubmits.slice();
+        this.pendingSubmits = [];
+
+        this.isProcessingPendingSubmits = true;
+
+        try {
+            await this.sendSubscriptions();
+
+            for (let p of pending) {
+                p.resolve();
+            }
+        } catch (err) {
+            for (let p of pending) {
+                err ? p.reject(err) : p.resolve();
+            }
+        } finally {
+            this.isProcessingPendingSubmits = false;
+
+            // another request came in while awaiting above
+            if (this.pendingSubmits.length > 0) {
+                await this.finalizePendingSubscriptions();
+            }
+        }
+    }
+
+    private getSubscriptionsCancelKey(): string {
+        return "realtime_" + this.clientId;
+    }
+
+    private getSubscriptionsByTopic(topic: string): Subscriptions {
+        const result: Subscriptions = {};
+
+        // "?" so that it can be used as end delimiter for the topic
+        topic = topic.includes("?") ? topic : topic + "?";
+
+        for (let key in this.subscriptions) {
+            if ((key + "?").startsWith(topic)) {
+                result[key] = this.subscriptions[key];
+            }
+        }
+
+        return result;
+    }
+
+    private getNonEmptySubscriptionKeys(): Array<string> {
+        const result: Array<string> = [];
+
+        for (let key in this.subscriptions) {
+            if (this.subscriptions[key].length) {
+                result.push(key);
+            }
+        }
+
+        return result;
+    }
+
+    private hasUnsentSubscriptions(): boolean {
+        const latestTopics = this.getNonEmptySubscriptionKeys();
+        if (latestTopics.length != this.lastSentSubscriptions.length) {
+            return true;
+        }
+
+        for (const t of latestTopics) {
+            if (!this.lastSentSubscriptions.includes(t)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private async sendSubscriptions(): Promise<void> {
+        // not initialized yet or connection closed
+        if (!this.clientId) {
+            return;
+        }
+
+        // no subscriptions -> close the SSE connection
+        if (!this.hasSubscriptionListeners()) {
+            return this.disconnect();
+        }
+
+        // no change
+        if (!this.hasUnsentSubscriptions()) {
+            return;
+        }
+
+        // optimistic update
+        this.addAllSubscriptionListeners();
+        this.lastSentSubscriptions = this.getNonEmptySubscriptionKeys();
+
+        return this.client
+            .send("/api/realtime", {
+                method: "POST",
+                body: {
+                    clientId: this.clientId,
+                    subscriptions: this.lastSentSubscriptions,
+                },
+                requestKey: this.getSubscriptionsCancelKey(),
+            })
+            .catch((err) => {
+                if (err?.isAbort) {
+                    return; // silently ignore aborted pending requests
+                }
+                throw err;
+            });
+    }
+
+    private addAllSubscriptionListeners(): void {
+        if (!this.eventSource) {
+            return;
+        }
+
+        this.removeAllSubscriptionListeners();
+
+        for (let key in this.subscriptions) {
+            for (let listener of this.subscriptions[key]) {
+                this.eventSource.addEventListener(key, listener);
+            }
+        }
+    }
+
+    private removeAllSubscriptionListeners(): void {
+        if (!this.eventSource) {
+            return;
+        }
+
+        for (let key in this.subscriptions) {
+            for (let listener of this.subscriptions[key]) {
+                this.eventSource.removeEventListener(key, listener);
+            }
+        }
+    }
+
+    private async connect(): Promise<void> {
+        if (this.reconnectAttempts > 0) {
+            // immediately resolve the promise to avoid indefinitely
+            // blocking the client during reconnection
+            return;
+        }
+
+        return new Promise((resolve, reject) => {
+            this.pendingConnects.push({ resolve, reject });
+
+            if (this.pendingConnects.length == 1) {
+                queueMicrotask(() => this.initConnect());
+            }
+        });
+    }
+
+    private initConnect() {
+        this.disconnect(true);
+
+        // wait up to 15s for connect
+        clearTimeout(this.connectTimeoutId);
+        this.connectTimeoutId = setTimeout(() => {
+            this.connectErrorHandler(new Error("EventSource connect took too long."));
+        }, this.maxConnectTimeout);
+
+        this.eventSource = new EventSource(this.client.buildURL("/api/realtime"));
+
+        this.eventSource.onerror = (_) => {
+            this.connectErrorHandler(
+                new Error("Failed to establish realtime connection."),
+            );
+        };
+
+        this.eventSource.addEventListener("PB_CONNECT", (e) => {
+            const msgEvent = e as MessageEvent;
+            this.clientId = msgEvent?.lastEventId;
+            this.lastSentSubscriptions = [];
+
+            this.submitSubscriptions()
+                .then(async () => {
+                    // This is in case new topics were being added while
+                    // the initial `submitSubscriptions()` was still pending
+                    //
+                    // It is a best effort attempt to try to submit
+                    // all topics before too eagerly resolving their promise.
+                    //
+                    // Or in other words, when there is no SSE established yet
+                    // and the user calls something like:
+                    // ```js
+                    // const p1 = pb.collection("col").subscribe("topic2")
+                    // queueMicrotask(() => {
+                    //   const p2 = pb.collection("col").subscribe("topic2")
+                    // })
+                    // ```
+                    // We want both p1 and p2 to complete AFTER their subscribe
+                    // (SSE connect + submit subscription) calls complete.
+                    let maxResubmit = 3;
+                    while (this.hasUnsentSubscriptions() && maxResubmit > 0) {
+                        maxResubmit--;
+                        await this.submitSubscriptions();
+                    }
+
+                    // resolve connect promises
+                    for (let p of this.pendingConnects) {
+                        p.resolve();
+                    }
+
+                    // reset connect meta
+                    this.pendingConnects = [];
+                    this.reconnectAttempts = 0;
+                    clearTimeout(this.reconnectTimeoutId);
+                    clearTimeout(this.connectTimeoutId);
+
+                    // propagate the PB_CONNECT event
+                    const connectSubs = this.getSubscriptionsByTopic("PB_CONNECT");
+                    for (let key in connectSubs) {
+                        for (let listener of connectSubs[key]) {
+                            listener(e);
+                        }
+                    }
+
+                    // just as a last resort in case the 3 retries from above weren't enough,
+                    // check for unset subscriptions after the pendingConnects has been resolved
+                    // (aka. subscribe in that case is no longer "blocked" because isConnected would be true)
+                    if (this.hasUnsentSubscriptions()) {
+                        await this.submitSubscriptions();
+                    }
+                })
+                .catch((err) => {
+                    this.clientId = "";
+                    this.lastSentSubscriptions = [];
+                    this.connectErrorHandler(err);
+                });
+        });
+    }
+
+    private connectErrorHandler(err: any) {
+        clearTimeout(this.connectTimeoutId);
+        clearTimeout(this.reconnectTimeoutId);
+
+        if (
+            // wasn't previously connected -> direct reject
+            (!this.clientId && !this.reconnectAttempts) ||
+            // was previously connected but the max reconnection limit has been reached
+            this.reconnectAttempts > this.maxReconnectAttempts
+        ) {
+            for (let p of this.pendingConnects) {
+                p.reject(new ClientResponseError(err));
+            }
+            this.pendingConnects = [];
+            this.disconnect();
+            return;
+        }
+
+        // otherwise -> reconnect in the background
+        this.disconnect(true);
+        const timeout =
+            this.predefinedReconnectIntervals[this.reconnectAttempts] ||
+            this.predefinedReconnectIntervals[
+                this.predefinedReconnectIntervals.length - 1
+            ];
+        this.reconnectAttempts++;
+        this.reconnectTimeoutId = setTimeout(() => {
+            this.initConnect();
+        }, timeout);
+    }
+
+    private disconnect(fromReconnect = false): void {
+        if (this.clientId && this.onDisconnect) {
+            this.onDisconnect(Object.keys(this.subscriptions));
+        }
+
+        clearTimeout(this.connectTimeoutId);
+        clearTimeout(this.reconnectTimeoutId);
+        this.removeAllSubscriptionListeners();
+        this.client.cancelRequest(this.getSubscriptionsCancelKey());
+        this.eventSource?.close();
+        this.eventSource = null;
+        this.clientId = "";
+        this.lastSentSubscriptions = [];
+
+        if (!fromReconnect) {
+            this.reconnectAttempts = 0;
+
+            // resolve any remaining connect promises
+            //
+            // this is done to avoid unnecessary throwing errors in case
+            // unsubscribe is called before the pending connect promises complete
+            // (see https://github.com/pocketbase/pocketbase/discussions/2897#discussioncomment-6423818)
+            for (let p of this.pendingConnects) {
+                p.resolve();
+            }
+            this.pendingConnects = [];
+        }
+    }
+}

@@ -1,0 +1,107 @@
+{
+    "version": "0.6.0",
+    "name": "@voidbase-cloud/sdk",
+    "description": "voidbase JavaScript SDK: the PocketBase JS SDK, kept in step with upstream, plus a typed client, a plugin surface, an offline queue, PWA helpers, in-place editing, a chat helper, a payments helper, an SEO helper and an interface strings runtime",
+    "author": "Gani Georgiev",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/voidbase-cloud/voidbase-js-sdk.git"
+    },
+    "homepage": "https://github.com/voidbase-cloud/voidbase-js-sdk#readme",
+    "bugs": {
+        "url": "https://github.com/voidbase-cloud/voidbase-js-sdk/issues"
+    },
+    "exports": {
+        ".": "./dist/pocketbase.es.mjs",
+        "./cjs": "./dist/pocketbase.cjs.js",
+        "./umd": "./dist/pocketbase.umd.js",
+        "./offline": {
+            "types": "./dist/offline.es.d.mts",
+            "import": "./dist/offline.es.mjs",
+            "require": "./dist/offline.cjs.js",
+            "default": "./dist/offline.es.mjs"
+        },
+        "./pwa": {
+            "types": "./dist/pwa.es.d.mts",
+            "import": "./dist/pwa.es.mjs",
+            "require": "./dist/pwa.cjs.js",
+            "default": "./dist/pwa.es.mjs"
+        },
+        "./editable": {
+            "types": "./dist/editable.es.d.mts",
+            "import": "./dist/editable.es.mjs",
+            "require": "./dist/editable.cjs.js",
+            "default": "./dist/editable.es.mjs"
+        },
+        "./ai": {
+            "types": "./dist/ai.es.d.mts",
+            "import": "./dist/ai.es.mjs",
+            "require": "./dist/ai.cjs.js",
+            "default": "./dist/ai.es.mjs"
+        },
+        "./payments": {
+            "types": "./dist/payments.es.d.mts",
+            "import": "./dist/payments.es.mjs",
+            "require": "./dist/payments.cjs.js",
+            "default": "./dist/payments.es.mjs"
+        },
+        "./seo": {
+            "types": "./dist/seo.es.d.mts",
+            "import": "./dist/seo.es.mjs",
+            "require": "./dist/seo.cjs.js",
+            "default": "./dist/seo.es.mjs"
+        },
+        "./i18n": {
+            "types": "./dist/i18n.es.d.mts",
+            "import": "./dist/i18n.es.mjs",
+            "require": "./dist/i18n.cjs.js",
+            "default": "./dist/i18n.es.mjs"
+        }
+    },
+    "typesVersions": {
+        "*": {
+            "offline": ["./dist/offline.es.d.mts"],
+            "pwa": ["./dist/pwa.es.d.mts"],
+            "editable": ["./dist/editable.es.d.mts"],
+            "ai": ["./dist/ai.es.d.mts"],
+            "payments": ["./dist/payments.es.d.mts"],
+            "seo": ["./dist/seo.es.d.mts"],
+            "i18n": ["./dist/i18n.es.d.mts"]
+        }
+    },
+    "main": "./dist/pocketbase.es.mjs",
+    "module": "./dist/pocketbase.es.mjs",
+    "react-native": "./dist/pocketbase.es.js",
+    "types": "./dist/pocketbase.es.d.mts",
+    "keywords": [
+        "voidbase",
+        "voidbase-sdk",
+        "pocketbase",
+        "pocketbase-js",
+        "js-sdk",
+        "javascript-sdk",
+        "pocketbase-sdk"
+    ],
+    "prettier": {
+        "tabWidth": 4,
+        "printWidth": 90,
+        "bracketSameLine": true
+    },
+    "scripts": {
+        "format": "bunx prettier ./src ./tests --write",
+        "build": "rm -rf dist && bun --bun rollup -c",
+        "dev": "bun --bun rollup -c -w",
+        "test": "vitest run",
+        "prepublishOnly": "bun run build"
+    },
+    "devDependencies": {
+        "@rollup/plugin-terser": "^0.4.3",
+        "jsdom": "^30.0.1",
+        "prettier": "3.2.4",
+        "rollup": "^4.0.0",
+        "rollup-plugin-ts": "^3.0.0",
+        "typescript": "^5.1.6",
+        "vitest": "^2.0.0"
+    }
+}

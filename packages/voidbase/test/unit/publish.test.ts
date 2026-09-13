@@ -51,11 +51,13 @@ import {
   type Pkg,
   type Run,
 } from "../../../../scripts/publish";
-import { bumpVersion, followSet, lockstep, prependNotes, releaseSet } from "../../../../scripts/hot-release";
+import { bumpVersion, followSet, lockstep, nextOwnVersion, ownVersion, prependNotes, releaseSet, versionFor } from "../../../../scripts/hot-release";
 
 const PACKAGE = "@voidbase-cloud/voidbase";
 const PLUGIN = "@voidbase-cloud/plugin-realtime";
 const FIXTURE = "@voidbase-cloud/release-fixture";
+/** the JavaScript SDK, beside the core and on a version of its own (11.1) */
+const SDK = "@voidbase-cloud/sdk";
 const pkg = (name: string, version: string, deps: Record<string, string> = {}, extra: Partial<Pkg> = {}): Pkg => ({
   path: `packages/${name.replace(/^@[^/]+\//, "")}`,
   dir: `/nowhere/${name}`,
@@ -102,7 +104,7 @@ describe("the workspace the release packs", () => {
     // the pin, and the reason this equality can fail at all: the directories the workspace globs reach have to be
     // exactly the packages the core re-exports through the entries it keeps (reexportedPlugins, above)
     expect(PLUGINS).toEqual(reexportedPlugins());
-    expect(workspace.map((p) => p.name).sort()).toEqual([...PLUGINS, FIXTURE, PACKAGE].sort());
+    expect(workspace.map((p) => p.name).sort()).toEqual([...PLUGINS, FIXTURE, PACKAGE, SDK].sort());
     expect(PLUGINS).toContain(PLUGIN);
     expect(workspace.find((p) => p.name === FIXTURE)!.private).toBe(true);
     expect(workspace.find((p) => p.name === PACKAGE)!.private).toBe(false);
@@ -135,7 +137,7 @@ describe("the workspace the release packs", () => {
   });
 
   test("publishes only what is not private", () => {
-    expect(publishable(workspace).map((p) => p.name).sort()).toEqual([...PLUGINS, PACKAGE].sort());
+    expect(publishable(workspace).map((p) => p.name).sort()).toEqual([...PLUGINS, PACKAGE, SDK].sort());
     expect(publishable(workspace).map((p) => p.name)).not.toContain(FIXTURE);
   });
 
@@ -161,8 +163,10 @@ describe("the workspace the release packs", () => {
     expect(publishOrder(workspace).map((p) => p.name)).toEqual(publishOrder([...workspace].reverse()).map((p) => p.name));
     // the core last of what ships, and the private fixture behind it
     const shipped = publishable(publishOrder(workspace)).map((p) => p.name);
-    expect(shipped.sort()).toEqual([...PLUGINS, PACKAGE].sort());
-    expect(publishable(publishOrder(workspace)).at(-1)!.name).toBe(PACKAGE);
+    expect(shipped.sort()).toEqual([...PLUGINS, PACKAGE, SDK].sort());
+    // the core after every plugin, because it depends on each; the SDK depends on nothing here and may sit anywhere
+    const order = publishable(publishOrder(workspace)).map((p) => p.name);
+    for (const plugin of PLUGINS) expect(order.indexOf(plugin), `${plugin} is published after the core, which depends on it`).toBeLessThan(order.indexOf(PACKAGE));
   });
 
   test("orders a chain, ignores devDependency edges, and refuses a real cycle", () => {
@@ -384,7 +388,7 @@ describe("the hot release bump, in lockstep", () => {
   test("moves every workspace package to one version", () => {
     const { from, to, packages } = lockstep(readWorkspace(ROOT));
     const plugins = readWorkspace(ROOT).map((p) => p.name).filter((n) => n.startsWith("@voidbase-cloud/plugin-"));
-    expect(packages.map((p) => p.name).sort()).toEqual([...plugins, FIXTURE, PACKAGE].sort());
+    expect(packages.map((p) => p.name).sort()).toEqual([...plugins, FIXTURE, PACKAGE, SDK].sort());
     expect(to).not.toBe(from);
     expect(`${from.split(".").slice(0, -1).join(".")}.${Number(from.split(".").pop()) + 1}`).toBe(to);
   });
@@ -412,8 +416,23 @@ describe("the hot release bump, in lockstep", () => {
 
   describe("the release set", () => {
     const core = () => pkg(CORE, "0.9.0-beta.10", { "@voidbase-cloud/plugin-a": "workspace:*", "@voidbase-cloud/plugin-b": "workspace:*" }, { path: "packages/voidbase" });
-    const a = () => pkg("@voidbase-cloud/plugin-a", "0.9.0-beta.10", {}, { path: "packages/plugin-a" });
-    const b = () => pkg("@voidbase-cloud/plugin-b", "0.9.0-beta.10", { "@voidbase-cloud/plugin-a": "workspace:*" }, { path: "packages/plugin-b" });
+    // each plugin peer-depends on the core, as the real ones do: that peer is what ties a plugin to the core's version
+    const tied = (p: Pkg): Pkg => { p.manifest.peerDependencies = { [CORE]: "workspace:^" }; return p; };
+    const a = () => tied(pkg("@voidbase-cloud/plugin-a", "0.9.0-beta.10", {}, { path: "packages/plugin-a" }));
+    const b = () => tied(pkg("@voidbase-cloud/plugin-b", "0.9.0-beta.10", { "@voidbase-cloud/plugin-a": "workspace:*" }, { path: "packages/plugin-b" }));
+
+    test("a package that does not depend on the core keeps a version of its own: the core moving does not move it", () => {
+      const sdk = pkg("@voidbase-cloud/sdk", "0.6.0", {}, { path: "packages/sdk" });
+      expect(ownVersion(sdk)).toBe(true);
+      expect(ownVersion(core())).toBe(false);
+      expect(ownVersion(a())).toBe(false);
+      expect(ownVersion(tied(pkg("@voidbase-cloud/plugin-c", "0.9.0-beta.10", {}, { path: "packages/plugin-c" })))).toBe(false);
+      expect([...releaseSet([core(), a(), b(), sdk], ["packages/voidbase/src/server/app.ts"], "0.10.0-beta.0")]).not.toContain("@voidbase-cloud/sdk");
+      expect([...releaseSet([core(), sdk], ["packages/sdk/src/Client.ts"], "0.9.0-beta.11")]).toContain("@voidbase-cloud/sdk");
+      expect(versionFor(sdk, "0.9.0-beta.11")).toBe("0.6.1");
+      expect(versionFor(core(), "0.9.0-beta.11")).toBe("0.9.0-beta.11");
+      expect(nextOwnVersion("0.3.0-beta.4")).toBe("0.3.0-beta.5");
+    });
 
     test("nothing changed: the core alone, and the plugins keep the versions they have", () => {
       const set = releaseSet([core(), a(), b()], ["packages/voidbase/src/server/app.ts"], "0.9.0-beta.11");

@@ -8,3 +8,8 @@
 # wrangler under the isolated linker, 300+ and every binary under this one.
 [install]
 linker = "hoisted"
+
+# packages/sdk is the JavaScript SDK, whose suite is vitest's (`bun run --cwd packages/sdk test`): its *.spec.ts files
+# are not bun test files, and the root's `bun test` would otherwise find and fail every one of them.
+[test]
+pathIgnorePatterns = ["packages/sdk/**"]

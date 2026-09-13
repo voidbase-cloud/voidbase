@@ -38,6 +38,30 @@ export function lockstep(pkgs: Pkg[]): Lockstep {
 }
 
 /**
+ * Whether a package keeps a version line of its own (decision 6): one that names the core in none of its dependency
+ * maps -- the SDK, which talks to an instance over HTTP and pins nothing of the core -- is released on its own numbers
+ * rather than the core's, and nothing about the core's version ever moves it. The peer map counts here although it is
+ * not a publish-order edge (ORDER_MAPS): a plugin's `workspace:^` peer on the core is exactly what ties it to the
+ * core's version.
+ */
+export function ownVersion(p: Pkg): boolean {
+  if (p.name === CORE) return false;
+  const m = p.manifest as unknown as Record<string, Record<string, string> | undefined>;
+  return !["dependencies", "peerDependencies", "optionalDependencies"].some((map) => m[map]?.[CORE] !== undefined);
+}
+
+/** the next version of a package on its own line: its prerelease counter when it has one, its patch otherwise */
+export function nextOwnVersion(version: string): string {
+  if (/-[A-Za-z]+\.\d+$/.test(version)) return nextPrerelease(version);
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  if (!m) throw new Error(`${version} is neither a release like 0.6.0 nor a prerelease like 0.9.0-beta.24`);
+  return `${m[1]}.${m[2]}.${Number(m[3]) + 1}`;
+}
+
+/** the version a package in the release set moves to: the core's for everything tied to it, its own next otherwise */
+export const versionFor = (p: Pkg, to: string): string => (ownVersion(p) ? nextOwnVersion(p.version) : to);
+
+/**
  * What a release moves, which is no longer everything.
  *
  * Under one version for the whole workspace, a plugin nobody touched was republished on every push to master --
@@ -64,7 +88,8 @@ export function releaseSet(pkgs: Pkg[], changedPaths: string[], to: string): Set
   // admits every later 0.9, so an unchanged plugin goes on being installable as the core moves. It stops admitting
   // it the moment the minor turns: `^0.9.0-beta.56` does not admit `0.10.0`. So a package whose range would no
   // longer name the core it ships beside is released too, however untouched it is.
-  for (const p of pkgs) if (p.name !== CORE && !Bun.semver.satisfies(to, `^${p.version}`)) out.add(p.name);
+  // A package on a version of its own names no core range at all, so the core moving leaves it where it is.
+  for (const p of pkgs) if (p.name !== CORE && !ownVersion(p) && !Bun.semver.satisfies(to, `^${p.version}`)) out.add(p.name);
   const names = new Set(pkgs.map((p) => p.name));
   // a dependent of anything in the set joins it, until nothing new joins: the edges are the same ones publishOrder
   // reads, so the order a release publishes in is the order these were added in
@@ -122,19 +147,18 @@ if (import.meta.main) {
     if (!version) { console.error("--follow needs the version the core was released at"); process.exit(1); }
     const pkgs = readWorkspace(ROOT);
     const changed = since ? (await sh(["git", "diff", "--name-only", `${since}..HEAD`], true)).split("\n").filter(Boolean) : pkgs.map((p) => p.path);
-    const moving = pkgs.filter((p) => followSet(pkgs, changed, version).has(p.name) && p.version !== version);
+    const moving = pkgs.filter((p) => followSet(pkgs, changed, version).has(p.name) && (ownVersion(p) || p.version !== version));
     if (!moving.length) { console.log(`follow ${version}: nothing besides the core changed since ${since || "the start"}`); process.exit(0); }
-    console.log(`follow ${version}: ${moving.map((p) => `${p.name} ${p.version} -> ${version}`).join(", ")}`);
+    console.log(`follow ${version}: ${moving.map((p) => `${p.name} ${p.version} -> ${versionFor(p, version)}`).join(", ")}`);
     if (dry) process.exit(0);
     if (!token) { console.error("GH_TOKEN is not set: the package versions cannot be pushed"); process.exit(1); }
     const files: string[] = [];
-    for (const p of moving) { const file = `${p.path}/package.json`; writeFileSync(`${ROOT}/${file}`, bumpVersion(readFileSync(`${ROOT}/${file}`, "utf8"), p.version, version)); files.push(file); }
-    if (syncLockfileFile(ROOT, moving.map((p) => ({ ...p, version }))).length) files.push("bun.lock");
-    const notes = `## ${version}\n\n* released with @voidbase-cloud/voidbase ${version}\n`;
+    for (const p of moving) { const file = `${p.path}/package.json`; writeFileSync(`${ROOT}/${file}`, bumpVersion(readFileSync(`${ROOT}/${file}`, "utf8"), p.version, versionFor(p, version))); files.push(file); }
+    if (syncLockfileFile(ROOT, moving.map((p) => ({ ...p, version: versionFor(p, version) }))).length) files.push("bun.lock");
     for (const p of publishable(moving)) {
       const file = `${p.path}/CHANGELOG.md`;
       let current: string | null = null; try { current = readFileSync(`${ROOT}/${file}`, "utf8"); } catch { current = null; }
-      writeFileSync(`${ROOT}/${file}`, prependNotes(current, notes)); files.push(file);
+      writeFileSync(`${ROOT}/${file}`, prependNotes(current, `## ${versionFor(p, version)}\n\n* released with @voidbase-cloud/voidbase ${version}\n`)); files.push(file);
     }
     await sh(["git", "config", "user.name", "voidbase release"]); await sh(["git", "config", "user.email", "release@voidbase.cloud"]);
     await sh(["git", "add", ...files]);
@@ -154,15 +178,15 @@ if (import.meta.main) {
   const subjects = (await sh(["git", "log", "--format=%s", ...(lastTag ? [`${lastTag}..HEAD`] : ["-20"])], true)).split("\n").filter((l) => l && !/^chore\(master\): release/.test(l));
   const date = new Date().toISOString().slice(0, 10);
   const notes = `## [${to}](https://github.com/${repo}/compare/v${from}...v${to}) (${date})\n\n${subjects.map((s) => `* ${s}`).join("\n") || "* (no commits since the last release)"}\n`;
-  console.log(`hot release: ${from} -> ${to} across ${releasing.length} of ${packages.length} workspace package(s) (${releasing.map((p) => p.path).join(", ")}), ${subjects.length} commit(s) since ${lastTag || "the start"}`);
+  console.log(`hot release: ${from} -> ${to} across ${releasing.length} of ${packages.length} workspace package(s) (${releasing.map((p) => (ownVersion(p) ? `${p.path} ${p.version} -> ${versionFor(p, to)}` : p.path)).join(", ")}), ${subjects.length} commit(s) since ${lastTag || "the start"}`);
   if (staying.length) console.log(`  unchanged, and left on the version they have: ${staying.map((p) => `${p.name}@${p.version}`).join(", ")}`);
   if (dry) { console.log(notes); process.exit(0); }
   if (!token) { console.error("GH_TOKEN is not set: the release cannot be pushed"); process.exit(1); }
   const staged: string[] = [];
-  for (const p of releasing) { const file = `${p.path}/package.json`; writeFileSync(`${ROOT}/${file}`, bumpVersion(readFileSync(`${ROOT}/${file}`, "utf8"), p.version, to)); staged.push(file); }
+  for (const p of releasing) { const file = `${p.path}/package.json`; writeFileSync(`${ROOT}/${file}`, bumpVersion(readFileSync(`${ROOT}/${file}`, "utf8"), p.version, versionFor(p, to))); staged.push(file); }
   // bun.lock records where each workspace package is, and `bun pm pack` resolves `workspace:` specs out of it: the
   // release commit carries the new versions there too, or the next pack names the release this one replaces
-  const moved = syncLockfileFile(ROOT, releasing.map((p) => ({ ...p, version: to })));
+  const moved = syncLockfileFile(ROOT, releasing.map((p) => ({ ...p, version: versionFor(p, to) })));
   if (moved.length) { console.log(`bun.lock: ${moved.join(", ")}`); staged.push("bun.lock"); }
   try { const m = JSON.parse(readFileSync(`${ROOT}/.release-please-manifest.json`, "utf8")) as Record<string, string>; for (const k of Object.keys(m)) if (m[k] === from) m[k] = to; writeFileSync(`${ROOT}/.release-please-manifest.json`, `${JSON.stringify(m, null, 2)}\n`); staged.push(".release-please-manifest.json"); } catch { /* no manifest */ }
   // a private package ships nothing, so it has no changelog to write

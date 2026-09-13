@@ -477,8 +477,14 @@ export function smokeProject(packed: Packed[]): { name: string; version: string;
  */
 export function subpathEntries(packed: Packed[]): { entry: string; pkg: string }[] {
   const scope = "@voidbase-cloud/plugin-";
-  if (!packed.some((p) => p.pkg.name === CORE)) return [];
-  return packed.filter((p) => p.pkg.name.startsWith(scope)).map((p) => ({ entry: `${CORE}/plugins/${p.pkg.name.slice(scope.length)}`, pkg: p.pkg.name }));
+  const core = packed.find((p) => p.pkg.name === CORE);
+  if (!core) return [];
+  // only the plugins the core still has an entry for: a plugin the core no longer imports (tiers 2 and 3) keeps no
+  // subpath there, and its package's root entry is the only name it has
+  const exported = core.manifest.exports && typeof core.manifest.exports === "object" ? new Set(Object.keys(core.manifest.exports)) : null;
+  return packed
+    .filter((p) => p.pkg.name.startsWith(scope) && (!exported || exported.has(`./plugins/${p.pkg.name.slice(scope.length)}`)))
+    .map((p) => ({ entry: `${CORE}/plugins/${p.pkg.name.slice(scope.length)}`, pkg: p.pkg.name }));
 }
 
 /** install the tarballs and use each package by name: the import goes through its exports, the bins actually run */
@@ -520,11 +526,16 @@ for (const want of JSON.parse(process.argv[2]) as { name: string; version: strin
 for (const want of JSON.parse(process.argv[3] ?? "[]") as { entry: string; pkg: string }[]) {
   const viaCore = await import(want.entry) as Record<string, unknown>;
   const viaPkg = await import(want.pkg) as Record<string, unknown>;
-  const keys = Object.keys(viaPkg);
-  if (keys.length === 0) throw new Error(\`\${want.pkg} exports nothing, so \${want.entry} re-exports nothing\`);
-  if (Object.keys(viaCore).sort().join() !== keys.slice().sort().join()) throw new Error(\`\${want.entry} exports \${Object.keys(viaCore).sort().join()}, \${want.pkg} exports \${keys.slice().sort().join()}\`);
-  for (const k of keys) if (viaCore[k] !== viaPkg[k]) throw new Error(\`\${want.entry} and \${want.pkg} disagree about \${k}: the entry is a second copy of the plugin, not a re-export of it\`);
-  console.log(\`\${want.entry}: the same \${keys.length} export(s) as \${want.pkg}, object for object\`);
+  // a plugin package is manifest.json beside main.js: its default export is the plugin, and the core's entry names
+  // that same object (with the manifest attached in place) and re-exports the rest
+  const name = want.entry.slice(want.entry.lastIndexOf("/") + 1).replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase());
+  if (!viaPkg.default) throw new Error(\`\${want.pkg} has no default export, so there is no plugin for \${want.entry} to name\`);
+  if (viaCore[name] !== viaPkg.default) throw new Error(\`\${want.entry} exports \${name} that is not \${want.pkg}'s default export: the entry is a second copy of the plugin, not the plugin\`);
+  // every other name the package exports is reachable through the core's entry; a factory the core wraps to attach the
+  // manifest (observabilityWith, openapiWith) is the core's own function under the same name, so presence is the check
+  const keys = Object.keys(viaPkg).filter((k) => k !== "default");
+  for (const k of keys) if (!(k in viaCore)) throw new Error(\`\${want.entry} does not export \${k}, which \${want.pkg} does\`);
+  console.log(\`\${want.entry}: \${name} is \${want.pkg}'s plugin, and its \${keys.length} other export(s) are there\`);
 }
 `;
 

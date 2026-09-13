@@ -93,7 +93,7 @@
         "build": "rm -rf dist && bun --bun rollup -c",
         "dev": "bun --bun rollup -c -w",
         "test": "vitest run",
-        "prepublishOnly": "bun run build"
+        "prepack": "bun run build"
     },
     "devDependencies": {
         "@rollup/plugin-terser": "^0.4.3",

@@ -314,6 +314,9 @@ describe("the workspace protocol, on the way into a tarball", () => {
     // the subpath lives in the core's tarball: with no core in the release there is nothing to import it out of
     expect(subpathEntries([packed(PLUGIN)])).toEqual([]);
     expect(subpathEntries([packed(PACKAGE)])).toEqual([]);
+    // a plugin the core no longer imports keeps no subpath there: the core's exports say which ones it still has
+    const core = { ...packed(PACKAGE), manifest: { name: PACKAGE, version: "1.0.0", exports: { ".": "./src/index.ts", "./plugins/realtime": "./src/server/plugins/realtime.ts" } } };
+    expect(subpathEntries([packed(PLUGIN), packed("@voidbase-cloud/plugin-ai"), core])).toEqual([{ entry: `${PACKAGE}/plugins/realtime`, pkg: PLUGIN }]);
   });
 
   test("the resolved sibling has to be the sibling that is actually there", () => {

@@ -416,15 +416,16 @@ export class RealtimeService extends BaseService {
             this.connectErrorHandler(new Error("EventSource connect took too long."));
         }, this.maxConnectTimeout);
 
-        this.eventSource = new EventSource(this.client.buildURL("/api/realtime"));
+        const eventSource = new EventSource(this.client.buildURL("/api/realtime"));
+        this.eventSource = eventSource;
 
-        this.eventSource.onerror = (_) => {
+        eventSource.onerror = (_) => {
             this.connectErrorHandler(
                 new Error("Failed to establish realtime connection."),
             );
         };
 
-        this.eventSource.addEventListener("PB_CONNECT", (e) => {
+        eventSource.addEventListener("PB_CONNECT", (e) => {
             const msgEvent = e as MessageEvent;
             this.clientId = msgEvent?.lastEventId;
             this.lastSentSubscriptions = [];

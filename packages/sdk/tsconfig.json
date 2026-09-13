@@ -6,6 +6,8 @@
     "sourceMap": true,
     "target": "es2021",
     "lib": ["dom", "es2021", "es2022.error"],
+    // the monorepo root's @types/bun would replace the DOM's EventSource; Node's types stay for `global`
+    "types": ["node"],
     "module": "esnext",
     "strict": true,
     "esModuleInterop": true,

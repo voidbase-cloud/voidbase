@@ -14,7 +14,7 @@
 // that is null is locked, superusers only. The MCP server the roadmap names beside this (mcp.ts) derives its tools
 // from this document, so the two answer the same token the same way.
 import type { Context, Hono } from "hono";
-import { isAuth, isMultiple, isSuperuser, listCollections, loadSettings, VERSION, isView } from "@voidbase-cloud/voidbase/sdk";
+import { hookRouteDocs, isAuth, isMultiple, isSuperuser, listCollections, loadSettings, VERSION, isView } from "@voidbase-cloud/voidbase/sdk";
 
 
 
@@ -205,7 +205,13 @@ function superuserPaths(paths: Record<string, Record<string, Operation>>) {
 }
 
 // --- the document ---------------------------------------------------------------------------------------------------
-export interface DocumentInput { collections: Collection[]; caller: Caller; title: string; origin: string; version: string }
+export interface DocumentInput {
+  collections: Collection[]; caller: Caller; title: string; origin: string; version: string;
+  /** routes the instance's own code added: pb_hooks and a project's entry file (core's hookRouteDocs) */
+  routes?: { method: string; path: string; superuser: boolean; response?: Schema }[];
+  /** routes plugins added, by method and path; described to a superuser, who may call them all */
+  pluginRoutes?: { method: string; path: string }[];
+}
 
 /** the OpenAPI 3.1 document for these collections as this caller sees them */
 export function buildDocument(input: DocumentInput): Record<string, unknown> {
@@ -228,6 +234,26 @@ export function buildDocument(input: DocumentInput): Record<string, unknown> {
     if (isAuth(c)) schemas[`${c.name}Auth`] = { type: "object", properties: { token: str(), record: ref(c.name) }, required: ["token", "record"] };
   }
   if (caller.kind === "superuser") superuserPaths(paths);
+  // the instance's own routes: everyone's, unless a superuser's guard is on one; what each answers is what its source
+  // says, and any JSON object where the source did not say
+  const own = (input.routes ?? []).filter((r) => !r.superuser || caller.kind === "superuser");
+  if (own.length) tags.push({ name: "hooks", description: "routes this instance's own code adds" });
+  for (const r of own) {
+    const method = r.method === "ALL" ? "get" : r.method.toLowerCase();
+    if (paths[r.path]?.[method]) continue;
+    const parameters = [...r.path.matchAll(/\{(\w+)\}/g)].map((m) => path(m[1]!, "a path parameter"));
+    const answer = r.response && Object.keys(r.response).length ? r.response : { type: "object", additionalProperties: true };
+    (paths[r.path] ??= {})[method] = op("hooks", `${r.method} ${r.path}`, r.superuser ? "Superusers only. Added by this instance's own code." : "Added by this instance's own code.", { ...(parameters.length ? { parameters } : {}), responses: { "200": { description: "What the route answers", ...json(answer) } } });
+  }
+  // what plugins added, for a superuser: by method and path, since a plugin's route says nothing about its answer
+  if (caller.kind === "superuser") {
+    const added = (input.pluginRoutes ?? []).filter((r) => !paths[r.path]?.[r.method.toLowerCase()]);
+    if (added.length) tags.push({ name: "plugins", description: "routes the instance's plugins add" });
+    for (const r of added) {
+      const parameters = [...r.path.matchAll(/\{(\w+)\}/g)].map((m) => path(m[1]!, "a path parameter"));
+      (paths[r.path] ??= {})[r.method.toLowerCase()] = op("plugins", `${r.method} ${r.path}`, "Added by a plugin.", { ...(parameters.length ? { parameters } : {}), responses: { "200": { description: "What the route answers", ...json({ type: "object", additionalProperties: true }) } } });
+    }
+  }
   const scope = caller.kind === "anonymous" ? "what an anonymous request may call" : caller.kind === "user" ? `what a signed-in ${caller.collection} record may call` : "everything, as a superuser sees it";
   return {
     openapi: "3.1.0",
@@ -303,12 +329,27 @@ const DOCS_PAGE = `<!doctype html>
 </html>
 `;
 
+/** the core's own routes, which the document already describes one collection at a time, or deliberately leaves out */
+const CORE_PREFIXES = ["/api/collections", "/api/settings", "/api/logs", "/api/backups", "/api/files", "/api/realtime", "/api/batch", "/api/crons", "/api/health", "/api/openapi.json", "/api/docs", "/api/sql", "/api/oauth2-redirect"];
+
+/** the routes registered on the app that are neither the core's own nor a catch-all, in OpenAPI's path form */
+function pluginRoutesOf(app: Hono<AppEnv>): { method: string; path: string }[] {
+  const seen = new Set<string>();
+  return (app.routes ?? []).flatMap((r) => {
+    if (!r.path.startsWith("/api/") || r.path.includes("*") || !/^(GET|POST|PUT|PATCH|DELETE)$/.test(r.method)) return [];
+    if (CORE_PREFIXES.some((p) => r.path === p || r.path.startsWith(`${p}/`))) return [];
+    const path = r.path.replace(/:(\w+)/g, "{$1}"); const k = `${r.method} ${path}`;
+    if (seen.has(k)) return []; seen.add(k);
+    return [{ method: r.method, path }];
+  });
+}
+
 // --- the plugin --------------------------------------------------------------------------------------------------------
 function mountRoutes(app: Hono<AppEnv>, version: string, source: OpenApiSource) {
   app.get("/api/openapi.json", async (c: Context<AppEnv>) => {
     const collections = await source.collections(c.env);
     const name = (await source.appName(c.env).catch(() => "")).trim();
-    const doc = buildDocument({ collections, caller: callerOf(c.get("auth")), title: name || "voidbase", origin: new URL(c.req.url).origin, version });
+    const doc = buildDocument({ collections, caller: callerOf(c.get("auth")), title: name || "voidbase", origin: new URL(c.req.url).origin, version, routes: hookRouteDocs(), pluginRoutes: pluginRoutesOf(app) });
     c.header("Cache-Control", "no-store");
     return c.json(doc);
   });

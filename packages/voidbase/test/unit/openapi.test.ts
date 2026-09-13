@@ -6,7 +6,7 @@ import { invalidateCollections, type Collection } from "../../src/server/collect
 import { ApiError } from "../../src/server/errors";
 import { createKernel, load } from "../../src/server/kernel";
 import { auth, provider } from "../../src/server/plugins/auth";
-import { openapi, openapiWith } from "../../src/server/plugins/openapi";
+import { buildDocument, openapi, openapiWith } from "../../src/server/plugins/openapi";
 import { invalidateSettings } from "../../src/server/settings";
 import type { AppEnv, AuthRecord, Bindings } from "../../src/server/types";
 
@@ -220,5 +220,30 @@ describe("the shipped plugin reads the instance", () => {
     expect(d.info.title).toBe("From the row");
     expect(methods(d, "/api/collections/posts/records")).toEqual(["get"]);
     invalidateCollections(); invalidateSettings();
+  });
+});
+
+describe("the routes the instance's own code and its plugins add", () => {
+  const routes = [
+    { method: "GET", path: "/api/vault-stats", superuser: false, response: { type: "object", properties: { total: { type: "number" } }, required: ["total"] } },
+    { method: "POST", path: "/api/vaults/{id}/purge", superuser: true },
+  ];
+  const pluginRoutes = [{ method: "POST", path: "/api/plugins/install" }, { method: "GET", path: "/api/plugins" }];
+  const docAs = (caller: Parameters<typeof buildDocument>[0]["caller"]) => buildDocument({ collections: COLLECTIONS, caller, title: "Shop", origin: "http://shop.example", version: "0.9.0", routes, pluginRoutes }) as unknown as Doc;
+
+  test("a hook route is in everyone's document with what it answers; a superuser's guarded one only in a superuser's", () => {
+    const guest = docAs({ kind: "anonymous" });
+    const stats = guest.paths["/api/vault-stats"]!.get as unknown as { responses: Record<string, { content: Record<string, { schema: unknown }> }> };
+    expect(stats.responses["200"]!.content["application/json"]!.schema).toEqual(routes[0]!.response);
+    expect(guest.paths["/api/vaults/{id}/purge"]).toBeUndefined();
+    const su = docAs({ kind: "superuser", collection: "_superusers" });
+    expect(Object.keys(su.paths["/api/vaults/{id}/purge"]!)).toEqual(["post"]);
+  });
+
+  test("a plugin's routes are described to a superuser, who may call them, and to nobody else", () => {
+    expect(docAs({ kind: "anonymous" }).paths["/api/plugins/install"]).toBeUndefined();
+    const su = docAs({ kind: "superuser", collection: "_superusers" });
+    expect(Object.keys(su.paths["/api/plugins/install"]!)).toEqual(["post"]);
+    expect(Object.keys(su.paths["/api/plugins"]!)).toEqual(["get"]);
   });
 });

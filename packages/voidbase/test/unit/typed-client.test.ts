@@ -32,7 +32,11 @@ const COLLECTIONS: Collection[] = [
   collection("stats", "view", [f("id", "text", { primaryKey: true, system: true }), f("total", "number")]),
 ];
 const document = (caller: Parameters<typeof buildDocument>[0]["caller"] = { kind: "superuser", collection: "_superusers" }) =>
-  buildDocument({ collections: COLLECTIONS, caller, title: "Shop", origin: "http://shop.example", version: "0.9.0" }) as OpenApiDocument;
+  buildDocument({
+    collections: COLLECTIONS, caller, title: "Shop", origin: "http://shop.example", version: "0.9.0",
+    routes: [{ method: "GET", path: "/api/vault-stats", superuser: false, response: { type: "object", properties: { total: { type: "number" } }, required: ["total"] } }],
+    pluginRoutes: [{ method: "POST", path: "/api/plugins/install" }],
+  }) as OpenApiDocument;
 const OPTS = { source: "http://shop.example/api/openapi.json", regenerate: "voidbase types --url http://shop.example --out src/voidbase.ts" };
 const generated = () => generateTypes(document(), OPTS);
 /** the body of one interface, without its doc comment lines */
@@ -116,8 +120,11 @@ describe("the generated interfaces", () => {
 
   test("the TypedPocketBase type narrows collection() and takes the SDK's class as a parameter", () => {
     const text = generated();
-    expect(text).toContain("collection<K extends keyof Collections>(name: K): RecordService<Collections[K]>;");
-    expect(text).toContain("collection(name: string): RecordService<AnyRecord>;");
+    expect(text).toContain("collection<K extends keyof Collections>(name: K): RecordService<Collections[K], K extends keyof Creates ? Creates[K] : RecordBody<Collections[K]>>;");
+    expect(text).not.toContain("collection(name: string)");
+    expect(text).toContain("export interface Creates {");
+    expect(text).toContain('"/api/vault-stats": { get: { response: { total: number } } };');
+    expect(text).toContain('"/api/plugins/install": { post: { response: Record<string, unknown> } };');
     expect(text).toContain('export type TypedPocketBase<Client = BaseClient> = Omit<Client, "collection"> & TypedCollectionAccess;');
     expect(text).not.toMatch(/^import /m);
   });
@@ -161,7 +168,12 @@ describe("the generated file compiles", () => {
     // the PocketBase SDK is a devDependency of this package, installed into the workspace root (hoisted linker)
     symlinkSync(join(ROOT, "../../node_modules/pocketbase"), join(dir, "node_modules/pocketbase"), "dir");
     writeFileSync(join(dir, "usage.ts"), `import PocketBase from "pocketbase";
-import type { Collections, PostsRecord, TypedPocketBase } from "./voidbase";
+import type { Collections, PostsRecord, Routes, TypedPocketBase } from "./voidbase";
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+const expectType = <Holds extends true>() => {};
+expectType<Equal<Routes["/api/vault-stats"]["get"]["response"], { total: number }>>();
+expectType<Equal<keyof Routes & "/api/plugins/install", "/api/plugins/install">>();
+expectType<Equal<keyof Routes & "/api/health", "/api/health">>();
 const pb = new PocketBase("http://shop.example") as TypedPocketBase;
 const full = new PocketBase("http://shop.example") as TypedPocketBase<PocketBase>;
 export async function main() {
@@ -180,8 +192,14 @@ export async function main() {
   await pb.collection("posts").create({ title: "t", status: "live", tags: ["a"] });
   // @ts-expect-error a value the select does not allow on create
   await pb.collection("posts").create({ title: "t", status: "gone" });
-  const other = await pb.collection("something_else").getOne("id");
-  const whatever: unknown = other.whatever;
+  // @ts-expect-error a collection this instance does not have
+  pb.collection("something_else");
+  // @ts-expect-error title is required
+  await pb.collection("posts").create({ status: "live" });
+  // @ts-expect-error no field is called this
+  await pb.collection("posts").create({ title: "t", typo_field: 1 });
+  // @ts-expect-error created is set by the instance, not by the caller
+  await pb.collection("posts").create({ title: "t", created: "2026-01-01" });
   const auth = await pb.collection("users").authWithPassword("a@b", "p");
   const verified: boolean = auth.record.verified;
   const comment = await pb.collection("blog-comments").getFirstListItem("text != ''", { expand: "post" });
@@ -191,7 +209,7 @@ export async function main() {
   const url: string = full.files.getURL(post, "x.png");
   const stop = await pb.collection("posts").subscribe("*", (e) => { const s: "draft" | "live" = e.record.status; void s; });
   await stop();
-  return [status, tag, authorName, editorEmail, lon, bad, name, whatever, verified, postTitle, k, total, url];
+  return [status, tag, authorName, editorEmail, lon, bad, name, verified, postTitle, k, total, url];
 }
 `);
     const r = tsc(["voidbase.ts", "usage.ts"]);

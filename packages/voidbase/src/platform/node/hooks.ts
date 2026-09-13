@@ -14,6 +14,7 @@ export async function loadCompiled(code: string, tag: string) {
 }
 const mod = await loadCompiled(compileHooksDir(dir), "hooks");
 export const hooksDir: string = mod.hooksDir;
+export const routeDocs: { method: string; path: string; superuser: boolean; response?: Record<string, unknown> }[] = mod.routeDocs ?? [];
 export const hooks: { name: string; run: (globals: Record<string, unknown>) => Promise<void> }[] = mod.hooks;
 export const modules: Record<string, (globals: Record<string, unknown>) => Promise<unknown>> = mod.modules;
 export const files: Record<string, string> = mod.files;

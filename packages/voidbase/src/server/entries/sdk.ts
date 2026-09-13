@@ -27,6 +27,9 @@
 // plugin that provides `auth@1` and nobody else. A plugin package wants this one.
 export { isSuperuser, requireAuth, requireSuperuser } from "../auth-slot";
 
+// the routes this instance's own code added (pb_hooks, a project's entry file), for a plugin describing the API
+export { hookRouteDocs, type HookRouteDoc } from "../hooks/route-docs";
+
 // the API errors the routes throw; the error handler recognises these instances and nothing else
 export { ApiError, badRequest, forbidden, notFound } from "../errors";
 

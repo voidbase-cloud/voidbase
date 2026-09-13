@@ -1,7 +1,7 @@
 // Loads the bundled pb_hooks files, exposes the JSVM-compatible globals, mounts routerAdd routes.
 import { logger } from "#platform/log";
 import type { Hono, MiddlewareHandler } from "hono";
-import { files, hooks, hooksDir, modules } from "#platform/hooks";
+import { files, hooks, hooksDir, modules, routeDocs } from "#platform/hooks";
 import { loadCollections } from "../collections/model";
 import { pathPattern, pathScore } from "../path-glob";
 import { dispatch, registerJobHandler, type Job } from "../jobs";
@@ -11,7 +11,7 @@ import { CollectionRef, HookRecord } from "./record";
 import {
   $apis, $app, $dbx, $filesystem, $http, $security, BadRequestError, ForbiddenError, InternalServerError, MailerMessage, NotFoundError,
   RecordUpsertFormFactory, RequestEvent, UnauthorizedError, ValidationError, authToHookRecord, cronAdd, cronRemove, globalMiddlewares, hookStore,
-  crons, eventHooks, makeOs, onEvent, routerAdd, routerUse, routes, type HookMiddleware,
+  crons, eventHooks, makeOs, onEvent, routerAdd, routerUse, routes, sourceRouteDocs, type HookMiddleware,
 } from "./runtime";
 import { ApiError } from "../errors";
 import { authCookieName, authCookieState, authCookieToken } from "../auth-cookie";
@@ -104,6 +104,7 @@ export function loadHooks() {
   loaded = true;
   // a dev reload re-evaluates this module while runtime.ts keeps its registries: start from empty
   routes.length = 0;
+  sourceRouteDocs.splice(0, sourceRouteDocs.length, ...routeDocs);
   eventHooks.clear();
   crons.clear();
   for (const h of hooks) {

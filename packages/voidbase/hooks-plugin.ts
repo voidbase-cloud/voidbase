@@ -139,6 +139,65 @@ function transform(sf: ts.SourceFile, asyncNames: Set<string>, asyncFns: Set<ts.
 // file whose first line is `// voidbase:raw` is emitted as it stands, with only module/exports/require in scope.
 const isRaw = (code: string) => /^\s*\/\/\s*voidbase:raw\b/.test(code);
 
+/** a route a pb_hooks file adds, as the API description tells it: what it answers, read from the source */
+export interface RouteDoc { method: string; path: string; superuser: boolean; response?: Record<string, unknown> }
+
+/** the JSON schema of a value written literally in the source; {} (any JSON) for whatever is computed */
+function schemaOfExpression(node: ts.Expression): Record<string, unknown> {
+  if (ts.isParenthesizedExpression(node)) return schemaOfExpression(node.expression);
+  if (ts.isNumericLiteral(node) || (ts.isPrefixUnaryExpression(node) && ts.isNumericLiteral(node.operand))) return { type: "number" };
+  if (ts.isStringLiteralLike(node) || ts.isTemplateExpression(node)) return { type: "string" };
+  if (node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword) return { type: "boolean" };
+  if (node.kind === ts.SyntaxKind.NullKeyword) return { type: "null" };
+  if (ts.isArrayLiteralExpression(node)) return { type: "array", items: node.elements[0] && !ts.isSpreadElement(node.elements[0]) ? schemaOfExpression(node.elements[0]) : {} };
+  if (ts.isObjectLiteralExpression(node)) {
+    const properties: Record<string, Record<string, unknown>> = {};
+    let open = false;
+    for (const prop of node.properties) {
+      const name = prop.name && (ts.isIdentifier(prop.name) || ts.isStringLiteralLike(prop.name) || ts.isNumericLiteral(prop.name)) ? prop.name.text : undefined;
+      if (ts.isPropertyAssignment(prop) && name !== undefined) properties[name] = schemaOfExpression(prop.initializer);
+      else if (ts.isShorthandPropertyAssignment(prop) && name !== undefined) properties[name] = {};
+      else open = true;
+    }
+    return { type: "object", properties, required: Object.keys(properties), ...(open ? { additionalProperties: true } : {}) };
+  }
+  return {};
+}
+
+/**
+ * The routes a hook file adds, for GET /api/openapi.json: routerAdd("GET", "/api/x", handler, ...middlewares) with a
+ * literal method and path. What the route answers is the first `e.json(2xx, value)` in its handler, typed from the
+ * value as written; a middleware that is $apis.requireSuperuserAuth() makes it a superuser's route.
+ */
+export function routeDocsOf(sf: ts.SourceFile): RouteDoc[] {
+  const docs: RouteDoc[] = [];
+  const answerOf = (handler: ts.Node): Record<string, unknown> | undefined => {
+    let found: Record<string, unknown> | undefined;
+    const look = (n: ts.Node) => {
+      if (found) return;
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "json" && n.arguments.length >= 2) {
+        const [status, value] = n.arguments;
+        if (status && ts.isNumericLiteral(status) && /^2\d\d$/.test(status.text) && value) { found = schemaOfExpression(value); return; }
+      }
+      ts.forEachChild(n, look);
+    };
+    look(handler);
+    return found;
+  };
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "routerAdd" && node.arguments.length >= 3) {
+      const [method, path, handler, ...middlewares] = node.arguments;
+      if (method && path && handler && ts.isStringLiteralLike(method) && ts.isStringLiteralLike(path)) {
+        const response = answerOf(handler);
+        docs.push({ method: method.text.toUpperCase(), path: path.text, superuser: middlewares.some((m) => /requireSuperuserAuth\s*\(/.test(m.getText(sf))), ...(response ? { response } : {}) });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return docs;
+}
+
 export function compileHooksDir(dir: string): string {
   const files = readDir(dir);
   const sources = new Map<string, ts.SourceFile>();
@@ -165,7 +224,8 @@ export function compileHooksDir(dir: string): string {
     if (f.kind === "hook") hooks.push(`{ name: ${JSON.stringify(f.name)}, run: async function (__g) { ${destructure}\n${body}\n} }`);
     else modules.push(`${JSON.stringify(basename(f.name, ".js"))}: async function (__g) { ${destructure}\n${body}\nreturn module.exports; }`);
   }
-  return `export const hooksDir = ${JSON.stringify(dir)};\nexport const asyncNames = ${JSON.stringify([...asyncNames])};\nexport const hooks = [${hooks.join(",\n")}];\nexport const modules = { ${modules.join(",\n")} };\nexport const files = { ${raw.join(",\n")} };\n`;
+  const routeDocs = [...sources.values()].flatMap((sf) => routeDocsOf(sf));
+  return `export const routeDocs = ${JSON.stringify(routeDocs)};\nexport const hooksDir = ${JSON.stringify(dir)};\nexport const asyncNames = ${JSON.stringify([...asyncNames])};\nexport const hooks = [${hooks.join(",\n")}];\nexport const modules = { ${modules.join(",\n")} };\nexport const files = { ${raw.join(",\n")} };\n`;
 }
 
 // pb_migrations/*.js: each file calls migrate(up, down); the same await insertion applies (app.importCollections,

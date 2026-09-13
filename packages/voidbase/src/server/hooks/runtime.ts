@@ -41,6 +41,8 @@ export interface RouteReg { method: string; path: string; handler: HookFn; middl
 export type HookFn = (e: unknown) => unknown;
 export type HookMiddleware = HookFn | { func: HookFn; id?: string; priority?: number };
 export const routes: RouteReg[] = [];
+/** what the hook files' sources say about the routes they add (hooks-plugin.ts routeDocsOf), filled by loadHooks */
+export const sourceRouteDocs: { method: string; path: string; superuser: boolean; response?: Record<string, unknown> }[] = [];
 export const eventHooks = new Map<string, { fn: HookFn; tags: string[] }[]>();
 export const crons = new Map<string, { expr: string; fn: () => unknown }>();
 

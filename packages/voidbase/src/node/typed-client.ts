@@ -112,6 +112,49 @@ function interfaceOf(c: CollectionSchema, byName: Map<string, CollectionSchema>)
   return lines.join("\n");
 }
 
+/** each collection's create body, from the document's <name>Create schema: exact, so a typo or a system field fails to compile */
+function createsOf(doc: OpenApiDocument, collections: CollectionSchema[], byName: Map<string, CollectionSchema>): { name: string; interfaceName: string; text: string }[] {
+  const schemas = (doc.components?.schemas ?? {}) as Record<string, JsonSchema>;
+  return collections.flatMap((c) => {
+    const schema = schemas[`${c.name}Create`];
+    if (!schema || schema.type !== "object") return [];
+    const interfaceName = c.interfaceName.replace(/Record$/, "Create");
+    const required = new Set(schema.required ?? []);
+    const lines = [`/** what creating a ${c.name} record sends */`, `export interface ${interfaceName} {`];
+    for (const [name, s] of Object.entries(schema.properties ?? {})) lines.push(`  ${key(name)}${required.has(name) ? "" : "?"}: ${typeOf(s, byName)};`);
+    lines.push("}");
+    return [{ name: c.name, interfaceName, text: lines.join("\n") }];
+  });
+}
+
+/** what a response schema is in TypeScript: a collection's list and auth answers by the SDK's own shapes */
+function answerType(schema: JsonSchema | undefined, byName: Map<string, CollectionSchema>): string {
+  if (!schema) return "unknown";
+  const target = schema.$ref?.replace(/^#\/components\/schemas\//, "");
+  if (target) {
+    const list = /^(.*)List$/.exec(target)?.[1], auth = /^(.*)Auth$/.exec(target)?.[1];
+    if (list && byName.has(list) && !byName.has(target)) return `ListResult<${byName.get(list)!.interfaceName}>`;
+    if (auth && byName.has(auth) && !byName.has(target)) return `RecordAuthResponse<${byName.get(auth)!.interfaceName}>`;
+  }
+  return typeOf(schema, byName);
+}
+
+/** every route the document describes, by path and method, with what it answers */
+function routesOf(doc: OpenApiDocument, byName: Map<string, CollectionSchema>): string {
+  type Op = { responses?: Record<string, { content?: Record<string, { schema?: JsonSchema }> }> };
+  const paths = ((doc as { paths?: Record<string, Record<string, Op>> }).paths ?? {});
+  const lines = ["/** every route this caller may call, by path and method, with what it answers */", "export interface Routes {"];
+  for (const [path, methods] of Object.entries(paths)) {
+    const members = Object.entries(methods).filter(([m]) => /^(get|post|put|patch|delete)$/.test(m)).map(([m, o]) => {
+      const ok = Object.entries(o.responses ?? {}).find(([status]) => /^2\d\d$/.test(status))?.[1];
+      return `${m}: { response: ${answerType(ok?.content?.["application/json"]?.schema, byName)} }`;
+    });
+    if (members.length) lines.push(`  ${JSON.stringify(path)}: { ${members.join("; ")} };`);
+  }
+  lines.push("}");
+  return lines.join("\n");
+}
+
 // --- the file --------------------------------------------------------------------------------------------------------------
 // the SDK's shape, the part these types touch: declared here so the generated file imports nothing
 const SDK = `// --- the SDK's shape, the part these types touch. Declared here rather than imported so this file depends on nothing;
@@ -130,15 +173,15 @@ export interface RecordOptions { expand?: string; fields?: string; requestKey?: 
 export interface RecordListOptions extends RecordOptions { page?: number; perPage?: number; sort?: string; filter?: string; skipTotal?: boolean }
 export interface RecordFullListOptions extends RecordListOptions { batch?: number }
 
-/** the SDK's RecordService with its record type fixed */
-export interface RecordService<M> {
+/** the SDK's RecordService with its record type fixed, and what a create may send */
+export interface RecordService<M, C = RecordBody<M>> {
   readonly collectionIdOrName: string;
   getList(page?: number, perPage?: number, options?: RecordListOptions): Promise<ListResult<M>>;
   getFullList(options?: RecordFullListOptions): Promise<M[]>;
   getFullList(batch?: number, options?: RecordListOptions): Promise<M[]>;
   getFirstListItem(filter: string, options?: RecordListOptions): Promise<M>;
   getOne(id: string, options?: RecordOptions): Promise<M>;
-  create(body?: RecordBody<M> | FormData, options?: RecordOptions): Promise<M>;
+  create(body?: C | FormData, options?: RecordOptions): Promise<M>;
   update(id: string, body?: RecordBody<M> | FormData, options?: RecordOptions): Promise<M>;
   delete(id: string, options?: RecordOptions): Promise<boolean>;
   subscribe(topic: string, callback: (data: RecordSubscription<M>) => void, options?: RecordOptions): Promise<() => Promise<void>>;
@@ -157,10 +200,9 @@ export interface BaseClient {
   send<T = unknown>(path: string, options: Record<string, unknown>): Promise<T>;
 }
 
-/** the collection method, narrowed: a known name answers its record type, any other name an untyped record */
+/** the collection method, narrowed: a name this instance has answers its record type, and any other name does not compile */
 export interface TypedCollectionAccess {
-  collection<K extends keyof Collections>(name: K): RecordService<Collections[K]>;
-  collection(name: string): RecordService<AnyRecord>;
+  collection<K extends keyof Collections>(name: K): RecordService<Collections[K], K extends keyof Creates ? Creates[K] : RecordBody<Collections[K]>>;
 }
 
 /** the PocketBase SDK client with collection() narrowed to this instance's collections:
@@ -193,7 +235,9 @@ export function generateTypes(doc: OpenApiDocument, opts: GenerateOptions): stri
   ];
   const interfaces = collections.map((c) => interfaceOf(c, byName));
   const map = ["/** every collection of the instance, by name */", "export interface Collections {", ...collections.map((c) => `  ${key(c.name)}: ${c.interfaceName};`), "}"];
-  return [header.join("\n"), ...interfaces, map.join("\n"), SDK.trimEnd()].join("\n\n") + "\n";
+  const creates = createsOf(doc, collections, byName);
+  const createMap = ["/** what a create of each collection sends: its required fields required, no field it lacks, none the instance sets */", "export interface Creates {", ...creates.map((c) => `  ${key(c.name)}: ${c.interfaceName};`), "}"];
+  return [header.join("\n"), ...interfaces, ...creates.map((c) => c.text), map.join("\n"), createMap.join("\n"), routesOf(doc, byName), SDK.trimEnd()].join("\n\n") + "\n";
 }
 
 // --- getting the document ----------------------------------------------------------------------------------------------

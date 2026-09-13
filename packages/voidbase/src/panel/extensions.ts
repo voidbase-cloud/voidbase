@@ -12,12 +12,25 @@
 //
 // The Plugins page: what loaded and where each came from (/api/plugins), and each plugin's configuration plane
 // (/api/plugins/config), editable where the instance holds it and read only where the project declares it.
+//
+// What the page may offer to change is read item by item from where each item came from (16.5: `source` on every
+// plugin and pb_ folder): only what the instance itself holds is changed here. That is how the panel tells a vanilla
+// instance, whose installer changes its own files, from an extended one, which a repository or a build declares.
 export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugins page (src/panel/extensions.ts)
 (function () {
   if (typeof app === "undefined" || !app.routes || !app.store) return;
   app.store.headerLinks.splice(Math.min(2, app.store.headerLinks.length), 0, { href: "#/plugins", icon: "ri-plug-line", label: "Plugins" });
 
   var SOURCE = { voidbase: "Ships with voidbase", repository: "Declared in the repository", instance: "Installed on this instance" };
+  var MAY = { instance: "Yes", repository: "No: change it in the repository and commit", voidbase: "No: it ships with voidbase" };
+
+  function modeLine(installer) {
+    var mode = installer && installer.mode;
+    if (mode === "filesystem") return "Vanilla: this instance holds its own plugins and files, and changes to them are made here.";
+    if (mode === "repository") return "Extended: the repository " + (installer.repository || "") + " declares this instance. The panel shows what it declares and changes none of it.";
+    if (mode === "fixed") return "Extended: this instance was built with its plugins and files. The panel shows them and changes none of them.";
+    return "The instance did not say where its plugins live, so the panel changes nothing.";
+  }
 
   function fieldInput(name, field, spec, data, editable) {
     var id = "plugin-config-" + name + "-" + field;
@@ -35,18 +48,21 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
   function plane(name, data, save) {
     var p = data.planes[name];
     var fields = Object.keys(p.fields);
+    // changed here only on an instance that holds its own files, and only when the project does not declare it
+    var extended = !data.installer || data.installer.mode !== "filesystem";
+    var editable = p.editable && !extended;
     return t.div({ className: "panel m-b-base plugin-config", "data-plugin": name },
       t.div({ className: "flex gap-10 m-b-sm" },
         t.div({ className: "txt-lg" }, name),
-        t.span({ className: "label" }, p.editable ? "Editable here" : "Read only: the project declares it in pb_plugins/" + name + "/config.json"),
+        t.span({ className: "label" }, editable ? "Editable here" : p.editable ? "Read only: an extended instance is configured in its project" : "Read only: the project declares it in pb_plugins/" + name + "/config.json"),
       ),
       t.div({ className: "grid" }, fields.map(function (field) {
         var spec = p.fields[field];
-        return t.div({ className: "col-lg-6" },
+        return t.div({ className: "col-lg-6", "data-field": field },
           t.div({ className: "field" },
             t.label({ htmlFor: "plugin-config-" + name + "-" + field }, field, " ",
               t.span({ className: "txt-hint txt-sm" }, spec.applies === "rebuild" ? "needs a rebuild" : "takes effect at once")),
-            fieldInput(name, field, spec, data, p.editable),
+            fieldInput(name, field, spec, data, editable),
           ),
           t.div({ className: "txt-sm txt-hint" },
             spec.description ? spec.description + " " : "",
@@ -55,7 +71,7 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
           ),
         );
       })),
-      p.editable ? t.div({ className: "flex m-t-sm" },
+      editable ? t.div({ className: "flex m-t-sm" },
         t.button({ type: "button", className: "btn", disabled: function () { return data.saving === name; }, onclick: function () { save(name); } }, "Save " + name),
       ) : "",
     );
@@ -63,7 +79,7 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
 
   app.routes.superuserOnly("#/plugins", function () {
     app.store.title = "Plugins";
-    var data = store({ loading: true, plugins: [], planes: {}, drafts: {}, saving: "" });
+    var data = store({ loading: true, plugins: [], files: {}, installer: null, planes: {}, drafts: {}, saving: "" });
 
     function load() {
       data.loading = true;
@@ -74,6 +90,8 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
           Object.keys(answers[1][name].fields).forEach(function (field) { drafts[name][field] = answers[1][name].fields[field].value; });
         });
         data.plugins = answers[0].plugins || [];
+        data.files = answers[0].files || {};
+        data.installer = answers[0].installer || null;
         data.planes = answers[1] || {};
         data.drafts = drafts;
       }).catch(function (err) { app.checkApiError(err); }).finally(function () { data.loading = false; });
@@ -103,11 +121,20 @@ export const PANEL_EXTENSIONS = String.raw`// voidbase: the admin panel's Plugin
         t.div({ className: "wrapper m-b-base" }, function () {
           if (data.loading) return t.div({ className: "txt-hint" }, "Loading plugins...");
           return t.div(null,
+            t.p({ className: "plugins-mode m-b-base" }, modeLine(data.installer)),
             t.div({ className: "txt-lg m-b-sm" }, "What this instance runs"),
             t.table({ className: "table m-b-base" },
-              t.thead(null, t.tr(null, t.th(null, "Plugin"), t.th(null, "Tier"), t.th(null, "Where it came from"), t.th(null, "Provides"))),
+              t.thead(null, t.tr(null, t.th(null, "Plugin"), t.th(null, "Tier"), t.th(null, "Where it came from"), t.th(null, "Changed here"), t.th(null, "Provides"))),
               t.tbody(null, data.plugins.map(function (p) {
-                return t.tr({ "data-plugin": p.name }, t.td(null, p.name), t.td(null, p.tier), t.td(null, SOURCE[p.source] || p.source || ""), t.td(null, (p.provides || []).join(", ")));
+                return t.tr({ "data-plugin": p.name }, t.td(null, p.name), t.td(null, p.tier), t.td(null, SOURCE[p.source] || p.source || ""), t.td(null, MAY[p.source] || "No"), t.td(null, (p.provides || []).join(", ")));
+              })),
+            ),
+            t.div({ className: "txt-lg m-b-sm" }, "Files"),
+            t.table({ className: "table m-b-base" },
+              t.thead(null, t.tr(null, t.th(null, "Folder"), t.th(null, "Where it came from"), t.th(null, "Changed here"))),
+              t.tbody(null, Object.keys(data.files).map(function (folder) {
+                var source = data.files[folder];
+                return t.tr({ "data-folder": folder }, t.td(null, folder), t.td(null, SOURCE[source] || source || ""), t.td(null, MAY[source] || "No"));
               })),
             ),
             t.div({ className: "txt-lg m-b-sm" }, "Configuration"),

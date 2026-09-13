@@ -1,7 +1,8 @@
 // The admin panel's Plugins page (src/panel/extensions.ts), run the way the panel runs its extensions file: against an
 // `app` with a router, a store and the SDK, and `t` and `store` as globals. What is checked is what the page does with
 // the instance's answers: the header link, the plugin list with where each came from, a plane editable on vanilla and
-// read only when the project declares it, and a save that sends only what changed.
+// read only when the project declares it, a save that sends only what changed, and what the page offers to change
+// read item by item from where each item came from, which is how it tells a vanilla instance from an extended one.
 import { expect, test } from "bun:test";
 import { PANEL_EXTENSIONS } from "../../src/panel/extensions";
 
@@ -21,7 +22,7 @@ const find = (n: unknown, pick: (e: El) => boolean, out: El[] = []): El[] => {
 };
 const text = (n: unknown): string => (Array.isArray(n) ? n.map(text).join("") : n && typeof n === "object" && "tag" in n ? (n as El).children.map(text).join("") : n == null ? "" : String(n));
 
-async function openPage(planes: Record<string, unknown>) {
+async function openPage(planes: Record<string, unknown>, installer: Record<string, unknown> = { mode: "filesystem" }) {
   const routes: Record<string, () => unknown> = {}; const sent: { path: string; options: Record<string, unknown> }[] = []; const toasts: string[] = [];
   const app = {
     routes: { superuserOnly: (path: string, handler: () => unknown) => { routes[path] = handler; } },
@@ -30,8 +31,12 @@ async function openPage(planes: Record<string, unknown>) {
     toasts: { success: (m: string) => toasts.push(m), info: (m: string) => toasts.push(m) },
     pb: { send: async (path: string, options: Record<string, unknown>) => {
       sent.push({ path, options });
-      if (path === "/api/plugins") return { plugins: [{ name: "hardening", tier: "core", source: "voidbase", provides: ["hardening@1"] }, { name: "audit", tier: "community", source: "repository", provides: [] }] };
-      if (path === "/api/plugins/config") return planes;
+      if (path === "/api/plugins") {
+        const source = installer.mode === "filesystem" ? "instance" : "repository";
+        return { installer, plugins: [{ name: "hardening", tier: "core", source: "voidbase", provides: ["hardening@1"] }, { name: "audit", tier: "community", source, provides: [] }], files: { pb_hooks: source, pb_migrations: source, pb_public: source } };
+      }
+      // a fresh answer on every call, the way a response is
+      if (path === "/api/plugins/config") return structuredClone(planes);
       return { message: "referrer_policy took effect." };
     } },
   };
@@ -49,7 +54,25 @@ test("the panel gets a Plugins page listing what loaded and where each came from
   expect(app.store.headerLinks.map((l) => l.href)).toEqual(["#/collections", "#/logs", "#/plugins", "#/settings"]);
   const shown = render(page);
   const rows = find(shown, (e) => e.tag === "tr" && !!e.props["data-plugin"]);
-  expect(rows.map(text)).toEqual(["hardeningcoreShips with voidbasehardening@1", "auditcommunityDeclared in the repository"]);
+  expect(rows.map(text)).toEqual(["hardeningcoreShips with voidbaseNo: it ships with voidbasehardening@1", "auditcommunityInstalled on this instanceYes"]);
+});
+
+test("the page knows what it may change item by item: vanilla changes what the instance holds, extended changes nothing", async () => {
+  const vanilla = render((await openPage({ hardening })).page);
+  expect(text(find(vanilla, (e) => e.tag === "p")[0])).toStartWith("Vanilla: this instance holds its own plugins and files");
+  expect(find(vanilla, (e) => e.tag === "tr" && !!e.props["data-folder"]).map(text)).toEqual(["pb_hooksInstalled on this instanceYes", "pb_migrationsInstalled on this instanceYes", "pb_publicInstalled on this instanceYes"]);
+
+  const extended = render((await openPage({ hardening }, { mode: "repository", repository: "me/app" })).page);
+  expect(text(find(extended, (e) => e.tag === "p")[0])).toBe("Extended: the repository me/app declares this instance. The panel shows what it declares and changes none of it.");
+  expect(find(extended, (e) => e.tag === "tr" && !!e.props["data-plugin"]).map(text)).toContain("auditcommunityDeclared in the repositoryNo: change it in the repository and commit");
+  expect(find(extended, (e) => e.tag === "tr" && !!e.props["data-folder"]).map(text)[2]).toBe("pb_publicDeclared in the repositoryNo: change it in the repository and commit");
+  // a plane the instance would accept is still read only on an extended instance, with nothing to save
+  expect(find(extended, (e) => e.tag === "input").map((i) => i.props.disabled)).toEqual([true]);
+  expect(text(find(extended, (e) => e.tag === "div" && e.props["data-plugin"] === "hardening")[0])).toContain("Read only: an extended instance is configured in its project");
+  expect(find(extended, (e) => e.tag === "button")).toHaveLength(0);
+
+  const fixed = render((await openPage({}, { mode: "fixed" })).page);
+  expect(text(find(fixed, (e) => e.tag === "p")[0])).toStartWith("Extended: this instance was built with its plugins and files.");
 });
 
 test("a plane the instance holds is editable, one the project declares is read only, and a rebuild field says it waits", async () => {

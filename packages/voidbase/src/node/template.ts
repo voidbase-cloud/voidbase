@@ -7,6 +7,7 @@
 //
 // Nothing is cloned: no .git, no history, no remote pointing at somebody else's repository. What you get is the
 // files, which is what "start from" should mean. The next steps are read from the files themselves.
+import { githubRefusal, githubToken } from "./github-token";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -62,7 +63,7 @@ export async function resolveTemplate(input: string, marketplaces: string[], fet
   return { repository: hits[0].repository, listed: hits[0] };
 }
 
-const github = (extra: Record<string, string> = {}) => ({ "user-agent": "voidbase-init", ...(process.env.GH_TOKEN ? { authorization: `Bearer ${process.env.GH_TOKEN}` } : {}), ...extra });
+const github = (extra: Record<string, string> = {}) => ({ "user-agent": "voidbase-init", ...(githubToken() ? { authorization: `Bearer ${githubToken()}` } : {}), ...extra });
 
 /** GitHub answers 404 for a private repository and for a missing one alike, so the message says both */
 const notPublic = (repository: string) => `GitHub has no public repository called ${repository}: it is private, or it does not exist (GitHub answers the same for both)`;
@@ -71,7 +72,7 @@ const notPublic = (repository: string) => `GitHub has no public repository calle
 export async function defaultBranch(repository: string, fetchImpl: typeof fetch = fetch): Promise<string> {
   const res = await fetchImpl(`https://api.github.com/repos/${repository}`, { headers: github({ accept: "application/vnd.github+json" }), signal: AbortSignal.timeout(15_000) });
   if (res.status === 404) throw new Error(notPublic(repository));
-  if (!res.ok) throw new Error(`asking GitHub about ${repository}: HTTP ${res.status}`);
+  if (!res.ok) throw new Error(githubRefusal(res.status, `asking GitHub about ${repository}`));
   return ((await res.json()) as { default_branch?: string }).default_branch || "main";
 }
 
@@ -136,7 +137,7 @@ export async function fetchTemplate(input: string, dir: string | undefined, o: F
   const ref = o.ref ?? (await defaultBranch(repository, fetchImpl));
   const res = await fetchImpl(tarballUrl(repository, ref), { headers: github(), redirect: "follow", signal: AbortSignal.timeout(120_000) });
   if (res.status === 404) throw new Error(o.ref ? `GitHub has no ${ref} in ${repository}, or the repository is private or missing (GitHub answers 404 for all three)` : notPublic(repository));
-  if (!res.ok) throw new Error(`downloading ${repository} at ${ref}: HTTP ${res.status}`);
+  if (!res.ok) throw new Error(githubRefusal(res.status, `downloading ${repository} at ${ref}`));
   const bytes = new Uint8Array(await res.arrayBuffer());
   log(`downloaded ${ref} (${(bytes.byteLength / 1024).toFixed(0)} kB)`);
 

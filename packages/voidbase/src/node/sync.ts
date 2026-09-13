@@ -19,6 +19,7 @@
 // A brand-new project therefore is: fork voidbase-site (vb) or `voidbase init` (pb), push it to GitHub, fill in
 // the secrets.json, run `voidbase sync`. The first run says which dashboard step the API cannot do (install the
 // GitHub App for the repository and connect it, which also creates the build token); the second run finishes.
+import { githubToken } from "./github-token";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { CfApi, resolveAccount } from "../cloud/rest";
@@ -121,7 +122,7 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   const account = await resolveAccount(cf, deployed.account).catch((e: Error) => { throw new Error(`${e.message} (is ${BUILDS_TOKEN_ENV} a user token that reaches account ${deployed.account}?)`); });
   const tag = await workerTag(cf, account.id, deployed.name);
   if (!tag) { log(`\nci: Worker ${deployed.name} not found through ${BUILDS_TOKEN_ENV}; deploy first`); return; }
-  const info = await githubRepo(repo, { token: process.env.GH_TOKEN });
+  const info = await githubRepo(repo, { token: githubToken() });
   const link = buildsSettingsLink(deployed.name);
   const manual = `open ${link}\n  Under Builds, connect ${repo}: that installs the "Cloudflare Workers and Pages" GitHub App for it and creates the build token. Then run voidbase sync again.`;
   let connection: string;
@@ -151,7 +152,7 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   // what the previews need on both triggers: the repository (Workers Builds sets no variable for it), the GitHub token
   // for the pull request comment, and on the production trigger the prune switch; the previews trigger also needs the
   // superuser, which is how the preview signs in on production to seed itself
-  const ghToken = process.env.VOIDBASE_GH_TOKEN; const superuser = { email: process.env.VOIDBASE_SUPERUSER_EMAIL, password: process.env.VOIDBASE_SUPERUSER_PASSWORD };
+  const ghToken = githubToken(); const superuser = { email: process.env.VOIDBASE_SUPERUSER_EMAIL, password: process.env.VOIDBASE_SUPERUSER_PASSWORD };
   const forPreviews: BuildEnv = wantPreviews ? { VOIDBASE_PROJECT_REPO: { value: repo, is_secret: false }, ...(ghToken ? { VOIDBASE_GH_TOKEN: { value: ghToken, is_secret: true } } : {}) } : {};
   await setTriggerEnv(cf, account.id, prod.uuid, { ...env, ...forPreviews, ...(wantPreviews ? { VOIDBASE_PREVIEW_PRUNE: { value: "1", is_secret: false } } : {}) });
   if (previewsTrigger) await setTriggerEnv(cf, account.id, previewsTrigger.uuid, { ...env, ...forPreviews, ...(superuser.email && superuser.password ? { VOIDBASE_SUPERUSER_EMAIL: { value: superuser.email, is_secret: true }, VOIDBASE_SUPERUSER_PASSWORD: { value: superuser.password, is_secret: true } } : {}) });

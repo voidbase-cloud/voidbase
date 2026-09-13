@@ -91,6 +91,7 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      create an instance on this machine: a directory, a port and a superuser. The
                                      npm answer to downloading the executable, and it never touches Cloudflare
   local ls                           the instances on this machine, with their ports and whether they are running
+                                     (the same as voidbase instances --local)
   local start [name]                 run one (the first, if no name is given)
   local rm <name> [--purge] [--yes]  forget one; --purge deletes its directory and database too
 
@@ -108,7 +109,9 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   plugins update [name]              bring installed plugins to the latest their own marketplace serves
                                      (--dir <project> or --name <local instance> picks the project; default: here)
 
-  instances [--account id]           list the voidbase instances on the Cloudflare account the token reaches
+  instances [--local | --cloudflare [--account id]]
+                                     list instances: the ones this machine keeps (--local, the default) or the voidbase
+                                     instances on the Cloudflare account the token reaches (--cloudflare)
   destroy <name> [--yes]             delete an instance and everything it owns: the Worker, its database, its bucket,
                                      its queue and its custom domains. Irreversible; asks first unless --yes
   token                              print the Cloudflare dashboard link that creates VOIDBASE_DEPLOY_CF_API_KEY
@@ -229,6 +232,17 @@ async function serveOnWorkers(): Promise<never> {
   const bye = () => { void s.stop().then(() => process.exit(0)); };
   process.on("SIGINT", bye); process.on("SIGTERM", bye);
   process.exit(await s.exited);
+}
+// `voidbase instances --local` (and `voidbase local ls`): the instances this machine keeps under ~/.voidbase
+async function listLocalInstances(): Promise<void> {
+  const L = await import("../src/node/local");
+  const list = L.readRegistry();
+  if (!list.length) { console.log(`no local instances yet (voidbase local new <name>)\nregistry: ${L.registryPath()}`); return; }
+  console.log(`${list.length} local instance(s), from ${L.registryPath()}:`);
+  for (const i of list) {
+    const running = await L.isRunning(i.port);
+    console.log(`  ${i.name.padEnd(20)} :${String(i.port).padEnd(6)} ${running ? "running" : "stopped"}  ${L.human(L.sizeOf(i.dir)).padStart(8)}  ${i.dir}`);
+  }
 }
 // `voidbase templates` / `voidbase init --template`: what the marketplaces list, one line each, and how to start one
 async function listTemplates(): Promise<void> {
@@ -462,16 +476,7 @@ switch (cmd) {
     const L = await import("../src/node/local");
     const action = sub ?? "ls";
 
-    if (action === "ls" || action === "list") {
-      const list = L.readRegistry();
-      if (!list.length) { console.log(`no local instances yet (voidbase local new <name>)\nregistry: ${L.registryPath()}`); break; }
-      console.log(`${list.length} local instance(s), from ${L.registryPath()}:`);
-      for (const i of list) {
-        const running = await L.isRunning(i.port);
-        console.log(`  ${i.name.padEnd(20)} :${String(i.port).padEnd(6)} ${running ? "running" : "stopped"}  ${L.human(L.sizeOf(i.dir)).padStart(8)}  ${i.dir}`);
-      }
-      break;
-    }
+    if (action === "ls" || action === "list") { await listLocalInstances(); break; }   // the same as `voidbase instances --local`
 
     if (action === "new") {
       const name = rest[0];
@@ -597,6 +602,13 @@ switch (cmd) {
     break;
   }
   case "instances": {
+    // One command for both kinds, a flag choosing which: --local is the instances this machine keeps (the default, as it
+    // needs no credentials), --cloudflare the ones on the account the Cloudflare token reaches. --account implies it.
+    if (!flags.cloudflare && !flags.account) {
+      await listLocalInstances();
+      console.log(`\n(voidbase instances --cloudflare lists the instances on your Cloudflare account)`);
+      break;
+    }
     // What is on the account, without a project: an instance is a Worker voidbase tagged as one when it deployed.
     const { deployTarget } = await import("../src/node/deploy-cf");
     const { listVoidbaseWorkers } = await import("../src/cloud/rest");

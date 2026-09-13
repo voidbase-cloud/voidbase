@@ -155,11 +155,31 @@ function resolveTarget(opts: Pick<DeployOptions, "name" | "preview">, secrets: L
 
 export interface DeployTarget { api: CfApi; token: string; account: { id: string; name: string }; name: string; production: string; preview: string | null; secretsDir: string; secrets: LoadedSecrets }
 /** The environment, the token, the account and the worker name a deploy (or `voidbase secrets`) targets. */
+/**
+ * The token of `wrangler login`, or "" when wrangler has none. `wrangler auth token --json` answers `{ type, token }`
+ * and refreshes an expired OAuth token as it does so, so the token is good for the calls that follow. wrangler comes
+ * with this package, through void; it is run by whatever runs this process, which is Bun from the npm package and the
+ * executable acting as Bun from the prebuilt one (src/node/toolchain.ts).
+ */
+export function wranglerLoginToken(): string {
+  try {
+    const pkg = resolve(import.meta.dir, "../..");   // this package, where void (and wrangler through it) is installed
+    const voidDir = resolve(Bun.resolveSync("void/package.json", pkg), "..");
+    const wrangler = resolve(Bun.resolveSync("wrangler/package.json", voidDir), "..", "bin", "wrangler.js");
+    const r = Bun.spawnSync([process.execPath, wrangler, "auth", "token", "--json"], { stdout: "pipe", stderr: "pipe", env: { ...process.env, WRANGLER_SEND_METRICS: "false" } });
+    if (r.exitCode !== 0) return "";
+    const answer = JSON.parse(new TextDecoder().decode(r.stdout)) as { token?: unknown };
+    return typeof answer.token === "string" ? answer.token : "";
+  } catch { return ""; }
+}
+
 export async function deployTarget(opts: Pick<DeployOptions, "name" | "account" | "log" | "preview"> = {}): Promise<DeployTarget> {
   const log = opts.log ?? ((l: string) => console.log(l));
   const { secretsDir, secrets } = await loadProjectEnv(log);
-  const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || ""; // empty means unset
-  if (!token) { log(`${TOKEN_ENV} is not set.\n\n${tokenHelp()}`); throw new Error(`${TOKEN_ENV} missing`); }
+  // the documented variable, then the one wrangler reads, then wrangler's own login: a machine already signed in with
+  // `wrangler login` needs nothing else to deploy, a dry run included
+  const token = process.env[TOKEN_ENV] || process.env.CLOUDFLARE_API_TOKEN || wranglerLoginToken(); // empty means none
+  if (!token) { log(`No Cloudflare credentials: ${TOKEN_ENV} and CLOUDFLARE_API_TOKEN are not set, and wrangler is not logged in (wrangler login).\n\n${tokenHelp()}`); throw new Error(`${TOKEN_ENV} missing`); }
   const target = resolveTarget(opts, secrets, secretsDir);
   const api = new CfApi(token, API);
   const account = await resolveAccount(api, opts.account || process.env.VOIDBASE_DEPLOY_CF_ACCOUNT_ID || undefined).catch((e: Error) => { throw new Error(`${e.message} (is it ${TOKEN_ENV} with Account Settings read?)`); });

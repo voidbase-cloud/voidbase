@@ -1,0 +1,47 @@
+{
+  "name": "@voidbase-cloud/plugin-lemonsqueezy",
+  "version": "0.9.0-beta.58",
+  "description": "The lemonsqueezy plugin of voidbase. Taking money through Lemon Squeezy: provides payments@1 with its JSON:API, its signed webhooks and the shared payment rows",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/voidbase-cloud/voidbase.git",
+    "directory": "packages/plugin-lemonsqueezy"
+  },
+  "homepage": "https://github.com/voidbase-cloud/voidbase/tree/master/packages/plugin-lemonsqueezy#readme",
+  "bugs": {
+    "url": "https://github.com/voidbase-cloud/voidbase/issues"
+  },
+  "private": false,
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "tsconfig.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "voidbase",
+    "voidbase-plugin",
+    "payments",
+    "lemonsqueezy",
+    "cloudflare-workers"
+  ],
+  "engines": {
+    "bun": ">=1.2"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@voidbase-cloud/voidbase": "workspace:^"
+  }
+}

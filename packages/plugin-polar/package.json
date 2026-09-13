@@ -1,0 +1,47 @@
+{
+  "name": "@voidbase-cloud/plugin-polar",
+  "version": "0.9.0-beta.58",
+  "description": "The polar plugin of voidbase. Taking money through Polar: provides payments@1 with Polar's REST API, its Standard Webhooks and the shared payment rows",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/voidbase-cloud/voidbase.git",
+    "directory": "packages/plugin-polar"
+  },
+  "homepage": "https://github.com/voidbase-cloud/voidbase/tree/master/packages/plugin-polar#readme",
+  "bugs": {
+    "url": "https://github.com/voidbase-cloud/voidbase/issues"
+  },
+  "private": false,
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "tsconfig.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "voidbase",
+    "voidbase-plugin",
+    "payments",
+    "polar",
+    "cloudflare-workers"
+  ],
+  "engines": {
+    "bun": ">=1.2"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@voidbase-cloud/voidbase": "workspace:^"
+  }
+}

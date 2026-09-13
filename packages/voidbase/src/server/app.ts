@@ -51,6 +51,8 @@ import { disabled as disabledPlugins, installed as installedPlugins, migrationFi
 import { automigrateOn, pendingSchemaChanges, recordSchemaChange, type SchemaChange } from "./automigrate";
 import { installerInfo as whereFilesLive } from "./installer-info";
 import { publicPath } from "./public-files";
+import { sideLoadedChange } from "./auto-merge";
+import { commitFiles } from "./project-sync";
 import { configReport, declareConfig, environmentOf } from "./plugin-config";
 import { loadStoredConfig, setPluginConfig } from "./plugin-config-store";
 import type { Auth, Hardening, Mail, Observability, Realtime } from "./interfaces";
@@ -623,15 +625,18 @@ provideRecordContext(recordContextFor);
 // plugin says about itself comes from the plugin that loaded under that name, so that a plugin installed over a
 // shipped one answers for it rather than being described by the code it replaced (plugins/report.ts).
 // pb_public from the admin panel (public-files.ts): an instance that holds its own files lists and takes uploads, and
-// the fetcher serves an upload on the next request; on one its project declares, the files are listed and changed in git.
+// the fetcher serves an upload on the next request; on one its project declares, the files are the repository's, and a
+// change made here is committed only when auto-merge is on (auto-merge.ts), and refused naming what to set otherwise.
+const holdsPublicFiles = (env: AppEnv["Bindings"]) => whereFilesLive(env).mode === "filesystem" && !!publicFiles;
 app.get("/api/pb_public", (c) => {
   requireSuperuser(c);
-  const holds = whereFilesLive(c.env).mode === "filesystem" && !!publicFiles;
-  return c.json({ source: holds ? "instance" : "repository", editable: holds, files: publicFiles ? publicFiles.list() : [] });
+  const holds = holdsPublicFiles(c.env); const where = sideLoadedChange(c.env, holds);
+  return c.json({ source: holds ? "instance" : "repository", editable: where.to !== "refused", ...(where.to === "refused" ? { refusal: where.message } : {}), files: publicFiles ? publicFiles.list() : [] });
 });
 app.post("/api/pb_public", async (c) => {
   requireSuperuser(c);
-  if (whereFilesLive(c.env).mode !== "filesystem" || !publicFiles) throw new ApiError(409, "This instance's pb_public is declared by its project: change the files in the repository, commit them, and let the build carry them.");
+  const where = sideLoadedChange(c.env, holdsPublicFiles(c.env));
+  if (where.to === "refused") throw new ApiError(409, where.message);
   const form = await c.req.formData().catch(() => null);
   const prefix = String(form?.get("path") ?? "").replace(/^\/+|\/+$/g, "");
   const files = (form?.getAll("files") ?? []).filter((f): f is File => f instanceof File);
@@ -640,8 +645,12 @@ app.post("/api/pb_public", async (c) => {
   const targets = files.map((f) => ({ file: f, path: publicPath(prefix ? `${prefix}/${f.name}` : f.name) }));
   const refused = targets.filter((t) => !t.path).map((t) => t.file.name);
   if (refused.length) throw badRequest(`These are not paths inside pb_public: ${refused.map((n) => JSON.stringify(n)).join(", ")}.`);
-  for (const t of targets) publicFiles.write(t.path!, new Uint8Array(await t.file.arrayBuffer()));
   const written = targets.map((t) => t.path!);
+  if (where.to === "repository") {
+    const committed = await commitFiles(where.repo, await Promise.all(targets.map(async (t) => ({ path: `pb_public/${t.path}`, content: new Uint8Array(await t.file.arrayBuffer()) }))), `chore(pb_public): ${written.join(", ")} from the admin panel`);
+    return c.json({ written, committed: committed.url, message: `Committed ${written.join(", ")} to ${where.repo.fullName} (${committed.branch}); its build deploys ${written.length === 1 ? "it" : "them"}.` });
+  }
+  for (const t of targets) publicFiles!.write(t.path!, new Uint8Array(await t.file.arrayBuffer()));
   return c.json({ written, message: `Uploaded ${written.join(", ")}. The instance serves ${written.length === 1 ? "it" : "them"} now.` });
 });
 

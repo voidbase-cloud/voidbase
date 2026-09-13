@@ -51,14 +51,20 @@ export const pluginsMessage = (change: PluginChange): string =>
  * One commit on the branch: pb_plugins/<name>/{bundle.js,release.json} written or deleted and voidbase.lock updated
  * the way `voidbase plugins add|remove` would. Returns the commit and the lock it wrote.
  */
-/** files committed to the branch in one commit beside whatever is there: a migration automigrate wrote (./automigrate.ts) */
-export async function commitFiles(repo: Repo, files: { path: string; content: string }[], message: string): Promise<{ sha: string; url: string; branch: string }> {
+/**
+ * Files committed to the branch in one commit beside whatever is there: a migration automigrate wrote (./automigrate.ts),
+ * a side-loaded file changed with auto-merge on (./auto-merge.ts). Text is sent as text, bytes as base64.
+ */
+export async function commitFiles(repo: Repo, files: { path: string; content: string | Uint8Array }[], message: string): Promise<{ sha: string; url: string; branch: string }> {
   const full = repo.fullName;
   const head = await gh<{ object: { sha: string } }>(repo, "GET", `/repos/${full}/git/ref/heads/${repo.branch}`);
   const headSha = head.data.object.sha;
   const commit = await gh<{ tree: { sha: string } }>(repo, "GET", `/repos/${full}/git/commits/${headSha}`);
   const tree: { path: string; mode: "100644"; type: "blob"; sha: string }[] = [];
-  for (const f of files) tree.push({ path: f.path, mode: "100644", type: "blob", sha: (await gh<{ sha: string }>(repo, "POST", `/repos/${full}/git/blobs`, { content: f.content, encoding: "utf-8" })).data.sha });
+  for (const f of files) {
+    const blob = typeof f.content === "string" ? { content: f.content, encoding: "utf-8" } : { content: b64(f.content), encoding: "base64" };
+    tree.push({ path: f.path, mode: "100644", type: "blob", sha: (await gh<{ sha: string }>(repo, "POST", `/repos/${full}/git/blobs`, blob)).data.sha });
+  }
   const newTree = await gh<{ sha: string }>(repo, "POST", `/repos/${full}/git/trees`, { base_tree: commit.data.tree.sha, tree });
   const newCommit = await gh<{ sha: string; html_url?: string }>(repo, "POST", `/repos/${full}/git/commits`, { message, tree: newTree.data.sha, parents: [headSha] });
   await gh(repo, "PATCH", `/repos/${full}/git/refs/heads/${repo.branch}`, { sha: newCommit.data.sha, force: false });

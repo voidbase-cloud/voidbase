@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { d1 } from "../../src/node/d1";
 import { cloudflareRebuilds, FOLD_SECONDS, rebuildsOnCloudflare } from "../../src/server/rebuild/cloudflare";
 import { declareAdd, declareUpdate, readDeclaration } from "../../src/server/rebuild/declaration";
-import { readState, RELEASE_PREFIX, releaseModuleKey, runModuleKey, runRebuild, type StepApi } from "../../src/server/rebuild/run";
+import { readState, RELEASE_PREFIX, releaseModuleKey, releaseModuleKeyIn, runModuleKey, runRebuild, stagedReleasePrefix, type StepApi } from "../../src/server/rebuild/run";
 
 const dirs: string[] = []; const servers: { stop(force?: boolean): void }[] = [];
 afterAll(() => { for (const s of servers) s.stop(true); for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -162,6 +162,30 @@ describe("a vanilla instance on Cloudflare rebuilds itself", () => {
     expect(cf.deployments.at(-1)).toEqual({ version: "v-1", force: true });
     expect((await readState(env.DB)).current).toBe(1);
     await expect(Promise.resolve().then(() => rebuilds.rollback(9))).rejects.toThrow("there is no version 9 to roll back to");
+  });
+
+  test("an update stages a newer release: the run builds on it and uploads its assets, later rebuilds stay on it, and a rollback leaves it", async () => {
+    const dec = new TextDecoder();
+    const staged = stagedReleasePrefix("0.9.1-test");
+    const original = JSON.parse(dec.decode(storage.objects.get(`${RELEASE_PREFIX}manifest.json`)!)) as { modules: { path: string }[] };
+    for (const m of original.modules) storage.objects.set(releaseModuleKeyIn(staged, m.path), storage.objects.get(releaseModuleKey(m.path))!);
+    storage.objects.set(`${staged}manifest.json`, enc.encode(JSON.stringify({ ...original, version: "0.9.1-test", assetsConfig: { html_handling: "auto-trailing-slash" } })));
+    const update = await rebuilds.queue("update voidbase 0.9.0-test -> 0.9.1-test", { release: "0.9.1-test", assets: "assets-jwt-1" });
+    expect((await runRebuild(env, update.id, steps, 0, opts))?.status).toBe("done");
+    expect(cf.uploads.at(-1)!.metadata).toMatchObject({ assets: { jwt: "assets-jwt-1", config: { html_handling: "auto-trailing-slash" } } });
+    expect(cf.uploads.at(-1)!.metadata.keep_assets).toBeUndefined();
+    let s = await readState(env.DB);
+    expect(s.release).toBe("0.9.1-test");
+    expect(s.versions.at(-1)).toMatchObject({ release: "0.9.1-test" });
+    expect(s.runs.at(-1)!.assets).toBeUndefined();
+    const plain = await rebuilds.queue("change a setting");
+    expect((await runRebuild(env, plain.id, steps, 0, opts))?.status).toBe("done");
+    s = await readState(env.DB);
+    expect(s.runs.at(-1)!.release).toBe("0.9.1-test");
+    expect(cf.uploads.at(-1)!.metadata.keep_assets).toBe(true);
+    const back = await rebuilds.rollback(1);
+    expect((await runRebuild(env, back.id, steps, 0, opts))?.status).toBe("done");
+    expect((await readState(env.DB)).release).toBeUndefined();
   });
 });
 

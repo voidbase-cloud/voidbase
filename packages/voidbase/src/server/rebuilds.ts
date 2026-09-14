@@ -33,6 +33,10 @@ export interface RebuildRun {
   version?: number;
   /** the voidbase version it builds on: the one in place, unless an update asked for another (src/node/core.ts) */
   core?: string;
+  /** on Cloudflare: the release it builds on, when an update staged one in the instance's bucket (src/node/cloud-update.ts) */
+  release?: string;
+  /** on Cloudflare: the completion token of that release's assets, uploaded for this run's version and spent by it */
+  assets?: string;
   /** the declaration as it stood when the run read it */
   declared?: Record<string, Declared>;
   disabled?: string[];
@@ -45,6 +49,8 @@ export interface InstanceVersion {
   number: number; at: string; plugins: Record<string, Declared>; disabled: string[]; from: number | null; run: number;
   /** locally: the voidbase version this version runs on, which a rollback brings back with it */
   core?: string;
+  /** on Cloudflare: the release it was built on (absent: the one the instance was created with) */
+  release?: string;
   /** on Cloudflare: the Worker version it was uploaded as, which a rollback deploys again */
   workerVersion?: string;
   /** on Cloudflare: the declaration it was built from, which a rollback puts back */
@@ -54,11 +60,15 @@ export interface InstanceVersion {
 /** the scheduled comparison of what is deployed with what the panel declares (voidbase-stories: "Noticing drift") */
 export interface Drift { checkedAt: string; declared: string; deployed: string | null; drifted: boolean; detail?: string }
 
-export interface RebuildState { runs: RebuildRun[]; versions: InstanceVersion[]; current: number | null; drift?: Drift }
+export interface RebuildState {
+  runs: RebuildRun[]; versions: InstanceVersion[]; current: number | null; drift?: Drift;
+  /** on Cloudflare: the release every rebuild builds on since an update took the instance onto it (absent: the one it was created with) */
+  release?: string;
+}
 
 export interface Rebuilds {
   /** a change to the declaration: folds into a waiting run, or queues the next */
-  queue(reason: string, opts?: { core?: string }): RebuildRun | Promise<RebuildRun>;
+  queue(reason: string, opts?: { core?: string; release?: string; assets?: string }): RebuildRun | Promise<RebuildRun>;
   /** a change is still being made (a plugin downloading): nothing starts until the returned release is called */
   hold(): () => void;
   /** resume the failed run from the step that failed, or null when the last run did not fail */

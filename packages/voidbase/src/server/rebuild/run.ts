@@ -28,6 +28,10 @@ export const releaseModuleKey = (path: string): string => `${RELEASE_PREFIX}work
 /** where a run keeps a module it assembled: escaped the same way, since destroying the instance deletes these through the REST API too */
 export const runModuleKey = (prefix: string, path: string): string => `${prefix}modules/${path.replace(/\./g, "%2E")}`;
 export const runPrefix = (run: number) => `_voidbase/rebuilds/${run}/`;
+/** where a release an update staged lives in the instance's bucket; the one the instance was created with is RELEASE_PREFIX */
+export const stagedReleasePrefix = (release: string): string => `_voidbase/releases/${release}/`;
+/** a module of the release under `prefix`, its dots escaped as releaseModuleKey escapes them */
+export const releaseModuleKeyIn = (prefix: string, path: string): string => `${prefix}worker/${path.replace(/\./g, "%2E")}`;
 
 export interface RebuildEnv {
   DB: D1Database; STORAGE: R2Bucket;
@@ -45,7 +49,7 @@ const bytesOf = async (bucket: R2Bucket, key: string): Promise<Uint8Array> => {
   return new Uint8Array(await o.arrayBuffer());
 };
 
-interface ReleaseManifest { mainModule: string; compatibilityDate: string; compatibilityFlags: string[]; version: string; modules: { path: string; type: ModuleFile["type"] }[] }
+interface ReleaseManifest { mainModule: string; compatibilityDate: string; compatibilityFlags: string[]; version: string; modules: { path: string; type: ModuleFile["type"] }[]; assetsConfig?: Record<string, unknown> }
 
 export async function runRebuild(env: RebuildEnv, runId: number, step: StepApi, wait = 0, o: RunOptions = {}): Promise<RebuildRun | null> {
   const now = () => (o.now ? o.now() : new Date()).toISOString();
@@ -66,6 +70,8 @@ export async function runRebuild(env: RebuildEnv, runId: number, step: StepApi, 
       const d = await readDeclaration(env.DB);
       run.declared = Object.fromEntries(Object.entries(d.plugins).map(([n, e]) => [n, { version: e.version, commit: e.source.commit }]));
       run.disabled = [...d.disabled];
+      // a rebuild for any other reason builds on the release the instance is on; an update named its own when it was queued
+      run.release ??= s.release;
       await env.STORAGE.put(`${prefix}declaration.json`, JSON.stringify(d));
     } else if (name === "fetch") {
       const d = JSON.parse(new TextDecoder().decode(await bytesOf(env.STORAGE, `${prefix}declaration.json`))) as Declaration;
@@ -78,9 +84,10 @@ export async function runRebuild(env: RebuildEnv, runId: number, step: StepApi, 
       }
     } else if (name === "assemble") {
       const d = JSON.parse(new TextDecoder().decode(await bytesOf(env.STORAGE, `${prefix}declaration.json`))) as Declaration;
-      const manifest = JSON.parse(new TextDecoder().decode(await bytesOf(env.STORAGE, `${RELEASE_PREFIX}manifest.json`))) as ReleaseManifest;
+      const releaseBase = run.release ? stagedReleasePrefix(run.release) : RELEASE_PREFIX;
+      const manifest = JSON.parse(new TextDecoder().decode(await bytesOf(env.STORAGE, `${releaseBase}manifest.json`))) as ReleaseManifest;
       const release = new Map<string, ModuleFile>();
-      for (const m of manifest.modules) release.set(m.path, { type: m.type, bytes: await bytesOf(env.STORAGE, releaseModuleKey(m.path)) });
+      for (const m of manifest.modules) release.set(m.path, { type: m.type, bytes: await bytesOf(env.STORAGE, releaseModuleKeyIn(releaseBase, m.path)) });
       const plugins = [];
       for (const [plugin, entry] of Object.entries(d.plugins)) {
         plugins.push({ name: plugin, version: entry.version, marketplace: entry.marketplace, files: pluginFilesFrom(await untarGz(await bytesOf(env.STORAGE, `${prefix}plugins/${plugin}.tgz`)), entry.source.directory) });
@@ -88,22 +95,26 @@ export async function runRebuild(env: RebuildEnv, runId: number, step: StepApi, 
       const next = assemble({ release, plugins, disabled: d.disabled });
       const modules: { path: string; type: ModuleFile["type"] }[] = [];
       for (const [path, m] of next) { await env.STORAGE.put(runModuleKey(prefix, path), m.bytes); modules.push({ path, type: m.type }); }
-      await env.STORAGE.put(`${prefix}modules.json`, JSON.stringify({ mainModule: manifest.mainModule, compatibilityDate: manifest.compatibilityDate, compatibilityFlags: manifest.compatibilityFlags, release: manifest.version, modules }));
+      await env.STORAGE.put(`${prefix}modules.json`, JSON.stringify({ mainModule: manifest.mainModule, compatibilityDate: manifest.compatibilityDate, compatibilityFlags: manifest.compatibilityFlags, release: manifest.version, assetsConfig: manifest.assetsConfig, modules }));
       run.version = (s.versions.at(-1)?.number ?? 0) + 1;
     } else if (name === "upload") {
       if (run.version === undefined) throw new Error("no version was assembled for this run");
       const index = JSON.parse(new TextDecoder().decode(await bytesOf(env.STORAGE, `${prefix}modules.json`))) as { mainModule: string; compatibilityDate: string; compatibilityFlags: string[]; modules: { path: string; type: ModuleFile["type"] }[] };
       const modules = new Map<string, ModuleFile>();
+      const assetsConfig = (index as { assetsConfig?: Record<string, unknown> }).assetsConfig;
       for (const m of index.modules) modules.set(m.path, { type: m.type, bytes: await bytesOf(env.STORAGE, runModuleKey(prefix, m.path)) });
       const d = JSON.parse(new TextDecoder().decode(await bytesOf(env.STORAGE, `${prefix}declaration.json`))) as Declaration;
-      const versionId = await uploadVersion(cf(), account!, script!, modules, { mainModule: index.mainModule, compatibilityDate: index.compatibilityDate, compatibilityFlags: index.compatibilityFlags, message: `rebuild ${run.id}: ${run.reasons.join(", ")}`, tag: `rebuild-${run.version}-${await declarationHash(d)}` });
+      const versionId = await uploadVersion(cf(), account!, script!, modules, { mainModule: index.mainModule, compatibilityDate: index.compatibilityDate, compatibilityFlags: index.compatibilityFlags, message: `rebuild ${run.id}: ${run.reasons.join(", ")}`, tag: `rebuild-${run.version}-${await declarationHash(d)}`, ...(run.assets ? { assets: { jwt: run.assets, config: assetsConfig } } : {}) });
       s.versions = s.versions.filter((v) => v.number !== run.version);
-      s.versions.push({ number: run.version, at: now(), plugins: run.declared ?? {}, disabled: run.disabled ?? [], from: s.current, run: run.id, workerVersion: versionId, declaration: d });
+      s.versions.push({ number: run.version, at: now(), plugins: run.declared ?? {}, disabled: run.disabled ?? [], from: s.current, run: run.id, workerVersion: versionId, declaration: d, ...(run.release ? { release: run.release } : {}) });
     } else if (name === "restart") {
       const v = s.versions.find((x) => x.number === run.version);
       if (!v?.workerVersion) throw new Error(`version ${run.version} was never uploaded`);
       await deployVersion(cf(), account!, script!, v.workerVersion, `rebuild ${run.id}: onto version ${run.version}`, run.reasons.some((r) => r.startsWith("roll back")));
       s.current = run.version ?? null;
+      // the release this version was built on is the one every later rebuild builds on; its assets token is spent
+      if (run.release) s.release = run.release;
+      delete run.assets;
     }
   }
 

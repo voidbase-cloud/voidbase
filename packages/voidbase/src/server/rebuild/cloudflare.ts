@@ -27,11 +27,13 @@ export function cloudflareRebuilds(env: CloudflareRebuildEnv, o: { now?: () => D
     await env.VOIDBASE_REBUILD.create({ id: `rebuild-${run.id}-${Date.now().toString(36)}`, params: { run: run.id, wait } });
   };
   return {
-    async queue(reason) {
+    async queue(reason, opts) {
       const s = await readState(env.DB);
       const waiting = s.runs.find((r) => r.status === "queued");
-      if (waiting) { waiting.reasons.push(reason); await writeState(env.DB, s); return waiting; }
+      if (waiting) { waiting.reasons.push(reason); if (opts?.release) waiting.release = opts.release; if (opts?.assets) waiting.assets = opts.assets; await writeState(env.DB, s); return waiting; }
       const run = fresh((s.runs.at(-1)?.id ?? 0) + 1, [reason]);
+      if (opts?.release) run.release = opts.release;
+      if (opts?.assets) run.assets = opts.assets;
       s.runs.push(run); await writeState(env.DB, s);
       await start(run, FOLD_SECONDS);
       return run;
@@ -54,6 +56,8 @@ export function cloudflareRebuilds(env: CloudflareRebuildEnv, o: { now?: () => D
       if (!v) throw new Error(`there is no version ${version} to roll back to (versions: ${s.versions.map((x) => x.number).join(", ") || "none"})`);
       if (!v.workerVersion) throw new Error(`version ${version} was never uploaded, so there is nothing to roll back onto`);
       if (v.declaration) await restoreDeclaration(env.DB, v.declaration as Parameters<typeof restoreDeclaration>[1]);
+      // the release that version was built on, which an update may since have moved the instance off
+      if (v.release) s.release = v.release; else delete s.release;
       const run = fresh((s.runs.at(-1)?.id ?? 0) + 1, [`roll back to version ${version}`]);
       for (const st of run.steps) if (st.name !== "restart") { st.status = "skipped"; st.detail = `version ${version} is already uploaded`; }
       run.version = version; run.declared = v.plugins; run.disabled = v.disabled;

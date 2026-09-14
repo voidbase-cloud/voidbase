@@ -3,7 +3,7 @@
 // rebuild keeps its work in. Every call is the Cloudflare REST API with the instance's own token (VOIDBASE_REBUILD_TOKEN).
 //
 // A version keeps what the Worker already has: its bindings and secrets (`keep_bindings`, by type) and its static assets
-// (`keep_assets`), so a rebuild changes code and nothing else. Uploading and deploying are two calls on purpose: the
+// (`keep_assets`), so a rebuild changes code and nothing else, except an update of the release, which brings its own assets. Uploading and deploying are two calls on purpose: the
 // upload is a version that serves nothing yet, and the deploy is the restart onto it, which is also what a rollback is.
 import type { ModuleFile } from "../server/rebuild/assemble";
 import type { CfApi } from "./rest";
@@ -11,18 +11,22 @@ import type { CfApi } from "./rest";
 /** the binding types an instance has, every one kept as the Worker holds it */
 export const KEEP_BINDINGS = [
   "plain_text", "json", "secret_text", "secret_key", "d1", "r2_bucket", "kv_namespace", "durable_object_namespace", "queue", "ratelimit",
-  "workflow", "secrets_store_secret", "flagship", "analytics_engine", "ai", "send_email", "service", "version_metadata",
+  "workflow", "secrets_store_secret", "flagship", "analytics_engine", "ai", "send_email", "service", "version_metadata", "assets",
 ];
 
 const MIME: Record<ModuleFile["type"], string> = { esm: "application/javascript+module", wasm: "application/wasm", text: "text/plain", data: "application/octet-stream" };
 
-export interface VersionMeta { mainModule: string; compatibilityDate: string; compatibilityFlags: string[]; message: string; tag: string }
+export interface VersionMeta {
+  mainModule: string; compatibilityDate: string; compatibilityFlags: string[]; message: string; tag: string;
+  /** a release update's assets: the completion token of their upload session, and the release's asset settings */
+  assets?: { jwt: string; config?: Record<string, unknown> };
+}
 
 /** upload `modules` as a version of `script` that serves nothing until deployed; returns the version id */
 export async function uploadVersion(cf: CfApi, account: string, script: string, modules: Map<string, ModuleFile>, m: VersionMeta): Promise<string> {
   const metadata = {
     main_module: m.mainModule, compatibility_date: m.compatibilityDate, compatibility_flags: m.compatibilityFlags,
-    bindings: [], keep_bindings: KEEP_BINDINGS, keep_assets: true,
+    bindings: [], keep_bindings: KEEP_BINDINGS, ...(m.assets ? { assets: { jwt: m.assets.jwt, ...(m.assets.config ? { config: m.assets.config } : {}) } } : { keep_assets: true }),
     annotations: { "workers/message": m.message.slice(0, 900), "workers/tag": m.tag.slice(0, 100) },
   };
   const form = new FormData();

@@ -207,6 +207,21 @@ export function wranglerLoginToken(): string {
  * cron trigger is the one measured, when the account has used all five a Workers Free plan allows -- used to exit 1
  * with the instance up and working, and a pipeline reading the exit code rolled back something that was fine.
  */
+/**
+ * the health status of a Worker that was just uploaded, asked until it answers 200 or the budget is spent: a fresh
+ * workers.dev address can take several seconds to answer, and asking once took a deploy that went live (and only lost
+ * its cron trigger to the account's limit) for one that failed
+ */
+export async function waitForHealth(url: string, budgetMs = 60_000, pollMs = 3_000, fetchImpl: typeof fetch = fetch): Promise<number> {
+  const deadline = Date.now() + budgetMs;
+  let status = 0;
+  for (;;) {
+    status = await fetchImpl(`${url}/api/health`, { signal: AbortSignal.timeout(5_000) }).then((r) => r.status).catch(() => 0);
+    if (status === 200 || Date.now() >= deadline) return status;
+    await Bun.sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+  }
+}
+
 export function deployWentLive(o: { startedAt: number; modifiedOn?: string | null; health: number }): boolean {
   if (!o.modifiedOn) return false;
   const modified = Date.parse(o.modifiedOn);
@@ -547,7 +562,9 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     await sh([voidBin, "deploy", "--backend", "cloudflare"]);
   } catch (err) {
     const written = (await listVoidbaseWorkers(api, account.id).catch(() => [])).find((w) => w.name === name);
-    const health = url ? await fetch(`${url}/api/health`).then((r) => r.status).catch(() => 0) : 0;
+    // only a Worker this deploy wrote is worth waiting for; one it never wrote failed before the upload
+    const wroteIt = deployWentLive({ startedAt, modifiedOn: written?.modified_on, health: 200 });
+    const health = url && wroteIt ? await waitForHealth(url) : 0;
     if (!deployWentLive({ startedAt, modifiedOn: written?.modified_on, health })) throw err;
     log(`\nthe Worker went live, but a step after the upload failed: ${err instanceof Error ? err.message : String(err)}`);
     if (cron) {

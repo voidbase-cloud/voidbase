@@ -31,6 +31,9 @@ bunx @voidbase-cloud/voidbase serve     # or run the CLI without installing
 voidbase local new blog                 # a named instance on this machine, with its own port and superuser
 voidbase local ls                       # what you have locally; `voidbase instances` does the same for Cloudflare
 voidbase update                         # move to the newest release, whichever way voidbase is installed
+voidbase update blog                    # rebuild a local instance onto it in place; `voidbase rollback blog` goes back
+voidbase update --cloudflare blog       # the same for an instance on Cloudflare, through its own rebuild
+voidbase instances create --cloudflare shop --template voidbase-demo   # a cloud instance shaped like a template
 ```
 
 Or, like PocketBase, a single prebuilt executable from the

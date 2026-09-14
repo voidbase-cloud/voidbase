@@ -67,6 +67,10 @@ records are browsed and edited, mail and OAuth2 providers are configured, logs a
 Beside it, `/api/docs` is the instance's own API reference: an OpenAPI document generated from the collections you
 have, scoped to the token it is opened with (nothing signed in, the public API; a user, that user's; a superuser,
 everything), read through Scalar. The document itself is `/api/openapi.json` (docs/plugins.md, the `openapi` plugin).
+A rule that reads only who is asking is decided for that token before any record is in question, so on an instance
+with several vendors, `@request.auth.vendor = "acme"` puts acme's collection in acme's document and in nobody else's; a
+rule that reads a record's fields or the request is described to anyone signed in, and the records API decides it per
+record as always.
 
 Sign in with a superuser account. If you are setting the instance up yourself, the next section makes one.
 
@@ -136,12 +140,23 @@ project whose `package.json` depends on voidbase is updated as a dependency, a g
 the executable replaces itself as above. Updating a project changes what your next deploy will carry, not what is
 serving right now.
 
+A named instance on this machine is updated in place: `voidbase update <name>` (or `--dir <pb_data>`) rebuilds it onto
+the newest voidbase, or `--to <version>`, as a new version of the instance that pins that voidbase, and a running
+instance takes it without a restart by hand. `voidbase rollback <name>` goes back to the version before, voidbase and
+plugins together (`--to <n>` names one). An instance on Cloudflare that rebuilds itself is updated the same way:
+`voidbase update --cloudflare <name>` stages the release in the instance's own bucket, applies its D1 migrations and
+lets the instance's rebuild land it as a version, keeping the plugins its panel installed, and `voidbase rollback
+--cloudflare <name>` goes back. `voidbase instances create --cloudflare <name> --template <template>` creates one
+shaped like a template (its hooks, migrations, pages and plugins) with a superuser of its own, printed once; the
+template's own deploy target and domains stay the template author's.
+
 `voidbase types --url <instance>` writes a typed client for the PocketBase JS SDK, generated from the instance's own
 API description rather than from a second reading of the collections, so the client and `/api/docs` cannot
 disagree. It fetches `GET /api/openapi.json` as a superuser (`--token <superuser token>`, or `--email` and
 `--password` to sign in through `_superusers/auth-with-password`; `--admin email:password` and
 `VOIDBASE_SUPERUSER_EMAIL`/`_PASSWORD` work as for the other commands), the one scope that describes every
-collection, and writes one file, `src/voidbase.ts` unless `--out` says otherwise, overwritten each time, with a
+collection (a user's `--token` alone generates that user's slice instead, which is how a vendor types a client for
+what they may reach without asking an administrator), and writes one file, `src/voidbase.ts` unless `--out` says otherwise, overwritten each time, with a
 header that says it is generated and how to regenerate it. The file has an interface per collection
 (`PostsRecord`, `UsersRecord`: `string`, `number`, `boolean`, a union of the literals for a `select`, an array of
 them for a multi-select, `unknown` for `json`, `{ lon; lat }` for a `geoPoint`, an id or ids for a `relation` and a

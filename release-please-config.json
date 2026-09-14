@@ -57,8 +57,7 @@
   ],
   "packages": {
     "packages/voidbase": {
-      "package-name": "@voidbase-cloud/voidbase",
-      "release-as": "1.0.0"
+      "package-name": "@voidbase-cloud/voidbase"
     }
   }
 }

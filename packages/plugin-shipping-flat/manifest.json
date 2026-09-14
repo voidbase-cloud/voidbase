@@ -1,6 +1,6 @@
 {
   "name": "shipping-flat",
-  "version": "0.9.0-beta.64",
+  "version": "0.9.0-beta.65",
   "tier": "official",
   "voidbase": "*",
   "provides": [

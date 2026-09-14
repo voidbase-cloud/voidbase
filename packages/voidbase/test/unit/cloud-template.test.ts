@@ -27,6 +27,7 @@ function fakes(files: Record<string, string>) {
 describe("creating a cloud instance from a template", () => {
   test("the template deploys under the given name, with no deploy target of its author's or this shell's, and a superuser of its own", async () => {
     const f = fakes({ "pb_hooks/demo.pb.js": "cronAdd('demo-reset', '0 * * * *', () => {})", "package.json": "{}" });
+    const shell = { VOIDBASE_DOMAINS: process.env.VOIDBASE_DOMAINS, VOIDBASE_DEPLOY_NAME: process.env.VOIDBASE_DEPLOY_NAME, VOIDBASE_SUPERUSER_PASSWORD: process.env.VOIDBASE_SUPERUSER_PASSWORD };
     process.env.VOIDBASE_DOMAINS = "site.example"; process.env.VOIDBASE_DEPLOY_NAME = "someone-else"; process.env.VOIDBASE_SUPERUSER_PASSWORD = "the shell's";
     try {
       const made = await createFromTemplate({ template: "voidbase-demo", name: "vbstories-et", email: "admin@example.com", log: () => undefined, ...f });
@@ -42,15 +43,16 @@ describe("creating a cloud instance from a template", () => {
       expect(process.env.VOIDBASE_DEPLOY_NAME).toBe("someone-else");
       expect(process.env.VOIDBASE_SUPERUSER_PASSWORD).toBe("the shell's");
       expect(existsSync(f.seen.dir!)).toBe(false);
-    } finally { delete process.env.VOIDBASE_DOMAINS; delete process.env.VOIDBASE_DEPLOY_NAME; delete process.env.VOIDBASE_SUPERUSER_PASSWORD; }
+    } finally { for (const [k, v] of Object.entries(shell)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
   });
 
   test("a template with no package.json installs nothing; a failed deploy still removes the scratch directory", async () => {
     const f = fakes({ "pb_hooks/demo.pb.js": "" });
+    const before = process.env.VOIDBASE_SUPERUSER_EMAIL;
     const failing = { ...f, sync: async (o: SyncOptions) => { await f.sync(o); throw new Error("deploy refused"); } };
     await expect(createFromTemplate({ template: "voidbase-demo", name: "vbstories-et", email: "a@b.c", log: () => undefined, ...failing })).rejects.toThrow("deploy refused");
     expect(f.seen.installed).toBeUndefined();
     expect(existsSync(f.seen.dir!)).toBe(false);
-    expect(process.env.VOIDBASE_SUPERUSER_EMAIL).toBeUndefined();
+    expect(process.env.VOIDBASE_SUPERUSER_EMAIL).toBe(before);
   });
 });

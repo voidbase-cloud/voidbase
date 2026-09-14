@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-polar",
-  "version": "0.9.0-beta.66",
+  "version": "0.9.0-beta.67",
   "description": "The polar plugin of voidbase. Taking money through Polar: provides payments@1 with Polar's REST API, its Standard Webhooks and the shared payment rows",
   "license": "MIT",
   "repository": {

@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-lemonsqueezy",
-  "version": "0.9.0-beta.66",
+  "version": "0.9.0-beta.67",
   "description": "The lemonsqueezy plugin of voidbase. Taking money through Lemon Squeezy: provides payments@1 with its JSON:API, its signed webhooks and the shared payment rows",
   "license": "MIT",
   "repository": {

@@ -1,6 +1,6 @@
 {
   "name": "@voidbase-cloud/plugin-auth",
-  "version": "0.9.0-beta.66",
+  "version": "0.9.0-beta.67",
   "description": "The auth plugin of voidbase: provides auth@1, mounting password, OAuth2, OTP, MFA and passkey sign-in and answering who a request is",
   "license": "MIT",
   "repository": {

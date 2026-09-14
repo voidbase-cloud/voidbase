@@ -1,6 +1,6 @@
 {
   "name": "mail",
-  "version": "0.9.0-beta.66",
+  "version": "0.9.0-beta.67",
   "tier": "core",
   "voidbase": "*",
   "provides": [

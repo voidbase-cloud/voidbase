@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.0-beta.67](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.66...v0.9.0-beta.67) (2026-09-14)
+
+* fix(cli): a handed-back executable restarts itself the way it is started, not by its internal path
+
 ## [0.9.0-beta.66](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.65...v0.9.0-beta.66) (2026-09-14)
 
 * fix(cli): an instance handed back to the CLI's own voidbase records itself and takes requests

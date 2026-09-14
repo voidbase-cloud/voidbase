@@ -194,7 +194,7 @@ export function wranglerLoginToken(): string {
     const pkg = resolve(import.meta.dir, "../..");   // this package, where void (and wrangler through it) is installed
     const voidDir = resolve(Bun.resolveSync("void/package.json", pkg), "..");
     const wrangler = resolve(Bun.resolveSync("wrangler/package.json", voidDir), "..", "bin", "wrangler.js");
-    const r = Bun.spawnSync([process.execPath, wrangler, "auth", "token", "--json"], { stdout: "pipe", stderr: "pipe", env: { ...process.env, WRANGLER_SEND_METRICS: "false" } });
+    const r = Bun.spawnSync([wranglerRuntime(), wrangler, "auth", "token", "--json"], { stdout: "pipe", stderr: "pipe", env: { ...process.env, WRANGLER_SEND_METRICS: "false" } });
     if (r.exitCode !== 0) return "";
     const answer = JSON.parse(new TextDecoder().decode(r.stdout)) as { token?: unknown };
     return typeof answer.token === "string" ? answer.token : "";
@@ -220,6 +220,11 @@ export async function waitForHealth(url: string, budgetMs = 60_000, pollMs = 3_0
     if (status === 200 || Date.now() >= deadline) return status;
     await Bun.sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
   }
+}
+
+/** the runtime wrangler runs on: Node from PATH, which wrangler supports, else the one running this CLI */
+export function wranglerRuntime(which: (bin: string) => string | null = (bin) => Bun.which(bin)): string {
+  return which("node") ?? process.execPath;
 }
 
 export function deployWentLive(o: { startedAt: number; modifiedOn?: string | null; health: number }): boolean {
@@ -550,7 +555,9 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
     if (secrets.length) { const r = await putStoreSecrets(api, account.id, store, name, Object.fromEntries(secrets)); log(`secrets store: ${r.created.length ? `created ${r.created.join(", ")}` : ""}${r.created.length && r.updated.length ? "; " : ""}${r.updated.length ? `replaced ${r.updated.join(", ")}` : ""}`); }
     if (retire.length) { await deleteWorkerSecrets(api, account.id, name, retire); log(`secrets: ${retire.join(", ")} retired from the Worker's own secrets; the store binds them now`); }
   } else if (secrets.length && (await workerExists(api, account.id, name))) await putWorkerSecrets(api, account.id, name, Object.fromEntries(secrets));
-  else for (const [k, v] of secrets) await sh(["bun", wrangler, "secret", "put", k, "--name", name], v + "\n");
+  // wrangler on Node: under Bun it warns that it does not support the runtime, and its fetches fail now and then (a new
+  // template instance lost its second secret that way); Void needs Node on PATH anyway, and the executable's toolchain puts one there
+  else for (const [k, v] of secrets) await sh([wranglerRuntime(), wrangler, "secret", "put", k, "--name", name], v + "\n");
   // The cron triggers as they were before this deploy, so a deploy that goes live but cannot attach its own can put
   // them back rather than leave a half-made change: Workers Free allows five across the whole account.
   const schedulesPath = `/accounts/${account.id}/workers/scripts/${name}/schedules`;

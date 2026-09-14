@@ -1,7 +1,7 @@
 // A deploy that went live reports success. At the Workers Free limit of five cron triggers `void deploy` exits 1 after
 // the upload, with the instance up and answering; the deploy now asks whether that happened before it fails.
 import { describe, expect, test } from "bun:test";
-import { deployWentLive, waitForHealth } from "../../src/node/deploy-cf";
+import { deployWentLive, waitForHealth, wranglerRuntime } from "../../src/node/deploy-cf";
 
 describe("whether a failed deploy went live anyway", () => {
   const startedAt = Date.parse("2026-09-13T02:00:00Z");
@@ -39,6 +39,13 @@ describe("a freshly uploaded Worker gets time to answer", () => {
     const a = answers([503]);
     expect(await waitForHealth("https://shop.acct.workers.dev", 60, 10, a.fetchImpl)).toBe(503);
     expect(a.calls()).toBeGreaterThan(1);
+  });
+});
+
+describe("the runtime wrangler runs on", () => {
+  test("Node from PATH when there is one, which wrangler supports; the running runtime otherwise", () => {
+    expect(wranglerRuntime((bin) => (bin === "node" ? "/usr/local/bin/node" : null))).toBe("/usr/local/bin/node");
+    expect(wranglerRuntime(() => null)).toBe(process.execPath);
   });
 });
 

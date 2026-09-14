@@ -3,16 +3,20 @@
 // its header; a named origin list that echoes and withholds; HSTS on https only; the per-route
 // Content-Security-Policy and the order it is decided in (routes, then files, then the global one); and the CSRF
 // refusal that the named list turns on for a cookie-carrying request from elsewhere.
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { ApiError, notFound } from "../../src/server/errors";
 import type { Hardening } from "../../src/server/interfaces";
 import { createKernel, load, using, type Kernel } from "../../src/server/kernel";
+import { declareConfig } from "../../src/server/plugin-config";
 import { hardening } from "../../src/server/plugins/hardening";
 import { cspForPath, FILE_CSP, parseCspRoutes } from "../../src/server/response-policy";
 import type { AppEnv } from "../../src/server/types";
 
 const STRICT = "default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; sandbox";
+// a knob no env sets falls back to a declared plugin configuration, which is the process's: another file's declared
+// referrer_policy answered "nothing set" here in the full build, so every test starts with none declared
+beforeEach(() => { declareConfig([]); });
 
 async function kernelWith(plugins = [hardening]): Promise<Kernel> {
   const kernel = createKernel(new Hono() as never);

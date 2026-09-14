@@ -92,11 +92,18 @@ const when = (b: Build) => b.created_on ?? b.created_at ?? "";
 const outcome = (b: Build | null | undefined): string => { if (!b) return ""; const st = b.status ?? ""; if (st === "stopped") return b.build_outcome === "success" ? "success" : b.build_outcome ? `failed (${b.build_outcome})` : "stopped"; return FINAL.has(st) ? st : ""; };
 const describe = (b: Build) => `${b.build_uuid}  ${(outcome(b) || b.status || "?").padEnd(16)} ${(b.build_trigger_metadata?.branch ?? "").padEnd(12)} ${(b.build_trigger_metadata?.commit_hash ?? "").slice(0, 10).padEnd(10)} ${when(b)}`;
 type LogLine = { line?: string; message?: string; ts?: string } | string | [number, string];
-interface LogsResult { lines?: LogLine[]; status?: string; build?: { status?: string } }
+interface LogsResult { lines?: LogLine[]; status?: string; build?: { status?: string }; truncated?: boolean; cursor?: string }
 async function printLogs(uuid: string, from = 0): Promise<{ next: number; status: string }> {
   // a build that is still queued has no log yet: treat a failed fetch as "nothing so far" and keep polling
   const r = await cf.json<LogsResult>("GET", `${A}/builds/builds/${uuid}/logs`).catch((): { result: LogsResult } => ({ result: { lines: [] } }));
-  const lines = r.result?.lines ?? [];
+  // the live API answers about a thousand lines a page with `truncated` and a `cursor` for the next: a failure late in
+  // the unit step was on the third page, and a log that only printed the first looked like one that just stopped
+  const lines = [...(r.result?.lines ?? [])];
+  for (let page = r.result, pages = 1; page?.truncated && page.cursor && pages < 50; pages++) {
+    const next = await cf.json<LogsResult>("GET", `${A}/builds/builds/${uuid}/logs?cursor=${encodeURIComponent(page.cursor)}`).catch(() => null);
+    if (!next?.result?.lines?.length || next.result.cursor === page.cursor) break;
+    lines.push(...next.result.lines); page = next.result;
+  }
   if (lines.length < from) return { next: from, status: "" };
   // the live API returns [unix ms, text] pairs; the mock returns {ts, line}
   const text = (l: LogLine) => (typeof l === "string" ? l : Array.isArray(l) ? `${new Date(l[0]).toISOString().slice(11, 19)}  ${l[1]}` : `${l.ts ? l.ts + "  " : ""}${l.line ?? l.message ?? JSON.stringify(l)}`);

@@ -167,7 +167,10 @@ if (import.meta.main) {
     const files: string[] = [];
     for (const p of moving) { const file = `${p.path}/package.json`; writeFileSync(`${ROOT}/${file}`, bumpVersion(readFileSync(`${ROOT}/${file}`, "utf8"), p.version, versionFor(p, version))); files.push(file); }
     for (const p of moving) { const m = bumpManifest(ROOT, p.path, p.version, versionFor(p, version)); if (m) files.push(m); }
-    if (syncLockfileFile(ROOT, moving.map((p) => ({ ...p, version: versionFor(p, version) }))).length) files.push("bun.lock");
+    // the core too: release-please moved its package.json and cannot write bun.lock (JSONC), so the lockfile still named
+    // the version before, and packing resolved every sibling's dependency on the core to it
+    const core = pkgs.filter((p) => p.name === CORE);
+    if (syncLockfileFile(ROOT, [...core, ...moving.map((p) => ({ ...p, version: versionFor(p, version) }))]).length) files.push("bun.lock");
     for (const p of publishable(moving)) {
       const file = `${p.path}/CHANGELOG.md`;
       let current: string | null = null; try { current = readFileSync(`${ROOT}/${file}`, "utf8"); } catch { current = null; }

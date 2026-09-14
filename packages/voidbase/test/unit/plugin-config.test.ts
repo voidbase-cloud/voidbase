@@ -1,7 +1,7 @@
 // A plugin's configuration plane (src/server/plugin-config.ts): what a manifest may declare, where a value comes from,
 // that a runtime field takes effect at once and a rebuild field waits, that a project's configuration is read only on
 // the instance, and the config.json an extended project gets when it adds a plugin.
-import { afterAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +16,9 @@ import { readKnob, responsePolicy } from "../../src/server/response-policy";
 const ROOT = resolve(import.meta.dir, "../..");
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
+// the declared planes are the process's: the last test here leaves shield's referrer_policy "same-origin" declared, and
+// a later file's responsePolicy({}) answered it as the default (response-policy.test.ts, in the full build)
+afterEach(() => { declareConfig([]); });
 
 const shield: PluginManifest = {
   name: "shield", version: "0.1.0", tier: "community", voidbase: "*",

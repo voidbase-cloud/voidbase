@@ -396,7 +396,15 @@ describe("the workspace protocol, on the way into a tarball", () => {
 
 describe("the hot release bump, in lockstep", () => {
   test("moves every workspace package to one version", () => {
-    const { from, to, packages } = lockstep(readWorkspace(ROOT));
+    // Hot mode releases prereleases only, and the repository is stable from 1.0.0 on: a stable core is refused, and the
+    // bump is checked on the real workspace with the core on the next patch's first prerelease.
+    const real = readWorkspace(ROOT);
+    const core = real.find((p) => p.name === PACKAGE)!;
+    const stable = !core.version.includes("-");
+    if (stable) expect(() => lockstep(real)).toThrow(/prereleases only/);
+    const [major, minor, patch] = core.version.replace(/-.*/, "").split(".").map(Number);
+    const workspace = stable ? real.map((p) => (p.name === PACKAGE ? { ...p, version: `${major}.${minor}.${patch! + 1}-beta.0` } : p)) : real;
+    const { from, to, packages } = lockstep(workspace);
     const plugins = readWorkspace(ROOT).map((p) => p.name).filter((n) => n.startsWith("@voidbase-cloud/plugin-"));
     expect(packages.map((p) => p.name).sort()).toEqual([...plugins, FIXTURE, PACKAGE, SDK].sort());
     expect(to).not.toBe(from);

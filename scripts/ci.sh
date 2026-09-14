@@ -175,6 +175,20 @@ starter() {  # the unmodified starter frontend against voidbase
   (cd "$PKG" && bun test/starter-smoke.ts http://127.0.0.1:5174 "$LOGS/starter.png")
 }
 
+release_follow() {  # on a release merge, the release set besides the core moves to its version before anything runs
+  local branch head v prev; branch="${WORKERS_CI_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null)}"
+  head=$(git log -1 --format=%s 2>/dev/null)
+  case "$head" in
+    "chore(master): release "*" packages") echo "the release set already follows the core: $head"; return 0 ;;
+    "chore(master): release "*) ;;
+    *) echo "not a release merge: nothing follows"; return 0 ;;
+  esac
+  if [ "$branch" != master ]; then echo "$branch is not master: nothing follows"; return 0; fi
+  if [ -z "${GH_TOKEN:-}" ]; then echo "GH_TOKEN is not set: the release set cannot be pushed, so nothing follows"; return 0; fi
+  v=$(node -p "require('./packages/voidbase/package.json').version")
+  prev=$(git describe --tags --abbrev=0 --match 'v*' HEAD 2>/dev/null || true)
+  bun scripts/hot-release.ts --follow "$v" --since "$prev"
+}
 release_work() {  # release-please, npm and the executables in this build (docs/releasing.md): on master, when the
   # commits ask for it or a release still needs publishing; hot mode publishes to npm and leaves the executables
   local branch; branch="${WORKERS_CI_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null)}"
@@ -218,6 +232,16 @@ if [ "${CI_HOT:-0}" = 1 ]; then run hot-release hot_release; run cache-save cach
 run cache-restore cache_restore
 run commitlint commitlint_check
 run plan plan
+# A merged release PR moved the core alone (release-please tracks one package), and the lockstep checks read every
+# package's version, so they failed on the merge commit. On a release merge the rest of the release set follows the
+# core first, in its own commit (scripts/hot-release.ts --follow), and this build stops there: that commit's build
+# checks everything and releases.
+followed_from=$(git rev-parse HEAD 2>/dev/null)
+run release-follow release_follow
+if [ "$(git rev-parse HEAD 2>/dev/null)" != "$followed_from" ]; then
+  echo; echo "the release set follows the core in $(git log -1 --format='%h %s'); that commit's build checks and releases"
+  run cache-save cache_save; exit 0
+fi
 maybe oracles oracles
 maybe typecheck typecheck
 maybe unit unit

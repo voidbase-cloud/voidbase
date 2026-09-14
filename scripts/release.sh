@@ -59,9 +59,18 @@ has_asset() { printf '%s' "$release_json" | grep -qF "\"$1\""; }
 # this ran. On the normal path release-please tracks one package, so its release PR moved the core and nothing else;
 # whatever else the release set names moves to the same version here, before anything is packed
 # (scripts/hot-release.ts --follow). Its commit starts `chore(master): release`, which starts no build.
+# Only a release merge moves anything: a build of any other commit ran this at the version it already had and bumped a
+# package on a version of its own for nothing (the SDK's 0.6.12 in dad4384). scripts/ci.sh normally follows before its
+# checks, so a build reaching this on a release merge that has not followed is a release cut outside it.
 if [ -z "$HOT" ] && [ -z "$DRY" ] && [ -n "${GH_TOKEN:-}" ] && [ "$BRANCH" = master ]; then
-  PREV_TAG=$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null || true)
-  step versions bun scripts/hot-release.ts --follow "$VERSION" --since "$PREV_TAG" || exit 1
+  HEAD_SUBJECT=$(git log -1 --format=%s 2>/dev/null)
+  case "$HEAD_SUBJECT" in
+    "chore(master): release "*" packages") skip_step versions "the release set already follows $VERSION" ;;
+    "chore(master): release "*)
+      PREV_TAG=$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null || true)
+      step versions bun scripts/hot-release.ts --follow "$VERSION" --since "$PREV_TAG" || exit 1 ;;
+    *) skip_step versions "not a release merge" ;;
+  esac
 fi
 
 # what npm is missing at this version, across every publishable package in the workspace (scripts/publish.ts). A

@@ -134,7 +134,7 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
                                      version its rollback can leave
   rollback --cloudflare <name> [--to <n>] [--account id]
                                      put an instance on Cloudflare back on the version before (or version n)
-  instances create --cloudflare <name> [--account id] [--email a@b]
+  instances create --cloudflare <name> [--template <name|owner/repo>] [--account id] [--email a@b]
                                      create a vanilla instance on Cloudflare from this voidbase's release, with the
                                      Cloudflare token this machine has; the superuser password is printed once
   instances [--local | --cloudflare [--account id]]
@@ -734,15 +734,29 @@ switch (cmd) {
     // create --cloudflare <name>: a vanilla instance made on Cloudflare from this CLI's release (src/node/cloud-create.ts)
     if (sub === "create") {
       const name = typeof flags.cloudflare === "string" && flags.cloudflare !== "1" ? flags.cloudflare : String(rest[0] ?? "");
-      if (!flags.cloudflare || !name) { console.error("usage: voidbase instances create --cloudflare <name> [--account id] [--email a@b]   (an instance on this machine is voidbase local new <name>)"); process.exit(1); }
+      if (!flags.cloudflare || !name) { console.error("usage: voidbase instances create --cloudflare <name> [--template <name|owner/repo>] [--account id] [--email a@b]   (an instance on this machine is voidbase local new <name>)"); process.exit(1); }
       const { deployTarget } = await import("../src/node/deploy-cf");
       const { workerExists } = await import("../src/cloud/rest");
       const { createOnCloudflare, createRefusal } = await import("../src/node/cloud-create");
       const { api, account } = await deployTarget({ account: flags.account, name, log: () => undefined });
       const why = createRefusal(name, await workerExists(api, account.id, name));
       if (why) { console.error(why); process.exit(1); }
-      console.log(`creating ${name} on ${account.name}: building the release`);
       const email = typeof flags.email === "string" && flags.email !== "1" ? flags.email : "admin@example.com";
+      // --template <name|owner/repo>: shaped like a template, deployed as its project would be (src/node/cloud-template.ts)
+      if (typeof flags.template === "string" && flags.template !== "1") {
+        console.log(`creating ${name} on ${account.name} from the template ${flags.template}`);
+        const { createFromTemplate } = await import("../src/node/cloud-template");
+        const { workersSubdomain } = await import("../src/cloud/rest");
+        try {
+          const t = await createFromTemplate({ template: flags.template, name, email, account: account.id, ref: flags.ref, marketplace: flags.marketplace });
+          const sub = await workersSubdomain(api, account.id).catch(() => null);
+          console.log(`\ncreated ${name} from ${t.repository} at ${t.ref}${sub ? `, at https://${name}.${sub}.workers.dev` : ""}`);
+          console.log(`superuser ${t.email}`);
+          console.log(`password  ${t.password}   (shown once, kept nowhere)`);
+        } catch (err) { console.error(`\ncreating ${name} from ${flags.template} failed: ${err instanceof Error ? err.message : String(err)}`); process.exit(1); }
+        break;
+      }
+      console.log(`creating ${name} on ${account.name}: building the release`);
       const c = await createOnCloudflare({ api, account: account.id, name, email });
       console.log(`\ncreated ${name}, voidbase ${c.release}${c.url ? `, at ${c.url}` : ""}`);
       console.log(`superuser ${c.email}`);

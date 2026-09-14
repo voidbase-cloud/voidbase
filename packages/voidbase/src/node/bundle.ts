@@ -31,7 +31,7 @@ export async function buildRelease(o: BundleOptions = {}): Promise<{ dir: string
   const hub = o.hub !== false; const queue = o.queue !== false;
   const pluginsDir = o.pluginsDir ? resolve(o.pluginsDir) : `${src}/pb_plugins`; mkdirSync(pluginsDir, { recursive: true });
   // VOIDBASE_SEO_PNG=1 keeps resvg in the release; off (the default) the wasm and the card's font are not bundled
-  writeCloudProject(cloud, "internal", { hooksDir: `${src}/pb_hooks`, migrationsDir: `${src}/pb_migrations`, pluginsDir, queue: queue ? "jobs" : false, hub, seoPng: seoPngOn(process.env.VOIDBASE_SEO_PNG) });
+  writeCloudProject(cloud, "internal", { publicUploads: true, hooksDir: `${src}/pb_hooks`, migrationsDir: `${src}/pb_migrations`, pluginsDir, queue: queue ? "jobs" : false, hub, seoPng: seoPngOn(process.env.VOIDBASE_SEO_PNG) });
   if (o.pluginsDir) log(`plugins: ${pluginsDir} (voidbase.lock beside it decides what is baked in)`);
   // placeholder ids: the real bindings are set at upload time from the manifest
   writeFileSync(`${cloud}/wrangler.jsonc`, JSON.stringify({

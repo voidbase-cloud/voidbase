@@ -138,7 +138,6 @@
     "src",
     "db",
     "crons",
-    "middleware",
     "queues",
     "routes",
     "scripts/export.ts",

@@ -130,7 +130,15 @@ app.use("*", (c, next) => hardened()?.rateLimit(c, next) ?? next());
 // pb_public uploaded to a vanilla instance on Cloudflare (public-r2.ts): served here, and a path nobody uploaded falls
 // through to the assets the Worker was deployed with (Void's entry serves those on a 404)
 const r2PublicBucket = (env: AppEnv["Bindings"]): R2Bucket | null => (rebuildsOnCloudflare(env as never) && env.STORAGE ? env.STORAGE : null);
-app.use("*", async (c, next) => { const bucket = r2PublicBucket(c.env); if (bucket) { const hit = await servePublic(bucket, c.req.raw); if (hit) return hit; } return next(); });
+/**
+ * a vanilla instance's pb_public upload at the path a request names, or null: what the Void project's global middleware
+ * answers with before Void's router (src/node/cloud-init.ts), since Void hands this app only /api/*
+ */
+export async function publicUploadResponse(env: AppEnv["Bindings"], request: Request): Promise<Response | null> {
+  const bucket = r2PublicBucket(env);
+  return bucket ? servePublic(bucket, request) : null;
+}
+app.use("*", async (c, next) => (await publicUploadResponse(c.env, c.req.raw)) ?? next());
 app.use("*", hookMiddleware() as never);
 // PocketBase's routerUse: the app's own global middleware, around every request (see src/adapter for Void's middleware/)
 app.use("*", globalHookMiddleware() as never);

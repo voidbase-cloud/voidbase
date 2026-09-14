@@ -106,7 +106,7 @@ try {
   const onAccount = run(["instances"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
   check("voidbase instances: resolves the account and reports what is on it", onAccount.code === 0 && /instances? on|no voidbase instances on account Test Account/.test(onAccount.out), onAccount.out.slice(-200));
   const gone = run(["destroy", "ghost-instance", "--yes"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
-  check("voidbase destroy: names every resource it would remove, and reports what was not there", gone.code === 0 && /the Worker ghost-instance/.test(gone.out) && /the bucket ghost-instance-storage/.test(gone.out) && /0 deleted, 6 not there/.test(gone.out), gone.out.slice(-300));
+  check("voidbase destroy: names every resource it would remove, and reports what was not there", gone.code === 0 && /the Worker ghost-instance/.test(gone.out) && /the bucket ghost-instance-storage/.test(gone.out) && /0 deleted, 8 not there/.test(gone.out), gone.out.slice(-300));
   const unconfirmed = run(["destroy", "ghost-instance"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
   check("voidbase destroy without --yes refuses when nobody can be asked", unconfirmed.code === 1 && /refusing to delete without a confirmation/.test(unconfirmed.out), unconfirmed.out.slice(-200));
 
@@ -116,6 +116,13 @@ try {
   check("a declared deploy target is not overridden by the environment", wrongTarget.code === 1 && /declares VOIDBASE_DEPLOY_NAME=declared-name.*environment says someone-elses-worker/s.test(wrongTarget.out) && /--name someone-elses-worker to mean it/.test(wrongTarget.out), wrongTarget.out.slice(-300));
   const meantIt = run(["deploy", "--dry-run", "--name", "someone-elses-worker"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", VOIDBASE_DEPLOY_NAME: "someone-elses-worker" });
   check("--name says it on purpose and the deploy goes ahead", meantIt.code === 0 && /worker "someone-elses-worker"/.test(meantIt.out), meantIt.out.slice(-200));
+  // the declared Worker's hostnames stay with it: a deploy under another name does not try to attach them (a template
+  // deployed as an instance of your own must not reach for its author's live domain)
+  writeFileSync(`${dir}/pb_secrets/main.ts`, readFileSync(`${dir}/pb_secrets/main.ts`, "utf8").replace(' VOIDBASE_DEPLOY_NAME: local(string().default("declared-name")),', ' VOIDBASE_DEPLOY_NAME: local(string().default("declared-name")), VOIDBASE_DEPLOY_DOMAIN: local(string().default("declared.example.com")),'));
+  const asDeclared = run(["deploy", "--dry-run"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+  const asAnother = run(["deploy", "--dry-run", "--name", "my-own-instance"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token" });
+  check("the declared domain goes with the declared Worker and not with a Worker of another name", asDeclared.code === 0 && asDeclared.out.includes("declared.example.com") && asAnother.code === 0 && !asAnother.out.includes("declared.example.com"), `${asDeclared.out.slice(-300)}\n---\n${asAnother.out.slice(-300)}`);
+  writeFileSync(`${dir}/pb_secrets/main.ts`, readFileSync(`${dir}/pb_secrets/main.ts`, "utf8").replace(' VOIDBASE_DEPLOY_DOMAIN: local(string().default("declared.example.com")),', ""));
   writeFileSync(`${dir}/pb_secrets/main.ts`, readFileSync(`${dir}/pb_secrets/main.ts`, "utf8").replace(' VOIDBASE_DEPLOY_NAME: local(string().default("declared-name")),', ""));
   const named = run(["deploy", "--dry-run", "--name", "My Shop API", "--account", "acc123"], { VOIDBASE_DEPLOY_CF_API_KEY: "cf-test-token", PB_SUPERUSER_EMAIL: "owner@example.com", PB_SUPERUSER_PASSWORD: "s3cret-from-env" });
   const named2 = JSON.parse(readFileSync(`${PKG}/.cloud/my-shop-api/wrangler.jsonc`, "utf8").replace(/^\/\/.*\n/, "")) as { name: string };

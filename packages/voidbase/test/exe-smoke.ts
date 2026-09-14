@@ -2,7 +2,7 @@
 // pb_hooks (panel unpacked from the embedded zip, migrations and typings embedded, a thumbnail through the wasm),
 // then `voidbase update` against a mock GitHub API (asset for this platform, checksums.txt, executable replaced).
 //   bun test/exe-smoke.ts
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { zipSync } from "fflate";
@@ -30,7 +30,10 @@ check("a build without the toolchain says so, rather than pointing at npm", run(
 
 // ---- serve
 const port = freePort(); const base = `http://127.0.0.1:${port}`;
-const server = Bun.spawn([exe, "serve", "--http", `127.0.0.1:${port}`, "--dir", `${tmp}/pb_data`, "--hooksDir", `${STARTER}/pb_hooks`, "--migrationsDir", `${STARTER}/pb_migrations`], { cwd: tmp, env: { ...process.env, HOME: home, XDG_CACHE_HOME: `${home}/.cache`, VOIDBASE_SUPERUSER_EMAIL: "admin@example.com", VOIDBASE_SUPERUSER_PASSWORD: "changeme123", VOIDBASE_LOG_MIN_LEVEL: "8" }, stdout: "pipe", stderr: "pipe" });
+// a copy of the starter's hooks and migrations: the collection created below makes automigrate write a migration, and
+// written into the starter it reached every later local run (the collections reference suite saw ks_exe)
+cpSync(`${STARTER}/pb_hooks`, `${tmp}/pb_hooks`, { recursive: true }); cpSync(`${STARTER}/pb_migrations`, `${tmp}/pb_migrations`, { recursive: true });
+const server = Bun.spawn([exe, "serve", "--http", `127.0.0.1:${port}`, "--dir", `${tmp}/pb_data`, "--hooksDir", `${tmp}/pb_hooks`, "--migrationsDir", `${tmp}/pb_migrations`], { cwd: tmp, env: { ...process.env, HOME: home, XDG_CACHE_HOME: `${home}/.cache`, VOIDBASE_SUPERUSER_EMAIL: "admin@example.com", VOIDBASE_SUPERUSER_PASSWORD: "changeme123", VOIDBASE_LOG_MIN_LEVEL: "8" }, stdout: "pipe", stderr: "pipe" });
 const serverLog: string[] = []; (async () => { for await (const c of server.stdout) serverLog.push(new TextDecoder().decode(c)); })(); (async () => { for await (const c of server.stderr) serverLog.push(new TextDecoder().decode(c)); })();
 try {
   let health = 0; for (let i = 0; i < 60 && health !== 200; i++) { await Bun.sleep(500); health = await fetch(`${base}/api/health`).then((r) => r.status).catch(() => 0); }

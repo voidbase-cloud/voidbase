@@ -143,6 +143,9 @@ async function loadProjectEnv(log: (line: string) => void): Promise<{ secretsDir
   return { secretsDir, secrets };
 }
 
+/** the declared Worker's hostname knobs this deploy is not taking along (resolveWorkerName); hookEnv leaves them out too */
+let shedTargetKeys = new Set<string>();
+
 /** The production worker name: --name, VOIDBASE_DEPLOY_NAME or the project's, checked against what pb_secrets/main.ts declares. */
 function resolveWorkerName(opts: Pick<DeployOptions, "name">, secrets: LoadedSecrets, secretsDir: string): string {
   const name = slug(opts.name || process.env.VOIDBASE_DEPLOY_NAME || projectName());
@@ -154,6 +157,15 @@ function resolveWorkerName(opts: Pick<DeployOptions, "name">, secrets: LoadedSec
   if (!opts.name && declaredName && slug(declaredName) !== name) {
     const declaredDomain = declaredTarget("VOIDBASE_DEPLOY_DOMAIN");
     throw new Error(`this project declares VOIDBASE_DEPLOY_NAME=${slug(declaredName)}${declaredDomain ? ` (${declaredDomain})` : ""} in ${secretsDir}/main.ts, but the environment says ${name}. Deploying would put it on that Worker, over whatever is there. Unset VOIDBASE_DEPLOY_NAME${declaredDomain ? " and VOIDBASE_DEPLOY_DOMAIN" : ""} for this deploy, or pass --name ${name} to mean it.`);
+  }
+  // A project put on a Worker other than the one it declares (a template deployed under a name of your own, a preview
+  // of somebody else's project) does not take that Worker's hostnames along: the declared defaults of the domain knobs
+  // are the declared Worker's, and attaching them here would try to move a live site's domain onto this one.
+  shedTargetKeys = new Set();
+  if (declaredName && slug(declaredName) !== name) {
+    for (const key of ["VOIDBASE_DOMAINS", "VOIDBASE_DEPLOY_DOMAIN", "VOIDBASE_CANONICAL_DOMAIN"]) {
+      if (secrets.loaded.includes(key)) { delete process.env[key]; shedTargetKeys.add(key); }
+    }
   }
   return name;
 }
@@ -552,7 +564,9 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
 
 /** the environment a deploy plugin reads: pb_secrets/secrets.json under the shell and the .env files, plus what a flag says */
 function hookEnv(secretsDir: string, extra: Record<string, string> = {}): Record<string, string> {
-  return { ...(readSecretsValues(secretsDir) ?? {}), ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")), ...extra };
+  const env: Record<string, string> = { ...(readSecretsValues(secretsDir) ?? {}), ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")), ...extra };
+  for (const key of shedTargetKeys) if (!(key in extra)) delete env[key];
+  return env;
 }
 
 /**

@@ -117,7 +117,7 @@
     },
     "packages/sdk": {
       "name": "@voidbase-cloud/sdk",
-      "version": "0.6.11",
+      "version": "0.6.12",
       "devDependencies": {
         "@rollup/plugin-terser": "^0.4.3",
         "jsdom": "^30.0.1",

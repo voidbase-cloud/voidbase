@@ -130,7 +130,10 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   rollback [<local instance>] [--to <n>] [--dir pb_data]
                                      put an instance back on the version before (or version n), its voidbase included
   update --cloudflare <name> [--account id]
-                                     rebuild an instance on Cloudflare onto this voidbase, as a new version of its Worker
+                                     rebuild an instance on Cloudflare onto this voidbase: its own rebuild, landing as a
+                                     version its rollback can leave
+  rollback --cloudflare <name> [--to <n>] [--account id]
+                                     put an instance on Cloudflare back on the version before (or version n)
   instances create --cloudflare <name> [--account id] [--email a@b]
                                      create a vanilla instance on Cloudflare from this voidbase's release, with the
                                      Cloudflare token this machine has; the superuser password is printed once
@@ -331,6 +334,17 @@ switch (cmd) {
       const { provisionInstance } = await import("../src/cloud/rest");
       console.log(`updating ${name} on ${account.name}: building the release`);
       const built = await buildRelease({ log: (l) => console.log(`  ${l}`) });
+      // the instance's own rebuild (voidbase-stories updating-core.feature, "Updating an instance on Cloudflare"): the release
+      // staged in its bucket and a run queued, landing as a version a rollback can leave (src/node/cloud-rebuild.ts)
+      const CR = await import("../src/node/cloud-rebuild");
+      const ready = await CR.rebuildReadiness(api, account.id, name);
+      if (ready.ok) {
+        const u = await CR.updateOnCloudflare({ cf: api, account: account.id, name, release: releaseFromDir(built.dir), log: (l) => console.log(`  ${l}`) });
+        console.log(u.run === null ? `\n${name} already runs ${u.to}` : `\nupdated ${name}: ${u.from} -> ${u.to}, landed as version ${u.version} by its rebuild ${u.run}`);
+        break;
+      }
+      // an instance made before instances rebuilt themselves: the release uploaded over it, which also makes it one that does
+      console.log(`  ${ready.reason}: uploading the release over it instead`);
       const r = await provisionInstance(api, { account: account.id, name, release: releaseFromDir(built.dir), inheritSecrets: ["VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD"], applyDoMigrations: false, tags: plan.keepTags, log: (l) => console.log(`  ${l}`) });
       console.log(`\nupdated ${name}: ${plan.from} -> ${r.release}, a new version of the Worker${r.url ? ` (${r.url})` : ""}`);
       break;
@@ -787,6 +801,17 @@ switch (cmd) {
     break;
   }
   case "rollback": {
+    if (flags.cloudflare) {
+      const name = typeof flags.cloudflare === "string" && flags.cloudflare !== "1" ? flags.cloudflare : sub;
+      if (!name) { console.error("usage: voidbase rollback --cloudflare <name> [--to <n>] [--account id]"); process.exit(1); }
+      if (flags.to !== undefined && !/^\d+$/.test(flags.to)) { console.error("--to takes a version number, as GET /api/rebuilds lists them"); process.exit(1); }
+      const { deployTarget } = await import("../src/node/deploy-cf");
+      const { api, account } = await deployTarget({ account: flags.account, name, log: () => undefined });
+      const CR = await import("../src/node/cloud-rebuild");
+      const r = await CR.rollbackOnCloudflare({ cf: api, account: account.id, name, to: flags.to !== undefined ? Number(flags.to) : undefined, log: (l) => console.log(`  ${l}`) });
+      console.log(`\nrolled ${name} back to version ${r.to}${r.release ? ` (release ${r.release})` : ""}`);
+      break;
+    }
     // an update or a plugin that made things worse: the version before it again, the voidbase it pinned included
     // (voidbase-stories voidbase/updating-core.feature, "An update that goes badly"; src/node/local-update.ts)
     const L = await import("../src/node/local");

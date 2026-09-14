@@ -153,23 +153,8 @@ export async function provisionInstance(cf: CfApi, o: ProvisionOptions): Promise
   }
   const migrationsApplied = await applyD1Migrations(cf, o.account, d1.uuid, o.release, log);
 
-  // static assets (the admin panel and the 404 shells): manifest, then the buckets the API asks for, then the completion token
-  const manifest: Record<string, { hash: string; size: number }> = {};
-  for (const a of m.assets) manifest[`/${a.path}`] = { hash: a.hash, size: a.size };
-  let assetsJwt: string | null = null;
-  if (m.assets.length) {
-    const session = await cf.json<{ jwt: string; buckets: string[][] }>("POST", `/accounts/${o.account}/workers/scripts/${o.name}/assets-upload-session`, { manifest });
-    assetsJwt = session.result.jwt;
-    const byHash = new Map(m.assets.map((a) => [a.hash, a] as const));
-    let uploaded = 0;
-    for (const bucketHashes of session.result.buckets ?? []) {
-      const form = new FormData();
-      for (const h of bucketHashes) { const a = byHash.get(h); if (!a) throw new Error(`asset upload: unknown hash ${h}`); const bytes = await o.release.read(`assets/${a.path}`); form.append(h, new Blob([toBase64(bytes)], { type: a.contentType }), h); uploaded++; }
-      const r = await cf.form<{ jwt?: string }>("POST", `/accounts/${o.account}/workers/assets/upload?base64=true`, form, { token: session.result.jwt });
-      if (r.result?.jwt) assetsJwt = r.result.jwt;
-    }
-    log(`assets: ${m.assets.length} files, ${uploaded} uploaded`);
-  }
+  // static assets (the admin panel and the 404 shells), uploaded for this Worker
+  const assetsJwt = await uploadReleaseAssets(cf, o.account, o.name, o.release, log);
 
   // the Worker itself: metadata part + every module of the release
   const bindings: Record<string, unknown>[] = [
@@ -235,6 +220,30 @@ export async function provisionInstance(cf: CfApi, o: ProvisionOptions): Promise
   const url = sub ? `https://${o.name}.${sub}.workers.dev` : null;
   log(`live: ${url ?? "(workers.dev subdomain not enabled on the account)"}`);
   return { name: o.name, account: o.account, url, d1, queue, bucket, release: m.version, assets: m.assets.length, modules: m.modules.length, migrationsApplied };
+}
+
+
+/**
+ * A release's static assets (the admin panel and the 404 shells) uploaded for a Worker: the manifest, then the buckets the
+ * API asks for, then the completion token a script upload or a version upload names. Null when the release has none.
+ */
+export async function uploadReleaseAssets(cf: CfApi, account: string, name: string, release: ReleaseSource, log: (l: string) => void = () => undefined): Promise<string | null> {
+  const m = release.manifest;
+  if (!m.assets.length) return null;
+  const manifest: Record<string, { hash: string; size: number }> = {};
+  for (const a of m.assets) manifest[`/${a.path}`] = { hash: a.hash, size: a.size };
+  const session = await cf.json<{ jwt: string; buckets: string[][] }>("POST", `/accounts/${account}/workers/scripts/${name}/assets-upload-session`, { manifest });
+  let jwt = session.result.jwt;
+  const byHash = new Map(m.assets.map((a) => [a.hash, a] as const));
+  let uploaded = 0;
+  for (const bucketHashes of session.result.buckets ?? []) {
+    const form = new FormData();
+    for (const h of bucketHashes) { const a = byHash.get(h); if (!a) throw new Error(`asset upload: unknown hash ${h}`); const bytes = await release.read(`assets/${a.path}`); form.append(h, new Blob([toBase64(bytes)], { type: a.contentType }), h); uploaded++; }
+    const r = await cf.form<{ jwt?: string }>("POST", `/accounts/${account}/workers/assets/upload?base64=true`, form, { token: session.result.jwt });
+    if (r.result?.jwt) jwt = r.result.jwt;
+  }
+  log(`assets: ${m.assets.length} files, ${uploaded} uploaded`);
+  return jwt;
 }
 
 // D1 migrations through the REST /query endpoint, tracked in wrangler's d1_migrations table so a later local

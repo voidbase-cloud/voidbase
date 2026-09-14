@@ -3,6 +3,13 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [1.0.1](https://github.com/voidbase-cloud/voidbase/compare/v1.0.0...v1.0.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* **release:** the release set follows the core before checks, and the lockfile names it ([4661096](https://github.com/voidbase-cloud/voidbase/commit/46610965a17fe66809e34890f5d4eff316bfb3a2))
+
 ## [1.0.0](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.69...v1.0.0) (2026-09-14)
 
 

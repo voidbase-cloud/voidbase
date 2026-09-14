@@ -4,7 +4,7 @@
 // included. A running instance owns its rebuilds and its restart, so it is asked, through a request file and a signal,
 // and the answer is the instance coming back on the version asked for. A stopped one is rebuilt here, and runs the new
 // version when it starts: the CLI hands over to the pinned voidbase then (`handOver`).
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RebuildState, Rebuilds } from "../server/rebuilds";
 import { activeCoreVersion, coreRecord, type CoreRecord, fetchCore, handoffFor, type RebuildRequest, runningInstance, takeRequest, writeRequest, writeServeInfo } from "./core";
@@ -129,10 +129,15 @@ export async function handOver(dataDir: string, running: string, http?: string, 
     delete env.VOIDBASE_RESTART_ARGV; delete env.VOIDBASE_RESTART_ENV;
     // pinned to another voidbase: that one serves; pinned to this one again (a rollback past an update): this CLI, fresh
     const argv = record ? [...record.argv, ...process.argv.slice(2)] : [process.execPath, ...process.argv.slice(1)];
-    if (!record) delete env.VOIDBASE_CORE_HANDOFF;
+    if (!record) {
+      // back on this CLI's own voidbase, which records itself and takes requests: this process gives up the record first
+      // (a server that finds a live one recorded leaves it alone) and passes a request's signal on instead of dying of it
+      delete env.VOIDBASE_CORE_HANDOFF;
+      if (runningInstance(dataDir)?.pid === process.pid) rmSync(join(dataDir, ".serve.json"), { force: true });
+    }
     const started = Bun.spawn(argv, { stdio: ["inherit", "inherit", "inherit"], env: env as Record<string, string> });
     child = started;
-    if (!record) return await started.exited;
+    if (!record) { process.on("SIGUSR2", () => { try { started.kill("SIGUSR2"); } catch { /* already gone */ } }); return await started.exited; }
     writeServeInfo(dataDir, { pid: process.pid, http: url, version: record.version, requests: true });
     let request: RebuildRequest | null = null;
     const onRequest = () => { const r = takeRequest(dataDir); if (!r) return; request = r; started.kill("SIGTERM"); };

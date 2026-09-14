@@ -51,6 +51,10 @@ export { createRecord, deleteRecord, listRecords, PreconditionFailed, updateReco
 // a stored row as the values a record has
 export { rowToValues } from "../records/values";
 
+// whether a rule admits a caller before any record is in question: "yes", "no", or "per-record" when it reads a record
+// or the call itself (the openapi document scopes itself to its caller with this)
+export { decideRule, type RuleVerdict } from "../filter/decide";
+
 // the instance's settings, cached
 export { loadSettings } from "../settings";
 

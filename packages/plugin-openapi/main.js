@@ -1,4 +1,4 @@
-import { hookRouteDocs, isAuth, isMultiple, isSuperuser, listCollections, loadSettings, VERSION, isView } from "@voidbase-cloud/voidbase/sdk";
+import { decideRule, hookRouteDocs, isAuth, isMultiple, isSuperuser, listCollections, loadSettings, VERSION, isView } from "@voidbase-cloud/voidbase/sdk";
 import { serve } from "@voidbase-cloud/voidbase/kernel";
 const defaultSource = {
   collections: (env) => listCollections(env.DB),
@@ -8,6 +8,11 @@ export const SCALAR_CDN = "https://cdn.jsdelivr.net/npm/@scalar/api-reference";
 export const callerOf = (auth) => !auth ? { kind: "anonymous" } : { kind: isSuperuser(auth) ? "superuser" : "user", collection: auth.collection.name };
 const accessOf = (rule) => (rule === null ? "superuser" : rule.trim() === "" ? "public" : "signed-in");
 const may = (caller, access) => access === "public" || caller.kind === "superuser" || (access === "signed-in" && caller.kind === "user");
+/**
+ * whether this caller is shown what a rule gates: a rule decided for the caller (a vendor's `@request.auth.vendor = "acme"`)
+ * is shown or not as it decided; a rule that reads the record or the call is shown to anyone signed in, as before
+ */
+const admits = (caller, rule, verdict) => caller.kind === "superuser" || rule === null || rule.trim() === "" || verdict === undefined || verdict === "per-record" ? may(caller, accessOf(rule)) : verdict === "yes";
 const ruleNote = (rule) => rule === null ? "Superusers only: the rule is locked." : rule.trim() === "" ? "Public: anyone may call this." : `Gated by the rule \`${rule.trim()}\`, judged against the signed-in record and the request.`;
 const str = (extra = {}) => ({ type: "string", ...extra });
 const many = (f, item) => (isMultiple(f) ? { type: "array", items: item, ...(Number(f.maxSelect) > 0 ? { maxItems: Number(f.maxSelect) } : {}) } : item);
@@ -109,11 +114,11 @@ const canUpdateSchema = {
   required: ["allowed", "fields", "reason"],
 };
 const op = (tag, summary, description, extra) => ({ tags: [tag], summary, description, ...extra });
-function collectionPaths(c, caller, byId, paths) {
+function collectionPaths(c, caller, byId, paths, verdict = () => undefined) {
   const base = `/api/collections/${c.name}/records`;
   const add = (p, method, o) => { (paths[p] ??= {})[method] = o; };
   const gated = (rule, method, p, summary, extra) => {
-    if (!may(caller, accessOf(rule)))
+    if (!admits(caller, rule, verdict(c.name, rule)))
       return;
     add(p, method, op(c.name, summary, ruleNote(rule), extra));
   };
@@ -125,7 +130,7 @@ function collectionPaths(c, caller, byId, paths) {
     gated(c.deleteRule, "delete", `${base}/{id}`, `Delete a ${c.name} record`, { parameters: [path("id", "the record id")], responses: { "204": { description: "Deleted" }, "403": errors["403"], "404": errors["404"] } });
     // voidbase's own: gated by the view rule, since that is the access it needs, and it never quotes the update
     // rule back (a caller who may not call the PATCH is not shown the PATCH either)
-    if (may(caller, accessOf(c.viewRule))) {
+    if (admits(caller, c.viewRule, verdict(c.name, c.viewRule))) {
       add(`${base}/{id}/can-update`, "get", op(c.name, `May I edit this ${c.name} record`, `${ruleNote(c.viewRule)} Answers whether a PATCH of this record with this token would be allowed and which fields it would take, writing nothing.`, {
         parameters: [path("id", "the record id")],
         responses: { "200": { description: "The verdict", ...json(canUpdateSchema) }, "403": errors["403"], "404": errors["404"] },
@@ -178,7 +183,7 @@ export function buildDocument(input) {
   const tags = [{ name: "system", description: "the instance itself" }];
   for (const c of collections) {
     const before = Object.keys(paths).length;
-    collectionPaths(c, caller, byId, paths);
+    collectionPaths(c, caller, byId, paths, input.verdict);
     if (Object.keys(paths).length === before)
       continue;
     tags.push({ name: c.name, description: `${c.type} collection${c.system ? ", system" : ""}` });
@@ -308,11 +313,28 @@ function pluginRoutesOf(app) {
   });
 }
 // --- the plugin --------------------------------------------------------------------------------------------------------
+/** each rule of each collection decided for this caller, keyed by collection and rule; no database, nothing decided */
+async function verdictsFor(env, collections, auth) {
+  const verdicts = new Map();
+  if (!env?.DB)
+    return verdicts;
+  const byKey = new Map(collections.flatMap((x) => [[x.name, x], [x.id, x]]));
+  for (const c of collections) {
+    for (const rule of new Set([c.listRule, c.viewRule, c.createRule, c.updateRule, c.deleteRule])) {
+      if (rule === null || rule.trim() === "")
+        continue;
+      verdicts.set(`${c.name}\n${rule}`, await decideRule({ db: env.DB, collections: byKey, collection: c, rule, auth: auth ? { collection: auth.collection, row: auth.row } : null }));
+    }
+  }
+  return verdicts;
+}
 function mountRoutes(app, version, source) {
   app.get("/api/openapi.json", async (c) => {
     const collections = await source.collections(c.env);
     const name = (await source.appName(c.env).catch(() => "")).trim();
-    const doc = buildDocument({ collections, caller: callerOf(c.get("auth")), title: name || "voidbase", origin: new URL(c.req.url).origin, version, routes: hookRouteDocs(), pluginRoutes: pluginRoutesOf(app) });
+    const caller = callerOf(c.get("auth"));
+    const verdicts = caller.kind === "superuser" ? new Map() : await verdictsFor(c.env, collections, c.get("auth") ?? null);
+    const doc = buildDocument({ collections, caller, verdict: (collection, rule) => verdicts.get(`${collection}\n${rule}`), title: name || "voidbase", origin: new URL(c.req.url).origin, version, routes: hookRouteDocs(), pluginRoutes: pluginRoutesOf(app) });
     c.header("Cache-Control", "no-store");
     return c.json(doc);
   });

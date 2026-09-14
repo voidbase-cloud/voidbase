@@ -98,6 +98,13 @@ export function compileFilter(filter: string, opts: CompileOptions): Compiled {
   return { where: out.sql, params: out.params, joins: c.joins };
 }
 
+/** one parsed expression compiled on its own: a part of a rule, for deciding the rule a part at a time (./decide.ts) */
+export function compileExpr(e: Expr, opts: CompileOptions): Compiled {
+  const c = new Compiler(opts);
+  const out = c.group(e);
+  return { where: out.sql, params: out.params, joins: c.joins };
+}
+
 // Sort: plain fields, @rowid, @random (relation-path sorting lands with the records milestone polish).
 export function compileSort(sort: string, base: Collection, allowHidden: boolean): string {
   if (!sort.trim()) return "";

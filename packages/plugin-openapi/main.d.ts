@@ -31,6 +31,11 @@ export interface DocumentInput {
         superuser: boolean;
         response?: Schema;
     }[];
+    /**
+     * how a rule was decided for this caller before any record is in question (core's decideRule): "yes" or "no" shows
+     * or hides what it gates; "per-record" or nothing leaves it to whether the caller is signed in
+     */
+    verdict?: (collection: string, rule: string) => "yes" | "no" | "per-record" | undefined;
     /** routes plugins added, by method and path; described to a superuser, who may call them all */
     pluginRoutes?: {
         method: string;

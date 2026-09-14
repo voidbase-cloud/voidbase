@@ -5,11 +5,19 @@
 import { workersSubdomain, type CfApi } from "../cloud/rest";
 
 /**
- * `kind` is what the Worker's tags say it was made from: `vanilla` when it carries `voidbase-release:<version>` (an
- * instance provisioned from a release), `extended` when it carries none (a project deployed with voidbase deploy),
- * and `unknown` when the tags could not be read, rather than a guess.
+ * `kind` is what the Worker is now: `vanilla` when it can rebuild itself from a release (it binds the rebuild Workflow,
+ * VOIDBASE_REBUILD), `extended` when it does not (a project deployed with voidbase deploy or sync), and `unknown` when
+ * its settings could not be read, rather than a guess. The bindings decide, not the `voidbase-release:<version>` tag: a
+ * project deployed through wrangler over an instance made from a release keeps that tag, because wrangler cannot clear
+ * it, while its bindings become the project's. Only settings that carry no bindings at all fall back to the tag.
  */
 export interface FoundInstance { name: string; url: string; version: string; plugins: string[]; kind: "vanilla" | "extended" | "unknown" }
+
+/** vanilla or extended, from a Worker's settings */
+export function kindOf(settings: { tags?: string[] | null; bindings?: { type?: string; name?: string }[] | null }): "vanilla" | "extended" {
+  if (Array.isArray(settings.bindings)) return settings.bindings.some((b) => b.type === "workflow" && b.name === "VOIDBASE_REBUILD") ? "vanilla" : "extended";
+  return (settings.tags ?? []).some((t) => t.startsWith("voidbase-release:")) ? "vanilla" : "extended";
+}
 
 /** what a health answer says about voidbase, or null when it is not a voidbase answer */
 export function voidbaseOf(body: unknown): { version: string; plugins: string[] } | null {
@@ -33,11 +41,11 @@ export async function probeWorkers(api: CfApi, account: string, fetchImpl: typeo
       const res = await fetchImpl(`${url}/api/health`, { signal: AbortSignal.timeout(timeoutMs) });
       const found = res.ok ? voidbaseOf(await res.json()) : null;
       if (!found) return null;
-      // what it was made from is on the Worker, not in its answer: the tag a release upload sets, or none
+      // what it is now is on the Worker, not in its answer: whether it binds the Workflow it rebuilds itself with
       let kind: FoundInstance["kind"] = "unknown";
       try {
-        const settings = await api.json<{ tags?: string[] | null }>("GET", `/accounts/${account}/workers/scripts/${name}/settings`);
-        kind = (settings.result?.tags ?? []).some((t) => t.startsWith("voidbase-release:")) ? "vanilla" : "extended";
+        const settings = await api.json<{ tags?: string[] | null; bindings?: { type?: string; name?: string }[] | null }>("GET", `/accounts/${account}/workers/scripts/${name}/settings`);
+        kind = kindOf(settings.result ?? {});
       } catch { kind = "unknown"; }
       return { name, url, ...found, kind };
     } catch { return null; }

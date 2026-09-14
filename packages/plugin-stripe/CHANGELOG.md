@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.0-beta.64](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.63...v0.9.0-beta.64) (2026-09-14)
+
+* test(exe): the executable updates itself where no instance lives; beside one it updates the instance
+
 ## [0.9.0-beta.63](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.62...v0.9.0-beta.63) (2026-09-14)
 
 * feat(cli): instances create --cloudflare --template deploys a template as a cloud instance

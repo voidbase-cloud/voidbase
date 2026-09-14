@@ -1,6 +1,6 @@
 {
   "name": "realtime",
-  "version": "0.9.0-beta.63",
+  "version": "0.9.0-beta.64",
   "tier": "core",
   "voidbase": "*",
   "provides": [

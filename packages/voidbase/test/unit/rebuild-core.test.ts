@@ -5,7 +5,7 @@ import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handoffFor, takeRequest, writeRequest } from "../../src/node/core";
+import { handoffFor, servesInstance, takeRequest, writeRequest, writeServeInfo } from "../../src/node/core";
 import { createRebuilder } from "../../src/node/rebuild";
 import type { Rebuilds } from "../../src/server/rebuilds";
 
@@ -111,4 +111,19 @@ test("the first update of an instance that never pinned a version makes what it 
   s = await settled(rebuilds);
   expect(s.current).toBe(1);
   expect(active(dataDir)).toBe("1.0.0");
+});
+
+test("a second server on the same pb_data does not take the running instance's record", () => {
+  const dir = mkdtempSync(join(tmpdir(), "vb-serves-"));
+  try {
+    // nobody recorded: this process may record itself
+    expect(servesInstance(dir, process.pid)).toBe(true);
+    // the running instance (a live process that is not this one) is recorded: a second server leaves it
+    writeServeInfo(dir, { pid: process.ppid, http: "http://127.0.0.1:8392", version: "1.0.0", requests: true });
+    expect(servesInstance(dir, process.pid)).toBe(false);
+    expect(servesInstance(dir, process.ppid)).toBe(true);
+    // a record of a process that is gone counts as nobody
+    writeServeInfo(dir, { pid: 2 ** 22 + 12345, http: "http://127.0.0.1:35625", version: "1.0.0", requests: true });
+    expect(servesInstance(dir, process.pid)).toBe(true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

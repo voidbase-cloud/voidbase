@@ -110,6 +110,16 @@ export function runningInstance(dataDir: string): ServeInfo | null {
   try { process.kill(info.pid, 0); return info; } catch { return null; }
 }
 
+/**
+ * whether the process `pid` is the one that serves this instance: nobody alive is recorded, or it is. A second server
+ * on the same pb_data (the one `voidbase sync up` starts to read the instance) must not take the record, or an update
+ * would be sent to it instead of the instance people use
+ */
+export function servesInstance(dataDir: string, pid: number): boolean {
+  const recorded = runningInstance(dataDir);
+  return !recorded || recorded.pid === pid;
+}
+
 export type RebuildRequest = { update: string } | { rollback: number };
 export const writeRequest = (dataDir: string, request: RebuildRequest): void => writeAtomic(join(dataDir, "rebuild-request.json"), JSON.stringify(request));
 

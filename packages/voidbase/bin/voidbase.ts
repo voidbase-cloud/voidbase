@@ -288,7 +288,10 @@ async function listTemplates(): Promise<void> {
 }
 // A command that builds a Worker needs Void, Vite and wrangler. The prebuilt executable carries them, unpacks them once
 // and hands the command to the voidbase CLI inside, run by itself as Bun (src/node/toolchain.ts); it used to refuse.
-if (cmd && TOOLCHAIN.has(cmd) && isExecutable()) { const { runWithToolchain } = await import("../src/node/toolchain"); await runWithToolchain(argv); }
+// creating an instance on Cloudflare and updating one there build a release, so they need it too; a local update stays
+// the executable's own, since it fetches an executable for the instance beside it
+const buildsARelease = !!flags.cloudflare && ((cmd === "instances" && sub === "create") || cmd === "update");
+if (cmd && (TOOLCHAIN.has(cmd) || buildsARelease) && isExecutable()) { const { runWithToolchain } = await import("../src/node/toolchain"); await runWithToolchain(argv); }
 // `voidbase deploy --remove [--preview <branch>]` and `voidbase previews remove <branch>`: the Worker (a preview with
 // everything it owns) after its deploy plugins undo their part. A destructive command says what it will do and waits,
 // unless the caller has already decided (--yes), and refuses when nobody can be asked.

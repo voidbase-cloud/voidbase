@@ -26,12 +26,12 @@ const randomPassword = (): string => {
 export interface Created { url: string | null; release: string; email: string; password: string }
 
 /** build this CLI's release and upload it as a new instance called `name` */
-export async function createOnCloudflare(o: { api: CfApi; account: string; name: string; email: string; log?: (line: string) => void }): Promise<Created> {
+export async function createOnCloudflare(o: { api: CfApi; account: string; name: string; email: string; password?: string; log?: (line: string) => void }): Promise<Created> {
   const log = o.log ?? ((l: string) => console.log(l));
   const { buildRelease, releaseFromDir } = await import("./bundle");
   const { provisionInstance } = await import("../cloud/rest");
   const built = await buildRelease({ log: (l) => log(`  ${l}`) });
-  const password = randomPassword();
+  const password = o.password ?? randomPassword();
   // the token the instance rebuilds itself with (src/cloud/tokens.ts), when this machine holds a token that may create tokens
   const { createRebuildToken, tokenCreatorFromEnv } = await import("../cloud/tokens");
   const creatorToken = tokenCreatorFromEnv();

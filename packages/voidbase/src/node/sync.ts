@@ -90,6 +90,17 @@ export async function sync(opts: SyncOptions = {}): Promise<void> {
   }
   if (voidApp && !existsSync(join(pbDir, "main.ts"))) throw new Error(`${pbDir} has no main.ts: build the app first (bun run build), or run sync from a PocketBase-shaped directory`);
 
+  // an instance that is not a project declares itself: on Cloudflare it becomes one that rebuilds itself (./sync-vanilla.ts)
+  const { isVanillaLocal, syncVanillaUp } = await import("./sync-vanilla");
+  if (!voidApp && isVanillaLocal(root)) {
+    if (opts.dryRun) { log(`\nvanilla (dry run): would create or reuse ${opts.name ?? "the instance"} from this voidbase's release and carry this instance's shape to it`); return; }
+    if (!opts.name) throw new Error("name the instance on Cloudflare: voidbase sync up <dir> --name <name>");
+    const { deployTarget } = await import("./deploy-cf");
+    const { api, account } = await deployTarget({ account: opts.account, name: opts.name, log: () => undefined });
+    await syncVanillaUp({ root, api, account: account.id, name: opts.name, data: !!opts.data, log });
+    return;
+  }
+
   // 1. the instance
   const before = process.cwd(); process.chdir(pbDir);
   let deployed: Awaited<ReturnType<typeof deployToCloudflare>>;

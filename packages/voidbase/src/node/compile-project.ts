@@ -36,6 +36,12 @@ export function projectFiles(dir: string): Record<string, string> {
 
 export interface CompileOptions { entry?: string; outfile?: string; dir?: string; log?: (line: string) => void }
 
+/** whether the runtime at `execPath` is something other than Bun itself (the voidbase executable), which a binary must not be compiled onto */
+export function compilesOntoExecutable(execPath: string): boolean {
+  // split on both separators: a Windows path read on another platform is still one name to node:path's basename
+  return !/^bun(-debug)?(\.exe)?$/i.test(execPath.split(/[\\/]/).pop() ?? "");
+}
+
 export async function compileProject(o: CompileOptions = {}): Promise<{ outfile: string; files: number; bytes: number }> {
   const log = o.log ?? ((l: string) => console.log(l));
   const dir = resolve(o.dir ?? ".");
@@ -71,8 +77,14 @@ export async function compileProject(o: CompileOptions = {}): Promise<{ outfile:
     }
     writeFileSync(projectPath, JSON.stringify({ id, files }));
     log(`compiling ${relative(dir, entry)} with ${Object.keys(files).length} project file(s) (${PROJECT_FOLDERS.filter((f) => existsSync(join(dir, f))).join(", ") || "no pb_ folders"})`);
-    // process.execPath is Bun, or the voidbase executable acting as Bun (BUN_BE_BUN, set by the toolchain re-exec)
-    const r = Bun.spawnSync([process.execPath, "build", "--compile", entry, "--outfile", outfile], { cwd: dir, stdout: "pipe", stderr: "pipe", env: { ...process.env, BUN_BE_BUN: "1" } });
+    // process.execPath is Bun, or the voidbase executable acting as Bun (BUN_BE_BUN, set by the toolchain re-exec). Bun
+    // compiles onto the binary it is running as, and a binary compiled onto the voidbase executable crashed on start (a
+    // segmentation fault in Bun, voidbase-stories b-binary-extended.feature: "Building the project into one binary"); a
+    // `--target` matching the host still used the running binary. From the executable the build is given a plain Bun of
+    // the same version to compile onto (src/node/bun-runtime.ts). The executable is told by the runtime's own name, since it
+    // hands this command to its unpacked toolchain, where nothing embedded is visible.
+    const onto = compilesOntoExecutable(process.execPath) ? [`--compile-executable-path=${await (await import("./bun-runtime")).ensureBun()}`] : [];
+    const r = Bun.spawnSync([process.execPath, "build", "--compile", ...onto, entry, "--outfile", outfile], { cwd: dir, stdout: "pipe", stderr: "pipe", env: { ...process.env, BUN_BE_BUN: "1" } });
     if (r.exitCode !== 0) throw new Error(`bun build --compile failed:\n${new TextDecoder().decode(r.stderr) || new TextDecoder().decode(r.stdout)}`);
   } finally {
     rmSync(projectPath, { force: true });

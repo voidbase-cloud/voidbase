@@ -63,7 +63,9 @@ export async function buildRelease(o: BundleOptions = {}): Promise<{ dir: string
     modules, assets, migrations, crons: ((W.triggers?.crons ?? []) as string[]), durableObjects: hub ? doBindings : [],
     ...(modules.some((m) => m.path === "voidbase-plugins.js") && readFileSync(join(ssr, String(W.main ?? "index.js")), "utf8").includes("VoidbaseRebuild") ? { rebuild: { className: "VoidbaseRebuild" } } : {}),
     queueBinding: queue ? String(W.queues?.producers?.[0]?.binding ?? "QUEUE_JOBS") : null,
-    assetsConfig: { ...(W.assets?.html_handling ? { html_handling: W.assets.html_handling } : {}), ...(W.assets?.not_found_handling ? { not_found_handling: W.assets.not_found_handling } : {}), ...(W.assets?.run_worker_first ? { run_worker_first: W.assets.run_worker_first } : {}) },
+    assetsConfig: { ...(W.assets?.html_handling ? { html_handling: W.assets.html_handling } : {}), ...(W.assets?.not_found_handling ? { not_found_handling: W.assets.not_found_handling } : {}), // a release is a vanilla instance, whose uploaded pb_public the Worker serves (src/server/public-r2.ts): every path
+      // reaches it first, and one nobody uploaded falls through to these assets
+      run_worker_first: ["/**"] },
   };
   const dir = resolve(o.out ?? resolve(PKG, ".cloud/releases", version)); rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
   for (const m of modules) { mkdirSync(resolve(dir, "worker", m.path, ".."), { recursive: true }); cpSync(join(ssr, m.path), resolve(dir, "worker", m.path)); }

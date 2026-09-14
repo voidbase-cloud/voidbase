@@ -40,6 +40,8 @@ import { automigrateOn, pendingSchemaChanges, recordSchemaChange, type SchemaCha
 import { installerInfo as whereFilesLive } from "./installer-info";
 import { publicPath } from "./public-files";
 import { sideLoadedChange } from "./auto-merge";
+import { r2PublicFiles, servePublic } from "./public-r2";
+import { rebuildsOnCloudflare } from "./rebuild/cloudflare";
 import { commitFiles } from "./project-sync";
 import { configReport, declareConfig, environmentOf } from "./plugin-config";
 import { loadStoredConfig, setPluginConfig } from "./plugin-config-store";
@@ -125,6 +127,10 @@ app.use("*", (c, next) => observing()?.sample(c, next) ?? next());
 // The limits, from the same provider: this is their place in the chain. No provider, no limits.
 app.use("*", (c, next) => hardened()?.bodyLimit(c, next) ?? next());
 app.use("*", (c, next) => hardened()?.rateLimit(c, next) ?? next());
+// pb_public uploaded to a vanilla instance on Cloudflare (public-r2.ts): served here, and a path nobody uploaded falls
+// through to the assets the Worker was deployed with (Void's entry serves those on a 404)
+const r2PublicBucket = (env: AppEnv["Bindings"]): R2Bucket | null => (rebuildsOnCloudflare(env as never) && env.STORAGE ? env.STORAGE : null);
+app.use("*", async (c, next) => { const bucket = r2PublicBucket(c.env); if (bucket) { const hit = await servePublic(bucket, c.req.raw); if (hit) return hit; } return next(); });
 app.use("*", hookMiddleware() as never);
 // PocketBase's routerUse: the app's own global middleware, around every request (see src/adapter for Void's middleware/)
 app.use("*", globalHookMiddleware() as never);
@@ -615,11 +621,12 @@ provideRecordContext(recordContextFor);
 // pb_public from the admin panel (public-files.ts): an instance that holds its own files lists and takes uploads, and
 // the fetcher serves an upload on the next request; on one its project declares, the files are the repository's, and a
 // change made here is committed only when auto-merge is on (auto-merge.ts), and refused naming what to set otherwise.
-const holdsPublicFiles = (env: AppEnv["Bindings"]) => whereFilesLive(env).mode === "filesystem" && !!publicFiles;
-app.get("/api/pb_public", (c) => {
+// a vanilla instance on Cloudflare holds its files too, in its bucket (public-r2.ts)
+const holdsPublicFiles = (env: AppEnv["Bindings"]) => (whereFilesLive(env).mode === "filesystem" && !!publicFiles) || !!r2PublicBucket(env);
+app.get("/api/pb_public", async (c) => {
   requireSuperuser(c);
   const holds = holdsPublicFiles(c.env); const where = sideLoadedChange(c.env, holds);
-  return c.json({ source: holds ? "instance" : "repository", editable: where.to !== "refused", ...(where.to === "refused" ? { refusal: where.message } : {}), files: publicFiles ? publicFiles.list() : [] });
+  return c.json({ source: holds ? "instance" : "repository", editable: where.to !== "refused", ...(where.to === "refused" ? { refusal: where.message } : {}), files: r2PublicBucket(c.env) ? await r2PublicFiles(r2PublicBucket(c.env)!).list() : publicFiles ? publicFiles.list() : [] });
 });
 app.post("/api/pb_public", async (c) => {
   requireSuperuser(c);
@@ -638,7 +645,8 @@ app.post("/api/pb_public", async (c) => {
     const committed = await commitFiles(where.repo, await Promise.all(targets.map(async (t) => ({ path: `pb_public/${t.path}`, content: new Uint8Array(await t.file.arrayBuffer()) }))), `chore(pb_public): ${written.join(", ")} from the admin panel`);
     return c.json({ written, committed: committed.url, message: `Committed ${written.join(", ")} to ${where.repo.fullName} (${committed.branch}); its build deploys ${written.length === 1 ? "it" : "them"}.` });
   }
-  for (const t of targets) publicFiles!.write(t.path!, new Uint8Array(await t.file.arrayBuffer()));
+  const bucket = r2PublicBucket(c.env);
+  for (const t of targets) { const bytes = new Uint8Array(await t.file.arrayBuffer()); if (bucket) await r2PublicFiles(bucket).write(t.path!, bytes); else publicFiles!.write(t.path!, bytes); }
   return c.json({ written, message: `Uploaded ${written.join(", ")}. The instance serves ${written.length === 1 ? "it" : "them"} now.` });
 });
 

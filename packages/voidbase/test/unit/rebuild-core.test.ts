@@ -99,3 +99,16 @@ test("a request left for a running instance is read once", () => {
   writeRequest(d, { rollback: 3 });
   expect(takeRequest(d)).toEqual({ rollback: 3 });
 });
+
+test("the first update of an instance that never pinned a version makes what it runs a version first, so the update can be rolled back", async () => {
+  const { dataDir, pin, rebuilds } = instance("1.0.0");
+  pin({ backups: "0.1.0" });
+  rebuilds.queue("update voidbase 1.0.0 -> 2.0.0", { core: "2.0.0" });
+  let s = await settled(rebuilds);
+  expect(s.versions.map((v) => ({ number: v.number, core: v.core, from: v.from }))).toEqual([{ number: 1, core: "1.0.0", from: null }, { number: 2, core: "2.0.0", from: 1 }]);
+  expect(active(dataDir)).toBe("2.0.0");
+  rebuilds.rollback(1);
+  s = await settled(rebuilds);
+  expect(s.current).toBe(1);
+  expect(active(dataDir)).toBe("1.0.0");
+});

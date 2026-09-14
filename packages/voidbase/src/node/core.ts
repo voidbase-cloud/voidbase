@@ -100,7 +100,7 @@ export async function fetchCore(o: FetchCoreOptions): Promise<CoreRecord> {
 
 // ---- asking a running instance ----------------------------------------------------------------------------------
 
-export interface ServeInfo { pid: number; http: string; version: string }
+export interface ServeInfo { pid: number; http: string; version: string; /** whether it takes update and rollback requests while it runs (a voidbase older than this does not) */ requests?: boolean }
 export const writeServeInfo = (dataDir: string, info: ServeInfo): void => writeAtomic(join(dataDir, ".serve.json"), `${JSON.stringify(info)}\n`);
 
 /** the instance serving this pb_data, when one is: its process is alive */

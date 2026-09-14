@@ -86,6 +86,19 @@ export function createRebuilder(o: RebuilderOptions): Rebuilds {
         if (run.core && !o.core.has(run.core)) await o.core.fetch(run.core);
       }
     } else if (name === "assemble") {
+      // an update of an instance that never pinned a version: what it runs now becomes a version first, on the voidbase
+      // running it, so the update has somewhere to roll back to (voidbase-stories updating-core.feature, "An update that goes badly")
+      if (o.core && run.core && s.current === null && run.core !== o.core.current) {
+        const base = (s.versions.at(-1)?.number ?? 0) + 1;
+        const baseDir = `${versionDir(base)}.partial`;
+        rmSync(baseDir, { recursive: true, force: true });
+        copyDeclaration(o.root, baseDir);
+        writeFileSync(join(baseDir, "core.json"), `${JSON.stringify({ version: o.core.current })}\n`);
+        rmSync(versionDir(base), { recursive: true, force: true });
+        renameSync(baseDir, versionDir(base));
+        s.versions.push({ number: base, at: now(), plugins: run.declared ?? {}, disabled: run.disabled ?? [], from: null, run: run.id, core: o.core.current });
+        s.current = base;
+      }
       const n = (s.versions.at(-1)?.number ?? 0) + 1;
       const partial = `${versionDir(n)}.partial`;
       rmSync(partial, { recursive: true, force: true });

@@ -125,6 +125,10 @@ const HELP = `voidbase - PocketBase-compatible backend: a single Bun process loc
   plugins update [name]              bring installed plugins to the latest their own marketplace serves
                                      (--dir <project> or --name <local instance> picks the project; default: here)
 
+  update <local instance> [--to 1.0.0]  rebuild a local instance onto a newer voidbase, in place, as a new version (the
+                                     pb_data --dir names, or the one beside the executable, when no name is given)
+  rollback [<local instance>] [--to <n>] [--dir pb_data]
+                                     put an instance back on the version before (or version n), its voidbase included
   update --cloudflare <name> [--account id]
                                      rebuild an instance on Cloudflare onto this voidbase, as a new version of its Worker
   instances create --cloudflare <name> [--account id] [--email a@b]
@@ -330,6 +334,22 @@ switch (cmd) {
       const r = await provisionInstance(api, { account: account.id, name, release: releaseFromDir(built.dir), inheritSecrets: ["VOIDBASE_SUPERUSER_EMAIL", "VOIDBASE_SUPERUSER_PASSWORD"], applyDoMigrations: false, tags: plan.keepTags, log: (l) => console.log(`  ${l}`) });
       console.log(`\nupdated ${name}: ${plan.from} -> ${r.release}, a new version of the Worker${r.url ? ` (${r.url})` : ""}`);
       break;
+    }
+    // A local instance (voidbase-stories voidbase/updating-core.feature, "Updating a local instance"): a named one
+    // (`voidbase update <name>`), the pb_data --dir names, or the one beside the executable. It is rebuilt and updated in
+    // place, as a version pinning the new voidbase (src/node/local-update.ts): asked while it runs, rebuilt here when not.
+    if (!("check" in flags) && !flags["dry-run"]) {
+      const L = await import("../src/node/local");
+      const named = sub ? L.find(sub) : undefined;
+      if (sub && !named) { console.error(`no local instance called "${sub}" (voidbase local ls)`); process.exit(1); }
+      const dataDir = named ? resolve(named.dir, "pb_data") : resolve(flags.dir ?? "pb_data");
+      if (named || ((isExecutable() || flags.dir) && existsSync(resolve(dataDir, "data.db")))) {
+        const U = await import("../src/node/update");
+        const shape = isExecutable() ? ("executable" as const) : ("package" as const);
+        const target = flags.to ?? (shape === "executable" ? (await U.fetchLatestRelease()).tag.replace(/^v/, "") : await U.latestPublished());
+        await (await import("../src/node/local-update")).updateLocalInstance({ root: named ? named.dir : resolve(dataDir, ".."), dataDir, target, shape, running: await currentVersion(), log: (l) => console.log(l) });
+        break;
+      }
     }
     // One command, four shapes. The executable replaces itself from a GitHub release; everything else is a package
     // and comes from the registry. --check answers without changing anything, and its exit code is what a pipeline
@@ -593,6 +613,8 @@ switch (cmd) {
       if (await L.isRunning(i.port)) { console.error(`"${i.name}" is already running on ${i.port}`); process.exit(1); }
       const { serve } = await import("../src/node/serve");
       process.chdir(i.dir);
+      // a version pinned to another voidbase runs on that one (src/node/core.ts)
+      { const handed = await (await import("../src/node/local-update")).handOver(resolve(i.dir, "pb_data"), await currentVersion(), flags.http ?? `127.0.0.1:${i.port}`); if (handed !== null) process.exit(handed); }
       await serve({ ...serveOpts(), http: flags.http ?? `127.0.0.1:${i.port}` });
       break;
     }
@@ -764,13 +786,24 @@ switch (cmd) {
     await pushRelease({ dir: resolve(String(rest[0] ?? flags.dir ?? ".")), url: String(flags.url ?? process.env.VOIDBASE_URL ?? "http://127.0.0.1:8090"), token: String(flags.token ?? process.env.VOIDBASE_RELEASE_TOKEN ?? ""), activate: !flags["no-activate"] });
     break;
   }
+  case "rollback": {
+    // an update or a plugin that made things worse: the version before it again, the voidbase it pinned included
+    // (voidbase-stories voidbase/updating-core.feature, "An update that goes badly"; src/node/local-update.ts)
+    const L = await import("../src/node/local");
+    const named = sub ? L.find(sub) : undefined;
+    if (sub && !named) { console.error(`no local instance called "${sub}" (voidbase local ls)`); process.exit(1); }
+    const dataDir = named ? resolve(named.dir, "pb_data") : resolve(flags.dir ?? "pb_data");
+    if (flags.to !== undefined && !/^\d+$/.test(flags.to)) { console.error("--to takes a version number, as GET /api/rebuilds lists them"); process.exit(1); }
+    await (await import("../src/node/local-update")).rollbackLocalInstance({ root: named ? named.dir : resolve(dataDir, ".."), dataDir, to: flags.to !== undefined ? Number(flags.to) : undefined, shape: isExecutable() ? "executable" : "package", running: await currentVersion(), log: (l) => console.log(l) });
+    break;
+  }
   case "serve": {
     // --workers: the instance on Cloudflare's local runtime (src/node/serve-workers.ts); the toolchain comes with the npm package
     if (flags.workers) { await serveOnWorkers(); break; }
     // --entry main.ts: the project's own composition (pb's "custom" build), otherwise the stock server
     // run in this process, with the package mapped to this CLI's own modules when the project has not installed it, so
     // the binary is extended with nothing else installed (src/node/run-entry.ts)
-    if (!flags.dev) { if (flags.entry) { const { runEntry } = await import("../src/node/run-entry"); await runEntry(flags.entry, process.argv.slice(3).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry")); break; } const { serve } = await import("../src/node/serve"); await serve(serveOpts()); break; }
+    if (!flags.dev) { if (flags.entry) { const { runEntry } = await import("../src/node/run-entry"); await runEntry(flags.entry, process.argv.slice(3).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry")); break; } { const handed = await (await import("../src/node/local-update")).handOver(resolve(flags.dir ?? "pb_data"), await currentVersion(), flags.http); if (handed !== null) process.exit(handed); } const { serve } = await import("../src/node/serve"); await serve(serveOpts()); break; }
     // --dev: run the server as a child and restart it when pb_hooks / pb_migrations change (like modd for PocketBase)
     const { watch } = await import("node:fs");
     const childArgs = process.argv.slice(2).filter((a) => a !== "--dev" && a !== "--tunnel");

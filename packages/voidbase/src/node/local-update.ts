@@ -128,7 +128,9 @@ export async function handOver(dataDir: string, running: string, http?: string, 
     const env: Record<string, string | undefined> = { ...process.env, VOIDBASE_CORE_HANDOFF: record?.version };
     delete env.VOIDBASE_RESTART_ARGV; delete env.VOIDBASE_RESTART_ENV;
     // pinned to another voidbase: that one serves; pinned to this one again (a rollback past an update): this CLI, fresh
-    const argv = record ? [...record.argv, ...process.argv.slice(2)] : [process.execPath, ...process.argv.slice(1)];
+    // this CLI again: how this CLI is started for this install (a compiled executable's argv[1] is its own internal path,
+    // not something it can be started with), then the arguments it was given
+    const argv = record ? [...record.argv, ...process.argv.slice(2)] : [...self(o).argv, ...process.argv.slice(2)];
     if (!record) {
       // back on this CLI's own voidbase, which records itself and takes requests: this process gives up the record first
       // (a server that finds a live one recorded leaves it alone) and passes a request's signal on instead of dying of it

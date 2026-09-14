@@ -3,6 +3,18 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [1.0.0](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.69...v1.0.0) (2026-09-14)
+
+
+### Bug Fixes
+
+* **ci:** each server serves its own copy of the starter's committed migrations ([b27d5ac](https://github.com/voidbase-cloud/voidbase/commit/b27d5acd731dbd423d78dd4802513fb52fdec4c7))
+
+
+### Chores
+
+* **release:** voidbase leaves the public beta and releases 1.0.0 ([9ab4b42](https://github.com/voidbase-cloud/voidbase/commit/9ab4b429b72ed42f64f45fa23b056a092dec9460))
+
 ## [0.9.0-beta.69](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.68...v0.9.0-beta.69) (2026-09-14)
 
 * fix(build): compile from the executable onto a plain Bun of its version, not onto itself

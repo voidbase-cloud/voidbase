@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.63](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.62...v0.9.0-beta.63) (2026-09-14)
+
+* feat(cli): instances create --cloudflare --template deploys a template as a cloud instance
+
 ## [0.9.0-beta.62](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.61...v0.9.0-beta.62) (2026-09-13)
 
 * fix(deploy): plugin imports read under Node, and release copies kept under keys R2 accepts

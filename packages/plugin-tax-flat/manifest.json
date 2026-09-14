@@ -1,6 +1,6 @@
 {
   "name": "tax-flat",
-  "version": "0.9.0-beta.62",
+  "version": "0.9.0-beta.63",
   "tier": "official",
   "voidbase": "*",
   "provides": [

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0
+
+* released with @voidbase-cloud/voidbase 1.0.0
+
 ## [0.9.0-beta.69](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.68...v0.9.0-beta.69) (2026-09-14)
 
 * fix(build): compile from the executable onto a plain Bun of its version, not onto itself

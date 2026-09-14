@@ -31,8 +31,13 @@ check("a build without the toolchain says so, rather than pointing at npm", run(
 // ---- serve
 const port = freePort(); const base = `http://127.0.0.1:${port}`;
 // a copy of the starter's hooks and migrations: the collection created below makes automigrate write a migration, and
-// written into the starter it reached every later local run (the collections reference suite saw ks_exe)
-cpSync(`${STARTER}/pb_hooks`, `${tmp}/pb_hooks`, { recursive: true }); cpSync(`${STARTER}/pb_migrations`, `${tmp}/pb_migrations`, { recursive: true });
+// written into the starter it reached every later local run (the collections reference suite saw ks_exe). Only the
+// migrations the starter commits: the suites before this step serve on the starter's own pb_migrations with automigrate
+// on, and one they wrote (deleting ks_p, which ks_q and ks_r still reference) stopped this instance from starting
+cpSync(`${STARTER}/pb_hooks`, `${tmp}/pb_hooks`, { recursive: true }); mkdirSync(`${tmp}/pb_migrations`);
+const committedMigrations = (() => { const r = Bun.spawnSync(["git", "-C", STARTER, "ls-files", "pb_migrations"], { stdout: "pipe", stderr: "ignore" }); return r.exitCode === 0 ? r.stdout.toString().split("\n").filter((f) => f.endsWith(".js")) : []; })();
+if (committedMigrations.length) for (const f of committedMigrations) copyFileSync(`${STARTER}/${f}`, `${tmp}/${f}`);
+else cpSync(`${STARTER}/pb_migrations`, `${tmp}/pb_migrations`, { recursive: true });
 const server = Bun.spawn([exe, "serve", "--http", `127.0.0.1:${port}`, "--dir", `${tmp}/pb_data`, "--hooksDir", `${tmp}/pb_hooks`, "--migrationsDir", `${tmp}/pb_migrations`], { cwd: tmp, env: { ...process.env, HOME: home, XDG_CACHE_HOME: `${home}/.cache`, VOIDBASE_SUPERUSER_EMAIL: "admin@example.com", VOIDBASE_SUPERUSER_PASSWORD: "changeme123", VOIDBASE_LOG_MIN_LEVEL: "8" }, stdout: "pipe", stderr: "pipe" });
 const serverLog: string[] = []; (async () => { for await (const c of server.stdout) serverLog.push(new TextDecoder().decode(c)); })(); (async () => { for await (const c of server.stderr) serverLog.push(new TextDecoder().decode(c)); })();
 try {

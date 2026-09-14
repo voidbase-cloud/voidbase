@@ -80,11 +80,24 @@ typecheck() {
 }
 unit() { bun test; }
 browser() { local exports; exports=$(./scripts/ci-browser.sh) || return 1; eval "$exports"; echo "$exports"; }
+# The starter's committed migrations, copied for one server. Automigrate writes a migration for every collection a
+# suite creates, changes or deletes; written into the starter's own pb_migrations they reached every later server that
+# read it, which replayed ~60 of them in filename order (several share a second, so a delete of ks_p ran while ks_q and
+# ks_r still referenced it), and the dev server restarted after the Bun pass then failed the starter's sign-up; the
+# executable smoke test's fresh instance failed on the same file. Each server gets its own copy, so none replays another's.
+starter_migrations() {
+  local to="$ROOT/.void/ci-migrations/$1" committed; rm -rf "$to"; mkdir -p "$to"
+  committed=$(git -C "$STARTER_DIR" ls-files pb/pb_migrations 2>/dev/null)
+  if [ -n "$committed" ]; then (cd "$STARTER_DIR" && printf '%s\n' "$committed" | while IFS= read -r f; do cp "$f" "$to/" || exit 1; done) || return 1
+  else cp -R "$STARTER_DIR/pb/pb_migrations/." "$to/" || return 1; fi
+  echo "$to"
+}
 boot() {
   # the Worker reads its vars from .env (Void bakes them), not from the shell: the run writes its own values so both
   # sides serve the same starter; a dev machine's file is put back when the run ends (cleanup)
   if [ -f "$PKG/.env" ] && [ ! -f .void/ci-env.backup ]; then cp "$PKG/.env" .void/ci-env.backup; fi
-  printf 'VOIDBASE_SUPERUSER_EMAIL=%s\nVOIDBASE_SUPERUSER_PASSWORD=%s\nVOIDBASE_HOOKS_DIR=%s\nVOIDBASE_MIGRATIONS_DIR=%s\nAUDITLOG=%s\nVOIDBASE_LOG_MIN_LEVEL=0\n' "$VOIDBASE_SUPERUSER_EMAIL" "$VOIDBASE_SUPERUSER_PASSWORD" "$STARTER_DIR/pb/pb_hooks" "$STARTER_DIR/pb/pb_migrations" "$AUDITLOG" > "$PKG/.env"
+  local migrations; migrations=$(starter_migrations dev) || return 1
+  printf 'VOIDBASE_SUPERUSER_EMAIL=%s\nVOIDBASE_SUPERUSER_PASSWORD=%s\nVOIDBASE_HOOKS_DIR=%s\nVOIDBASE_MIGRATIONS_DIR=%s\nAUDITLOG=%s\nVOIDBASE_LOG_MIN_LEVEL=0\n' "$VOIDBASE_SUPERUSER_EMAIL" "$VOIDBASE_SUPERUSER_PASSWORD" "$STARTER_DIR/pb/pb_hooks" "$migrations" "$AUDITLOG" > "$PKG/.env"
   (cd "$PKG" && "$ROOT/node_modules/.bin/void" db migrate)
   ./scripts/dev.sh start "$PORT" && booted=1
   "$PKG/scripts/seed-app-user.sh" "$VB"
@@ -138,7 +151,8 @@ suites_bun() {  # the selected suites against `voidbase serve` (Bun runtime, SQL
   # gets a fresh one: both sides of every comparison then start from the same state
   if [ "$started_pb" = 1 ]; then stop_reference; start_reference; fi
   rm -rf .void/ci-serve; mkdir -p .void/ci-serve
-  daemon serve .void/serve.log bun "$PKG/bin/voidbase.ts" serve --http 127.0.0.1:8093 --dir .void/ci-serve/pb_data --hooksDir "$STARTER_DIR/pb/pb_hooks" --migrationsDir "$STARTER_DIR/pb/pb_migrations"
+  local migrations; migrations=$(starter_migrations bun) || return 1
+  daemon serve .void/serve.log bun "$PKG/bin/voidbase.ts" serve --http 127.0.0.1:8093 --dir .void/ci-serve/pb_data --hooksDir "$STARTER_DIR/pb/pb_hooks" --migrationsDir "$migrations"
   wait_http http://127.0.0.1:8093/api/health 60
   "$PKG/scripts/seed-app-user.sh" http://127.0.0.1:8093
   # shellcheck disable=SC2086

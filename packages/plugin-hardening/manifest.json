@@ -1,6 +1,6 @@
 {
   "name": "hardening",
-  "version": "0.9.0-beta.65",
+  "version": "0.9.0-beta.66",
   "tier": "core",
   "voidbase": "*",
   "provides": [

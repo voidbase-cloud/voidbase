@@ -3,6 +3,10 @@
 Entries after 0.1.0 are compiled by release-please from the Conventional Commits merged since the previous release
 (docs/releasing.md); 0.1.0 was written by hand.
 
+## [0.9.0-beta.66](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.65...v0.9.0-beta.66) (2026-09-14)
+
+* fix(cli): an instance handed back to the CLI's own voidbase records itself and takes requests
+
 ## [0.9.0-beta.65](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.64...v0.9.0-beta.65) (2026-09-14)
 
 * fix(cli): instances are vanilla or extended by the rebuild binding, not a leftover tag

@@ -1,5 +1,5 @@
 {
-    "version": "0.6.7",
+    "version": "0.6.8",
     "name": "@voidbase-cloud/sdk",
     "description": "voidbase JavaScript SDK: the PocketBase JS SDK, kept in step with upstream, plus a typed client, a plugin surface, an offline queue, PWA helpers, in-place editing, a chat helper, a payments helper, an SEO helper and an interface strings runtime",
     "author": "Gani Georgiev",

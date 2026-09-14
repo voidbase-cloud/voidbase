@@ -10,6 +10,10 @@ Added, on the same upstream base (PocketBase JS SDK 0.28.1):
 
 - The interface strings runtime, `@voidbase-cloud/sdk/i18n`: `i18n<MessageKey>({ catalogues })` gives `client.i18n.t(key, vars)` typed from the keys `voidbase i18n extract` generates, with locale negotiation, persistence and `missing()`. It sends `Accept-Language` on every request, so the server's content translations answer in the language the interface is in.
 
+## [0.9.0-beta.66](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.65...v0.9.0-beta.66) (2026-09-14)
+
+* fix(cli): an instance handed back to the CLI's own voidbase records itself and takes requests
+
 ## [0.9.0-beta.65](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.64...v0.9.0-beta.65) (2026-09-14)
 
 * fix(cli): instances are vanilla or extended by the rebuild binding, not a leftover tag

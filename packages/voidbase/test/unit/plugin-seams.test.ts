@@ -16,7 +16,7 @@
 // seo, translations, previews, domains) left the core for repositories of their own (11.3). Regenerate it only when
 // the answer is meant to change, and say in the changelog what moved: a diff here is a change to what every instance
 // reports about itself.
-import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { Hono } from "hono";
@@ -42,6 +42,7 @@ import { openapi } from "../../src/server/plugins/openapi";
 import { polar } from "../support/plugins/polar";
 import { realtime } from "../../src/server/plugins/realtime";
 import { pluginsReport, sourceOf } from "../../src/server/plugins/report";
+import { invalidateSettings } from "../../src/server/settings";
 import { CORE } from "../../src/server/plugins/resolve";
 import { shippingFlat, shippingFlatInfo } from "../support/plugins/shipping-flat";
 import { stripe } from "../support/plugins/stripe";
@@ -71,6 +72,10 @@ async function instance(extra: Plugin[] = [], shadowed: string[] = []): Promise<
 }
 
 afterAll(() => { commerce.stopWatchingPayments(); });
+// loadSettings keeps what it read for five seconds, and mail and observability report from it before they touch the
+// database: settings another file loaded moments earlier answered for this file's database, which throws, so the full
+// build saw a sender and logs on. Every test reads settings for itself.
+beforeEach(() => { invalidateSettings(); });
 
 /** the route as app.ts mounts it: c.json() serialises the whole answer at once, which is where a bad value lands */
 async function route(kernel: Kernel, opts: { timeoutMs?: number } = {}): Promise<Response> {

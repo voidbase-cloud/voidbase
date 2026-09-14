@@ -69,11 +69,14 @@ const mock = Bun.serve({ port: api, hostname: "127.0.0.1", fetch: (req) => {
 let mockTag = `v${built.version}`;
 // what /releases/latest would answer: GitHub keeps a prerelease out of it, so this stays behind on purpose
 let stableTag = `v${built.version}`;
+// the executable replacing itself: run where no instance lives, since `update` beside an instance's pb_data updates that
+// instance in place instead (voidbase-stories updating-core.feature, "One command wherever I am"; src/node/local-update.ts)
+const noInstance = `${tmp}/no-instance`;
 try {
-  const same = await runAsync(["update", "--dir", `${tmp}/pb_data`], { VOIDBASE_UPDATE_API: `http://127.0.0.1:${api}` });
+  const same = await runAsync(["update", "--dir", noInstance], { VOIDBASE_UPDATE_API: `http://127.0.0.1:${api}` });
   check("already on the latest version: nothing replaced", same.code === 0 && /already have the latest version/.test(same.out), same.out.slice(-200));
   mockTag = "v99.0.0"; const saved = checksumLine; checksumLine = `${"0".repeat(64)}  ${assetName}\n`;
-  const bad = await runAsync(["update", "--dir", `${tmp}/pb_data`], { VOIDBASE_UPDATE_API: `http://127.0.0.1:${api}` });
+  const bad = await runAsync(["update", "--dir", noInstance], { VOIDBASE_UPDATE_API: `http://127.0.0.1:${api}` });
   check("checksum mismatch refuses the update and keeps the executable", bad.code !== 0 && /checksum mismatch/.test(bad.out) && run(["version"]).out.trim() === built.version, bad.out.slice(-200));
   checksumLine = saved;
 
@@ -84,7 +87,7 @@ try {
   check("a prerelease is offered even though /releases/latest hides it", beta.code === 1 && /latest 99\.0\.0-beta/.test(beta.out) && /behind/.test(beta.out), beta.out.slice(-200));
   mockTag = "v99.0.0"; stableTag = "v99.0.0";
 
-  const ok = await runAsync(["update", "--dir", `${tmp}/pb_data`], { VOIDBASE_UPDATE_API: `http://127.0.0.1:${api}` });
+  const ok = await runAsync(["update", "--dir", noInstance], { VOIDBASE_UPDATE_API: `http://127.0.0.1:${api}` });
   const after = Bun.spawnSync([exe], { cwd: tmp, stdout: "pipe" });
   check("update: asset for this platform verified, extracted and swapped in, notes printed without the update hint", ok.code === 0 && /Checksum verified/.test(ok.out) && /Update completed successfully/.test(ok.out) && /something new/.test(ok.out) && !/To update the prebuilt/.test(ok.out) && new TextDecoder().decode(after.stdout).trim() === "updated-executable", ok.out.slice(-300));
 } finally { mock.stop(true); rmSync(tmp, { recursive: true, force: true }); }

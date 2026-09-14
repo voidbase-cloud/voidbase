@@ -39,12 +39,16 @@ export function toolchainDir(version: string, platform = process.platform, arch 
   return resolve(base, "voidbase", "toolchain", `${version}-${platform}-${arch}`);
 }
 
-/** `node` and `bun` in the toolchain's bin/, each being this executable acting as Bun */
-export function writeShims(bin: string, exe = process.execPath): void {
+/**
+ * `node` and `bun` in the toolchain's bin/: `bun` is this executable acting as Bun, and `node` is the real Node given
+ * (src/node/node-runtime.ts), or this executable as Bun when there is none
+ */
+export function writeShims(bin: string, exe = process.execPath, node: string | null = null): void {
   mkdirSync(bin, { recursive: true });
   for (const name of ["node", "bun"]) {
-    if (process.platform === "win32") writeFileSync(join(bin, `${name}.cmd`), `@echo off\r\nset BUN_BE_BUN=1\r\n"${exe}" %*\r\n`);
-    else { const file = join(bin, name); writeFileSync(file, `#!/bin/sh\nBUN_BE_BUN=1 exec "${exe}" "$@"\n`); chmodSync(file, 0o755); }
+    const real = name === "node" ? node : null;
+    if (process.platform === "win32") writeFileSync(join(bin, `${name}.cmd`), real ? `@echo off\r\n"${real}" %*\r\n` : `@echo off\r\nset BUN_BE_BUN=1\r\n"${exe}" %*\r\n`);
+    else { const file = join(bin, name); writeFileSync(file, real ? `#!/bin/sh\nexec "${real}" "$@"\n` : `#!/bin/sh\nBUN_BE_BUN=1 exec "${exe}" "$@"\n`); chmodSync(file, 0o755); }
   }
 }
 
@@ -85,7 +89,13 @@ export async function runWithToolchain(argv: string[]): Promise<never> {
     await unpack(archive, dir);
   }
   const bin = join(dir, "bin");
-  writeShims(bin);
+  // Void, Vite and wrangler are Node programs: a real Node when one can be had, this executable as Bun otherwise
+  const { ensureNode } = await import("./node-runtime");
+  const node = await ensureNode({ exclude: [bin, join(dir, "node_modules", ".bin")] }).catch((err: unknown) => {
+    console.error(`voidbase: ${err instanceof Error ? err.message : String(err)}; the toolchain runs on this executable instead, where a deploy can fail`);
+    return null;
+  });
+  writeShims(bin, process.execPath, node);
   const cli = join(dir, "node_modules", "@voidbase-cloud", "voidbase", "bin", "voidbase.ts");
   if (!existsSync(cli)) { console.error(`voidbase: the toolchain in ${dir} has no voidbase CLI; delete the directory and run again`); process.exit(1); }
   const env = { ...process.env, BUN_BE_BUN: "1", PATH: [bin, join(dir, "node_modules", ".bin"), process.env.PATH ?? ""].join(delimiter) };

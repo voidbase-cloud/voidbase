@@ -332,6 +332,9 @@ export async function deployToCloudflare(opts: DeployOptions = {}): Promise<Depl
   if (deployPlugins.length) log(`deploy plugins: ${deployPlugins.map((p) => `${p.name} (${p.origin})`).join(", ")}`);
   writeCloudProject(cloud, mode, { hooksDir: resolve(consumer, process.env.VOIDBASE_HOOKS_DIR || "pb_hooks"), migrationsDir: resolve(consumer, process.env.VOIDBASE_MIGRATIONS_DIR || "pb_migrations"), pluginsDir, entry, entryRegisters, queue, hub, database, seoPng, workflows: workflows.map((w) => ({ file: w.file, className: w.className })) });
   log(seoPng ? `${SEO_PNG_VAR}=1: seo share cards are rasterised to PNG (resvg, about 1 MB gzipped in the Worker)` : `share cards are SVG (${SEO_PNG_VAR}=1 bundles resvg and serves them as PNG, about 1 MB gzipped more)`);
+  // from the prebuilt executable nothing above the project holds vite: it resolves the toolchain's packages through a link
+  const { linkToolchainModules } = await import("./toolchain-link");
+  if (linkToolchainModules(cloud, resolve(Bun.resolveSync("void/package.json", PKG), "..", ".."))) log(`linked the toolchain's node_modules into ${cloud}`);
   if (!queue) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/queues`, { recursive: true, force: true }); }
   if (!cron) { const { rmSync } = await import("node:fs"); rmSync(`${cloud}/crons`, { recursive: true, force: true }); log("cron trigger disabled (VOIDBASE_DEPLOY_CRON=0 / --no-cron): maintenance runs lazily in requests"); }
   log(observability

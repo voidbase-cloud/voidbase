@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { zipSync, type Zippable } from "fflate";
+import { patchToolchainIn } from "../packages/voidbase/src/node/void-probe-patch";
 
 // the published package: this script is the repository's release tooling and lives in the workspace root's scripts/
 const PKG = resolve(import.meta.dir, "../packages/voidbase");
@@ -60,6 +61,9 @@ async function stageToolchain(target: string, packs: string, stageRoot: string, 
       for (const pkg of readdirSync(`${dir}/node_modules/${scope}`)) if (pkg.endsWith(other)) rmSync(`${dir}/node_modules/${scope}/${pkg}`, { recursive: true, force: true });
     }
   }
+  // under Bun (the executable's `node`) Void's env-schema probe never gets its child's answer through fd 3, and Vite's
+  // bundling config loader cannot load vite.config.ts (src/node/void-probe-patch.ts)
+  patchToolchainIn(`${dir}/node_modules`);
   const archive = `${stageRoot}/${target}.tar.gz`;
   const t = Bun.spawnSync(["tar", "-czf", archive, "-C", dir, "node_modules"], { stdout: "pipe", stderr: "pipe" });
   if (t.exitCode !== 0) throw new Error(`archiving the toolchain for ${target} failed: ${new TextDecoder().decode(t.stderr)}`);
@@ -93,6 +97,9 @@ export async function buildExecutables(o: BuildOptions = {}): Promise<{ version:
   const stageRoot = resolve(process.env.CI_CACHE_DIR ? `${process.env.CI_CACHE_DIR}/toolchain-stage` : join(tmpdir(), "voidbase-toolchain-stage"));
   const packs = `${stageRoot}/packs`;
   if (withToolchain) {
+    // a build that was killed before its cleanup leaves the last toolchain archive in src/node, and packing the package
+    // would put that whole toolchain inside this one (it doubled the executable and the compile ran out of memory)
+    rmSync(toolchainPath, { force: true });
     rmSync(packs, { recursive: true, force: true }); mkdirSync(packs, { recursive: true });
     const root = resolve(PKG, "..");
     for (const d of [PKG, ...readdirSync(root).filter((n) => n.startsWith("plugin-")).map((n) => `${root}/${n}`)]) {

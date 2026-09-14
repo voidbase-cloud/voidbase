@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.0-beta.69](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.68...v0.9.0-beta.69) (2026-09-14)
+
+* fix(build): compile from the executable onto a plain Bun of its version, not onto itself
+
 ## [0.9.0-beta.68](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.67...v0.9.0-beta.68) (2026-09-14)
 
 * fix(deploy): a Worker that went live gets a minute to answer before a later step fails the deploy

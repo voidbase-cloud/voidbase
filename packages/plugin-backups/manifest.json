@@ -1,6 +1,6 @@
 {
   "name": "backups",
-  "version": "0.9.0-beta.68",
+  "version": "0.9.0-beta.69",
   "tier": "core",
   "voidbase": "*",
   "provides": [

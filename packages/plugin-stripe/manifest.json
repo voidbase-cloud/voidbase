@@ -1,6 +1,6 @@
 {
   "name": "stripe",
-  "version": "0.9.0-beta.67",
+  "version": "0.9.0-beta.68",
   "tier": "official",
   "voidbase": "*",
   "provides": [

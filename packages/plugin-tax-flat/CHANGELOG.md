@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.0-beta.68](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.67...v0.9.0-beta.68) (2026-09-14)
+
+* fix(deploy): a Worker that went live gets a minute to answer before a later step fails the deploy
+
 ## [0.9.0-beta.67](https://github.com/voidbase-cloud/voidbase/compare/v0.9.0-beta.66...v0.9.0-beta.67) (2026-09-14)
 
 * fix(cli): a handed-back executable restarts itself the way it is started, not by its internal path

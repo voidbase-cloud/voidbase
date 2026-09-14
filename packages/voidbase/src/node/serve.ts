@@ -140,7 +140,8 @@ export async function voidbase(opts: ServeOptions = {}) {
     // cron: every minute on the minute, like the Cloudflare trigger
     const tick = () => runDue(env as never, new Date()).catch((e) => console.error("voidbase: cron failed", e));
     const first = 60_000 - (Date.now() % 60_000);
-    const timer = setTimeout(() => { void tick(); setInterval(() => void tick(), 60_000); }, first);
+    let every: ReturnType<typeof setInterval> | undefined;
+    const timer = setTimeout(() => { void tick(); every = setInterval(() => void tick(), 60_000); }, first);
     // --tunnel: cloudflared in front of the port, started before the banner so the address is in it. The watcher of
     // --dev keeps one tunnel across restarts and passes its address down as VOIDBASE_TUNNEL_URL; a missing
     // cloudflared costs the tunnel, never the server
@@ -155,7 +156,7 @@ export async function voidbase(opts: ServeOptions = {}) {
     // bootstrap now (system collections, settings, superuser from env, pb_migrations) instead of on the first request
     await fetch(`http://127.0.0.1:${port}/api/health`).catch(() => undefined);
     await seedUser(port);
-    const stop = () => { clearTimeout(timer); tunnel?.stop(); server.stop(true); };
+    const stop = () => { clearTimeout(timer); clearInterval(every); tunnel?.stop(); server.stop(true); };
     // an instance that holds its own files rebuilds itself: a plugin change queues a rebuild, which assembles the
     // declaration as a new version and starts this process again onto it (src/node/rebuild.ts, src/node/restart.ts)
     if (!process.env.VOIDBASE_PROJECT_BAKED) {

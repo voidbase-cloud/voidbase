@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RebuildState, Rebuilds } from "../server/rebuilds";
-import { activeCoreVersion, coreRecord, type CoreRecord, fetchCore, handoffFor, runningInstance, writeRequest, writeServeInfo } from "./core";
+import { activeCoreVersion, coreRecord, type CoreRecord, fetchCore, handoffFor, type RebuildRequest, runningInstance, takeRequest, writeRequest, writeServeInfo } from "./core";
 import { createRebuilder } from "./rebuild";
 
 export interface LocalOptions {
@@ -110,17 +110,43 @@ export async function rollbackLocalInstance(o: LocalOptions & { to?: number }): 
 
 /**
  * Start the voidbase the version in place pins, when it is not this one, with the same arguments; null when this one
- * is it. The started process records itself as serving, and forwards the signals a person stops it with.
+ * is it. A pinned voidbase older than the update protocol takes no requests, so this process takes them for it: asked
+ * for an update or a rollback, it stops the pinned one, rebuilds the instance here as a stopped one is rebuilt, and
+ * starts whichever voidbase the instance pins now (voidbase-stories a-binary-vanilla.feature, "Updating the instance":
+ * the CLI update rebuilds it in place whatever it runs). It forwards the signals a person stops it with.
  */
-export async function handOver(dataDir: string, running: string, http?: string): Promise<number | null> {
-  const record = handoffFor(dataDir, running);
+export async function handOver(dataDir: string, running: string, http?: string, shape: LocalOptions["shape"] = "package"): Promise<number | null> {
+  let record = handoffFor(dataDir, running);
   if (!record) return null;
   // handed to this version already, and it says it is another: stop rather than start one process after another
   if (process.env.VOIDBASE_CORE_HANDOFF === record.version) throw new Error(`pb_data/cores/${record.version} does not run voidbase ${record.version} (it runs ${running}): update again, or roll back`);
-  const env: Record<string, string | undefined> = { ...process.env, VOIDBASE_CORE_HANDOFF: record.version };
-  delete env.VOIDBASE_RESTART_ARGV; delete env.VOIDBASE_RESTART_ENV;
-  const child = Bun.spawn([...record.argv, ...process.argv.slice(2)], { stdio: ["inherit", "inherit", "inherit"], env: env as Record<string, string> });
-  writeServeInfo(dataDir, { pid: child.pid, http: http ? `http://${http}` : "http://127.0.0.1:8090", version: record.version, requests: false });
-  for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => child.kill(signal));
-  return await child.exited;
+  const url = http ? `http://${http}` : "http://127.0.0.1:8090";
+  const o: LocalOptions = { root: resolve(dataDir, ".."), dataDir, running, shape, log: (l) => console.log(`voidbase: ${l}`) };
+  let child: ReturnType<typeof Bun.spawn> | null = null;
+  for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => { if (child) child.kill(signal); else process.exit(0); });
+  for (;;) {
+    const env: Record<string, string | undefined> = { ...process.env, VOIDBASE_CORE_HANDOFF: record?.version };
+    delete env.VOIDBASE_RESTART_ARGV; delete env.VOIDBASE_RESTART_ENV;
+    // pinned to another voidbase: that one serves; pinned to this one again (a rollback past an update): this CLI, fresh
+    const argv = record ? [...record.argv, ...process.argv.slice(2)] : [process.execPath, ...process.argv.slice(1)];
+    if (!record) delete env.VOIDBASE_CORE_HANDOFF;
+    const started = Bun.spawn(argv, { stdio: ["inherit", "inherit", "inherit"], env: env as Record<string, string> });
+    child = started;
+    if (!record) return await started.exited;
+    writeServeInfo(dataDir, { pid: process.pid, http: url, version: record.version, requests: true });
+    let request: RebuildRequest | null = null;
+    const onRequest = () => { const r = takeRequest(dataDir); if (!r) return; request = r; started.kill("SIGTERM"); };
+    process.on("SIGUSR2", onRequest);
+    const code = await started.exited;
+    process.off("SIGUSR2", onRequest);
+    child = null;
+    const asked = request as RebuildRequest | null;
+    if (!asked) return code;
+    try {
+      const r = offline(o);
+      if ("update" in asked) r.queue(`update voidbase ${record.version} -> ${asked.update}`, { core: asked.update }); else r.rollback(asked.rollback);
+      await settle(r);
+    } catch (err) { console.error(`voidbase: ${err instanceof Error ? err.message : String(err)}; starting the instance on what it pinned before`); }
+    record = handoffFor(dataDir, running);
+  }
 }

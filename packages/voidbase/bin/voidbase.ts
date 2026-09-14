@@ -631,7 +631,7 @@ switch (cmd) {
       const { serve } = await import("../src/node/serve");
       process.chdir(i.dir);
       // a version pinned to another voidbase runs on that one (src/node/core.ts)
-      { const handed = await (await import("../src/node/local-update")).handOver(resolve(i.dir, "pb_data"), await currentVersion(), flags.http ?? `127.0.0.1:${i.port}`); if (handed !== null) process.exit(handed); }
+      { const handed = await (await import("../src/node/local-update")).handOver(resolve(i.dir, "pb_data"), await currentVersion(), flags.http ?? `127.0.0.1:${i.port}`, isExecutable() ? "executable" : "package"); if (handed !== null) process.exit(handed); }
       await serve({ ...serveOpts(), http: flags.http ?? `127.0.0.1:${i.port}` });
       break;
     }
@@ -845,7 +845,7 @@ switch (cmd) {
     // --entry main.ts: the project's own composition (pb's "custom" build), otherwise the stock server
     // run in this process, with the package mapped to this CLI's own modules when the project has not installed it, so
     // the binary is extended with nothing else installed (src/node/run-entry.ts)
-    if (!flags.dev) { if (flags.entry) { const { runEntry } = await import("../src/node/run-entry"); await runEntry(flags.entry, process.argv.slice(3).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry")); break; } { const handed = await (await import("../src/node/local-update")).handOver(resolve(flags.dir ?? "pb_data"), await currentVersion(), flags.http); if (handed !== null) process.exit(handed); } const { serve } = await import("../src/node/serve"); await serve(serveOpts()); break; }
+    if (!flags.dev) { if (flags.entry) { const { runEntry } = await import("../src/node/run-entry"); await runEntry(flags.entry, process.argv.slice(3).filter((a, i, arr) => a !== "--entry" && arr[i - 1] !== "--entry")); break; } { const handed = await (await import("../src/node/local-update")).handOver(resolve(flags.dir ?? "pb_data"), await currentVersion(), flags.http, isExecutable() ? "executable" : "package"); if (handed !== null) process.exit(handed); } const { serve } = await import("../src/node/serve"); await serve(serveOpts()); break; }
     // --dev: run the server as a child and restart it when pb_hooks / pb_migrations change (like modd for PocketBase)
     const { watch } = await import("node:fs");
     const childArgs = process.argv.slice(2).filter((a) => a !== "--dev" && a !== "--tunnel");

@@ -3,9 +3,6 @@
   "release-type": "node",
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": false,
-  "versioning": "prerelease",
-  "prerelease": true,
-  "prerelease-type": "beta",
   "include-component-in-tag": false,
   "changelog-sections": [
     {
@@ -60,7 +57,8 @@
   ],
   "packages": {
     "packages/voidbase": {
-      "package-name": "@voidbase-cloud/voidbase"
+      "package-name": "@voidbase-cloud/voidbase",
+      "release-as": "1.0.0"
     }
   }
 }

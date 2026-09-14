@@ -316,11 +316,13 @@ component. This repository tags `vX.Y.Z` with no component in it, so the plugin 
 quietly do nothing, and turning the component on would rename every tag the executables' update path and
 `scripts/release.sh --tag` depend on.
 
-## The public beta
+## The public beta, and 1.0.0
 
-While voidbase is in public beta the versions carry the label: `"versioning": "prerelease"` with
-`"prerelease-type": "beta"` turns the next bump into `0.9.0-beta` rather than `0.9.0`, and `"prerelease": true` marks
-the GitHub release as a pre-release. Going stable is deleting those three keys and nothing else.
+voidbase was in public beta until 1.0.0: `"versioning": "prerelease"` with `"prerelease-type": "beta"` turned each
+bump into `0.9.0-beta.<n>`, and `"prerelease": true` marked the GitHub release as a pre-release. Going stable deleted
+those three keys and set `"release-as": "1.0.0"` on the package once, so the release pull request cut 1.0.0 rather than
+0.9.0; that key comes out again with the release, or every later release would be 1.0.0 too. Hot mode releases
+prereleases only (`scripts/hot-release.ts`), so it stays off from 1.0.0 on.
 
 Two consequences are worth knowing, because both of them decide whether an existing install ever hears about a
 release:

@@ -1,7 +1,7 @@
 # @voidbase-cloud/plugin-observability
 
 The observability plugin of [voidbase](https://github.com/voidbase-cloud/voidbase), as a package of its own. It is
-tier `core`, for the reason the roadmap gives: an instance you cannot see into is one you cannot operate.
+tier `core`, because an instance you cannot see into is one you cannot operate.
 
 It ships with voidbase and is on by default — `@voidbase-cloud/voidbase` depends on this package and loads it —
 so an instance needs nothing here. Install it yourself only to load it into an app that builds its own plugin

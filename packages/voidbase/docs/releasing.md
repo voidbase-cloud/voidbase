@@ -97,7 +97,8 @@ release-please, a commit touching no tracked package -- and after 7.6 there are 
 now the ordinary shape of a plugin change rather than an edge case. The plugin still *moves* when a release is cut --
 `scripts/hot-release.ts --follow` writes the version into whatever the release set names (below) -- but a plugin
 package cannot be what cuts one. The fix while that matters is the same as for tooling: touch the core in the same
-commit. Hot mode, which is the mode in use during the beta, has no such rule and releases every push.
+commit. Hot mode, which this repository ran in through the beta and has had off since 1.0.0, had no such rule and
+released every push.
 
 This is a real change and not a side effect worth shrugging at. Until the move the configuration was keyed `"."`,
 and `"."` is release-please's root project path: `CommitSplit` (release-please 17.11.2,
@@ -112,7 +113,8 @@ entry keyed `"."`; it would take *all* commits, the package's included, duplicat
 private workspace root's own `package.json`, so it was not taken. If a tooling change has to reach a release, touch
 the package in the same commit, or cut the release by hand (below).
 
-**Hot mode is the exception, and it is the mode this repository runs in during the beta** (`CI_HOT=1`, docs/ci.md).
+**Hot mode was the exception, and the mode this repository ran in through the beta** (`CI_HOT=1`, docs/ci.md); it
+has been off since 1.0.0, because it releases prereleases only.
 `scripts/hot-release.ts` asks release-please nothing: it reads the version off the publishable packages, increments
 the prerelease counter, writes it into every workspace package, writes the changelog of each publishable one from
 the commit subjects, tags and pushes. So with hot mode on, a push that
@@ -293,11 +295,15 @@ token expired or a name was refused -- so it is printed rather than dropped.
 
 **A package moves when it changed, on both paths.** Hot mode moves the whole release set in its own commit
 (`releaseSet`, above). On the normal path release-please tracks one package, `packages/voidbase`, so its release pull
-request moves the core and nothing else; once that release is cut, `scripts/release.sh` runs
-`scripts/hot-release.ts --follow <version> --since <previous tag>` before anything is packed, which moves every other
-package the release set names to the same version, writes their changelogs and `bun.lock`, commits that as
-`chore(master): release <version> packages` (a subject ci.sh already skips) and pushes. It tags nothing and makes no
-release: those are the core's. `bun scripts/hot-release.ts --follow <version> --since <tag> --dry-run` prints what it
+request moves the core and nothing else. The merge's build does not check that commit: its `release-follow` step
+(scripts/ci.sh, right after `plan`) runs `scripts/hot-release.ts --follow <version> --since <previous tag>`, which
+moves every other package the release set names to the same version, writes their changelogs and `bun.lock` (the
+core's entry too, which release-please cannot write), commits that as `chore(master): release <version> packages`,
+pushes it and ends the build. That commit's build runs every check on packages that agree, then releases. It had to
+be this order: the lockstep tests read every package's version, so on the merge commit itself they failed, which is
+how 1.0.0's first release build ended. `scripts/release.sh` still follows, but only on a release merge that has not
+followed yet (a release cut outside ci.sh); on any other build it skips, having once bumped the SDK for nothing.
+`--follow` tags nothing and makes no release: those are the core's. `bun scripts/hot-release.ts --follow <version> --since <tag> --dry-run` prints what it
 would move.
 
 This used to be the other way round. The configuration carried an `extra-files` glob,
@@ -328,7 +334,7 @@ Two consequences are worth knowing, because both of them decide whether an exist
 release:
 
 - **npm.** npm refuses to publish a prerelease unless `--tag` is explicit, because the default would quietly move
-  `latest` onto it. `scripts/release.sh` passes `--tag latest` anyway, deliberately: while the beta is what we are
+  `latest` onto it. `scripts/release.sh` passes `--tag latest` anyway, deliberately: while the beta was what we were
   asking people to run, a fresh `bun i -g` and `voidbase update` should both land on it, and publishing under a
   `beta` tag alone would leave everyone on the last stable version without saying so. After a prerelease publishes,
   `beta` is added as a second dist-tag, so `@beta` works for anyone who would rather pin the channel. Going stable

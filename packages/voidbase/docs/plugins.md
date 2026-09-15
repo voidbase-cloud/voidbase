@@ -2,7 +2,7 @@
 
 voidbase composes its server from plugins over [cordis](https://github.com/cordiverse/cordis) (MIT, see NOTICE).
 This is the state of it inside the package; the user-facing design and the install story are on the site
-(`/docs/plugins`, the roadmap, and the "Plugins" section of the run docs), and `plan.md` in this repository is the
+(`/docs/plugins` and the "Plugins" section of the run docs), and `plan.md` in this repository is the
 working plan. What is here is what a contributor needs to touch it.
 
 ## The pieces
